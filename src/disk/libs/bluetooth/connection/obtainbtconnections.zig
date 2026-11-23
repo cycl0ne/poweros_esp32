@@ -30,10 +30,11 @@ const _connection = @import("_connection.zig");
 /// BEHAVIOR:
 /// The links are those that are up - made by ConnectBTDevice, or by a
 /// device that paged the controller - and those being ended: each with
-/// the device's address, what sort of link it is (BTLF_*), the
-/// controller's handle for it, LE's parameters, how long it has been up,
-/// and the device's name and class where they are known. A link being
-/// made is not listed until it is up.
+/// the device's address, what sort of link it is (BTLF_*: since 1.4 also
+/// whether it is authenticated, to a device with a bond, being paired),
+/// the controller's handle for it, LE's parameters, how long it has been
+/// up, and the device's name and class where they are known. A link
+/// being made is not listed until it is up.
 ///
 /// Each node is a copy, its name with it: nothing the library does later
 /// reaches it.
@@ -98,7 +99,7 @@ pub fn ObtainBTConnections(base: *BluetoothBase, controller: u32) ?*exec.List {
             const entry = &entries[index];
             index += 1;
             entry.* = .{};
-            _connection.describe(kept.id, connection, entry, now);
+            _connection.describe(kept.id, &kept.layer, connection, entry, now);
             sys.AddTail(list, &entry.public.node);
         }
     }

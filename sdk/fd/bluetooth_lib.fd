@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 //! bluetooth.library's functions: the Bluetooth controllers, brought up
-//! and run by the library's task, the devices they find and their links
-//! to them, and who is told when they change. Open it with
-//! OpenLibrary("bluetooth.library", 1); the structures are in
-//! sdk.bluetooth.
+//! and run by the library's task, the devices they find, their links to
+//! them and their bonds with them, and who is told when they change.
+//! Open it with OpenLibrary("bluetooth.library", 1); the structures are
+//! in sdk.bluetooth.
 ##include libs/exec/exec as exec
 ##include libs/utility/utility as utility
 ##include libs/bluetooth/bluetooth as bluetooth
@@ -46,4 +46,17 @@ i32 DisconnectBTDevice(u32 controller, *const bluetooth.BTAddress address)
 ?*exec.List ObtainBTConnections(u32 controller)
 /// A list from ObtainBTConnections given back. Null does nothing.
 void ReleaseBTConnections(?*exec.List list)
+// Pairing
+/// A pairing with a device begun over BR/EDR, its link made first where there is none: 0 once it has begun, BTERR_*, or the controller's status. What it needs to know and its end go to `agent`.
+i32 PairBTDevice(u32 controller, *const bluetooth.BTAddress address, ?*bluetooth.BTAgent agent)
+/// A bond ended: its key forgotten, its file deleted, a link to the device ended. 0, or BTERR_*.
+i32 UnpairBTDevice(u32 controller, *const bluetooth.BTAddress address)
+/// An agent added: `port` sent what a pairing needs to know (BTAgentMessage), `capability` what its user can do (BTIO_*); null for no memory.
+?*bluetooth.BTAgent AddBTAgent(*exec.MsgPort port, u32 capability)
+/// An agent given back: asked nothing more, its pairings refused; what is still on its port is the caller's to reply. Null does nothing.
+void RemBTAgent(?*bluetooth.BTAgent agent)
+/// The bonds of a controller - or every controller's, BT_ALL_CONTROLLERS: a list of BTBond, the caller's until ReleaseBTBonds; null for no memory.
+?*exec.List ObtainBTBonds(u32 controller)
+/// A list from ObtainBTBonds given back. Null does nothing.
+void ReleaseBTBonds(?*exec.List list)
 ##end

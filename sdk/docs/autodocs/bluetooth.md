@@ -1,30 +1,110 @@
 # bluetooth.library
 
 bluetooth.library's functions: the Bluetooth controllers, brought up
-and run by the library's task, the devices they find and their links
-to them, and who is told when they change. Open it with
-OpenLibrary("bluetooth.library", 1); the structures are in
-sdk.bluetooth.
+and run by the library's task, the devices they find, their links to
+them and their bonds with them, and who is told when they change.
+Open it with OpenLibrary("bluetooth.library", 1); the structures are
+in sdk.bluetooth.
 
 Generated from the source by `./zig build autodoc`.
 
 ## Index
 
+- [AddBTAgent](#addbtagent) - Adds an agent: a port the library sends what a pairing needs to know, and what its user can do.
 - [AddBTController](#addbtcontroller) - Offers a controller to the stack: the library's task opens the unit and brings the controller up.
 - [AddBTNotify](#addbtnotify) - Asks for signals whenever a controller is added, comes up, fails or goes, is set otherwise, or finds a device.
 - [ConnectBTDevice](#connectbtdevice) - Makes a link to a device - a page over BR/EDR, LE's initiating over LE - and waits until it is up.
 - [DisconnectBTDevice](#disconnectbtdevice) - Ends a link to a device, and waits until it is down.
+- [ObtainBTBonds](#obtainbtbonds) - Lists the bonds of a controller, or of every controller.
 - [ObtainBTConnections](#obtainbtconnections) - Lists a controller's links to devices: a copy of each as it is at the moment of the call.
 - [ObtainBTControllers](#obtainbtcontrollers) - Lists the controllers: a copy of each as it is at the moment of the call.
 - [ObtainBTDevices](#obtainbtdevices) - Lists the devices a controller found: a copy of each as it is at the moment of the call.
+- [PairBTDevice](#pairbtdevice) - Begins a pairing with a device over BR/EDR: a bond the two keep, which authenticates and encrypts their links from then on.
+- [ReleaseBTBonds](#releasebtbonds) - Gives back a list from ObtainBTBonds.
 - [ReleaseBTConnections](#releasebtconnections) - Gives back what ObtainBTConnections answered.
 - [ReleaseBTControllers](#releasebtcontrollers) - Gives back what ObtainBTControllers answered.
 - [ReleaseBTDevices](#releasebtdevices) - Gives back what ObtainBTDevices answered.
+- [RemBTAgent](#rembtagent) - Ends what AddBTAgent began: the agent is asked nothing more.
 - [RemBTController](#rembtcontroller) - Takes a controller from the stack: everything the library had out on the unit is taken back, the unit closed, and the controller gone from the list.
 - [RemBTNotify](#rembtnotify) - Ends what AddBTNotify asked for.
 - [SetBTControllerAttrs](#setbtcontrollerattrs) - Changes what a controller does: whether it is on, the name it shows others, whether they find it.
 - [StartBTDiscovery](#startbtdiscovery) - Makes a controller look for the devices around it: LE's advertisers, then the BR/EDR devices that answer an inquiry, then the names not yet heard.
 - [StopBTDiscovery](#stopbtdiscovery) - Ends a controller's discovery now.
+- [UnpairBTDevice](#unpairbtdevice) - Ends a bond: the controller forgets the device's key.
+
+## AddBTAgent
+
+Adds an agent: a port the library sends what a pairing needs to know, and what its user can do.
+
+**SYNOPSIS**
+
+```zig
+fn AddBTAgent(base: *BluetoothBase, port: *exec.MsgPort, capability: u32) ?*bluetooth.BTAgent
+```
+
+**SINCE**
+
+1.4. LVO -88.
+
+**INPUTS**
+
+- `port` - where the BTAgentMessages go; the caller's.
+- `capability` - BTIO_*: whether its user can see a number, answer
+  yes or no, type a number. Any other value is BTIO_NOINPUTNOOUTPUT.
+
+**RESULT**
+
+A handle for PairBTDevice and RemBTAgent, or null without memory.
+
+**BEHAVIOR**
+
+The agent is asked about the pairings PairBTDevice begins with it,
+and about every pairing a device begins while it is the agent added
+last - without an agent, a device's pairing is refused. Each message
+is the library's: for BTAK_CONFIRM the agent sets `accept` to 1 when
+the device shows `number` (or, without one, when the device may
+pair); for BTAK_PASSKEY `accept` and `passkey`; for BTAK_PIN `accept`,
+`pin` and `pin_length`; then it replies the message (ReplyMsg).
+BTAK_SHOW and BTAK_DONE only tell, and are replied at once. A question
+not answered within 30 seconds is refused, its reply let go when it
+comes.
+
+**CONTEXT**
+
+- Waits: yes, for the agents' list and the library's task.
+- Interrupts: no.
+- Locks: none may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The handle is the caller's until RemBTAgent; the port must be there
+until then, and what comes to it replied.
+
+**NOTES**
+
+With BTIO_KEYBOARDDISPLAY, BR/EDR's pairings ask as for
+BTIO_DISPLAYYESNO: they have no such capability.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`RemBTAgent`, `PairBTDevice`
+
+**EXAMPLES**
+
+```zig
+const port = sys.CreateMsgPort() orelse return;
+const agent = bt.AddBTAgent(port, bluetooth.BTIO_DISPLAYYESNO) orelse return;
+while (sys.GetMsg(port)) |message| {
+    const asked: *bluetooth.BTAgentMessage = @fieldParentPtr("message", message);
+    if (asked.kind == bluetooth.BTAK_CONFIRM) asked.accept = 1;
+    sys.ReplyMsg(message);
+}
+```
 
 ## AddBTController
 
@@ -205,7 +285,10 @@ or BTERR_TIMEOUT for an LE device that did not advertise within 20
 seconds, BTERR_BUSY while the controller makes another link of the
 kind or ends this one, BTERR_NOCONTROLLER, BTERR_NOTUP, BTERR_OFF,
 BTERR_UNSUPPORTED for a controller without the kind of link, and
-BTERR_NOMEM when it has no room for another (it keeps 8).
+BTERR_NOMEM when it has no room for another (it keeps 8). For a device
+with a bond, a link that is up but could not be made secure: the
+controller's status - HCI_ERR_PIN_OR_KEY_MISSING when the device no
+longer has the bond.
 
 **BEHAVIOR**
 
@@ -221,6 +304,10 @@ controller is taken on by itself: its link is listed as well.
 The device's name, where the discovery did not hear it, is asked for
 over a BR/EDR link once it is up. AddBTNotify's signal comes when the
 link is up, and again when it is down.
+
+Since 1.4, a BR/EDR link to a device the controller has a bond with
+(PairBTDevice) is authenticated with the bond's key and encrypted
+before the call returns; one that could not be stays up.
 
 **CONTEXT**
 
@@ -244,7 +331,8 @@ None known.
 
 **SEE ALSO**
 
-`DisconnectBTDevice`, `ObtainBTConnections`, `StartBTDiscovery`
+`DisconnectBTDevice`, `ObtainBTConnections`, `StartBTDiscovery`,
+`PairBTDevice`
 
 **EXAMPLES**
 
@@ -320,6 +408,72 @@ None known.
 _ = bt.DisconnectBTDevice(bluetooth.BT_ALL_CONTROLLERS, &link.address);
 ```
 
+## ObtainBTBonds
+
+Lists the bonds of a controller, or of every controller.
+
+**SYNOPSIS**
+
+```zig
+fn ObtainBTBonds(base: *BluetoothBase, controller: u32) ?*exec.List
+```
+
+**SINCE**
+
+1.4. LVO -96.
+
+**INPUTS**
+
+- `controller` - its number (BTController.id), or BT_ALL_CONTROLLERS.
+
+**RESULT**
+
+A list of BTBond, empty for none; null without memory.
+
+**BEHAVIOR**
+
+Each bond the device's address, its name and class of device as they
+were at its pairing, the kind of its key, and whether its pairing was
+confirmed (BTBF_AUTHENTICATED), made with Secure Connections
+(BTBF_SECURE) or with a PIN (BTBF_LEGACY). A controller's bonds are
+there once it has read them, as it comes up.
+
+**CONTEXT**
+
+- Waits: yes, for the controllers' lock.
+- Interrupts: no.
+- Locks: none may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The list and its nodes are the caller's until ReleaseBTBonds; they do
+not change.
+
+**NOTES**
+
+The keys are not listed.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`ReleaseBTBonds`, `PairBTDevice`, `UnpairBTDevice`
+
+**EXAMPLES**
+
+```zig
+const list = bt.ObtainBTBonds(bluetooth.BT_ALL_CONTROLLERS) orelse return;
+defer bt.ReleaseBTBonds(list);
+var it = list.iterator();
+while (it.next()) |node| {
+    const bond: *bluetooth.BTBond = @fieldParentPtr("node", node);
+    _ = bond.address;
+}
+```
+
 ## ObtainBTConnections
 
 Lists a controller's links to devices: a copy of each as it is at the moment of the call.
@@ -348,10 +502,11 @@ such controller - or null without memory.
 
 The links are those that are up - made by ConnectBTDevice, or by a
 device that paged the controller - and those being ended: each with
-the device's address, what sort of link it is (BTLF_*), the
-controller's handle for it, LE's parameters, how long it has been up,
-and the device's name and class where they are known. A link being
-made is not listed until it is up.
+the device's address, what sort of link it is (BTLF_*: since 1.4 also
+whether it is authenticated, to a device with a bond, being paired),
+the controller's handle for it, LE's parameters, how long it has been
+up, and the device's name and class where they are known. A link
+being made is not listed until it is up.
 
 Each node is a copy, its name with it: nothing the library does later
 reaches it.
@@ -533,6 +688,146 @@ while (it.next()) |node| {
 }
 ```
 
+## PairBTDevice
+
+Begins a pairing with a device over BR/EDR: a bond the two keep, which authenticates and encrypts their links from then on.
+
+**SYNOPSIS**
+
+```zig
+fn PairBTDevice(base: *BluetoothBase, controller: u32, address: *const bluetooth.BTAddress, agent: ?*bluetooth.BTAgent) i32
+```
+
+**SINCE**
+
+1.4. LVO -80.
+
+**INPUTS**
+
+- `controller` - its number (BTController.id), or BT_ALL_CONTROLLERS
+  for the one that has a link to the device already, else the one
+  whose discovery found it, else the first that is up and on.
+- `address` - the device's, a BTADDR_BREDR address.
+- `agent` - from AddBTAgent: asked what the pairing needs to know, and
+  told its end; null for a pairing that asks nobody.
+
+**RESULT**
+
+0 once the pairing has begun: its end comes to the agent. Otherwise
+why it has not: BTERR_BONDED for a device the controller has a bond
+with already, BTERR_BUSY while the device is being paired or its link
+ended, BTERR_UNSUPPORTED for an LE address or a controller without
+BR/EDR, BTERR_NOCONTROLLER, BTERR_NOTUP, BTERR_OFF, BTERR_NOMEM.
+
+**BEHAVIOR**
+
+A link to the device is made first where there is none, as
+ConnectBTDevice makes one, and the pairing begins once it is up. With
+Secure Simple Pairing the two say what their users can do, and the
+agent is asked what that calls for: BTAK_CONFIRM, whether the device
+shows the same number; BTAK_PASSKEY, the number the device shows;
+BTAK_SHOW, a number to be typed on the device. A device without it
+asks for a PIN: BTAK_PIN. Where there is nothing to compare - a side
+that can show or type nothing - the pairing is confirmed by nobody
+(Just Works), as it is without an agent. The link is then
+authenticated and encrypted; an encryption key shorter than 7 bytes
+ends it.
+
+The end goes to the agent as BTAK_DONE, its `result` 0 for a bond
+made - kept by the controller's address and the device's in
+`ENVARC:Sys/bluetooth/` - or why not: the controller's status
+(hci.HCI_ERR_AUTHENTICATION_FAILURE when the numbers did not match or
+the device said no, HCI_ERR_PAGE_TIMEOUT for a device that did not
+answer its page), BTERR_REFUSED when the agent said no or did not
+answer within 30 seconds, BTERR_TIMEOUT for a pairing not over within
+a minute, BTERR_NOMEM when the controller has its 32 bonds already.
+AddBTNotify's signal comes when the bond is made.
+
+**CONTEXT**
+
+- Waits: yes, for the library's task - not for the pairing.
+- Interrupts: no.
+- Locks: none may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The agent stays the caller's; it is asked and told until BTAK_DONE,
+or until RemBTAgent, which refuses the pairing.
+
+**NOTES**
+
+The link stays up after the pairing; DisconnectBTDevice ends it. A
+pairing a device begins goes to the agent added last.
+
+**BUGS**
+
+LE devices are not paired yet.
+
+**SEE ALSO**
+
+`AddBTAgent`, `UnpairBTDevice`, `ObtainBTBonds`, `ConnectBTDevice`
+
+**EXAMPLES**
+
+```zig
+const agent = bt.AddBTAgent(port, bluetooth.BTIO_DISPLAYYESNO) orelse return;
+defer bt.RemBTAgent(agent);
+if (bt.PairBTDevice(bluetooth.BT_ALL_CONTROLLERS, &device, agent) != 0) return;
+// What comes to `port` answered and replied, until BTAK_DONE.
+```
+
+## ReleaseBTBonds
+
+Gives back a list from ObtainBTBonds.
+
+**SYNOPSIS**
+
+```zig
+fn ReleaseBTBonds(base: *BluetoothBase, list: ?*exec.List) void
+```
+
+**SINCE**
+
+1.4. LVO -100.
+
+**INPUTS**
+
+- `list` - from ObtainBTBonds; null does nothing.
+
+**RESULT**
+
+Nothing.
+
+**BEHAVIOR**
+
+The list and its nodes are freed.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The list is gone.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`ObtainBTBonds`
+
+**EXAMPLES**
+
+```zig
+bt.ReleaseBTBonds(list);
+```
+
 ## ReleaseBTConnections
 
 Gives back what ObtainBTConnections answered.
@@ -684,6 +979,64 @@ None known.
 
 ```zig
 bt.ReleaseBTDevices(list);
+```
+
+## RemBTAgent
+
+Ends what AddBTAgent began: the agent is asked nothing more.
+
+**SYNOPSIS**
+
+```zig
+fn RemBTAgent(base: *BluetoothBase, agent: ?*bluetooth.BTAgent) void
+```
+
+**SINCE**
+
+1.4. LVO -92.
+
+**INPUTS**
+
+- `agent` - from AddBTAgent; null does nothing.
+
+**RESULT**
+
+Nothing.
+
+**BEHAVIOR**
+
+Nothing is sent to its port once the call returns. The pairings that
+ask it are refused - the question it has not answered, and whatever
+they would ask next - and their end is not told. The agent added
+before it answers the devices' pairings again.
+
+**CONTEXT**
+
+- Waits: yes, for the agents' list and the library's task.
+- Interrupts: no.
+- Locks: none may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The handle is gone. What the agent was sent and has not replied is
+still on its port, the library's: the caller replies it (GetMsg,
+ReplyMsg) before the port goes, and the library lets it go.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`AddBTAgent`
+
+**EXAMPLES**
+
+```zig
+bt.RemBTAgent(agent);
+while (sys.GetMsg(port)) |message| sys.ReplyMsg(message);
+sys.DeleteMsgPort(port);
 ```
 
 ## RemBTController
@@ -1024,4 +1377,65 @@ None known.
 
 ```zig
 bt.StopBTDiscovery(bluetooth.BT_ALL_CONTROLLERS);
+```
+
+## UnpairBTDevice
+
+Ends a bond: the controller forgets the device's key.
+
+**SYNOPSIS**
+
+```zig
+fn UnpairBTDevice(base: *BluetoothBase, controller: u32, address: *const bluetooth.BTAddress) i32
+```
+
+**SINCE**
+
+1.4. LVO -84.
+
+**INPUTS**
+
+- `controller` - its number (BTController.id), or BT_ALL_CONTROLLERS
+  for every controller with a bond with the device.
+- `address` - the device's.
+
+**RESULT**
+
+0 once the bond is ended; BTERR_NOTBONDED for a controller - or, with
+BT_ALL_CONTROLLERS, every controller - without one, BTERR_NOCONTROLLER.
+
+**BEHAVIOR**
+
+The key is forgotten and its file deleted before the call returns,
+and a link to the device is ended. AddBTNotify's signal comes.
+
+**CONTEXT**
+
+- Waits: yes, for the library's task and the file's deletion.
+- Interrupts: no.
+- Locks: none may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing.
+
+**NOTES**
+
+The device keeps its side of the bond until it is told otherwise; it
+cannot authenticate a link to the controller any more, and a pairing
+with it begins afresh.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`PairBTDevice`, `ObtainBTBonds`
+
+**EXAMPLES**
+
+```zig
+_ = bt.UnpairBTDevice(bluetooth.BT_ALL_CONTROLLERS, &device);
 ```

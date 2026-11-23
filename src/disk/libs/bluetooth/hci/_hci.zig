@@ -6,7 +6,8 @@
 //! shows others and whether it is on (local.zig); the devices it found
 //! (discovery.zig, devices.zig); its links to devices (connections.zig)
 //! and the data on them (acl.zig), which L2CAP's channels carry
-//! (l2cap/).
+//! (l2cap/); its pairings (pairing.zig) and the bonds they leave
+//! (bonds.zig).
 //!
 //! **Pure.** Nothing here calls exec or waits: the task hands in each
 //! packet that came (`received`), the time (`now`) and the time-outs
@@ -25,7 +26,8 @@
 //! a lister sees a controller between two packets, never inside one.
 //!
 //! **Its own times** - a discovery's phase, the end of being visible for
-//! a time, a link being made or ended - are deadlines like a command's:
+//! a time, a link being made or ended, a pairing and its agent's answer -
+//! are deadlines like a command's:
 //! `nextDeadline` answers the earliest of them all, and `tick` runs
 //! whichever has passed.
 
@@ -34,11 +36,13 @@ const bluetooth = sdk.bluetooth;
 const hci = bluetooth.hci;
 const hcidev = sdk.devices.hci;
 const acl = @import("acl.zig");
+const bonds = @import("bonds.zig");
 const bringup = @import("bringup.zig");
 const connections = @import("connections.zig");
 const devices = @import("devices.zig");
 const discovery = @import("discovery.zig");
 const local = @import("local.zig");
+const pairing = @import("pairing.zig");
 
 /// How many commands wait for their turn - room for every link's end
 /// when the power goes off - and how many may be out at once.
@@ -147,6 +151,16 @@ pub const Hci = struct {
     /// What happened to its links since the task last said it in the log.
     notes: [connections.NOTES]connections.Note = @splat(.{}),
     note_count: u8 = 0,
+    /// The agent that answers the pairings a device begins - the one
+    /// added last, by its number, 0 for none - and what its user can do
+    /// (BTIO_*). What agents are to be told, which the task sends.
+    agent_current: u32 = 0,
+    agent_capability: u32 = 0,
+    notices: [pairing.NOTICES]pairing.Notice = @splat(.{}),
+    notice_count: u8 = 0,
+    /// Its bonds (bonds.zig), and whether one is to be written.
+    bonds: [bonds.BONDS]bonds.Bond = @splat(.{}),
+    bonds_changed: bool = false,
 };
 
 /// Whether feature `n` of page `page` is set.
@@ -276,7 +290,7 @@ pub fn nextDeadline(layer: *const Hci) ?u64 {
         if (earliest == null or pending.deadline < earliest.?) earliest = pending.deadline;
     }
     if (layer.state != bluetooth.BTCS_UP) return earliest;
-    for ([_]?u64{ discovery.deadline(layer), local.deadline(layer), connections.deadline(layer) }) |due| {
+    for ([_]?u64{ discovery.deadline(layer), local.deadline(layer), connections.deadline(layer), pairing.deadline(layer) }) |due| {
         const time = due orelse continue;
         if (earliest == null or time < earliest.?) earliest = time;
     }
@@ -299,6 +313,7 @@ pub fn tick(layer: *Hci) void {
         discovery.tick(layer);
         local.tick(layer);
         connections.tick(layer);
+        pairing.tick(layer);
     }
     pump(layer);
 }
@@ -309,6 +324,7 @@ fn timedOut(layer: *Hci, opcode: u16) void {
         bluetooth.BTCS_UP => {
             discovery.timedOut(layer, opcode);
             connections.answered(layer, opcode, &.{});
+            pairing.answered(layer, opcode, &.{});
         },
         else => {},
     }
@@ -356,8 +372,8 @@ fn event(layer: *Hci, code: u8, params: []const u8) void {
     }
 }
 
-/// The events of a controller that is up: what its discovery hears, and
-/// its links.
+/// The events of a controller that is up: what its discovery hears, its
+/// links, and their pairings.
 fn upEvent(layer: *Hci, code: u8, params: []const u8) void {
     switch (code) {
         hci.HCI_EV_INQUIRY_COMPLETE => discovery.inquiryComplete(layer),
@@ -373,6 +389,16 @@ fn upEvent(layer: *Hci, code: u8, params: []const u8) void {
         hci.HCI_EV_DISCONNECTION_COMPLETE => connections.disconnectionComplete(layer, params),
         hci.HCI_EV_ROLE_CHANGE => connections.roleChange(layer, params),
         hci.HCI_EV_ENCRYPTION_CHANGE => connections.encryptionChange(layer, params),
+        hci.HCI_EV_AUTHENTICATION_COMPLETE => pairing.authenticationComplete(layer, params),
+        hci.HCI_EV_LINK_KEY_REQUEST => pairing.linkKeyRequest(layer, params),
+        hci.HCI_EV_LINK_KEY_NOTIFICATION => pairing.linkKeyNotification(layer, params),
+        hci.HCI_EV_PIN_CODE_REQUEST => pairing.pinCodeRequest(layer, params),
+        hci.HCI_EV_IO_CAPABILITY_REQUEST => pairing.ioCapabilityRequest(layer, params),
+        hci.HCI_EV_IO_CAPABILITY_RESPONSE => pairing.ioCapabilityResponse(layer, params),
+        hci.HCI_EV_USER_CONFIRMATION_REQUEST => pairing.userConfirmationRequest(layer, params),
+        hci.HCI_EV_USER_PASSKEY_REQUEST => pairing.userPasskeyRequest(layer, params),
+        hci.HCI_EV_USER_PASSKEY_NOTIFICATION => pairing.userPasskeyNotification(layer, params),
+        hci.HCI_EV_SIMPLE_PAIRING_COMPLETE => pairing.simplePairingComplete(layer, params),
         hci.HCI_EV_NUMBER_OF_COMPLETED_PACKETS => acl.completedPackets(layer, params),
         hci.HCI_EV_LE_META => leEvent(layer, params),
         else => {},
@@ -399,6 +425,7 @@ fn completed(layer: *Hci, opcode: u16, returned: []const u8) void {
         bluetooth.BTCS_UP => {
             discovery.answered(layer, opcode, returned);
             connections.answered(layer, opcode, returned);
+            pairing.answered(layer, opcode, returned);
         },
         else => {},
     }

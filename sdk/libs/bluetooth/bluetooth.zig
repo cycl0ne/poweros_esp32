@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 //! bluetooth.library's structures and constants: a device's address, a
 //! controller as the library lists it and the tags that set it, a device
-//! a controller found, a connection, and the notification. The calls are
+//! a controller found, a connection, an agent and what it is asked, a
+//! bond, and the notification. The calls are
 //! in `sdk.interface.bluetooth`; the HCI's commands, events and the
 //! fields they carry are `hci.zig`, L2CAP's `l2cap.zig`, here as well.
 //!
@@ -30,9 +31,19 @@
 //! DisconnectBTDevice; a device that pages a controller is taken on as
 //! well. ObtainBTConnections lists them.
 //!
+//! **Pairing** makes a bond with a device over BR/EDR: a link key the two
+//! keep, which authenticates and encrypts their links from then on.
+//! PairBTDevice begins one and returns; what the pairing needs to know -
+//! whether a number matches, a passkey, a PIN - and its end are messages
+//! to the agent it names (AddBTAgent: a port, and what its user can do).
+//! The agent added last also answers the pairings a device begins. The
+//! bonds are kept by the controller's address and the device's
+//! (`ENVARC:Sys/bluetooth/<controller>/<device>`); ObtainBTBonds lists
+//! them, UnpairBTDevice ends one.
+//!
 //! **A change** - a controller added, up, failed or gone, a setting, a
 //! device found or named, a discovery ended, a connection made or
-//! ended - signals every task that
+//! ended, a bond made or ended - signals every task that
 //! asked with AddBTNotify, which then lists again. The signal says that
 //! something changed, not what: two changes before the task looks are
 //! one.
@@ -230,6 +241,13 @@ pub const BTLF_INCOMING: u32 = 1 << 1;
 pub const BTLF_CENTRAL: u32 = 1 << 2;
 /// Encrypted.
 pub const BTLF_ENCRYPTED: u32 = 1 << 3;
+/// Authenticated: the two have shown each other the link key of their
+/// bond, or of a pairing on this link.
+pub const BTLF_AUTHENTICATED: u32 = 1 << 4;
+/// To a device the controller has a bond with.
+pub const BTLF_BONDED: u32 = 1 << 5;
+/// Being paired, or being authenticated and encrypted.
+pub const BTLF_PAIRING: u32 = 1 << 6;
 
 /// A connection, as ObtainBTConnections lists it.
 pub const BTConnection = extern struct {
@@ -262,6 +280,101 @@ pub const BTConnection = extern struct {
 /// given back with RemBTNotify.
 pub const BTNotify = opaque {};
 
+// --- pairing -----------------------------------------------------------------
+
+/// AddBTAgent's capability: what the agent's user can do, which decides
+/// how a pairing is confirmed.
+/// Show a number, but answer nothing.
+pub const BTIO_DISPLAYONLY: u32 = 0;
+/// Show a number and answer yes or no.
+pub const BTIO_DISPLAYYESNO: u32 = 1;
+/// Type a number, but show nothing.
+pub const BTIO_KEYBOARDONLY: u32 = 2;
+/// Nothing: a pairing is confirmed by nobody (Just Works).
+pub const BTIO_NOINPUTNOOUTPUT: u32 = 3;
+/// Show a number, answer yes or no, and type one.
+pub const BTIO_KEYBOARDDISPLAY: u32 = 4;
+
+/// An agent added with AddBTAgent: the library's, given back with
+/// RemBTAgent.
+pub const BTAgent = opaque {};
+
+/// BTAgentMessage.kind: what the agent is asked or told.
+/// Whether the device shows `number`; BT_NO_NUMBER when there is none
+/// to compare - whether the device may pair at all.
+pub const BTAK_CONFIRM: u32 = 1;
+/// The passkey the device shows, typed into `passkey`.
+pub const BTAK_PASSKEY: u32 = 2;
+/// `number`, to be typed on the device: answered at once.
+pub const BTAK_SHOW: u32 = 3;
+/// The PIN for a device without Secure Simple Pairing, into `pin`.
+pub const BTAK_PIN: u32 = 4;
+/// The pairing is over: `result` says how. Answered at once.
+pub const BTAK_DONE: u32 = 5;
+
+/// BTAgentMessage.number when there is no number.
+pub const BT_NO_NUMBER: u32 = 0xFFFF_FFFF;
+/// The longest PIN.
+pub const BT_PIN_MOST = 16;
+/// The most of a device's name a message or a bond carries, its NUL
+/// besides.
+pub const BT_BOND_NAME_MOST = 127;
+
+/// What the library asks an agent, or tells it: sent to the agent's port,
+/// and replied by the agent once it has answered. The library makes it
+/// and frees it once it is back.
+pub const BTAgentMessage = extern struct {
+    message: exec.Message = .{},
+    /// BTAK_*.
+    kind: u32 = 0,
+    /// The controller (BTController.id) and the device.
+    controller: u32 = 0,
+    address: BTAddress = .{},
+    /// BTAK_CONFIRM's number to compare, BTAK_SHOW's passkey: six
+    /// decimal digits, leading zeros shown; BT_NO_NUMBER for none.
+    number: u32 = BT_NO_NUMBER,
+    /// BTAK_DONE: 0 for a bond made, else why not - BTERR_*, or the
+    /// controller's status (hci.HCI_ERR_*).
+    result: i32 = 0,
+    /// Whether this machine began the pairing (PairBTDevice); otherwise
+    /// the device did.
+    ours: u32 = 0,
+    /// The agent's answer: whether it agrees (BTAK_CONFIRM, BTAK_PASSKEY,
+    /// BTAK_PIN), the passkey typed, and the PIN with its length.
+    accept: u32 = 0,
+    passkey: u32 = 0,
+    pin_length: u32 = 0,
+    pin: [BT_PIN_MOST]u8 = @splat(0),
+    /// The device's name, UTF-8, ended by a NUL; empty when it is not
+    /// known.
+    name: [BT_BOND_NAME_MOST + 1]u8 = @splat(0),
+};
+
+/// BTBond.flags: what sort of bond it is.
+/// Its pairing was confirmed - a number compared, a passkey typed, or a
+/// PIN given - so that nobody between the two could have made it.
+pub const BTBF_AUTHENTICATED: u32 = 1 << 0;
+/// Made with Secure Connections (P-256); otherwise with P-192, or a PIN.
+pub const BTBF_SECURE: u32 = 1 << 1;
+/// Made with a PIN, by a device without Secure Simple Pairing.
+pub const BTBF_LEGACY: u32 = 1 << 2;
+
+/// A bond, as ObtainBTBonds lists it.
+pub const BTBond = extern struct {
+    /// On the list ObtainBTBonds answers. ln_Name is the device's name as
+    /// it was at the pairing, UTF-8; empty when none was known.
+    node: exec.Node = .{},
+    /// The controller it is a bond of (BTController.id).
+    controller: u32 = 0,
+    /// BTBF_*.
+    flags: u32 = 0,
+    address: BTAddress = .{},
+    /// The device's class of device, as it was at the pairing.
+    class_of_device: u32 = 0,
+    /// The kind of its link key (hci.LINK_KEY_*).
+    key_type: u32 = 0,
+};
+
 // What the calls answer, and BTController.failure: 0, or one of these.
 // A positive failure is the controller's own status (hci.HCI_ERR_*).
 /// No memory, or the library's task could not be started.
@@ -286,5 +399,13 @@ pub const BTERR_UNSUPPORTED: i32 = -9;
 /// There is no connection to the device.
 pub const BTERR_NOTCONNECTED: i32 = -10;
 /// The controller is making a connection of that kind already - it pages
-/// one device at a time and initiates to one - or is ending this one.
+/// one device at a time and initiates to one - or is ending this one; or
+/// the device is being paired.
 pub const BTERR_BUSY: i32 = -11;
+/// The controller has a bond with the device already: UnpairBTDevice
+/// ends it first.
+pub const BTERR_BONDED: i32 = -12;
+/// The controller has no bond with the device.
+pub const BTERR_NOTBONDED: i32 = -13;
+/// The agent said no, or no agent answered in time.
+pub const BTERR_REFUSED: i32 = -14;

@@ -82,6 +82,7 @@ pub const HCI_OP_READ_LOCAL_FEATURES: u16 = 0x1003;
 pub const HCI_OP_READ_LOCAL_EXT_FEATURES: u16 = 0x1004;
 pub const HCI_OP_READ_BUFFER_SIZE: u16 = 0x1005;
 pub const HCI_OP_READ_BD_ADDR: u16 = 0x1009;
+pub const HCI_OP_READ_ENCRYPTION_KEY_SIZE: u16 = 0x1408;
 // LE.
 pub const HCI_OP_LE_SET_EVENT_MASK: u16 = 0x2001;
 pub const HCI_OP_LE_READ_BUFFER_SIZE: u16 = 0x2002;
@@ -124,6 +125,7 @@ pub const HCI_EV_USER_CONFIRMATION_REQUEST: u8 = 0x33;
 pub const HCI_EV_USER_PASSKEY_REQUEST: u8 = 0x34;
 pub const HCI_EV_SIMPLE_PAIRING_COMPLETE: u8 = 0x36;
 pub const HCI_EV_USER_PASSKEY_NOTIFICATION: u8 = 0x3B;
+pub const HCI_EV_KEYPRESS_NOTIFICATION: u8 = 0x3C;
 pub const HCI_EV_REMOTE_HOST_FEATURES: u8 = 0x3D;
 pub const HCI_EV_LE_META: u8 = 0x3E;
 /// LE Meta's subevents: the first parameter.
@@ -158,11 +160,44 @@ pub const HCI_ERR_REMOTE_USER_TERMINATED: u8 = 0x13;
 pub const HCI_ERR_REMOTE_LOW_RESOURCES: u8 = 0x14;
 pub const HCI_ERR_REMOTE_POWER_OFF: u8 = 0x15;
 pub const HCI_ERR_LOCAL_HOST_TERMINATED: u8 = 0x16;
+pub const HCI_ERR_REPEATED_ATTEMPTS: u8 = 0x17;
 pub const HCI_ERR_PAIRING_NOT_ALLOWED: u8 = 0x18;
+pub const HCI_ERR_LMP_RESPONSE_TIMEOUT: u8 = 0x22;
+pub const HCI_ERR_INSUFFICIENT_SECURITY: u8 = 0x2F;
 pub const HCI_ERR_UNSPECIFIED: u8 = 0x1F;
 pub const HCI_ERR_INSTANT_PASSED: u8 = 0x28;
 pub const HCI_ERR_UNACCEPTABLE_PARAMETERS: u8 = 0x3B;
 pub const HCI_ERR_FAILED_TO_ESTABLISH: u8 = 0x3E;
+
+// --- pairing -----------------------------------------------------------------
+
+/// IO Capability Request Reply's IO capability: what the host's user can
+/// do (Secure Simple Pairing; KeyboardDisplay is LE's alone).
+pub const IO_DISPLAY_ONLY: u8 = 0x00;
+pub const IO_DISPLAY_YES_NO: u8 = 0x01;
+pub const IO_KEYBOARD_ONLY: u8 = 0x02;
+pub const IO_NO_INPUT_OUTPUT: u8 = 0x03;
+/// Its authentication requirements: the bit for protection from a man in
+/// the middle, and what is to be bonded - nothing, this device on its
+/// own (dedicated), or in passing (general).
+pub const AUTH_MITM: u8 = 0x01;
+pub const AUTH_NO_BONDING: u8 = 0x00;
+pub const AUTH_DEDICATED_BONDING: u8 = 0x02;
+pub const AUTH_GENERAL_BONDING: u8 = 0x04;
+/// Link Key Notification's key types.
+pub const LINK_KEY_COMBINATION: u8 = 0x00;
+pub const LINK_KEY_LOCAL_UNIT: u8 = 0x01;
+pub const LINK_KEY_REMOTE_UNIT: u8 = 0x02;
+pub const LINK_KEY_DEBUG: u8 = 0x03;
+pub const LINK_KEY_UNAUTHENTICATED_P192: u8 = 0x04;
+pub const LINK_KEY_AUTHENTICATED_P192: u8 = 0x05;
+pub const LINK_KEY_CHANGED_COMBINATION: u8 = 0x06;
+pub const LINK_KEY_UNAUTHENTICATED_P256: u8 = 0x07;
+pub const LINK_KEY_AUTHENTICATED_P256: u8 = 0x08;
+/// A link key's length, and the shortest encryption key a link is kept
+/// with: one shorter is open to being guessed.
+pub const LINK_KEY_SIZE = 16;
+pub const MIN_ENCRYPTION_KEY_SIZE: u8 = 7;
 
 // --- connections -------------------------------------------------------------
 
@@ -314,6 +349,7 @@ pub const CMDBIT_USER_CONFIRMATION_NEGATIVE_REPLY: u16 = 153;
 pub const CMDBIT_USER_PASSKEY_REPLY: u16 = 154;
 pub const CMDBIT_USER_PASSKEY_NEGATIVE_REPLY: u16 = 155;
 pub const CMDBIT_IO_CAPABILITY_NEGATIVE_REPLY: u16 = 163;
+pub const CMDBIT_READ_ENCRYPTION_KEY_SIZE: u16 = 164;
 pub const CMDBIT_SET_EVENT_MASK_PAGE_2: u16 = 178;
 pub const CMDBIT_WRITE_LE_HOST_SUPPORTED: u16 = 198;
 pub const CMDBIT_LE_SET_EVENT_MASK: u16 = 200;

@@ -121,7 +121,9 @@ pub fn readKeywords(scanner: *Scanner, into: *Kept) void {
     }
 }
 
-fn yesOf(scanner: *const Scanner) ?bool {
+/// A keyword's value as yes or no: YES, NO, or a number; null for
+/// anything else.
+pub fn yesOf(scanner: *const Scanner) ?bool {
     const value = scanner.token[0..scanner.len];
     if (same(value, "YES")) return true;
     if (same(value, "NO")) return false;
@@ -130,7 +132,7 @@ fn yesOf(scanner: *const Scanner) ?bool {
 }
 
 /// Whether two words are the same, in any case.
-fn same(word: []const u8, keyword: []const u8) bool {
+pub fn same(word: []const u8, keyword: []const u8) bool {
     if (word.len != keyword.len) return false;
     for (word, keyword) |char, wanted| {
         if (lower(char) != lower(wanted)) return false;
@@ -181,7 +183,8 @@ pub fn writeName(dl: *DosBase, address: *const [6]u8, name: [*:0]const u8) bool 
     return written == length and ended == 1 and closed;
 }
 
-fn putFile(dl: *DosBase, path: [*:0]const u8, bytes: []const u8) bool {
+/// `bytes` written to the file at `path`, the directories it needs made.
+pub fn putFile(dl: *DosBase, path: [*:0]const u8, bytes: []const u8) bool {
     if (!dl.CreateDirs(path, false)) return false;
     const file = dl.Open(path, dos.MODE_NEWFILE) orelse return false;
     const written = dl.Write(file, bytes.ptr, @intCast(bytes.len));

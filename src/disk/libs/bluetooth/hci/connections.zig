@@ -32,14 +32,19 @@
 //! for once a BR/EDR link is up (Remote Name Request): over the link it
 //! comes at once.
 //!
+//! **Made secure.** A BR/EDR link the library makes to a device it has a
+//! bond with is authenticated with the bond's key and encrypted before
+//! the calls waiting for it are answered (pairing.zig), and a link a
+//! pairing waits for begins it once it is up.
+//!
 //! **Ended** by DisconnectBTDevice, by the device, or by the controller's
 //! power going off: Disconnection Complete frees the record and gives
 //! back the controller's buffers its packets held (acl.zig).
 //!
-//! **Noted.** A link up, not made or down leaves a Note in the layer -
-//! the device, the handle, the controller's reason - which the task says
-//! in the log and clears; NOTES of them wait at most, and more are let
-//! go.
+//! **Noted.** A link up, not made or down - and a pairing over - leaves
+//! a Note in the layer - the device, the handle, the controller's reason
+//! - which the task says in the log and clears; NOTES of them wait at
+//! most, and more are let go.
 //!
 //! Pure, as the rest of the layer.
 
@@ -51,6 +56,7 @@ const Hci = _hci.Hci;
 const acl = @import("acl.zig");
 const devices = @import("devices.zig");
 const discovery = @import("discovery.zig");
+const pairing = @import("pairing.zig");
 
 /// How many links a controller keeps, and how many calls may wait on
 /// them at once.
@@ -82,6 +88,11 @@ pub const Connection = struct {
     incoming: bool = false,
     central: bool = false,
     encrypted: bool = false,
+    /// The two have shown each other a link key: an authentication, or
+    /// the encryption that follows one.
+    authenticated: bool = false,
+    /// Its pairing, or its being made secure (pairing.zig).
+    pairing: pairing.Pairing = .{},
     /// Its making taken back at its time: it failed by BTERR_TIMEOUT.
     cancelled: bool = false,
     /// Ended as soon as it is up: DisconnectBTDevice, or the power going
@@ -131,7 +142,7 @@ pub const Begun = union(enum) {
 /// How many notes wait for the log.
 pub const NOTES = 8;
 
-pub const NoteKind = enum(u8) { up, not_made, down };
+pub const NoteKind = enum(u8) { up, not_made, down, paired, not_paired, not_secured };
 
 /// What happened to a link, for the log.
 pub const Note = struct {
@@ -140,8 +151,8 @@ pub const Note = struct {
     handle: u16 = 0,
     le: bool = false,
     incoming: bool = false,
-    /// Not made or down: the controller's reason (hci.HCI_ERR_*), or
-    /// BTERR_*.
+    /// Not made, down, not paired or not made secure: the controller's
+    /// reason (hci.HCI_ERR_*), or BTERR_*.
     reason: i32 = 0,
 };
 
@@ -217,23 +228,33 @@ pub fn sameAddress(one: bluetooth.BTAddress, other: bluetooth.BTAddress) bool {
 pub fn connect(layer: *Hci, address: bluetooth.BTAddress) Begun {
     if (layer.state != bluetooth.BTCS_UP) return .{ .done = bluetooth.BTERR_NOTUP };
     if (!layer.powered) return .{ .done = bluetooth.BTERR_OFF };
-    const le_link = address.kind != bluetooth.BTADDR_BREDR;
     if (find(layer, address)) |known| switch (known.state) {
-        .up => return .{ .done = 0 },
+        // Up, unless it is being made secure.
+        .up => return if (securing(known)) waitFor(layer, .connect, address) else .{ .done = 0 },
         .connecting => if (!known.unwanted) return waitFor(layer, .connect, address),
         else => {},
     };
     if (find(layer, address) != null) return .{ .done = bluetooth.BTERR_BUSY };
-    if (if (le_link) !canInitiate(layer) else !canPage(layer)) return .{ .done = bluetooth.BTERR_UNSUPPORTED };
-    if (making(layer, le_link) != null) return .{ .done = bluetooth.BTERR_BUSY };
-    const connection = freeConnection(layer) orelse return .{ .done = bluetooth.BTERR_NOMEM };
     const wait = freeWait(layer) orelse return .{ .done = bluetooth.BTERR_NOMEM };
+    const result = make(layer, address);
+    if (result != 0) return .{ .done = result };
+    return waitOn(layer, wait, .connect, address);
+}
+
+/// A link to the device at `address` begun, none being there, and
+/// nobody waiting for it: 0, or why not.
+pub fn make(layer: *Hci, address: bluetooth.BTAddress) i32 {
+    const le_link = address.kind != bluetooth.BTADDR_BREDR;
+    if (find(layer, address) != null) return bluetooth.BTERR_BUSY;
+    if (if (le_link) !canInitiate(layer) else !canPage(layer)) return bluetooth.BTERR_UNSUPPORTED;
+    if (making(layer, le_link) != null) return bluetooth.BTERR_BUSY;
+    const connection = freeConnection(layer) orelse return bluetooth.BTERR_NOMEM;
     // Room for the discovery's end and the link's command.
-    if (_hci.QUEUE - layer.queue_count < 3) return .{ .done = bluetooth.BTERR_NOMEM };
+    if (_hci.QUEUE - layer.queue_count < 3) return bluetooth.BTERR_NOMEM;
     discovery.stop(layer);
     const heard = devices.find(layer, address.bytes, address.kind);
     const sent = if (le_link) initiate(layer, address) else page(layer, address, heard);
-    if (!sent) return .{ .done = bluetooth.BTERR_NOMEM };
+    if (!sent) return bluetooth.BTERR_NOMEM;
     connection.* = .{
         .state = .connecting,
         .address = address,
@@ -246,7 +267,13 @@ pub fn connect(layer: *Hci, address: bluetooth.BTAddress) Begun {
         setName(connection, &device.name);
     }
     layer.changed = true;
-    return waitOn(layer, wait, .connect, address);
+    return 0;
+}
+
+/// Whether a link that is up is being made secure, which ConnectBTDevice
+/// waits for.
+fn securing(connection: *const Connection) bool {
+    return connection.pairing.stage != .idle and connection.pairing.purpose == .secure;
 }
 
 /// The link to `address` ended: one being made taken back, or ended as
@@ -266,11 +293,17 @@ pub fn disconnect(layer: *Hci, address: bluetooth.BTAddress) Begun {
 /// Every link ended - the controller's power goes off - those being made
 /// taken back.
 pub fn dropAll(layer: *Hci) void {
-    for (&layer.connections) |*connection| switch (connection.state) {
-        .up => _ = end(layer, connection, hci.HCI_ERR_REMOTE_POWER_OFF),
+    for (&layer.connections) |*connection| close(layer, connection, hci.HCI_ERR_REMOTE_POWER_OFF);
+}
+
+/// A link ended, whatever its state: one up ended for `reason`, one being
+/// made taken back.
+pub fn close(layer: *Hci, connection: *Connection, reason: u8) void {
+    switch (connection.state) {
+        .up => _ = end(layer, connection, reason),
         .connecting => drop(layer, connection),
         .disconnecting, .free => {},
-    };
+    }
 }
 
 /// A link being made no longer wanted: taken back if the library is
@@ -283,7 +316,10 @@ fn drop(layer: *Hci, connection: *Connection) void {
 /// Every link forgotten - the controller is brought up again from its
 /// reset, or given up on - and every call waiting answered `result`.
 pub fn reset(layer: *Hci, result: i32) void {
-    for (&layer.connections) |*connection| connection.* = .{};
+    for (&layer.connections) |*connection| {
+        pairing.linkGone(layer, connection, result);
+        connection.* = .{};
+    }
     for (&layer.waits) |*wait| {
         if (!wait.used or wait.done) continue;
         wait.done = true;
@@ -318,6 +354,12 @@ fn answer(layer: *Hci, kind: WaitKind, address: bluetooth.BTAddress, result: i32
         wait.done = true;
         wait.result = result;
     }
+}
+
+/// Every call waiting for the link to `address` to be up answered
+/// `result`: the link made secure, or not.
+pub fn answerConnect(layer: *Hci, address: bluetooth.BTAddress, result: i32) void {
+    answer(layer, .connect, address, result);
 }
 
 /// A wait whose call the task has answered given back.
@@ -581,15 +623,21 @@ fn up(layer: *Hci, connection: *Connection, handle: u16) void {
     connection.outstanding = 0;
     layer.changed = true;
     note(layer, connection, .up, 0);
-    answer(layer, .connect, connection.address, 0);
-    if (connection.unwanted and !end(layer, connection, hci.HCI_ERR_REMOTE_USER_TERMINATED)) {
-        connection.unwanted = false;
-        answer(layer, .disconnect, connection.address, bluetooth.BTERR_NOMEM);
+    if (connection.unwanted) {
+        answer(layer, .connect, connection.address, 0);
+        if (!end(layer, connection, hci.HCI_ERR_REMOTE_USER_TERMINATED)) {
+            connection.unwanted = false;
+            answer(layer, .disconnect, connection.address, bluetooth.BTERR_NOMEM);
+        }
+        return;
     }
+    // A pairing that waited for it begun; a bonded device's link made
+    // secure before its callers are answered.
+    if (!pairing.linkUp(layer, connection)) answer(layer, .connect, connection.address, 0);
 }
 
 /// What happened to a link kept for the log, while there is room.
-fn note(layer: *Hci, connection: *const Connection, kind: NoteKind, reason: i32) void {
+pub fn note(layer: *Hci, connection: *const Connection, kind: NoteKind, reason: i32) void {
     if (layer.note_count == NOTES) return;
     layer.notes[layer.note_count] = .{
         .kind = kind,
@@ -606,6 +654,7 @@ fn note(layer: *Hci, connection: *const Connection, kind: NoteKind, reason: i32)
 /// answered - those for its end that it is down.
 fn failed(layer: *Hci, connection: *Connection, result: i32) void {
     note(layer, connection, .not_made, result);
+    pairing.linkGone(layer, connection, result);
     const address = connection.address;
     connection.* = .{};
     layer.changed = true;
@@ -617,6 +666,7 @@ fn failed(layer: *Hci, connection: *Connection, result: i32) void {
 /// its record freed, the calls waiting for its end answered `result`.
 fn down(layer: *Hci, connection: *Connection, result: i32, reason: i32) void {
     note(layer, connection, .down, reason);
+    pairing.linkGone(layer, connection, reason);
     acl.released(layer, connection);
     const address = connection.address;
     connection.* = .{};
@@ -650,12 +700,17 @@ pub fn roleChange(layer: *Hci, params: []const u8) void {
     layer.changed = true;
 }
 
-/// Encryption Change: whether the link is encrypted.
+/// Encryption Change: whether the link is encrypted - which it is only
+/// once the two have authenticated - and a pairing waiting for it told.
 pub fn encryptionChange(layer: *Hci, params: []const u8) void {
-    if (params.len < 4 or params[0] != hci.HCI_SUCCESS) return;
+    if (params.len < 4) return;
     const connection = byHandle(layer, _hci.le16(params[1..3]) & hci.ACL_HANDLE_MASK) orelse return;
-    connection.encrypted = params[3] != 0;
-    layer.changed = true;
+    if (params[0] == hci.HCI_SUCCESS) {
+        connection.encrypted = params[3] != 0;
+        if (connection.encrypted) connection.authenticated = true;
+        layer.changed = true;
+    }
+    pairing.encryptionChanged(layer, connection, params[0]);
 }
 
 /// LE Connection Update Complete, past its subevent: the link's new

@@ -78,10 +78,10 @@ AArch64 `virt` machines and in its x86-64 q35 machine.
   Amiga software.
 - **It is not** a protected system. All tasks share one address space; it
   is a machine for one person at a time.
-- **It does not (yet)** pair with Bluetooth devices or use them:
-  bluetooth.library brings its controllers up, sets them, finds the
-  devices around them and makes links to them, and the rest of the stack
-  is being built.
+- **It does not (yet)** use Bluetooth devices: bluetooth.library brings
+  its controllers up, sets them, finds the devices around them, makes
+  links to them and pairs with them over BR/EDR, and the rest of the
+  stack is being built.
 
 ### What is in it
 
@@ -150,7 +150,7 @@ every module is in [the SDK's documentation](sdk/docs/README.md).
 | **Sound** | up to sixteen streams mixed into an output, each output with its own volume and a ten-band equalizer; recording; WAV, MP3, FLAC and Ogg Vorbis, from files or internet radio ([sound](sdk/docs/guides/audio.md)) |
 | **Video** | films in MP4, MOV and Matroska - H.264, H.265, VP9 and AV1 - with their sound and subtitles, on the chip's own decoder where it has one |
 | **Network** | TCP/IP with IPv4 and IPv6, TLS 1.3 and 1.2, HTTP, WPA2 Wi-Fi, a packet filter; a shell over Telnet or SSH; a git client that clones, fetches, commits and pushes; SMB shares ([network](sdk/docs/guides/network.md)) |
-| **Devices** | USB hosts up to SuperSpeed with keyboards, mice, sticks and disks, serial and Ethernet adapters, Wi-Fi sticks, speakers and headsets; PCI Express, with Wi-Fi cards on it (MediaTek MT7922); Bluetooth controllers on USB (the MT7922's) and the Raspberry Pi 4 Model B's on its UART, which find the devices around them, are found by them and make links to them over BR/EDR and LE; NVMe, SD cards and flash; Ethernet up to 1000 Mbit/s; I2C, RS-485 and Modbus ([USB](sdk/docs/guides/usb.md), [Modbus](sdk/docs/guides/modbus.md)) |
+| **Devices** | USB hosts up to SuperSpeed with keyboards, mice, sticks and disks, serial and Ethernet adapters, Wi-Fi sticks, speakers and headsets; PCI Express, with Wi-Fi cards on it (MediaTek MT7922); Bluetooth controllers on USB (the MT7922's) and the Raspberry Pi 4 Model B's on its UART, which find the devices around them, are found by them, make links to them over BR/EDR and LE and pair with them over BR/EDR; NVMe, SD cards and flash; Ethernet up to 1000 Mbit/s; I2C, RS-485 and Modbus ([USB](sdk/docs/guides/usb.md), [Modbus](sdk/docs/guides/modbus.md)) |
 | **Desktop** | the desktop with icons and a dock; requesters; datatypes for pictures - JPEG, progressive too, PNG, WebP, GIF, BMP, ICO, ILBM -, SVG drawings - their text in colour fonts too -, text, Markdown, HTML, animations - GIF, WebP, Lottie - and sounds; commodities, hotkeys and filters on the input ([desktop](sdk/docs/guides/anvil.md), [icons](sdk/docs/guides/icons.md), [datatypes](sdk/docs/guides/datatypes.md), [commodities](sdk/docs/guides/commodities.md)) |
 | **When something fails** | a Guru and a ROM debugger on the serial port, memory debugging, the system log, and a failed program held for Suspend, Kill or Reboot ([debugging](sdk/docs/guides/debugging.md)) |
 

@@ -17,7 +17,7 @@ const board = @import("controller/board.zig");
 
 pub const LIBRARY_NAME = bluetooth.BLUETOOTHNAME;
 pub const LIBRARY_VERSION = 1;
-pub const LIBRARY_REVISION = 3;
+pub const LIBRARY_REVISION = 4;
 pub const BUILD_DATE = "23.11.2026";
 pub const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
@@ -35,9 +35,11 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     lib.revision = LIBRARY_REVISION;
     base.controllers.init(.unknown);
     base.notify.init(.unknown);
+    base.agents.init(.unknown);
     sys_base.InitSemaphore(&base.lock);
     sys_base.InitSemaphore(&base.start_lock);
     sys_base.InitSemaphore(&base.notify_lock);
+    sys_base.InitSemaphore(&base.agents_lock);
     return lib;
 }
 

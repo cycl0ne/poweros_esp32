@@ -30,6 +30,14 @@
 //! parked on the task's list with the wait its layer made
 //! (hci/connections.zig), and answered once that is done - or once its
 //! controller has gone.
+//!
+//! **Pairing.** What a pairing asks of its agent, and what it tells it,
+//! the task sends as a BTAgentMessage to the agent's port; the agent's
+//! answer comes back on a port of the task's own and is handed to the
+//! layer (hci/pairing.zig) - or let go, when the question was given up on
+//! meanwhile. The task does not end while a message of its is out. A
+//! controller's bonds are read with its settings and written as they
+//! change (bondfiles.zig).
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -49,9 +57,14 @@ const connections = @import("../hci/connections.zig");
 const devices = @import("../hci/devices.zig");
 const discovery = @import("../hci/discovery.zig");
 const local = @import("../hci/local.zig");
+const bonds = @import("../hci/bonds.zig");
+const hci_pairing = @import("../hci/pairing.zig");
 const _notify = @import("../notify/_notify.zig");
+const _pairing = @import("../pairing/_pairing.zig");
+const bondfiles = @import("bondfiles.zig");
 const device = @import("device.zig");
 const settings = @import("settings.zig");
+const DosBase = sdk.interface.dos.DosBase;
 
 const task_name = "bluetooth.library";
 const stack_bytes = 8192;
@@ -73,22 +86,26 @@ pub const Command = extern struct {
     /// add, remove: the device's unit.
     unit: u32 = 0,
     device_name: [*:0]const u8 = "",
-    /// set, discover, stop, connect, disconnect: the controller
-    /// (BTController.id), or BT_ALL_CONTROLLERS.
+    /// set, discover, stop, connect, disconnect, pair, unpair: the
+    /// controller (BTController.id), or BT_ALL_CONTROLLERS.
     controller: u32 = 0,
     /// discover: for how long, in milliseconds (0: the default).
     time_ms: u32 = 0,
     /// set: what is wanted.
     wanted: Wanted = .{},
-    /// connect, disconnect: the device's address; while parked, the
-    /// controller waited on and its wait.
+    /// connect, disconnect, pair, unpair: the device's address; while
+    /// parked, the controller waited on and its wait.
     address: bluetooth.BTAddress = .{},
     waiting_on: ?*anyopaque = null,
     wait: u32 = 0,
+    /// pair: the agent to ask and tell, by its number, and what its user
+    /// can do; agents: the one given back, 0 for one added.
+    agent: u32 = 0,
+    capability: u32 = 0,
     /// What the call answers.
     result: i32 = 0,
 
-    pub const Kind = enum(u32) { add, remove, set, discover, stop, connect, disconnect };
+    pub const Kind = enum(u32) { add, remove, set, discover, stop, connect, disconnect, pair, unpair, agents };
 };
 
 /// What SetBTControllerAttrs wants of a controller: `which` says which of
@@ -119,6 +136,14 @@ const Work = struct {
     name: [hci.HCI_MAX_NAME + 1]u8 = @splat(0),
     /// The hostname file's start, as it was last read.
     hostname: [hostname_most]u8 = undefined,
+    /// Where the agents' answers come back, and how many messages are out.
+    agent_replies: *exec.MsgPort,
+    agent_out: u32 = 0,
+    /// Room for a bond file: its directory's entry, the bond read, its
+    /// text.
+    bond_info: dos.FileInfoBlock = .{},
+    bond: bonds.Bond = .{},
+    bond_text: [bondfiles.TEXT_MOST]u8 = undefined,
 };
 
 /// A command handed to the task, which is started if it does not run,
@@ -240,7 +265,8 @@ fn taskMain(sys: *ExecBase) callconv(.c) void {
     base.task = me;
     base.port = work.commands;
     started(base);
-    const mask = (@as(u32, 1) << @intCast(work.commands.sig_bit)) | (@as(u32, 1) << @intCast(work.replies.sig_bit));
+    const mask = (@as(u32, 1) << @intCast(work.commands.sig_bit)) | (@as(u32, 1) << @intCast(work.replies.sig_bit)) |
+        (@as(u32, 1) << @intCast(work.agent_replies.sig_bit));
     while (true) {
         var worked = true;
         while (worked) {
@@ -257,6 +283,13 @@ fn taskMain(sys: *ExecBase) callconv(.c) void {
                         worked = true;
                         continue;
                     },
+                    .pair => command.result = pair(work, command),
+                    .unpair => {
+                        command.result = unpair(work, command);
+                        // Its file deleted before the call returns.
+                        keepBonds(work);
+                    },
+                    .agents => agentsChanged(work, command.agent),
                 }
                 sys.ReplyMsg(message);
                 worked = true;
@@ -265,9 +298,15 @@ fn taskMain(sys: *ExecBase) callconv(.c) void {
                 replied(work, message);
                 worked = true;
             }
+            while (sys.GetMsg(work.agent_replies)) |message| {
+                agentReplied(work, message);
+                worked = true;
+            }
         }
         answerWaits(work);
         settle(work);
+        keepBonds(work);
+        askAgents(work);
         report(work);
         armTimer(work);
         if (ending(work)) break;
@@ -289,11 +328,18 @@ fn makeWork(base: *BluetoothBase) ?*Work {
         sys.FreeVec(memory);
         return null;
     };
-    work.* = .{ .base = base, .commands = commands, .replies = replies };
+    const agent_replies = sys.CreateMsgPort() orelse {
+        sys.DeleteMsgPort(replies);
+        sys.DeleteMsgPort(commands);
+        sys.FreeVec(memory);
+        return null;
+    };
+    work.* = .{ .base = base, .commands = commands, .replies = replies, .agent_replies = agent_replies };
     work.parked.init(.message);
     work.timer_io.node.message.reply_port = replies;
     work.timer_io.node.message.length = @sizeOf(timer.TimeRequest);
     if (sys.OpenDevice(sdk.interface.timer.NAME, timer.UNIT_MICROHZ, &work.timer_io.node, 0) != 0) {
+        sys.DeleteMsgPort(agent_replies);
         sys.DeleteMsgPort(replies);
         sys.DeleteMsgPort(commands);
         sys.FreeVec(memory);
@@ -310,20 +356,23 @@ fn unmakeWork(work: *Work) void {
         _ = sys.WaitIO(&work.timer_io.node);
     }
     if (work.timer_open) sys.CloseDevice(&work.timer_io.node);
+    sys.DeleteMsgPort(work.agent_replies);
     sys.DeleteMsgPort(work.replies);
     sys.DeleteMsgPort(work.commands);
     sys.FreeVec(work);
 }
 
-/// Whether the task ends now: no controller left and no command waiting,
-/// looked at under `start_lock`, which a caller holds to put one on the
-/// port. Its port is no one's from then on.
+/// Whether the task ends now: no controller left, no command waiting and
+/// no message out to an agent, looked at under `start_lock`, which a
+/// caller holds to put one on the port. Its port is no one's from then
+/// on.
 fn ending(work: *Work) bool {
     const base = work.base;
     const sys = base.sys_base;
     sys.ObtainSemaphore(&base.start_lock);
     defer sys.ReleaseSemaphore(&base.start_lock);
     if (!base.controllers.isEmpty() or !work.commands.msg_list.isEmpty() or !work.parked.isEmpty()) return false;
+    if (work.agent_out != 0) return false;
     base.port = null;
     base.task = null;
     return true;
@@ -384,8 +433,11 @@ fn bringUp(work: *Work, controller: *Controller) void {
     const layer = &controller.layer;
     // Read before the lock, which ObtainBTControllers copies the name under.
     machineName(work, &work.name);
+    const agent = _pairing.current(base);
     sys.ObtainSemaphore(&base.lock);
     layer.class_of_device = class_of_device;
+    layer.agent_current = agent.id;
+    layer.agent_capability = agent.capability;
     _controller.copyString(&layer.name, @ptrCast(&work.name));
     layer.now = now(work);
     _hci.start(layer);
@@ -400,6 +452,11 @@ fn remove(work: *Work, device_name: [*:0]const u8, unit: u32) void {
     const base = work.base;
     const sys = base.sys_base;
     const controller = _controller.find(base, device_name, unit) orelse return;
+    // Its pairings' agents told that it went.
+    sys.ObtainSemaphore(&base.lock);
+    for (&controller.layer.connections) |*connection| hci_pairing.linkGone(&controller.layer, connection, bluetooth.BTERR_DETACHED);
+    sys.ReleaseSemaphore(&base.lock);
+    askAgents(work);
     answerGone(work, controller);
     device.close(controller);
     sys.ObtainSemaphore(&base.lock);
@@ -424,7 +481,10 @@ fn settle(work: *Work) void {
         if (!layer.wants_settings) continue;
         const kept = &work.kept;
         kept.* = .{};
-        if (base.dos) |dl| settings.read(dl, &layer.address, kept);
+        if (base.dos) |dl| {
+            settings.read(dl, &layer.address, kept);
+            loadBonds(work, dl, controller);
+        }
         sys.ObtainSemaphore(&base.lock);
         layer.now = now(work);
         layer.powered = kept.powered;
@@ -665,6 +725,220 @@ fn hostName(work: *Work) ?[]const u8 {
     return settings.hostNameIn(work.hostname[0..@intCast(got)]);
 }
 
+// --- pairing ----------------------------------------------------------------------
+
+/// PairBTDevice: a pairing begun on the controller named - or, for
+/// BT_ALL_CONTROLLERS, on the one a link would be made on: 0, or why not.
+fn pair(work: *Work, command: *Command) i32 {
+    const base = work.base;
+    const sys = base.sys_base;
+    const controller = linkController(work, command) orelse return command.result;
+    sys.ObtainSemaphore(&base.lock);
+    defer sys.ReleaseSemaphore(&base.lock);
+    controller.layer.now = now(work);
+    const capability: ?u32 = if (command.agent != 0) command.capability else null;
+    return hci_pairing.pair(&controller.layer, command.address, command.agent, capability);
+}
+
+/// UnpairBTDevice: the bond with the device ended on the controller named
+/// - or on every controller that has one: 0, or why not.
+fn unpair(work: *Work, command: *Command) i32 {
+    const base = work.base;
+    const sys = base.sys_base;
+    var matched = false;
+    var done = false;
+    sys.ObtainSemaphore(&base.lock);
+    defer sys.ReleaseSemaphore(&base.lock);
+    var it = base.controllers.iterator();
+    while (it.next()) |node| {
+        const controller = _controller.fromNode(node);
+        if (command.controller != bluetooth.BT_ALL_CONTROLLERS and controller.id != command.controller) continue;
+        matched = true;
+        controller.layer.now = now(work);
+        if (hci_pairing.unpair(&controller.layer, command.address) == 0) done = true;
+    }
+    if (!matched) return bluetooth.BTERR_NOCONTROLLER;
+    return if (done) 0 else bluetooth.BTERR_NOTBONDED;
+}
+
+/// The agents changed - one added, or `gone` given back: every
+/// controller's pairings that asked the one gone refused, and the agent
+/// added last made the one a device's pairing goes to.
+fn agentsChanged(work: *Work, gone: u32) void {
+    const base = work.base;
+    const sys = base.sys_base;
+    const agent = _pairing.current(base);
+    sys.ObtainSemaphore(&base.lock);
+    defer sys.ReleaseSemaphore(&base.lock);
+    var it = base.controllers.iterator();
+    while (it.next()) |node| {
+        const layer = &_controller.fromNode(node).layer;
+        layer.now = now(work);
+        if (gone != 0) hci_pairing.agentGone(layer, gone);
+        layer.agent_current = agent.id;
+        layer.agent_capability = agent.capability;
+    }
+}
+
+/// A controller's bond files read into its table, each put in under the
+/// lock.
+fn loadBonds(work: *Work, dl: *DosBase, controller: *Controller) void {
+    const base = work.base;
+    const sys = base.sys_base;
+    var reader = bondfiles.Reader.open(dl, &controller.layer.address, &work.bond_info);
+    defer reader.close();
+    var count: u32 = 0;
+    while (reader.next(&work.bond_info, &work.bond)) {
+        sys.ObtainSemaphore(&base.lock);
+        const kept = bonds.loaded(&controller.layer, &work.bond);
+        sys.ReleaseSemaphore(&base.lock);
+        if (kept) count += 1;
+    }
+    if (count != 0) exec.kprintf(sys, "%s: controller %u has %u bonds\n", .{ @as([*:0]const u8, task_name), controller.id, count });
+}
+
+/// Every bond made or changed since written to its file, and every one
+/// ended its file deleted. The task alone changes the tables, so it reads
+/// a bond without the lock and marks it written under it.
+fn keepBonds(work: *Work) void {
+    const base = work.base;
+    const sys = base.sys_base;
+    const dl = base.dos orelse return;
+    var it = base.controllers.iterator();
+    while (it.next()) |node| {
+        const controller = _controller.fromNode(node);
+        const layer = &controller.layer;
+        if (!layer.bonds_changed) continue;
+        var kept = true;
+        while (true) {
+            sys.ObtainSemaphore(&base.lock);
+            const next = bonds.nextDirty(layer);
+            sys.ReleaseSemaphore(&base.lock);
+            const bond = next orelse break;
+            const done = if (bond.gone) bondfiles.delete(dl, &layer.address, &bond.address.bytes) else bondfiles.write(dl, &layer.address, bond, &work.bond_text);
+            if (!done) kept = false;
+            sys.ObtainSemaphore(&base.lock);
+            bonds.written(bond);
+            sys.ReleaseSemaphore(&base.lock);
+        }
+        if (!kept) exec.kprintf(sys, "%s: the bonds of controller %u could not all be kept\n", .{ @as([*:0]const u8, task_name), controller.id });
+    }
+}
+
+/// What the pairings ask of their agents, and tell them, sent: each in a
+/// message of its own, which the agent replies. A question with no agent
+/// to ask - none, or one gone - or no memory for its message, is refused;
+/// a notice without either is let go. The agents' lock is held while
+/// their ports are sent to.
+fn askAgents(work: *Work) void {
+    const base = work.base;
+    const sys = base.sys_base;
+    sys.ObtainSemaphore(&base.lock);
+    defer sys.ReleaseSemaphore(&base.lock);
+    sys.ObtainSemaphoreShared(&base.agents_lock);
+    defer sys.ReleaseSemaphore(&base.agents_lock);
+    var it = base.controllers.iterator();
+    while (it.next()) |node| {
+        const controller = _controller.fromNode(node);
+        const layer = &controller.layer;
+        layer.now = now(work);
+        for (&layer.connections) |*connection| {
+            const question = &connection.pairing.question;
+            if (question.kind == 0 or question.sent) continue;
+            const agent = _pairing.find(base, connection.pairing.agent) orelse {
+                hci_pairing.unasked(layer, connection);
+                continue;
+            };
+            const message = newMessage(work, layer, question.kind, controller.id, connection.address) orelse {
+                hci_pairing.unasked(layer, connection);
+                continue;
+            };
+            message.number = question.number;
+            message.ours = @intFromBool(connection.pairing.ours);
+            question.sent = true;
+            question.message = message;
+            send(work, agent, message);
+        }
+        for (layer.notices[0..layer.notice_count]) |*item| {
+            const agent = _pairing.find(base, item.agent) orelse continue;
+            const kind = switch (item.kind) {
+                .show => bluetooth.BTAK_SHOW,
+                .done => bluetooth.BTAK_DONE,
+            };
+            const message = newMessage(work, layer, kind, controller.id, item.address) orelse continue;
+            message.number = item.number;
+            message.result = item.result;
+            message.ours = @intFromBool(item.ours);
+            send(work, agent, message);
+        }
+        layer.notice_count = 0;
+    }
+}
+
+/// A message for an agent, its reply port the task's, the device's name in
+/// it as the controller knows it; null for no memory.
+fn newMessage(work: *Work, layer: *_hci.Hci, kind: u32, id: u32, address: bluetooth.BTAddress) ?*bluetooth.BTAgentMessage {
+    const sys = work.base.sys_base;
+    const memory = sys.AllocVec(@sizeOf(bluetooth.BTAgentMessage), exec.MEMF_CLEAR) orelse return null;
+    const message: *bluetooth.BTAgentMessage = @ptrCast(@alignCast(memory));
+    message.* = .{ .kind = kind, .controller = id, .address = address };
+    message.message.node.type = .message;
+    message.message.reply_port = work.agent_replies;
+    message.message.length = @sizeOf(bluetooth.BTAgentMessage);
+    nameOf(layer, address, &message.name);
+    return message;
+}
+
+/// The device's name - its link's, its bond's, or what the discovery
+/// heard - into `into`, cut to what a message carries; empty for none.
+fn nameOf(layer: *_hci.Hci, address: bluetooth.BTAddress, into: *[bluetooth.BT_BOND_NAME_MOST + 1]u8) void {
+    var name: []const u8 = "";
+    if (connections.find(layer, address)) |connection| {
+        name = &connection.name;
+    } else if (bonds.find(layer, address)) |bond| {
+        name = &bond.name;
+    } else if (devices.find(layer, address.bytes, address.kind)) |heard| {
+        name = &heard.name;
+    }
+    var length: usize = 0;
+    while (length < name.len and length < bluetooth.BT_BOND_NAME_MOST and name[length] != 0) length += 1;
+    // A whole character: a cut UTF-8 sequence is let go.
+    while (length > 0 and length < name.len and name[length] & 0xC0 == 0x80) length -= 1;
+    @memcpy(into[0..length], name[0..length]);
+    into[length] = 0;
+}
+
+fn send(work: *Work, agent: *_pairing.Agent, message: *bluetooth.BTAgentMessage) void {
+    work.agent_out += 1;
+    work.base.sys_base.PutMsg(agent.port, &message.message);
+}
+
+/// A message an agent replied: an answer handed to its controller's
+/// layer, which lets it go when the question was given up on; then
+/// freed.
+fn agentReplied(work: *Work, message: *exec.Message) void {
+    const base = work.base;
+    const sys = base.sys_base;
+    const answer: *bluetooth.BTAgentMessage = @fieldParentPtr("message", message);
+    work.agent_out -= 1;
+    switch (answer.kind) {
+        bluetooth.BTAK_CONFIRM, bluetooth.BTAK_PASSKEY, bluetooth.BTAK_PIN => {
+            sys.ObtainSemaphore(&base.lock);
+            defer sys.ReleaseSemaphore(&base.lock);
+            var it = base.controllers.iterator();
+            while (it.next()) |node| {
+                const controller = _controller.fromNode(node);
+                if (controller.id != answer.controller) continue;
+                controller.layer.now = now(work);
+                const length = @min(answer.pin_length, bluetooth.BT_PIN_MOST);
+                _ = hci_pairing.agentAnswered(&controller.layer, answer, answer.accept != 0, answer.passkey, answer.pin[0..length]);
+            }
+        },
+        else => {},
+    }
+    sys.FreeVec(answer);
+}
+
 // --- the requests' answers ------------------------------------------------------
 
 fn replied(work: *Work, message: *exec.Message) void {
@@ -742,7 +1016,8 @@ fn report(work: *Work) void {
     if (any) _notify.changed(base);
 }
 
-/// A link up, not made or down, in the log: the device, how, and why.
+/// A link up, not made or down - a pairing over, a link not made secure -
+/// in the log: the device, how, and why.
 fn sayLink(sys: *ExecBase, id: u32, note: *const connections.Note) void {
     const bytes = note.address.bytes;
     const over: [*:0]const u8 = if (!note.le) "BR/EDR" else if (note.address.kind == bluetooth.BTADDR_LE_RANDOM) "LE random" else "LE";
@@ -754,16 +1029,21 @@ fn sayLink(sys: *ExecBase, id: u32, note: *const connections.Note) void {
             const made: [*:0]const u8 = if (note.incoming) "the device" else "this machine";
             exec.kprintf(sys, line ++ "up, handle %u, made by %s\n", head ++ .{ @as(u32, note.handle), made });
         },
-        .not_made => if (note.reason >= 0) {
-            exec.kprintf(sys, line ++ "not made: 0x%02lx\n", head ++ .{@as(u64, @intCast(note.reason))});
-        } else {
-            exec.kprintf(sys, line ++ "not made: %ld\n", head ++ .{@as(i64, note.reason)});
-        },
-        .down => if (note.reason >= 0) {
-            exec.kprintf(sys, line ++ "down: 0x%02lx\n", head ++ .{@as(u64, @intCast(note.reason))});
-        } else {
-            exec.kprintf(sys, line ++ "down: %ld\n", head ++ .{@as(i64, note.reason)});
-        },
+        .not_made => sayReason(sys, line ++ "not made: ", head, note.reason),
+        .down => sayReason(sys, line ++ "down: ", head, note.reason),
+        .paired => exec.kprintf(sys, line ++ "paired\n", head),
+        .not_paired => sayReason(sys, line ++ "not paired: ", head, note.reason),
+        .not_secured => sayReason(sys, line ++ "not made secure: ", head, note.reason),
+    }
+}
+
+/// A note's line ended with its reason: the controller's status in hex,
+/// BTERR_* as it is.
+fn sayReason(sys: *ExecBase, comptime text: []const u8, head: anytype, reason: i32) void {
+    if (reason >= 0) {
+        exec.kprintf(sys, text ++ "0x%02lx\n", head ++ .{@as(u64, @intCast(reason))});
+    } else {
+        exec.kprintf(sys, text ++ "%ld\n", head ++ .{@as(i64, reason)});
     }
 }
 

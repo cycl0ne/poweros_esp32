@@ -34,7 +34,10 @@ const _task = @import("../task/_task.zig");
 /// seconds, BTERR_BUSY while the controller makes another link of the
 /// kind or ends this one, BTERR_NOCONTROLLER, BTERR_NOTUP, BTERR_OFF,
 /// BTERR_UNSUPPORTED for a controller without the kind of link, and
-/// BTERR_NOMEM when it has no room for another (it keeps 8).
+/// BTERR_NOMEM when it has no room for another (it keeps 8). For a device
+/// with a bond, a link that is up but could not be made secure: the
+/// controller's status - HCI_ERR_PIN_OR_KEY_MISSING when the device no
+/// longer has the bond.
 ///
 /// BEHAVIOR:
 /// A discovery the controller runs is stopped first. Over BR/EDR the
@@ -49,6 +52,10 @@ const _task = @import("../task/_task.zig");
 /// The device's name, where the discovery did not hear it, is asked for
 /// over a BR/EDR link once it is up. AddBTNotify's signal comes when the
 /// link is up, and again when it is down.
+///
+/// Since 1.4, a BR/EDR link to a device the controller has a bond with
+/// (PairBTDevice) is authenticated with the bond's key and encrypted
+/// before the call returns; one that could not be stays up.
 ///
 /// CONTEXT:
 /// - Waits: yes, until the link is up or not made.
@@ -67,7 +74,8 @@ const _task = @import("../task/_task.zig");
 /// None known.
 ///
 /// SEE ALSO:
-/// `DisconnectBTDevice`, `ObtainBTConnections`, `StartBTDiscovery`
+/// `DisconnectBTDevice`, `ObtainBTConnections`, `StartBTDiscovery`,
+/// `PairBTDevice`
 ///
 /// EXAMPLES:
 /// ```zig

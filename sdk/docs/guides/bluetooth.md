@@ -9,15 +9,17 @@ the programs that asked when a controller comes, goes or changes.
 
 The library brings controllers up, lists them, sets them - on or off,
 their name, whether others find them - finds the devices around them,
-and makes links to them and takes the links they make. It does not yet
-pair with devices, and a link carries nothing but what the link itself
-needs: pairing and the protocols over a link are the stack's next parts.
+makes links to them and takes the links they make, and pairs with them
+over BR/EDR, keeping the bonds. A link carries nothing but what the
+link itself needs: the protocols over a link, and LE's pairing, are the
+stack's next parts.
 
 This guide is the pieces first, then what a controller device is, how a
 controller is brought up, listing the controllers from a program, a
 controller's settings, finding devices, links to devices and what a
-link carries, the USB controllers and the MediaTek MT7922's firmware,
-the Raspberry Pi 4 Model B's controller, and `C:Bluetooth`.
+link carries, pairing and bonds, the USB controllers and the MediaTek
+MT7922's firmware, the Raspberry Pi 4 Model B's controller, and
+`C:Bluetooth`.
 
 ## The pieces
 
@@ -26,10 +28,12 @@ the Raspberry Pi 4 Model B's controller, and `C:Bluetooth`.
                           \                          /
            ObtainBTControllers, SetBTControllerAttrs, AddBTNotify,
            StartBTDiscovery, ObtainBTDevices, ConnectBTDevice,
-           DisconnectBTDevice, ObtainBTConnections
+           DisconnectBTDevice, ObtainBTConnections, AddBTAgent,
+           PairBTDevice, UnpairBTDevice, ObtainBTBonds
  the stack          bluetooth.library: its own task, every controller's
                     HCI traffic, the bring-up, the settings, the
-                    discoveries, the links and their data
+                    discoveries, the links and their data, the pairings
+                    and the bonds
                           |  CMD_READ, CMD_WRITE, HCICMD_QUERY (DEVIF_HCI)
                           |  AddBTController, RemBTController
  the controllers    usb/bluetooth.device:           bluetooth/cyw43455bt.device:
@@ -41,13 +45,13 @@ the Raspberry Pi 4 Model B's controller, and `C:Bluetooth`.
 
 | Piece | Where | What it is |
 |---|---|---|
-| `bluetooth.library` | `LIBS:` | the stack: the controllers it is given, brought up, listed and set, the devices they find and the links to them, and the programs told when they change ([bluetooth](../autodocs/bluetooth.md)) |
-| `ENVARC:Sys/bluetooth/` | | each controller's settings, kept by its address |
+| `bluetooth.library` | `LIBS:` | the stack: the controllers it is given, brought up, listed and set, the devices they find, the links to them and the bonds with them, and the programs told when they change ([bluetooth](../autodocs/bluetooth.md)) |
+| `ENVARC:Sys/bluetooth/` | | each controller's settings and bonds, kept by its address |
 | `usb/bluetooth.device` | `DEVS:usb/` | Bluetooth controllers on USB as HCI units, a unit a controller; a class driver |
 | `DEVS:usb/firmware/mediatek/` | | the MediaTek MT7922's Bluetooth firmware and MediaTek's licence for it, from `scripts/fetch-mt7922.sh` (the 64-bit machines' disks) |
 | `bluetooth/cyw43455bt.device` | `DEVS:bluetooth/` | the Raspberry Pi 4 Model B's controller - the Bluetooth of its CYW43455, on the BCM2711's mini UART - as an HCI unit (the BCM2711 boards' disk) |
 | `DEVS:bluetooth/firmware/broadcom/` | | the CYW43455's Bluetooth patch, `BCM4345C0.hcd`, and the licence for passing it on, from `scripts/fetch-cyw43455.sh` (the BCM2711 boards' disk) |
-| `C:Bluetooth` | | the controllers - listed, with `INFO` what each is, and set - the devices around them (`SCAN`), and the links to them (`CONNECT`, `DISCONNECT`, `LIST`) |
+| `C:Bluetooth` | | the controllers - listed, with `INFO` what each is, and set - the devices around them (`SCAN`), the links to them (`CONNECT`, `DISCONNECT`, `LIST`), and the bonds (`PAIR`, `UNPAIR`, `BONDS`, `AGENT`) |
 
 The library, the devices, their firmware and the command are the disk's
 `bluetooth` set.
@@ -350,7 +354,7 @@ while (it.next()) |node| {
 | Field | What it is |
 |---|---|
 | `node.name` | the device's name: what the discovery heard, or - over BR/EDR - what the device answers over the link once it is up |
-| `flags` | `BTLF_LE` for a link over LE, `BTLF_INCOMING` for one the device made, `BTLF_CENTRAL` while the controller is its central, `BTLF_ENCRYPTED` while it is encrypted |
+| `flags` | `BTLF_LE` for a link over LE, `BTLF_INCOMING` for one the device made, `BTLF_CENTRAL` while the controller is its central, `BTLF_ENCRYPTED` while it is encrypted, `BTLF_AUTHENTICATED` once the two have shown each other a link key, `BTLF_BONDED` for a device with a bond, `BTLF_PAIRING` while it is being paired or made secure |
 | `handle` | the controller's number for the link |
 | `age` | how many milliseconds it has been up |
 | `class_of_device` | the device's class, as its page said or the discovery heard |
@@ -368,8 +372,85 @@ A channel to a protocol is refused, there being none yet, and so is
 LE's credit-based one. Over LE, a peripheral's wish for other
 parameters is taken while they are within the specification's bounds
 and the controller is the link's central; a request of the attribute
-protocol is answered as not supported, and pairing is refused. A
+protocol is answered as not supported, and LE's pairing is refused. A
 device may end a link it has no use for.
+
+## Pairing and bonds
+
+Pairing makes a bond with a device: a link key the two keep, which
+authenticates their links from then on and encrypts them. The library
+pairs over BR/EDR - with Secure Simple Pairing, or with a PIN for a
+device without it - and keeps each bond by the controller's address and
+the device's.
+
+**An agent** answers what a pairing needs to know. `AddBTAgent` gives the
+library a port, and what the agent's user can do - see a number, answer
+yes or no, type a number:
+
+```zig
+const port = sys.CreateMsgPort() orelse return;
+const agent = bt.AddBTAgent(port, bluetooth.BTIO_DISPLAYYESNO) orelse return;
+```
+
+Each question comes to the port as a `BTAgentMessage`, the library's;
+the agent fills in its answer and replies it (`ReplyMsg`):
+
+| `kind` | What it asks | The answer |
+|---|---|---|
+| `BTAK_CONFIRM` | whether the device shows `number` - or, with `BT_NO_NUMBER`, whether the device may pair at all | `accept` |
+| `BTAK_PASSKEY` | the number the device shows | `accept`, `passkey` |
+| `BTAK_PIN` | the PIN, for a device without Secure Simple Pairing | `accept`, `pin`, `pin_length` |
+| `BTAK_SHOW` | nothing: `number` is to be typed on the device | replied at once |
+| `BTAK_DONE` | nothing: the pairing is over, `result` says how | replied at once |
+
+`name` holds the device's name where the controller knows it, `ours`
+whether this machine began the pairing. A question not answered within
+30 seconds is refused, its reply let go when it comes. `RemBTAgent`
+ends an agent: the pairings that ask it are refused, and what is still
+on its port is the caller's to reply before the port goes.
+
+**PairBTDevice** begins a pairing and returns; its questions and its end
+go to the agent it names:
+
+```zig
+if (bt.PairBTDevice(bluetooth.BT_ALL_CONTROLLERS, &device, agent) != 0) return;
+// What comes to `port` answered and replied, until BTAK_DONE: its
+// result 0 for a bond made, else the controller's status, BTERR_REFUSED, ...
+```
+
+A link to the device is made first where there is none. The two say
+what their users can do, and that decides what is asked: where both can
+show a number and answer, and one of them wants protection from a man
+in the middle, each user confirms that the two show the same number
+(`BTAK_CONFIRM`); where one side can only type, the other shows the
+number to be typed (`BTAK_SHOW`, `BTAK_PASSKEY`); where a side can show
+or type nothing, there is nothing to compare, and the pairing goes on
+unconfirmed - as it does without an agent. The link is then
+authenticated with the new key and encrypted; an encryption key shorter
+than 7 bytes ends it. The bond is made where both sides asked for one.
+
+**A device's pairing** - one the device begins - goes to the agent added
+last, and is refused while there is none. Where there is nothing to
+compare, an agent that can answer is asked whether the device may pair
+(`BTAK_CONFIRM` with `BT_NO_NUMBER`); one that cannot lets it.
+
+**The bonds** are kept in `ENVARC:Sys/bluetooth/<controller>/<device>`,
+each address its twelve hex digits: a keyword file a bond - the device's
+name and class at the pairing, the link key and its kind, whether a PIN
+made it - read again as the controller comes up. A controller keeps 32.
+`ObtainBTBonds` lists them - the keys stay the library's - and
+`UnpairBTDevice` ends one: the key forgotten, its file deleted, a link
+to the device ended. The device keeps its side until it is told
+otherwise.
+
+**A link to a device with a bond** that `ConnectBTDevice` makes is
+authenticated with the bond's key and encrypted before the call
+returns; a device that lost the bond answers
+`HCI_ERR_PIN_OR_KEY_MISSING`, the link staying up. A device with a bond
+that makes a link and authenticates it is given the bond's key.
+
+The log says each pairing over, and why one failed (`C:Log`). LE's
+pairing is not there yet: an LE device that asks for it is refused.
 
 ## Controllers on USB
 
@@ -586,7 +667,10 @@ heard over LE, and for an address given with `LE` - its public address
 - or `RANDOM` - its random one; over BR/EDR otherwise. A link not made
 says why: the device did not answer, did not answer in time - an LE
 device that does not advertise - or refused, the controller is making
-another such link, or what the controller answered. `DISCONNECT` ends
+another such link, or what the controller answered. A link to a device
+with a bond that could not be made secure is up still, and says so and
+why: the device has no key for this machine any more, or did not take
+it. `DISCONNECT` ends
 the link to a device, by its address or its name (`DisconnectBTDevice`).
 
 `LIST` shows the links (`ObtainBTConnections`): the device's address,
@@ -596,7 +680,43 @@ with `INFO`, who made it, whether it is encrypted, its controller and
 handle, the device's class, and an LE link's interval, latency and how
 long it lasts unheard.
 
+Paired - the one machine answering with `AGENT`, the other pairing:
+
+```
+1> Bluetooth AGENT
+Answering the pairings devices begin; CTRL-C stops
+Does poweros show 492187? (y/n) y
+Paired with poweros
+```
+
+```
+1> Bluetooth PAIR 00:00:5E:EF:10:43
+Pairing with 00:00:5E:EF:10:43; CTRL-C stops
+Does poweros show 492187? (y/n) y
+Paired with poweros
+1> Bluetooth BONDS INFO
+  00:00:5E:EF:10:43  confirmed    poweros
+      controller 0, class 000104, key type 5
+1> Bluetooth LIST INFO
+  00:00:5E:EF:10:43  BR/EDR     central         12 s  poweros
+      made by this machine, encrypted, authenticated, bonded; controller 0, handle 51
+```
+
+`PAIR` makes a bond with a device over BR/EDR (`PairBTDevice`), by its
+address or a name a `SCAN` heard, and asks here what the pairing needs:
+whether the device shows the same number - `y` or `n` - the number it
+shows, its PIN - `PIN` gives that beforehand - or it shows a number to
+type on the device. It ends when the pairing is over, saying why one
+failed; CTRL-C stops it. `AGENT` answers the pairings devices begin the
+same way, until CTRL-C. `BONDS` lists the bonds (`ObtainBTBonds`): the
+device's address, how its pairing was confirmed - `confirmed`,
+`unconfirmed`, or `PIN` - and its name; with `INFO`, the controller, the
+device's class where the pairing learned it - a link the device made
+says it - the kind of its key, and whether it was made with Secure
+Connections. `UNPAIR` ends a bond, by the device's address or
+name (`UnpairBTDevice`).
+
 `CONTROLLER` makes any of these for one controller, by its number;
-without it, they are for every one - for `CONNECT`, the one with a link
-to the device, else the one whose scan found it, else the first that is
-on.
+without it, they are for every one - for `CONNECT` and `PAIR`, the one
+with a link to the device, else the one whose scan found it, else the
+first that is on.
