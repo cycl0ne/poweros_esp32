@@ -519,8 +519,8 @@ address, or for a device's Security Request - which goes to the agent as
 a device's pairing does. It asks for a bond, for protection from a man
 in the middle where the agent's user can give it, for Secure
 Connections, and for a key of up to 16 bytes; a device that takes fewer
-than 7 is refused. With Secure Connections - where the device has them
-- each side makes a P-256 key pair and the two share a secret; the
+than 7 is refused. With Secure Connections - where the device has them -
+each side makes a P-256 key pair and the two share a secret; the
 methods are BR/EDR's: a number both show (`BTAK_CONFIRM`), a passkey the
 device shows (`BTAK_PASSKEY`) or one shown here to be typed on it
 (`BTAK_SHOW`), or nothing to compare. Without them it is legacy
@@ -1291,8 +1291,8 @@ controller the machine's name again.
 ten without - and shows each device as it is found: its address, how it
 was heard (`BR/EDR`, `LE`, `LE random` for an LE device's random
 address, `BR/EDR+LE` for one heard both ways), its signal, its name -
-`-` until one has come, `(no name)` for one that was asked and has none
-- and what it is, by its class of device or its LE appearance. A device
+`-` until one has come, `(no name)` for one that was asked and has none -
+and what it is, by its class of device or its LE appearance. A device
 is shown again when its name comes, and when its whole name comes after
 a shortened one. After the inquiry, the names not yet heard are asked
 for; CTRL-C stops it all. With `INFO`, what each device said of itself
@@ -1332,8 +1332,8 @@ and the other end of the first link, the machine that was paged:
 `CONNECT` makes a link to a device (`ConnectBTDevice`) and shows it once
 it is up: the device by its address, written as `Bluetooth` shows one,
 or by a name a `SCAN` heard. The link is over LE for a device the scan
-heard over LE, and for an address given with `LE` - its public address
-- or `RANDOM` - its random one; over BR/EDR otherwise. A link not made
+heard over LE, and for an address given with `LE` - its public address -
+or `RANDOM` - its random one; over BR/EDR otherwise. A link not made
 says why: the device did not answer, did not answer in time - an LE
 device that does not advertise - or refused, the controller is making
 another such link, or what the controller answered. A link to a device
@@ -1388,8 +1388,8 @@ failed; CTRL-C stops it. `AGENT` answers the pairings devices begin the
 same way, until CTRL-C. `BONDS` lists the bonds (`ObtainBTBonds`): the
 device's address, the kind of link the bond is for, how its pairing was
 confirmed - `confirmed`, `unconfirmed`, or `PIN` - and its name; with
-`INFO`, the controller, the device's class where the pairing learned it
-- a link the device made says it - the kind of its key, or an LE key's
+`INFO`, the controller, the device's class where the pairing learned it -
+a link the device made says it - the kind of its key, or an LE key's
 size, whether it was made with Secure Connections, whether the device
 gave its identity, and the profile drivers that drive it. `UNPAIR` ends
 a bond, by the device's address or name (`UnpairBTDevice`), a driver
