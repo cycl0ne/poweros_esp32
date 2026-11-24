@@ -13,8 +13,8 @@ const task = @import("input/task.zig");
 
 pub const RESOURCE_NAME = "ps2.resource";
 pub const RESOURCE_VERSION = 1;
-pub const RESOURCE_REVISION = 0;
-const BUILD_DATE = "14.11.2026";
+pub const RESOURCE_REVISION = 1;
+const BUILD_DATE = "24.11.2026";
 const RESOURCE_VERSION_STRING =
     "\x00$VER: " ++ RESOURCE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ RESOURCE_VERSION, RESOURCE_REVISION }) ++

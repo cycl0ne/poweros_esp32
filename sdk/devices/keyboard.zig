@@ -19,6 +19,12 @@
 //! The device opens with no source at all, and its readers then simply
 //! wait.
 //!
+//! **The media keys** are rawkeys too, 0x72 to 0x7C: what a player does -
+//! stop, play/pause, previous, next, rewind, fast forward, play, pause -
+//! and how loud the output is - mute, volume down, volume up. They come
+//! from a keyboard's media keys, a remote control's and a headphone's
+//! buttons, and type nothing: no keymap gives them a character.
+//!
 //! Requests are `IOStdReq`s: io_Data and io_Length say where the answer
 //! goes, and io_Actual how many bytes of it were written.
 
@@ -97,3 +103,15 @@ pub const RAWKEY_RAMIGA: u32 = 0x67;
 pub const RAWKEY_F12: u32 = 0x6F;
 pub const RAWKEY_HOME: u32 = 0x70;
 pub const RAWKEY_END: u32 = 0x71;
+pub const RAWKEY_MEDIA_STOP: u32 = 0x72;
+pub const RAWKEY_MEDIA_PLAYPAUSE: u32 = 0x73;
+pub const RAWKEY_MEDIA_PREVIOUS: u32 = 0x74;
+pub const RAWKEY_MEDIA_NEXT: u32 = 0x75;
+pub const RAWKEY_MEDIA_REWIND: u32 = 0x76;
+pub const RAWKEY_MEDIA_FASTFORWARD: u32 = 0x77;
+/// Play and pause each alone, for a button that says which it means.
+pub const RAWKEY_MEDIA_PLAY: u32 = 0x78;
+pub const RAWKEY_MEDIA_PAUSE: u32 = 0x79;
+pub const RAWKEY_MUTE: u32 = 0x7A;
+pub const RAWKEY_VOLUMEDOWN: u32 = 0x7B;
+pub const RAWKEY_VOLUMEUP: u32 = 0x7C;

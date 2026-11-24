@@ -120,6 +120,18 @@ test "ParseIX reads a class, qualifiers, upstroke and a key" {
     try testing.expectEqual(@as(u32, 0), ix.qual_mask & cx.IXSYM_CAPSMASK);
     try testing.expectEqual(kbd.RAWKEY_SPACE | ie.IECODE_UP_PREFIX, ix.code);
 
+    // The media keys by name; PAUSE is still the Pause key.
+    try testing.expectEqual(@as(i32, 0), cb.ParseIX("media_play_pause", &ix));
+    try testing.expectEqual(kbd.RAWKEY_MEDIA_PLAYPAUSE, ix.code);
+    try testing.expectEqual(@as(i32, 0), cb.ParseIX("shift volume_up", &ix));
+    try testing.expectEqual(kbd.RAWKEY_VOLUMEUP, ix.code);
+    try testing.expectEqual(@as(i32, 0), cb.ParseIX("VOLUME_MUTE", &ix));
+    try testing.expectEqual(kbd.RAWKEY_MUTE, ix.code);
+    try testing.expectEqual(@as(i32, 0), cb.ParseIX("media_pause", &ix));
+    try testing.expectEqual(kbd.RAWKEY_MEDIA_PAUSE, ix.code);
+    try testing.expectEqual(@as(i32, 0), cb.ParseIX("pause", &ix));
+    try testing.expectEqual(@as(u32, 0x6E), ix.code);
+
     // A button, and no key at all: any code.
     try testing.expectEqual(@as(i32, 0), cb.ParseIX("rawmouse mouse_leftpress", &ix));
     try testing.expectEqual(ie.IECLASS_RAWMOUSE, ix.class);

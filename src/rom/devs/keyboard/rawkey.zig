@@ -4,12 +4,13 @@
 //!
 //! A key arrives as some other system's code (the emulator's is Linux's)
 //! and leaves as a **rawkey**: the key's place on the keyboard, 0x00 to
-//! 0x77. The table below goes by position, so the key left of S is 0x20
+//! 0x71. The table below goes by position, so the key left of S is 0x20
 //! whatever is printed on it, and a keymap above the device decides what it
 //! means. PC keys with no place in that layout take codes the range leaves
 //! free: Insert 0x47, Page Up 0x48, Page Down 0x49, F11 0x4B, F12 0x6F,
 //! Home 0x70, End 0x71; the Windows keys are the Amiga keys, and there is
-//! one Control.
+//! one Control. The media keys are 0x72 to 0x7C, which no keymap gives a
+//! character (sdk/devices/keyboard.zig).
 //!
 //! `Keys` keeps what a stream of keys adds up to - which modifiers are held
 //! and which keys are down - and turns each key into its event. A modifier
@@ -72,6 +73,11 @@ pub const from_linux: [256]u8 = blk: {
         .{ 76, 0x2E },  .{ 77, 0x2F },  .{ 83, 0x3C },  .{ 71, 0x3D },  .{ 72, 0x3E },
         .{ 73, 0x3F },  .{ 74, 0x4A },  .{ 96, 0x43 },  .{ 98, 0x5C },  .{ 55, 0x5D },
         .{ 78, 0x5E },
+        // The media keys: stop, play/pause, previous, next, rewind, fast
+        // forward, play, pause, mute, volume down, volume up.
+         .{ 166, 0x72 }, .{ 164, 0x73 }, .{ 165, 0x74 }, .{ 163, 0x75 },
+        .{ 168, 0x76 }, .{ 208, 0x77 }, .{ 200, 0x78 }, .{ 201, 0x79 }, .{ 113, 0x7A },
+        .{ 114, 0x7B }, .{ 115, 0x7C },
     };
     for (pairs) |p| t[p[0]] = @intCast(p[1]);
     break :blk t;
@@ -230,6 +236,12 @@ test "the table: by position, the extended keys, nothing for the rest" {
     try testing.expectEqual(@as(?u8, kb.RAWKEY_HOME), fromLinux(102));
     try testing.expectEqual(@as(?u8, kb.RAWKEY_CONTROL), fromLinux(97)); // right control
     try testing.expectEqual(@as(?u8, kb.RAWKEY_LAMIGA), fromLinux(125)); // left Windows
+    // The media keys.
+    try testing.expectEqual(@as(?u8, kb.RAWKEY_MEDIA_PLAYPAUSE), fromLinux(164));
+    try testing.expectEqual(@as(?u8, kb.RAWKEY_MEDIA_STOP), fromLinux(166));
+    try testing.expectEqual(@as(?u8, kb.RAWKEY_MEDIA_FASTFORWARD), fromLinux(208));
+    try testing.expectEqual(@as(?u8, kb.RAWKEY_MUTE), fromLinux(113));
+    try testing.expectEqual(@as(?u8, kb.RAWKEY_VOLUMEUP), fromLinux(115));
     try testing.expect(fromLinux(99) == null); // SysRq
     try testing.expect(fromLinux(700) == null);
     // No two keys on one rawkey, but the two controls.

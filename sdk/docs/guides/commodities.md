@@ -143,7 +143,10 @@ the words.
 - **The key:** `F1` to `F12`, `ESC`, `TAB`, `RETURN`, `ENTER` (the
   keypad's), `SPACE`, `BACKSPACE`, `DEL`, `HELP`, `INSERT`, `HOME`,
   `END`, `PAGE_UP`, `PAGE_DOWN`, `UP`, `DOWN`, `LEFT`, `RIGHT`, `COMMA`,
-  `BREAK` - or one character, in UTF-8, the key that types it on the
+  `BREAK`; the media keys `MEDIA_PLAY_PAUSE`, `MEDIA_PLAY`,
+  `MEDIA_PAUSE`, `MEDIA_STOP`, `MEDIA_PREVIOUS`, `MEDIA_NEXT`,
+  `MEDIA_REWIND`, `MEDIA_FAST_FORWARD`, `VOLUME_MUTE`, `VOLUME_DOWN`,
+  `VOLUME_UP` - or one character, in UTF-8, the key that types it on the
   default keymap with the qualifiers that takes (`ctrl A` is Control
   and shift with A, `€` on the German keymap AltGr with E); with
   `NUMERICPAD`, a digit is the keypad's.

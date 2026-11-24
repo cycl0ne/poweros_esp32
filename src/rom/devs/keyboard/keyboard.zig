@@ -47,8 +47,8 @@ const DEVICE_VERSION = 1;
 /// 1: sources (KBDF_SOURCE, KBD_ADDEVENT, KBD_READSOURCES), and on every
 /// board. 2: the emulator's stack is the system's, not the first
 /// opener's. 3: the standard stack.
-const DEVICE_REVISION = 3;
-const BUILD_DATE = "29.10.2026";
+const DEVICE_REVISION = 4;
+const BUILD_DATE = "24.11.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++

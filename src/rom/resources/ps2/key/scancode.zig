@@ -8,8 +8,10 @@
 //! top bit set when the key goes up. The keys a PC keyboard gained later
 //! - the cursor block, the right Control and Alt, the keypad's Enter and
 //! slash, the two system keys - send 0xE0 first and then a byte that is
-//! another key's without it. Pause sends 0xE1 and two bytes more, and is
-//! no key here. Print Screen and the cursor block with Num Lock on wrap
+//! another key's without it, and so do the media keys a keyboard has
+//! above its keys - play/pause, stop, previous, next, mute and the volume
+//! down and up, the rawkeys sdk/devices/keyboard.zig names. Pause sends
+//! 0xE1 and two bytes more, and is no key here. Print Screen and the cursor block with Num Lock on wrap
 //! their byte in a Shift that nobody pressed (0xE0 0x2A, 0xE0 0x36): those
 //! are dropped, since the real Shift keys say what they do themselves.
 //!
@@ -97,6 +99,10 @@ const extended: [128]u8 = made: {
         .{ 0x52, 0x47 }, .{ 0x53, 0x46 },
         // The two system keys.
         .{ 0x5B, 0x66 }, .{ 0x5C, 0x67 },
+        // The media keys: previous, next, mute, play/pause, stop, volume
+        // down, volume up.
+        .{ 0x10, 0x74 }, .{ 0x19, 0x75 }, .{ 0x20, 0x7A }, .{ 0x22, 0x73 },
+        .{ 0x24, 0x72 }, .{ 0x2E, 0x7B }, .{ 0x30, 0x7C },
     };
     for (pairs) |pair| table[pair[0]] = pair[1];
     break :made table;
@@ -150,6 +156,15 @@ test "a key down and up, and the keys behind 0xE0" {
     try testing.expectEqual(Key{ .rawkey = 0x63, .up = false }, decoder.feed(0x1D).?);
     _ = decoder.feed(0xE0);
     try testing.expectEqual(Key{ .rawkey = 0x63, .up = true }, decoder.feed(0x9D).?);
+    // The media keys behind 0xE0: play/pause down and up, the volume up.
+    _ = decoder.feed(0xE0);
+    try testing.expectEqual(Key{ .rawkey = 0x73, .up = false }, decoder.feed(0x22).?);
+    _ = decoder.feed(0xE0);
+    try testing.expectEqual(Key{ .rawkey = 0x73, .up = true }, decoder.feed(0xA2).?);
+    _ = decoder.feed(0xE0);
+    try testing.expectEqual(Key{ .rawkey = 0x7C, .up = false }, decoder.feed(0x30).?);
+    // Without 0xE0 the same byte is another key: 0x22 is G.
+    try testing.expectEqual(Key{ .rawkey = 0x24, .up = false }, decoder.feed(0x22).?);
 }
 
 test "a Shift nobody pressed, a Pause and the keyboard's answers are no keys" {

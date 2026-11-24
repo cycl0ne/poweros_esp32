@@ -8,7 +8,9 @@
 //!   a finger and nothing more. So a program that knows only the pointer
 //!   works with the panel, and one that wants every finger still gets them.
 //! - `repeats` says which keys a held key repeats for: every key but the
-//!   modifiers.
+//!   modifiers and the media keys that start or stop something - a held
+//!   play/pause would play and pause by turns - while rewind, fast forward
+//!   and the volume keys go on as the cursor keys do.
 //! - `keyQualifier` puts a key's qualifiers into the device's own, leaving
 //!   the pointer's buttons alone.
 //! - `dispatch` walks the handler chain.
@@ -16,6 +18,7 @@
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const ie = sdk.devices.inputevent;
+const kbd = sdk.devices.keyboard;
 const touch = sdk.devices.touch;
 const InputEvent = ie.InputEvent;
 const InputHandlerFn = sdk.devices.input.InputHandlerFn;
@@ -30,10 +33,16 @@ pub fn keyQualifier(current: u32, from_key: u32) u32 {
     return (current & ~key_qualifiers) | (from_key & key_qualifiers);
 }
 
-/// Whether holding the key repeats it. The modifiers (0x60-0x67) never do.
+/// Whether holding the key repeats it. The modifiers (0x60-0x67) never
+/// do, nor stop, play/pause, previous, next, play, pause and mute.
 pub fn repeats(rawkey: u32) bool {
     const code = rawkey & ie.IECODE_KEY_CODE_MASK;
-    return code < 0x60 or code > 0x67;
+    return switch (code) {
+        0x60...0x67 => false,
+        kbd.RAWKEY_MEDIA_STOP...kbd.RAWKEY_MEDIA_NEXT => false,
+        kbd.RAWKEY_MEDIA_PLAY...kbd.RAWKEY_MUTE => false,
+        else => true,
+    };
 }
 
 /// A key down as the keys after it carry it in `x` and `y`: the rawkey and
@@ -166,6 +175,17 @@ test "repeats: everything but the modifiers" {
     try testing.expect(!repeats(0x60));
     try testing.expect(!repeats(0x67));
     try testing.expect(repeats(0x20 | ie.IECODE_UP_PREFIX));
+    // The media keys: what starts or stops does not repeat, what goes on
+    // does.
+    try testing.expect(!repeats(kbd.RAWKEY_MEDIA_PLAYPAUSE));
+    try testing.expect(!repeats(kbd.RAWKEY_MEDIA_STOP));
+    try testing.expect(!repeats(kbd.RAWKEY_MEDIA_NEXT));
+    try testing.expect(!repeats(kbd.RAWKEY_MEDIA_PAUSE));
+    try testing.expect(!repeats(kbd.RAWKEY_MUTE));
+    try testing.expect(repeats(kbd.RAWKEY_MEDIA_REWIND));
+    try testing.expect(repeats(kbd.RAWKEY_MEDIA_FASTFORWARD));
+    try testing.expect(repeats(kbd.RAWKEY_VOLUMEDOWN));
+    try testing.expect(repeats(kbd.RAWKEY_VOLUMEUP));
 }
 
 test "pointer: the first finger is the pointer, a second is only a finger" {

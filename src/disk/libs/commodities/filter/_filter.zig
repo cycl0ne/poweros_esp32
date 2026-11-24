@@ -114,6 +114,14 @@ pub const keys = [_]Keyword{
     .{ .word = "HOME", .id = kbd.RAWKEY_HOME },
     .{ .word = "INSERT", .id = kbd.RAWKEY_INSERT },
     .{ .word = "LEFT", .id = kbd.RAWKEY_LEFT },
+    .{ .word = "MEDIA_FAST_FORWARD", .id = kbd.RAWKEY_MEDIA_FASTFORWARD },
+    .{ .word = "MEDIA_NEXT", .id = kbd.RAWKEY_MEDIA_NEXT },
+    .{ .word = "MEDIA_PAUSE", .id = kbd.RAWKEY_MEDIA_PAUSE },
+    .{ .word = "MEDIA_PLAY", .id = kbd.RAWKEY_MEDIA_PLAY },
+    .{ .word = "MEDIA_PLAY_PAUSE", .id = kbd.RAWKEY_MEDIA_PLAYPAUSE },
+    .{ .word = "MEDIA_PREVIOUS", .id = kbd.RAWKEY_MEDIA_PREVIOUS },
+    .{ .word = "MEDIA_REWIND", .id = kbd.RAWKEY_MEDIA_REWIND },
+    .{ .word = "MEDIA_STOP", .id = kbd.RAWKEY_MEDIA_STOP },
     .{ .word = "PAGE_DOWN", .id = kbd.RAWKEY_PAGEDOWN },
     .{ .word = "PAGE_UP", .id = kbd.RAWKEY_PAGEUP },
     .{ .word = "PAUSE", .id = 0x6E },
@@ -123,6 +131,9 @@ pub const keys = [_]Keyword{
     .{ .word = "SPACEBAR", .id = kbd.RAWKEY_SPACE },
     .{ .word = "TAB", .id = kbd.RAWKEY_TAB },
     .{ .word = "UP", .id = kbd.RAWKEY_UP },
+    .{ .word = "VOLUME_DOWN", .id = kbd.RAWKEY_VOLUMEDOWN },
+    .{ .word = "VOLUME_MUTE", .id = kbd.RAWKEY_MUTE },
+    .{ .word = "VOLUME_UP", .id = kbd.RAWKEY_VOLUMEUP },
 };
 
 /// RAWMOUSE's buttons.
