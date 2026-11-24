@@ -120,6 +120,63 @@ that mounts it on the machine
 itself, with names that fit a directory entry as it stands, and refuses
 one that does not rather than shortening it.
 
+### A Raspberry Pi 4B's card, installed
+
+A Raspberry Pi 4B can start from a card that has the system on it
+already: `./zig build card -Dboard=rpi4b` makes, on the host, what
+`C:Install` leaves on a card, so the machine needs no stick and no
+install to get there.
+
+```sh
+scripts/fetch-examples.sh     # songs and films for Work:, once
+./zig build card -Dboard=rpi4b -Dboot=<dir>/start4.elf -Dboot=<dir>/fixup4.dat \
+    -Dboot=<dir>/bcm2711-rpi-4-b.dtb -Dboot=overlays/disable-bt.dtbo=<dir>/overlays/disable-bt.dtbo
+sudo dd if=release/card-rpi4b.img of=/dev/sdX bs=4M conv=fsync status=progress
+```
+
+The firmware's files come with `-Dboot=`, as for the stick. The image is
+the build's release package installed, in a GPT:
+
+| Partition | What |
+|---|---|
+| `BOOT` | FAT32, 256 MiB, Basic data, not mounted when the card comes in: the package's boot half - `kernel.bin`, `config.txt` and the firmware's files - without the disk image, so the system is the card's and not one in RAM |
+| PowerOS container | a table; `DH0`, posfs, `System`, bootable at priority 5: the package's system half, the package's manifest as `SYS:Storage/installed.manifest` and `ENVARC:Sys/install.prefs`; `DH1`, posfs, `Work`, over the rest |
+
+The image is 7168 MiB unless `-Dcard-size=` says otherwise, which a
+card sold as 8 GB holds; the system partition gets half the container,
+32 GiB at most, as an install gives it. A larger card keeps the rest of
+itself unused: the image says how large its disk is, and nothing grows a
+container and its partitions to the medium they are on.
+
+`-Dcard-work=<dir>` puts a directory's drawers and files on `Work:`.
+Without it the card gets `toolchain/examples` where it is there, which
+`scripts/fetch-examples.sh` fills with songs and films that may be passed
+on - MP3s, a film in H.264 in MP4, one in H.264 in Matroska with AC-3
+sound and ten subtitles, one in H.265 - what the Pi 4B's decoders play,
+and `Credits.txt`, which says whose they are and under which licence. A
+file is read from the host as it is written, so a film never has to fit
+in the host's memory.
+
+`ENVARC:Sys/install.prefs` says what an install from the package would
+say, the source and the time left out: the files came from a build, not
+from somewhere the machine could look again, so `C:Update` is given the
+package (`Update FROM ...`), or `SOURCE` is set in the file by hand.
+
+```
+DEVICE=sdcard.device UNIT=0 SYSTEM=DH0 WORK=DH1 BOOT=BOOT BOARD=rpi4b
+```
+
+Write the whole image as it is: `dd`'s `conv=sparse` skips blocks of
+zeroes, and a FAT's free entries and the volumes' own blocks of zeroes are
+then whatever the card held before. Everything on the card is written
+over. The image holds only the blocks that were written - some 1.5 GB of
+its 7 GiB with the examples on it - and takes that much on the host. The
+disk/ tree is on the card as on any image built with it: build with
+`-Ddisk-tree=false` for a card to hand out, and give it Raspberry Pi's
+`LICENCE.broadcom` beside the firmware
+(`-Dboot=LICENCE.broadcom=<dir>/LICENCE.broadcom`), which the firmware's
+terms ask for.
+
 The other boards are reached their own ways: the ESP32 boards over USB
 from the host (`./zig build flash-all`), the VisionFive 2 and the Compute
 Module 5 from a card or over the network with a release package
@@ -363,7 +420,7 @@ reads itself, not from posfs:
 | VisionFive 2 | U-Boot, from the card's FAT partition | the machine itself: sdcard.device and FAT's handler are in its ROM |
 | Compute Module 5 | the bootloader in its EEPROM, from a FAT partition in the order `BOOT_ORDER` gives ([bundle notes](../../../tools/bootpackage/bundle.md)) | the eMMC or `rpiboot`, from another machine; no driver here reaches the eMMC |
 | Compute Module 4 | the bootloader in its EEPROM, from the eMMC's FAT partition, a GPT's as well as an MBR's; `config.txt` names the disk image, and a partition without it starts all the same | the machine itself: sdcard.device - the eMMC on the BCM2711's SDHCI - and FAT's handler are in its ROM; `rpiboot` from another machine as the way back in (J2 on the IO board) |
-| Raspberry Pi 4 Model B | the bootloader in its EEPROM, from the first FAT partition of the card or, with none in, of a USB stick in an MBR's; `config.txt` names the disk image, which the system runs on in RAM | another machine: `./zig build stick -Dboard=rpi4b` makes the stick's image; the system in RAM reaches the USB-A ports - the VL805's, on the BCM2711's PCI Express - through pci.library and xhci.device, not yet tried on the board |
+| Raspberry Pi 4 Model B | the bootloader in its EEPROM, from the first FAT partition of the card - a GPT's as well as an MBR's - or, with none in, of a USB stick in an MBR's; `config.txt` names the disk image, which the system runs on in RAM | another machine: `./zig build stick -Dboard=rpi4b` makes the stick's image, `./zig build card -Dboard=rpi4b` a card with the system installed on it ([above](#a-raspberry-pi-4bs-card-installed)); the system in RAM reaches the USB-A ports - the VL805's, on the BCM2711's PCI Express - through pci.library and xhci.device |
 | QEMU's `virt` machines | the kernel is handed to QEMU | the host's command line |
 | A machine whose firmware is UEFI | the loader `EFI/BOOT/BOOTX64.EFI` in an EFI System partition, and `kernel.bin` beside it | the machine itself: both are on its own disk, under `SYS:Storage/Boot`, and the install writes them into the partition it makes |
 

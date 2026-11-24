@@ -474,6 +474,9 @@ pub const PackageStepsWith = struct {
 pub const MadePackageSteps = struct {
     boot_files: []const BootFile,
     mkpackage: *std.Build.Step.Compile,
+    /// The release package of -Dboard=, gathered, where the board has
+    /// one: what a medium with the system installed on it is made from.
+    package: ?std.Build.LazyPath,
     serve: *std.Build.Step.Compile,
     uefi_stub: *std.Build.Step.Compile,
 };
@@ -538,6 +541,7 @@ pub fn addPackageSteps(b: *std.Build, with: PackageStepsWith) MadePackageSteps {
     const uefi_stub = addUefiStub(b, optimize);
     const package_step = b.step("package", "Gather a release package for -Dboard= into release/package-<board>/");
     const serve_step = b.step("serve", "Gather the release package and hand it out over HTTP (quit with Ctrl-C)");
+    var package: ?std.Build.LazyPath = null;
     switch (chipOf(board)) {
         .esp32s3, .esp32p4 => {
             const no_package = b.addFail(
@@ -563,6 +567,7 @@ pub fn addPackageSteps(b: *std.Build, with: PackageStepsWith) MadePackageSteps {
                 .boot_files = boot_files,
                 .boot_loader = if (chipOf(board) == .x64uefi) uefi_stub.getEmittedBin() else null,
             });
+            package = gathered;
             // `serve` hands out the package it has just gathered, so one
             // command is the whole of the host's side.
             const run_serve = b.addRunArtifact(serve);
@@ -642,6 +647,7 @@ pub fn addPackageSteps(b: *std.Build, with: PackageStepsWith) MadePackageSteps {
     return .{
         .boot_files = boot_files,
         .mkpackage = mkpackage,
+        .package = package,
         .serve = serve,
         .uefi_stub = uefi_stub,
     };

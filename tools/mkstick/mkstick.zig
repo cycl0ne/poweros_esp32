@@ -6,7 +6,7 @@
 //!
 //! usage: mkstick --into=<image> [--as=<path>] [--size=<MiB>]
 //!                [--table=gpt|mbr] [--label=<name>] [--name=<partition>]
-//!                [--system=<disk image>]
+//!                [--type=efi|basic] [--nomount] [--system=<disk image>]
 //!                <path on the stick>=<file> ...
 //!
 //! What it writes: with `--table=gpt`, the default, a protective MBR, a
@@ -22,6 +22,15 @@
 //! then reads `kernel.bin` from beside itself. A Raspberry Pi's firmware
 //! reads config.txt from the volume's root, and what that names.
 //!
+//! **The partition's type** in a GPT is EFI System, what a UEFI firmware
+//! looks for, unless `--type=basic` makes it Basic data: a firmware that
+//! reads the first FAT partition by its place, as a Raspberry Pi's does,
+//! takes either, and Basic data is what `C:Install` marks the boot
+//! partition of such a machine with. `--nomount` marks the partition as
+//! one no drive is made for when the medium comes in
+//! (`gpt.ATTR_NO_AUTOMOUNT`), as an install marks the partition the
+//! firmware reads.
+//!
 //! **The system is the second partition** (`--system`): the PowerOS
 //! container of a disk image `mkfs --gpt` made - a table in its first
 //! block and a posfs partition with the system's files - copied as it
@@ -36,6 +45,9 @@
 //! `--system` the medium holds the EFI System partition alone, and the
 //! loader reads a disk image from beside itself when one is there. The
 //! container goes in a GPT: with `--table=mbr` there is the volume alone.
+//! It is copied a piece at a time, a piece of zeroes left a hole, so a
+//! container of gigabytes - a card's, most of it free - is never in
+//! memory and takes on the host what it holds.
 //!
 //! **The volume is the file system's own format.** `format.write`
 //! (`src/disk/devs/handlers/fat/fat32/format.zig`, through that
@@ -101,6 +113,17 @@ const default_label = "POWEROS";
 /// The partition table the medium has (`--table`).
 const Table = enum { gpt, mbr };
 
+/// What a GPT marks the volume's partition as (`--type`).
+const Kind = enum { efi, basic };
+
+/// The volume's partition as the GPT's entry gives it: its name, its
+/// type, and whether no drive is made for it when the medium comes in.
+const Partition = struct {
+    name: []const u8,
+    kind: Kind,
+    no_mount: bool,
+};
+
 /// Where the volume starts on a medium with an MBR: its first mebibyte
 /// is the table's and room, as a GPT medium's is.
 const mbr_first: u64 = 1024 * 1024 / block_bytes;
@@ -158,6 +181,8 @@ pub fn main(init: std.process.Init) !void {
     var name_text: []const u8 = default_name;
     var system_path: ?[]const u8 = null;
     var table: Table = .gpt;
+    var kind: Kind = .efi;
+    var no_mount = false;
     var given: std.ArrayList(Give) = .empty;
     for (args, 0..) |arg, index| {
         if (index == 0) continue;
@@ -177,6 +202,11 @@ pub fn main(init: std.process.Init) !void {
         } else if (mem.startsWith(u8, arg, "--table=")) {
             table = std.meta.stringToEnum(Table, arg["--table=".len..]) orelse
                 fatal("--table: {s} is neither gpt nor mbr", .{arg["--table=".len..]});
+        } else if (mem.startsWith(u8, arg, "--type=")) {
+            kind = std.meta.stringToEnum(Kind, arg["--type=".len..]) orelse
+                fatal("--type: {s} is neither efi nor basic", .{arg["--type=".len..]});
+        } else if (mem.eql(u8, arg, "--nomount")) {
+            no_mount = true;
         } else if (mem.startsWith(u8, arg, "--")) {
             fatal("{s}: no such option", .{arg});
         } else {
@@ -191,11 +221,12 @@ pub fn main(init: std.process.Init) !void {
         }
     }
     const path = into orelse fatal(
-        "usage: mkstick --into=<image> [--as=<path>] [--size=<MiB>] [--table=gpt|mbr] [--label=<name>] [--name=<partition>] [--system=<disk image>] <path on the stick>=<file> ...",
+        "usage: mkstick --into=<image> [--as=<path>] [--size=<MiB>] [--table=gpt|mbr] [--label=<name>] [--name=<partition>] [--type=efi|basic] [--nomount] [--system=<disk image>] <path on the stick>=<file> ...",
         .{},
     );
     if (given.items.len == 0) fatal("nothing to put on it: give at least the loader the firmware reads", .{});
     if (table == .mbr and system_path != null) fatal("--system: the system's container goes in a GPT, and --table=mbr has room for the volume alone", .{});
+    if (table == .mbr and (kind != .efi or no_mount)) fatal("--type and --nomount say what a GPT's entry says, and --table=mbr has none", .{});
     const label = fat_host.shortLabel(label_text) catch
         fatal("--label: {s} is not a name a volume can carry", .{label_text});
 
@@ -209,7 +240,8 @@ pub fn main(init: std.process.Init) !void {
         .{size_mib},
     );
     // The system's container, behind the volume on a mebibyte of its own.
-    const system: ?System = if (system_path) |from| takeSystem(io, arena, from, gpt.alignUp(made.plan.first + made.plan.total, block_bytes)) else null;
+    const system: ?System = if (system_path) |from| takeSystem(io, from, gpt.alignUp(made.plan.first + made.plan.total, block_bytes)) else null;
+    defer if (system) |container| container.file.close(io);
     const body = if (system) |container| container.first + container.blocks else made.plan.first + made.plan.total;
     const blocks = switch (table) {
         .gpt => body + backBlocks(),
@@ -224,7 +256,7 @@ pub fn main(init: std.process.Init) !void {
 
     const seed = seedOf(label_text, name_text, blocks);
     switch (table) {
-        .gpt => writeTable(&image, blocks, made.plan, name_text, &seed, system),
+        .gpt => writeTable(&image, blocks, made.plan, .{ .name = name_text, .kind = kind, .no_mount = no_mount }, &seed, system),
         .mbr => writeMbr(&image, made.plan, &seed),
     }
     if (system) |container| writeSystem(&image, container);
@@ -251,9 +283,18 @@ pub fn main(init: std.process.Init) !void {
     }) catch |e| fatal("the report could not be written: {t}", .{e});
     const partition_said = switch (table) {
         .gpt => out.interface.print(
-            \\  partition     EFI System, blocks {d} to {d}, "{s}"
+            \\  partition     {s}, blocks {d} to {d}, "{s}"{s}
             \\
-        , .{ made.plan.first, made.plan.first + made.plan.total - 1, name_text }),
+        , .{
+            switch (kind) {
+                .efi => "EFI System",
+                .basic => "Basic data",
+            },
+            made.plan.first,
+            made.plan.first + made.plan.total - 1,
+            name_text,
+            if (no_mount) ", not mounted" else "",
+        }),
         .mbr => out.interface.print(
             \\  partition     FAT32 in an MBR (type 0x0C), blocks {d} to {d}
             \\
@@ -285,7 +326,7 @@ pub fn main(init: std.process.Init) !void {
     }) catch |e| fatal("the report could not be written: {t}", .{e});
     out.interface.print(
         \\
-        \\Write it to a stick with:
+        \\Write it to a stick or a card with:
         \\  sudo dd if={s} of=/dev/sdX bs=4M conv=fsync status=progress
         \\
     , .{shown}) catch |e| fatal("the report could not be written: {t}", .{e});
@@ -295,49 +336,72 @@ pub fn main(init: std.process.Init) !void {
 /// What the system's partition is called in the GPT.
 const system_name = "PowerOS";
 
-/// The system's container: where it goes on the medium, how many blocks
-/// it is, and the blocks themselves as the disk image holds them.
+/// The system's container: where it goes on the medium and how many
+/// blocks it is, and the disk image it is read from - open, its path, and
+/// the block the container starts at in it.
 const System = struct {
     first: u64,
     blocks: u64,
-    bytes: []const u8,
+    file: std.Io.File,
+    path: []const u8,
+    from: u64,
 };
 
 /// The PowerOS container of the disk image at `path`, to go on the
 /// medium from block `first` on. The image is one `mkfs --gpt` made: a
-/// GPT in its block 1, whose container's blocks are taken as they are.
-fn takeSystem(io: std.Io, arena: Allocator, path: []const u8, first: u64) System {
-    const disk = std.Io.Dir.cwd().readFileAlloc(io, path, arena, .unlimited) catch |e| fatal("{s}: {t}", .{ path, e });
-    if (disk.len < 3 * block_bytes) fatal("{s}: too short to be a disk image", .{path});
-    const disk_blocks = disk.len / block_bytes;
-    const header = gpt.readHeader(disk[gpt.header_block * block_bytes ..][0..block_bytes], gpt.header_block, disk_blocks) orelse
+/// GPT in its block 1, whose container's blocks are read as they are
+/// when they are written (`writeSystem`), so the image stays open.
+fn takeSystem(io: std.Io, path: []const u8, first: u64) System {
+    const file = std.Io.Dir.cwd().openFile(io, path, .{}) catch |e| fatal("{s}: {t}", .{ path, e });
+    const disk_bytes = (file.stat(io) catch |e| fatal("{s}: {t}", .{ path, e })).size;
+    if (disk_bytes < 3 * block_bytes) fatal("{s}: too short to be a disk image", .{path});
+    const disk_blocks = disk_bytes / block_bytes;
+    var block: [block_bytes]u8 = undefined;
+    readAll(io, file, path, &block, gpt.header_block * block_bytes);
+    const header = gpt.readHeader(&block, gpt.header_block, disk_blocks) orelse
         fatal("{s}: no partition table in its second block: it is not a disk image `mkfs --gpt` made", .{path});
-    const entries_at: usize = @intCast(header.partition_entry_lba * block_bytes);
     const entries_bytes: usize = @intCast(gpt.entriesLength(&header));
-    if (entries_at + entries_bytes > disk.len) fatal("{s}: its partition table reaches past its end", .{path});
-    const entries = disk[entries_at..][0..entries_bytes];
+    if (header.partition_entry_lba * block_bytes + entries_bytes > disk_bytes) fatal("{s}: its partition table reaches past its end", .{path});
+    var entries_buffer: [128 * 128]u8 = undefined;
+    if (entries_bytes > entries_buffer.len) fatal("{s}: a partition table of {d} bytes, more than a GPT has", .{ path, entries_bytes });
+    const entries = entries_buffer[0..entries_bytes];
+    readAll(io, file, path, entries, header.partition_entry_lba * block_bytes);
     var index: u32 = 0;
     while (index < header.number_of_partition_entries) : (index += 1) {
         const entry = gpt.entryAt(&header, entries, index);
         if (!gpt.used(&entry) or !gpt.isContainer(&entry)) continue;
         if (entry.starting_lba > entry.ending_lba or entry.ending_lba >= disk_blocks) fatal("{s}: its container reaches past its end", .{path});
-        const from: usize = @intCast(entry.starting_lba * block_bytes);
-        const length: usize = @intCast((entry.ending_lba - entry.starting_lba + 1) * block_bytes);
-        return .{ .first = first, .blocks = length / block_bytes, .bytes = disk[from..][0..length] };
+        return .{
+            .first = first,
+            .blocks = entry.ending_lba - entry.starting_lba + 1,
+            .file = file,
+            .path = path,
+            .from = entry.starting_lba,
+        };
     }
     fatal("{s}: no PowerOS container in its partition table", .{path});
 }
 
-/// The container's blocks written where it goes, but those that are all
-/// zeroes: the image is as long as the medium and holds only what was
-/// written.
+/// `into` filled from the file at byte `at`; a file that ends first is
+/// one cut short.
+fn readAll(io: std.Io, file: std.Io.File, path: []const u8, into: []u8, at: u64) void {
+    const got = file.readPositionalAll(io, into, at) catch |e| fatal("{s}: {t}", .{ path, e });
+    if (got != into.len) fatal("{s}: it ends at byte {d}, before what its table says is there", .{ path, at + got });
+}
+
+/// The container's blocks written where they go, a piece at a time, but
+/// those pieces that are all zeroes: the image is as long as the medium
+/// and holds only what was written.
 fn writeSystem(image: *Image, system: System) void {
-    const step = 256 * block_bytes;
-    var at: usize = 0;
-    while (at < system.bytes.len) : (at += step) {
-        const piece = system.bytes[at..@min(at + step, system.bytes.len)];
-        if (mem.allEqual(u8, piece, 0)) continue;
-        image.putBytes(system.first + at / block_bytes, piece);
+    const step_blocks: u64 = 256;
+    const piece = image.arena.alloc(u8, step_blocks * block_bytes) catch @panic("out of memory");
+    var at: u64 = 0;
+    while (at < system.blocks) : (at += step_blocks) {
+        const count_blocks = @min(step_blocks, system.blocks - at);
+        const bytes = piece[0..@intCast(count_blocks * block_bytes)];
+        readAll(image.io, system.file, system.path, bytes, (system.from + at) * block_bytes);
+        if (mem.allEqual(u8, bytes, 0)) continue;
+        image.putBytes(system.first + at, bytes);
     }
 }
 
@@ -636,7 +700,7 @@ fn chsOf(block: u64) [3]u8 {
 
 /// The protective MBR and both copies of the GPT, with the partition
 /// the volume is on and, with `system`, the system's container after it.
-fn writeTable(image: *Image, blocks: u64, plan: format.Plan, name: []const u8, seed: *const [32]u8, system: ?System) void {
+fn writeTable(image: *Image, blocks: u64, plan: format.Plan, partition: Partition, seed: *const [32]u8, system: ?System) void {
     const arena = image.arena;
     var disk_guid = drawn(seed, 0)[0..16].*;
     var part_guid = drawn(seed, 1)[0..16].*;
@@ -646,12 +710,16 @@ fn writeTable(image: *Image, blocks: u64, plan: format.Plan, name: []const u8, s
     var header = gpt.freshHeader(blocks, block_bytes, &disk_guid) orelse
         fatal("{s}: the medium is too small for a partition table", .{image.path});
     var entry: gpt.Entry = .{
-        .partition_type_guid = gpt.TYPE_EFI_SYSTEM,
+        .partition_type_guid = switch (partition.kind) {
+            .efi => gpt.TYPE_EFI_SYSTEM,
+            .basic => gpt.TYPE_BASIC_DATA,
+        },
         .unique_partition_guid = part_guid,
         .starting_lba = plan.first,
         .ending_lba = plan.first + plan.total - 1,
+        .attributes = if (partition.no_mount) gpt.ATTR_NO_AUTOMOUNT else 0,
     };
-    gpt.setName(&entry, name);
+    gpt.setName(&entry, partition.name);
 
     const entries_bytes: usize = @intCast(gpt.entriesLength(&header));
     const entries = arena.alloc(u8, entries_bytes) catch @panic("out of memory");

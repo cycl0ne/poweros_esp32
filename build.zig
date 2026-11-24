@@ -286,6 +286,7 @@ pub fn build(b: *std.Build) void {
     });
     const boot_files = packaging.boot_files;
     const mkpackage = packaging.mkpackage;
+    const package = packaging.package;
     const serve = packaging.serve;
     const uefi_stub = packaging.uefi_stub;
 
@@ -311,6 +312,7 @@ pub fn build(b: *std.Build) void {
         .ovmf_code = ovmf_code,
         .ovmf_vars = ovmf_vars,
         .p4_target = p4_target,
+        .package = package,
         .q35_network = q35_network,
         .q35_speaker = q35_speaker,
         .qemu = qemu,

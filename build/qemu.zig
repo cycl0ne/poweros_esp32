@@ -352,6 +352,7 @@ pub const RunStepsWith = struct {
     ovmf_code: []const u8,
     ovmf_vars: []const u8,
     p4_target: std.Build.ResolvedTarget,
+    package: ?std.Build.LazyPath,
     q35_network: []const []const u8,
     q35_speaker: []const []const u8,
     qemu: []const u8,
@@ -407,19 +408,7 @@ const PiStickWith = struct {
 /// runs on, in RAM. The firmware's own three come with -Dboot=; without
 /// all of them the step fails, naming the ones it lacks.
 fn addPiStick(b: *std.Build, step: *std.Build.Step, with: PiStickWith) void {
-    var missing: std.ArrayList(u8) = .empty;
-    for (pi4b_firmware) |name| {
-        for (with.boot_files) |file| {
-            if (std.mem.eql(u8, file.name, name)) break;
-        } else missing.appendSlice(b.allocator, b.fmt(" -Dboot=<dir>/{s}", .{name})) catch @panic("OOM");
-    }
-    if (missing.items.len != 0) {
-        step.dependOn(&b.addFail(b.fmt(
-            "stick: the Raspberry Pi 4B's firmware reads files this tree does not hold, Raspberry Pi's own (github.com/raspberrypi/firmware, boot/):{s}",
-            .{missing.items},
-        )).step);
-        return;
-    }
+    if (lacksPiFirmware(b, step, "stick", with.boot_files)) return;
     const make_stick = b.addRunArtifact(with.mkstick);
     const stick_name = b.fmt("stick-{s}.img", .{@tagName(with.board)});
     const stick_image = make_stick.addPrefixedOutputFileArg("--into=", stick_name);
@@ -441,9 +430,187 @@ fn addPiStick(b: *std.Build, step: *std.Build.Step, with: PiStickWith) void {
     step.dependOn(&addReport(b, report, tail, &put.step).step);
 }
 
+/// Whether -Dboot= leaves out a file the Raspberry Pi 4B's firmware
+/// reads: then `step` fails, naming the ones it lacks, and nothing is
+/// made for it.
+fn lacksPiFirmware(b: *std.Build, step: *std.Build.Step, what: []const u8, boot_files: []const BootFile) bool {
+    var missing: std.ArrayList(u8) = .empty;
+    for (pi4b_firmware) |name| {
+        for (boot_files) |file| {
+            if (std.mem.eql(u8, file.name, name)) break;
+        } else missing.appendSlice(b.allocator, b.fmt(" -Dboot=<dir>/{s}", .{name})) catch @panic("OOM");
+    }
+    if (missing.items.len == 0) return false;
+    step.dependOn(&b.addFail(b.fmt(
+        "{s}: the Raspberry Pi 4B's firmware reads files this tree does not hold, Raspberry Pi's own (github.com/raspberrypi/firmware, boot/):{s}",
+        .{ what, missing.items },
+    )).step);
+    return true;
+}
+
+/// The partition the firmware reads, as `C:Install` makes it, in MiB,
+/// and the most it gives the system partition
+/// (src/disk/c/install/_install.zig's `boot_bytes`, `system_bytes`).
+const card_boot_mib: u64 = 256;
+const card_system_most_mib: u64 = 32 * 1024;
+
+/// How large the card's image is unless -Dcard-size says otherwise:
+/// a card sold as 8 GB holds it.
+const card_default_mib: u64 = 7 * 1024;
+
+/// The smallest card the step makes: the boot partition, and a system
+/// and a work partition with room in them.
+const card_least_mib: u64 = 1024;
+
+/// The songs and films the card's Work: volume is handed unless
+/// -Dcard-work says otherwise, where scripts/fetch-examples.sh has
+/// fetched them.
+const card_default_work = "toolchain/examples";
+
+/// A drawer or a file the card's Work: volume is handed: its path on the
+/// volume, and a file's path on the host.
+const WorkEntry = struct { path: []const u8, host: ?[]const u8 };
+
+/// What `addPiCard` takes.
+const PiCardWith = struct {
+    board: Board,
+    boot_files: []const BootFile,
+    logdebug: bool,
+    mkfs: *std.Build.Step.Compile,
+    mkstick: *std.Build.Step.Compile,
+    package: std.Build.LazyPath,
+    size_mib: u64,
+    /// Where the Work: volume's files come from, and what they are.
+    work_dir: ?[]const u8,
+    work: []const WorkEntry,
+};
+
+/// What `C:Install` leaves on a Raspberry Pi 4B's card, made on the
+/// host into release/card-<board>.img, to be written to a card with one
+/// `dd`: a GPT whose first partition is the one the firmware reads -
+/// `BOOT`, FAT32, Basic data, not mounted, holding the release package's
+/// boot half but the disk image - and whose second is the PowerOS
+/// container: a table, the system partition (DH0 "System", posfs,
+/// bootable at priority 5) with the package's system half, its manifest
+/// as SYS:Storage/installed.manifest and ENVARC:Sys/install.prefs, and
+/// the work partition (DH1 "Work", posfs) over the rest, with what
+/// -Dcard-work hands it. `mkfs` makes the container, `mkstick` puts the
+/// boot partition in front of it.
+fn addPiCard(b: *std.Build, step: *std.Build.Step, with: PiCardWith) void {
+    if (lacksPiFirmware(b, step, "card", with.boot_files)) return;
+    const mib: u64 = 1024 * 1024;
+    // The container is the card past the boot partition and the first
+    // MiB, and the system partition half of what the container holds
+    // past its own first MiB, or 32 GiB where that is less, in whole
+    // MiB - as an install sizes them.
+    const container_mib = with.size_mib - card_boot_mib;
+    const system_mib = @min(card_system_most_mib, (container_mib - 2) / 2);
+
+    const make_system = b.addRunArtifact(with.mkfs);
+    const system_disk = make_system.addPrefixedOutputFileArg("--gpt=", "card-system.bin");
+    make_system.addArg(b.fmt("--gpt-bytes={d}", .{container_mib * mib}));
+    make_system.addPrefixedDirectoryArg("--gpt-tree=", with.package.path(b, "system"));
+    make_system.addArg(b.fmt("--gpt-system-bytes={d}", .{system_mib * mib}));
+    make_system.addArg("--gpt-boot-pri=5");
+    make_system.addArg("--gpt-work=Work:DH1");
+    for (with.work) |entry| {
+        if (entry.host) |host| {
+            make_system.addPrefixedFileArg(b.fmt("--gpt-work-file={s}=", .{entry.path}), .{ .cwd_relative = host });
+        } else make_system.addArg(b.fmt("--gpt-work-file={s}", .{entry.path}));
+    }
+    // The install's record: the card is sdcard.device's unit 0, and
+    // the partition the firmware reads is BOOT in the GPT.
+    make_system.addArg("--gpt-installed=sdcard.device:0:BOOT");
+    make_system.addPrefixedFileArg("--gpt-manifest=", with.package.path(b, "manifest"));
+    make_system.addArgs(&.{ "System", "DH0" });
+
+    const make_card = b.addRunArtifact(with.mkstick);
+    const card_name = b.fmt("card-{s}.img", .{@tagName(with.board)});
+    const card_image = make_card.addPrefixedOutputFileArg("--into=", card_name);
+    make_card.addArg(b.fmt("--as=release/{s}", .{card_name}));
+    // The boot partition from the first MiB to the 257th, the container
+    // from there to the card's end.
+    make_card.addArgs(&.{ "--table=gpt", b.fmt("--size={d}", .{card_boot_mib + 1}), "--type=basic", "--nomount", "--name=BOOT", "--label=Boot" });
+    make_card.addPrefixedFileArg("--system=", system_disk);
+    // The package's boot half, the disk image left out: the system is on
+    // the card, not in RAM.
+    make_card.addPrefixedFileArg("config.txt=", with.package.path(b, "boot/config.txt"));
+    make_card.addPrefixedFileArg("kernel.bin=", with.package.path(b, "boot/kernel.bin"));
+    for (with.boot_files) |file| {
+        make_card.addPrefixedFileArg(b.fmt("{s}=", .{file.name}), with.package.path(b, b.fmt("boot/{s}", .{file.name})));
+    }
+    const report = make_card.captureStdOut(.{ .basename = "report.txt" });
+    const put = b.addInstallFileWithDir(card_image, release_dir, card_name);
+
+    var files: usize = 0;
+    for (with.work) |entry| {
+        if (entry.host != null) files += 1;
+    }
+    const work_said = if (with.work_dir) |dir|
+        b.fmt("{d} files from {s}", .{ files, dir })
+    else
+        "nothing";
+    const tail = b.fmt(
+        \\
+        \\In the container: System (DH0, {d} MiB, bootable at priority 5) with
+        \\the package's system and the install's record of itself, and Work
+        \\(DH1, the rest) with {s}.
+        \\The image is {d} MiB: a larger card keeps the rest of itself unused.
+        \\Writing it over a card loses what the card held.
+        \\
+        \\{s}
+    , .{
+        system_mib,
+        work_said,
+        with.size_mib,
+        if (with.logdebug)
+            "The kernel on it names every module as the cold start starts it.\n"
+        else
+            "The kernel on it is a quiet one. Build it with -Dlogdebug to have it\nname every module as the cold start starts it, which is how a boot that\nstops somewhere is read.\n",
+    });
+    step.dependOn(&addReport(b, report, tail, &put.step).step);
+}
+
+/// What is under `dir` on the host, as the Work: volume holds it: every
+/// drawer and file, sorted by path - so a drawer comes before what is in
+/// it, and the volume is the same whatever order the host lists them in.
+/// A name beginning with a dot is the host's own, and so is what is under
+/// it. `unread` where `dir` cannot be read, a message where a name cannot
+/// be handed on.
+fn workEntries(b: *std.Build, dir: []const u8) union(enum) { entries: []const WorkEntry, unread, wrong: []const u8 } {
+    const io = b.graph.io;
+    const host_dir = b.pathFromRoot(dir);
+    var root = std.Io.Dir.cwd().openDir(io, host_dir, .{ .iterate = true }) catch return .unread;
+    defer root.close(io);
+    var entries: std.ArrayList(WorkEntry) = .empty;
+    var walker = root.walk(b.allocator) catch @panic("OOM");
+    defer walker.deinit();
+    walk: while (walker.next(io) catch return .unread) |entry| {
+        var parts = std.mem.splitScalar(u8, entry.path, '/');
+        while (parts.next()) |part| {
+            if (part.len != 0 and part[0] == '.') continue :walk;
+        }
+        const path = b.dupe(entry.path);
+        // mkfs takes a file as <path>=<host>, up to the first `=`.
+        if (std.mem.indexOfScalar(u8, path, '=') != null) return .{ .wrong = b.fmt("{s}/{s}: a name with `=` in it is not handed on", .{ dir, path }) };
+        switch (entry.kind) {
+            .directory => entries.append(b.allocator, .{ .path = path, .host = null }) catch @panic("OOM"),
+            .file => entries.append(b.allocator, .{ .path = path, .host = b.fmt("{s}/{s}", .{ host_dir, path }) }) catch @panic("OOM"),
+            else => {},
+        }
+    }
+    const Sort = struct {
+        fn before(_: void, one: WorkEntry, other: WorkEntry) bool {
+            return std.mem.lessThan(u8, one.path, other.path);
+        }
+    };
+    std.mem.sort(WorkEntry, entries.items, {}, Sort.before);
+    return .{ .entries = entries.items };
+}
+
 /// The steps that boot an emulated board - `qemu`, `emu`, `virt`,
-/// `virt64`, `q35` and their display steps - and `stick`, the medium a
-/// UEFI machine or a Raspberry Pi 4B starts from.
+/// `virt64`, `q35` and their display steps - and `stick` and `card`,
+/// the media a UEFI machine or a Raspberry Pi 4B starts from.
 pub fn addRunSteps(b: *std.Build, with: RunStepsWith) MadeRunSteps {
     const a64_system_disk = with.a64_system_disk;
     const a64_target = with.a64_target;
@@ -466,6 +633,7 @@ pub fn addRunSteps(b: *std.Build, with: RunStepsWith) MadeRunSteps {
     const ovmf_code = with.ovmf_code;
     const ovmf_vars = with.ovmf_vars;
     const p4_target = with.p4_target;
+    const package = with.package;
     const q35_network = with.q35_network;
     const q35_speaker = with.q35_speaker;
     const qemu = with.qemu;
@@ -762,6 +930,48 @@ pub fn addRunSteps(b: *std.Build, with: RunStepsWith) MadeRunSteps {
         else
             "\nThe kernel on it is a quiet one. Build it with -Dlogdebug to have it\nname every module as the cold start starts it, which is how a boot that\nstops somewhere is read.\n";
         stick_step.dependOn(&addReport(b, stick_report, stick_tail, &stick_put.step).step);
+    }
+
+    // `card` - what `C:Install` leaves on a Raspberry Pi 4B's card, made
+    // here instead: release/card-<board>.img, a card's worth to be
+    // written with one `dd`, the system installed on it from the release
+    // package and the Work: volume handed songs and films to try.
+    const card_step = b.step("card", "Make the Raspberry Pi 4B's card with the system installed on it (-Dboard=rpi4b): release/card-<board>.img");
+    const card_size = b.option(u64, "card-size", "How many mebibytes the `card` step's image is (default: 7168, which a card sold as 8 GB holds); a larger card keeps the rest unused") orelse card_default_mib;
+    const card_work = b.option([]const u8, "card-work", "A directory whose drawers and files the `card` step puts on the Work: volume (default: toolchain/examples, which scripts/fetch-examples.sh fills, where it is there)");
+    if (board != .rpi4b) {
+        card_step.dependOn(&b.addFail("card: it is the Raspberry Pi 4B's card (-Dboard=rpi4b)").step);
+    } else if (card_size < card_least_mib) {
+        card_step.dependOn(&b.addFail(b.fmt("card: -Dcard-size={d} leaves no room: a card is {d} MiB at least, the boot partition's {d} among them", .{ card_size, card_least_mib, card_boot_mib })).step);
+    } else {
+        // The work volume's files: those -Dcard-work names, or the
+        // fetched examples where they are there, or none.
+        const work_dir: ?[]const u8 = card_work orelse default: {
+            std.Io.Dir.cwd().access(b.graph.io, b.pathFromRoot(card_default_work), .{}) catch break :default null;
+            break :default card_default_work;
+        };
+        const work: ?[]const WorkEntry = if (work_dir) |dir| switch (workEntries(b, dir)) {
+            .entries => |found| found,
+            .unread => found: {
+                card_step.dependOn(&b.addFail(b.fmt("card: -Dcard-work={s} is no directory this build can read", .{dir})).step);
+                break :found null;
+            },
+            .wrong => |message| found: {
+                card_step.dependOn(&b.addFail(b.fmt("card: {s}", .{message})).step);
+                break :found null;
+            },
+        } else &.{};
+        if (work) |entries| addPiCard(b, card_step, .{
+            .board = board,
+            .boot_files = boot_files,
+            .logdebug = logdebug,
+            .mkfs = mkfs,
+            .mkstick = mkstick,
+            .package = package.?,
+            .size_mib = card_size,
+            .work_dir = work_dir,
+            .work = entries,
+        });
     }
 
     // The same with the machine's window and what the board has around

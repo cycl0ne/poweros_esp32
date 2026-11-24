@@ -9,6 +9,13 @@
 //!            <out.bin> <volume> <partition> <sectors> <partition-sectors>
 //!            <sector-size> <page-size> <rdb-sectors>
 //!            [<path-in-image>[=<host-file>] ...]
+//!        mkfs --gpt=<file> --gpt-bytes=<bytes> --gpt-tree=<dir>
+//!            [--gpt-system-bytes=<bytes>] [--gpt-boot-pri=<n>]
+//!            [--gpt-file=<path>[=<host-file>] ...]
+//!            [--gpt-work=<volume>:<partition>
+//!             [--gpt-work-file=<path>[=<host-file>] ...]]
+//!            [--gpt-installed=<device>:<unit>:<boot> --gpt-manifest=<file>]
+//!            <volume> <partition>
 //!        mkfs --blank --gpt=<file> --gpt-bytes=<bytes> <volume> <partition>
 //!
 //! `volume` is what the file system calls itself; `partition` is what the
@@ -63,6 +70,33 @@
 //! and its partition not bootable - a disk to keep work on. Its only
 //! arguments are the volume's name and the partition's.
 //!
+//! **A GPT disk alone, from a tree** (`--gpt-tree`): only the GPT disk,
+//! its system volume holding what a directory on the host holds - a
+//! release package's `system/` - in a manifest's order, so a drawer
+//! comes before what is in it; `--gpt-file` after it as before. Its
+//! arguments are the volume's name and the partition's, and it takes
+//! what lays the disk out as an install does:
+//! - `--gpt-system-bytes`: the system partition that large, from the
+//!   container's first MiB, rather than the whole container.
+//! - `--gpt-boot-pri`: the system partition's boot priority, 0 without
+//!   it.
+//! - `--gpt-work=<volume>:<partition>`: a second partition, from the
+//!   first MiB past the system's to the container's end, posfs, not
+//!   bootable, holding what `--gpt-work-file` gives it - in the order
+//!   given, a drawer (no `=`) before what goes in it. Each file is read
+//!   from the host a piece at a time as it is written, so a film is
+//!   never in memory whole.
+//! - `--gpt-installed=<device>:<unit>:<boot>` with `--gpt-manifest`: the
+//!   system volume is one `C:Install` left, with the two files it writes
+//!   besides the system's own (src/disk/c/install/files.zig): the
+//!   package's manifest as `Storage/installed.manifest`, the list an
+//!   update compares against, and `ENVARC:Sys/install.prefs`, which says
+//!   the device and unit the system is on, the two partitions, the boot
+//!   partition by its name in the GPT, and the board the manifest names.
+//!   A medium made of such a disk and the partition the firmware reads
+//!   in front of it (tools/mkstick `--system`) is what an install leaves
+//!   on that machine's card.
+//!
 //! **The same files outside the image**, for a volume that is not made
 //! from it - a card that is SYS:, brought up to date file by file
 //! (tools/vf2_update.py in the port's repository). `--tree` writes every
@@ -90,6 +124,9 @@ const dos = sdk.dos;
 const hardblocks = dos.hardblocks;
 const flashfs = dos.flashfs;
 const gpt = dos.gpt;
+const install = sdk.install;
+const manifest = install.manifest;
+const prefs_install = sdk.prefs.install;
 const disk = @import("fs");
 const posfs = @import("posfs");
 
@@ -374,9 +411,16 @@ pub fn main(init: std.process.Init) !void {
     var medium_path: ?[]const u8 = null;
     var gpt_path: ?[]const u8 = null;
     var gpt_bytes: u64 = 0;
+    var gpt_tree: ?[]const u8 = null;
+    var gpt_system_bytes: u64 = 0;
+    var gpt_boot_pri: i32 = 0;
+    var gpt_work: ?[]const u8 = null;
+    var gpt_installed: ?[]const u8 = null;
+    var gpt_manifest: ?[]const u8 = null;
     var blank = false;
     var system_only: std.ArrayList([]const u8) = .empty;
     var gpt_only: std.ArrayList([]const u8) = .empty;
+    var work_only: std.ArrayList([]const u8) = .empty;
     var kept: std.ArrayList([:0]const u8) = .empty;
     for (all_args, 0..) |arg, index| {
         if (index == 0 or !mem.startsWith(u8, arg, "--")) {
@@ -396,6 +440,22 @@ pub fn main(init: std.process.Init) !void {
             try system_only.append(arena, arg["--system-file=".len..]);
         } else if (mem.startsWith(u8, arg, "--gpt-file=")) {
             try gpt_only.append(arena, arg["--gpt-file=".len..]);
+        } else if (mem.startsWith(u8, arg, "--gpt-tree=")) {
+            gpt_tree = arg["--gpt-tree=".len..];
+        } else if (mem.startsWith(u8, arg, "--gpt-system-bytes=")) {
+            const text = arg["--gpt-system-bytes=".len..];
+            gpt_system_bytes = std.fmt.parseInt(u64, text, 0) catch fatal("{s}: not a number", .{text});
+        } else if (mem.startsWith(u8, arg, "--gpt-boot-pri=")) {
+            const text = arg["--gpt-boot-pri=".len..];
+            gpt_boot_pri = std.fmt.parseInt(i8, text, 0) catch fatal("{s}: not a boot priority, -128 to 127", .{text});
+        } else if (mem.startsWith(u8, arg, "--gpt-work=")) {
+            gpt_work = arg["--gpt-work=".len..];
+        } else if (mem.startsWith(u8, arg, "--gpt-work-file=")) {
+            try work_only.append(arena, arg["--gpt-work-file=".len..]);
+        } else if (mem.startsWith(u8, arg, "--gpt-installed=")) {
+            gpt_installed = arg["--gpt-installed=".len..];
+        } else if (mem.startsWith(u8, arg, "--gpt-manifest=")) {
+            gpt_manifest = arg["--gpt-manifest=".len..];
         } else if (mem.eql(u8, arg, "--blank")) {
             blank = true;
         } else fatal("{s}: no such option", .{arg});
@@ -404,10 +464,51 @@ pub fn main(init: std.process.Init) !void {
     const cwd = std.Io.Dir.cwd();
     if (gpt_path != null and gpt_bytes == 0) fatal("--gpt: --gpt-bytes says how large the disk is", .{});
     if (gpt_path == null and gpt_only.items.len != 0) fatal("--gpt-file: there is no --gpt disk to put it on", .{});
+    if (gpt_tree == null) {
+        // What lays a disk out as an install does is for a disk made
+        // from a tree alone.
+        if (gpt_system_bytes != 0) fatal("--gpt-system-bytes: only with --gpt-tree", .{});
+        if (gpt_boot_pri != 0) fatal("--gpt-boot-pri: only with --gpt-tree", .{});
+        if (gpt_work != null or work_only.items.len != 0) fatal("--gpt-work: only with --gpt-tree", .{});
+        if (gpt_installed != null or gpt_manifest != null) fatal("--gpt-installed: only with --gpt-tree", .{});
+    }
     if (blank) {
         if (args.len != 3 or gpt_path == null) fatal("usage: mkfs --blank --gpt=<file> --gpt-bytes=<bytes> <volume> <partition>", .{});
         checkDrive(args[2]);
-        gptDisk(io, cwd, gpt_path.?, gpt_bytes, args[1], args[2], false, &.{}, arena);
+        gptDisk(io, cwd, .{ .path = gpt_path.?, .bytes = gpt_bytes, .label = args[1], .drive = args[2], .bootable = false, .entries = &.{} }, arena);
+        return;
+    }
+    if (gpt_tree) |tree| {
+        if (args.len != 3 or gpt_path == null) fatal("usage: mkfs --gpt=<file> --gpt-bytes=<bytes> --gpt-tree=<dir> [...] <volume> <partition>", .{});
+        checkDrive(args[2]);
+        if (work_only.items.len != 0 and gpt_work == null) fatal("--gpt-work-file: there is no --gpt-work partition to put it on", .{});
+        if ((gpt_installed == null) != (gpt_manifest == null)) fatal("--gpt-installed and --gpt-manifest come together: the install's record and the list it was installed from", .{});
+        const work: ?Work = if (gpt_work) |text| work: {
+            const colon = mem.indexOfScalar(u8, text, ':') orelse fatal("--gpt-work={s}: it is <volume>:<partition>", .{text});
+            const drive = text[colon + 1 ..];
+            if (colon == 0 or drive.len == 0) fatal("--gpt-work={s}: it is <volume>:<partition>", .{text});
+            checkDrive(drive);
+            if (std.ascii.eqlIgnoreCase(drive, args[2])) fatal("--gpt-work={s}: the system partition is {s} already", .{ text, args[2] });
+            var streamed: std.ArrayList(Streamed) = .empty;
+            for (work_only.items) |entry| try streamed.append(arena, try streamedOf(entry, arena));
+            break :work .{ .label = text[0..colon], .drive = drive, .entries = streamed.items };
+        } else null;
+
+        var entries: std.ArrayList(Entry) = .empty;
+        try treeEntries(io, cwd, tree, arena, &entries);
+        for (gpt_only.items) |entry| try entries.append(arena, try entryOf(io, cwd, entry, arena));
+        if (gpt_installed) |text| try installedRecords(io, cwd, text, gpt_manifest.?, args[2], if (work) |one| one.drive else "", arena, &entries);
+        gptDisk(io, cwd, .{
+            .path = gpt_path.?,
+            .bytes = gpt_bytes,
+            .label = args[1],
+            .drive = args[2],
+            .bootable = true,
+            .boot_pri = gpt_boot_pri,
+            .system_bytes = gpt_system_bytes,
+            .entries = entries.items,
+            .work = work,
+        }, arena);
         return;
     }
     if (args.len < 9) fatal("usage: mkfs <out.bin> <volume> <partition> <sectors> <partition-sectors> <sector-size> <page-size> <rdb-sectors> [<path>[=<file>] ...]", .{});
@@ -489,7 +590,7 @@ pub fn main(init: std.process.Init) !void {
         putBlock(store, partition_block, sector_size, &started);
         try cwd.writeFile(io, .{ .sub_path = path, .data = store[0..used] });
     }
-    if (gpt_path) |path| gptDisk(io, cwd, path, gpt_bytes, label, drive, true, entries.items, arena);
+    if (gpt_path) |path| gptDisk(io, cwd, .{ .path = path, .bytes = gpt_bytes, .label = label, .drive = drive, .bootable = true, .entries = entries.items }, arena);
 }
 
 /// One path on the command line: a directory to make, or with `=` a file
@@ -508,11 +609,51 @@ fn checkDrive(drive: []const u8) void {
     }
 }
 
+/// What the GPT disk holds: its size, the system partition and its
+/// volume, and the work partition where there is one.
+const GptDisk = struct {
+    path: []const u8,
+    bytes: u64,
+    /// The system volume's name and its partition's.
+    label: []const u8,
+    drive: []const u8,
+    bootable: bool,
+    /// The system partition's boot priority.
+    boot_pri: i32 = 0,
+    /// How large the system partition is; 0 for the whole container.
+    system_bytes: u64 = 0,
+    /// What the system volume holds.
+    entries: []const Entry,
+    /// The second partition, over the rest of the container.
+    work: ?Work = null,
+};
+
+/// The work partition (`--gpt-work`): its volume's name, its
+/// partition's, and what the volume holds.
+const Work = struct {
+    label: []const u8,
+    drive: []const u8,
+    entries: []const Streamed,
+};
+
+/// A drawer to make, or a file read from the host as it is written.
+const Streamed = struct { path: [:0]const u8, host: ?[]const u8 };
+
+/// The fewest blocks the work partition may have: what posfs takes for
+/// a volume with room in it (its limits: 64 blocks of up to 64 KiB).
+const min_work_blocks: u64 = 64 * 128;
+
 /// The GPT disk: its GPT and the copy at its end, the PowerOS container,
-/// the table in it, and posfs on the table's one partition with what
-/// `entries` puts there.
-fn gptDisk(io: std.Io, cwd: std.Io.Dir, path: []const u8, bytes: u64, label: []const u8, drive: []const u8, bootable: bool, entries: []const Entry, arena: mem.Allocator) void {
+/// the table in it, posfs on the table's system partition with what
+/// `gpt_disk.entries` puts there, and on the work partition, where there
+/// is one, what `gpt_disk.work` does.
+fn gptDisk(io: std.Io, cwd: std.Io.Dir, gpt_disk: GptDisk, arena: mem.Allocator) void {
+    const path = gpt_disk.path;
+    const bytes = gpt_disk.bytes;
+    const label = gpt_disk.label;
+    const drive = gpt_disk.drive;
     if (bytes % gpt_block != 0) fatal("--gpt-bytes={d}: not whole {d}-byte blocks", .{ bytes, gpt_block });
+    if (gpt_disk.system_bytes % gpt_block != 0) fatal("--gpt-system-bytes={d}: not whole {d}-byte blocks", .{ gpt_disk.system_bytes, gpt_block });
     const blocks = bytes / gpt_block;
     var seed: [32]u8 = undefined;
     var hash = std.crypto.hash.sha2.Sha256.init(.{});
@@ -536,6 +677,19 @@ fn gptDisk(io: std.Io, cwd: std.Io.Dir, path: []const u8, bytes: u64, label: []c
     const container_blocks = container.ending_lba - container.starting_lba + 1;
     if (container_blocks > 0xFFFF_FFFF) fatal("--gpt-bytes={d}: a table counts at most 2^32 blocks", .{bytes});
     if (container_blocks < gpt_partition_first + 2) fatal("--gpt-bytes={d}: no room for a partition", .{bytes});
+
+    // The system partition from the container's first MiB, as large as
+    // asked or to the container's end; the work partition from the first
+    // MiB past it to the end. Block numbers count from the container's
+    // first block, and a cylinder is a block.
+    const system_last: u64 = if (gpt_disk.system_bytes == 0)
+        container_blocks - 1
+    else
+        gpt_partition_first + gpt_disk.system_bytes / gpt_block - 1;
+    if (system_last >= container_blocks) fatal("--gpt-system-bytes={d}: the container has {d} bytes from its first MiB", .{ gpt_disk.system_bytes, (container_blocks - gpt_partition_first) * gpt_block });
+    const work_first = gpt.alignUp(system_last + 1, gpt_block);
+    if (gpt_disk.work != null and (work_first >= container_blocks or container_blocks - work_first < min_work_blocks))
+        fatal("--gpt-work: the container has no room past the system partition's {d} bytes", .{(system_last + 1 - gpt_partition_first) * gpt_block});
 
     const file = cwd.createFile(io, path, .{ .read = true }) catch |e| fatal("{s}: {t}", .{ path, e });
     defer file.close(io);
@@ -578,20 +732,36 @@ fn gptDisk(io: std.Io, cwd: std.Io.Dir, path: []const u8, bytes: u64, label: []c
     @memcpy(rdb.disk_vendor[0.."PowerOS".len], "PowerOS");
     @memcpy(rdb.disk_product[0.."disk image".len], "disk image");
     var part: hardblocks.PartitionBlock = .{
-        .flags = if (bootable) hardblocks.PBFF_BOOTABLE else 0,
+        .next = if (gpt_disk.work != null) work_block else hardblocks.end_of_list,
+        .flags = if (gpt_disk.bootable) hardblocks.PBFF_BOOTABLE else 0,
         .environment = .{
             .size_block = gpt_block,
             .low_cyl = gpt_partition_first,
-            .high_cyl = cylinders - 1,
+            .high_cyl = @intCast(system_last),
             .num_buffers = buffers,
             .buf_mem_type = sdk.exec.MEMF_ANY,
+            .boot_pri = gpt_disk.boot_pri,
             .dos_type = dos.posfs.ID_POSFS_DISK,
         },
     };
     @memcpy(part.drive_name[0..drive.len], drive);
-    var table: [2 * gpt_block]u8 = @splat(0);
+    var table: [3 * gpt_block]u8 = @splat(0);
     putBlock(&table, rdb_block, gpt_block, &rdb);
     putBlock(&table, partition_block, gpt_block, &part);
+    if (gpt_disk.work) |work| {
+        var second: hardblocks.PartitionBlock = .{
+            .environment = .{
+                .size_block = gpt_block,
+                .low_cyl = @intCast(work_first),
+                .high_cyl = cylinders - 1,
+                .num_buffers = buffers,
+                .buf_mem_type = sdk.exec.MEMF_ANY,
+                .dos_type = dos.posfs.ID_POSFS_DISK,
+            },
+        };
+        @memcpy(second.drive_name[0..work.drive.len], work.drive);
+        putBlock(&table, work_block, gpt_block, &second);
+    }
     writeAt(io, file, path, &table, container.starting_lba * gpt_block);
 
     // posfs on the partition, filled, and put away clean.
@@ -599,7 +769,7 @@ fn gptDisk(io: std.Io, cwd: std.Io.Dir, path: []const u8, bytes: u64, label: []c
         .io = io,
         .file = file,
         .first = (container.starting_lba + gpt_partition_first) * gpt_block,
-        .length = (container_blocks - gpt_partition_first) * gpt_block,
+        .length = (system_last + 1 - gpt_partition_first) * gpt_block,
         // Not the arena: the file system frees as much as it takes,
         // packet after packet.
         .allocator = std.heap.smp_allocator,
@@ -608,8 +778,168 @@ fn gptDisk(io: std.Io, cwd: std.Io.Dir, path: []const u8, bytes: u64, label: []c
     var fs = posfs.FileSystem.init(posfs.Device.of(DiskMedia, &media));
     defer fs.deinit();
     fs.format(.{ .name = label, .partition_block = gpt_block }) catch |e| fatal("{s}: format: {t}", .{ path, e });
-    fill(&fs, entries, media.length);
+    fill(&fs, gpt_disk.entries, media.length);
     fs.unmount() catch |e| fatal("{s}: unmount: {t}", .{ path, e });
+
+    // And posfs on the work partition, its files read from the host as
+    // they are written.
+    const work = gpt_disk.work orelse return;
+    var work_media: DiskMedia = .{
+        .io = io,
+        .file = file,
+        .first = (container.starting_lba + work_first) * gpt_block,
+        .length = (container_blocks - work_first) * gpt_block,
+        .allocator = std.heap.smp_allocator,
+        .seed = drawn(&seed, 3),
+    };
+    var work_fs = posfs.FileSystem.init(posfs.Device.of(DiskMedia, &work_media));
+    defer work_fs.deinit();
+    work_fs.format(.{ .name = work.label, .partition_block = gpt_block }) catch |e| fatal("{s}: format {s}: {t}", .{ path, work.drive, e });
+    const piece = arena.alloc(u8, stream_piece) catch fatal("out of memory", .{});
+    fillStreamed(&work_fs, io, cwd, work.entries, work_media.length, piece);
+    work_fs.unmount() catch |e| fatal("{s}: unmount {s}: {t}", .{ path, work.drive, e });
+}
+
+/// Where the work partition's PartitionBlock goes: after the system
+/// partition's, in the table's blocks.
+const work_block: u32 = partition_block + 1;
+
+/// How much of a file on the host is read and written at a time.
+const stream_piece: usize = 8 * 1024 * 1024;
+
+/// What `--gpt-work-file` puts on the work volume, in the order given:
+/// each file read from the host a piece at a time and written as it is
+/// read.
+fn fillStreamed(fs: anytype, io: std.Io, cwd: std.Io.Dir, entries: []const Streamed, volume_bytes: u64, piece: []u8) void {
+    var written_total: u64 = 0;
+    for (entries) |entry| {
+        const path = entry.path;
+        const host = entry.host orelse {
+            const made = send(fs, .create_dir, .{ .raw = .{ 0, @bitCast(@intFromPtr(path.ptr)), dos.EXCLUSIVE_LOCK, 0, 0, 0, 0 } });
+            if (made.res1 == 0) fatal("{s}: cannot make it ({d})", .{ path, made.res2 });
+            _ = send(fs, .free_lock, .{ .raw = .{ made.res1, 0, 0, 0, 0, 0, 0 } });
+            continue;
+        };
+        const source = cwd.openFile(io, host, .{}) catch |e| fatal("{s}: {t}", .{ host, e });
+        defer source.close(io);
+        var fh: dos.FileHandle = .{};
+        const opened = send(fs, .findoutput, .{ .find = .{ .fh = &fh, .lock = null, .name = path.ptr } });
+        if (opened.res1 == dos.DOSFALSE) fatal("{s}: cannot write it ({d})", .{ path, opened.res2 });
+        var at: u64 = 0;
+        while (true) {
+            const got = source.readPositionalAll(io, piece, at) catch |e| fatal("{s}: {t}", .{ host, e });
+            if (got == 0) break;
+            const written = send(fs, .write, .{ .io = .{ .fh = &fh, .buffer = piece.ptr, .length = @intCast(got) } });
+            if (written.res1 != @as(isize, @intCast(got))) {
+                if (written.res2 == dos.ERROR_DISK_FULL)
+                    fatal("the work volume is full at {s}: it has {d} bytes, and {d} were written before it", .{ path, volume_bytes, written_total + at });
+                fatal("{s}: only {d} of {d} bytes ({d})", .{ path, at + @as(u64, @intCast(@max(written.res1, 0))), at + got, written.res2 });
+            }
+            at += got;
+            if (got < piece.len) break;
+        }
+        written_total += at;
+        const closed = send(fs, .end, .{ .file = .{ .fh = &fh } });
+        if (closed.res1 == dos.DOSFALSE) fatal("{s}: cannot close it ({d})", .{ path, closed.res2 });
+    }
+}
+
+/// One `--gpt-work-file`: a drawer to make, or with `=` a file and the
+/// host file it is read from.
+fn streamedOf(entry: []const u8, arena: mem.Allocator) !Streamed {
+    const split = mem.indexOfScalar(u8, entry, '=');
+    const path = try arena.dupeZ(u8, if (split) |at| entry[0..at] else entry);
+    return .{ .path = path, .host = if (split) |at| entry[at + 1 ..] else null };
+}
+
+/// Every drawer and file under `root` on the host, as the volume's
+/// entries, in a manifest's order: a drawer before what is in it, and the
+/// same volume from the same tree whatever order the host lists it in.
+fn treeEntries(io: std.Io, cwd: std.Io.Dir, root: []const u8, arena: mem.Allocator, entries: *std.ArrayList(Entry)) !void {
+    var dir = cwd.openDir(io, root, .{ .iterate = true }) catch |e| fatal("{s}: {t}", .{ root, e });
+    defer dir.close(io);
+    var found: std.ArrayList(Entry) = .empty;
+    var walker = try dir.walk(arena);
+    defer walker.deinit();
+    while (try walker.next(io)) |entry| {
+        const path = try arena.dupeZ(u8, entry.path);
+        switch (entry.kind) {
+            .directory => try found.append(arena, .{ .path = path, .content = null }),
+            .file => {
+                const content = entry.dir.readFileAlloc(io, entry.basename, arena, .unlimited) catch |e|
+                    fatal("{s}/{s}: {t}", .{ root, entry.path, e });
+                try found.append(arena, .{ .path = path, .content = content });
+            },
+            else => fatal("{s}/{s}: neither a file nor a drawer", .{ root, entry.path }),
+        }
+    }
+    const Sort = struct {
+        fn before(_: void, a: Entry, b: Entry) bool {
+            return manifest.orderPaths(a.path, b.path) == .before;
+        }
+    };
+    mem.sort(Entry, found.items, {}, Sort.before);
+    try entries.appendSlice(arena, found.items);
+}
+
+/// Where `C:Install` keeps its record in ENVARC:, by the path on the
+/// volume that S:Startup-Sequence assigns ENVARC: to.
+const install_prefs_path = "Prefs/Env-Archive/Sys/install.prefs";
+
+/// The two files `C:Install` leaves on a system volume besides the
+/// system's own (`--gpt-installed`, `--gpt-manifest`): the list it was
+/// installed from, where an update reads it, and its record of where
+/// the system went - `<device>:<unit>:<boot>` the device and unit, and
+/// the boot partition's name in the GPT; `system` and `work` the two
+/// partitions' drives, `work` empty where there is none; the board the
+/// list names. Neither says where the files came from or when: they came
+/// from a build, not from a place the machine could look again.
+fn installedRecords(io: std.Io, cwd: std.Io.Dir, text: []const u8, manifest_path: []const u8, system: []const u8, work: []const u8, arena: mem.Allocator, entries: *std.ArrayList(Entry)) !void {
+    var parts = mem.splitScalar(u8, text, ':');
+    const device = parts.next() orelse "";
+    const unit_text = parts.next() orelse "";
+    const boot = parts.next() orelse "";
+    if (device.len == 0 or boot.len == 0 or parts.next() != null)
+        fatal("--gpt-installed={s}: it is <device>:<unit>:<boot>", .{text});
+    const unit = std.fmt.parseInt(u32, unit_text, 10) catch fatal("--gpt-installed={s}: {s} is no unit", .{ text, unit_text });
+
+    const list = cwd.readFileAlloc(io, manifest_path, arena, .unlimited) catch |e| fatal("{s}: {t}", .{ manifest_path, e });
+    const reader = manifest.Reader.init(list) catch |e| fatal("{s}: {s}", .{ manifest_path, manifest.why(e) });
+
+    var settings: prefs_install.Settings = .{};
+    setField(&settings.device, device, "the device");
+    settings.unit = unit;
+    setField(&settings.system, system, "the system partition");
+    setField(&settings.work, work, "the work partition");
+    setField(&settings.boot, boot, "the boot partition");
+    setField(&settings.board, reader.header.board, "the board");
+    var line: [prefs_install.max_line]u8 = undefined;
+    const length = prefs_install.write(&settings, &line);
+    const record = try mem.concat(arena, u8, &.{ prefs_install.header, line[0..length], "\n" });
+
+    try needDrawers(arena, entries, install.installed_manifest["SYS:".len..]);
+    try entries.append(arena, .{ .path = try arena.dupeZ(u8, install.installed_manifest["SYS:".len..]), .content = list });
+    try needDrawers(arena, entries, install_prefs_path);
+    try entries.append(arena, .{ .path = install_prefs_path, .content = record });
+}
+
+/// A field of the install's record set to `value`, which must fit.
+fn setField(field: anytype, value: []const u8, what: []const u8) void {
+    if (value.len > field.len) fatal("{s}: {s} is too long for the install's record", .{ what, value });
+    field.* = @splat(0);
+    @memcpy(field[0..value.len], value);
+}
+
+/// The drawers above `path` that `entries` does not make, added to it,
+/// outermost first.
+fn needDrawers(arena: mem.Allocator, entries: *std.ArrayList(Entry), path: []const u8) !void {
+    var at: usize = 0;
+    while (mem.indexOfScalarPos(u8, path, at, '/')) |slash| : (at = slash + 1) {
+        const drawer = path[0..slash];
+        for (entries.items) |entry| {
+            if (entry.content == null and manifest.samePath(entry.path, drawer)) break;
+        } else try entries.append(arena, .{ .path = try arena.dupeZ(u8, drawer), .content = null });
+    }
 }
 
 fn writeAt(io: std.Io, file: std.Io.File, path: []const u8, bytes: []const u8, at: u64) void {

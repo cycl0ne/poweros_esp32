@@ -5,6 +5,7 @@ programs on `C:` instead of the shell copying them into `RAM:`.
 
 ```
 mkfs [--tree=<dir>] [--manifest=<file>] [--system-file=<path>[=<file>] ...] [--gpt=<file> --gpt-bytes=<bytes> [--gpt-file=<path>[=<file>] ...]] <out.bin> <name> <partition> <sectors> <partition-sectors> <sector-size> <page-size> <rdb-sectors> [<path>[=<file>] ...]
+mkfs --gpt=<file> --gpt-bytes=<bytes> --gpt-tree=<dir> [--gpt-system-bytes=<bytes>] [--gpt-boot-pri=<n>] [--gpt-file=<path>[=<file>] ...] [--gpt-work=<name>:<partition> [--gpt-work-file=<path>[=<file>] ...]] [--gpt-installed=<device>:<unit>:<boot> --gpt-manifest=<file>] <name> <partition>
 mkfs --blank --gpt=<file> --gpt-bytes=<bytes> <name> <partition>
 ```
 
@@ -39,6 +40,33 @@ what was written to it takes room on the host; the rest is a hole.
 `--gpt-file` puts a file on that disk alone, after the others - one too
 large for the flash disk - and one with no `=` a drawer; the tree and
 the manifest leave them out.
+
+`--gpt-tree` writes such a disk alone, without the flash image, its
+system volume holding what a directory on the host holds - a release
+package's `system/` - in a manifest's order, so a drawer comes before
+what is in it. The disk can then be laid out as `C:Install` lays out
+the one it installs onto:
+
+- `--gpt-system-bytes` makes the system partition that large, from the
+  container's first MiB, instead of the whole container;
+  `--gpt-boot-pri` gives it a boot priority (0 without it).
+- `--gpt-work=<name>:<partition>` adds a second partition, from the
+  first MiB past the system's to the container's end, posfs, not
+  bootable. `--gpt-work-file` puts a file on it, or with no `=` a
+  drawer, in the order given. Each file is read from the host a piece at
+  a time as it is written, so a film never has to fit in memory.
+- `--gpt-installed=<device>:<unit>:<boot>` with `--gpt-manifest` makes
+  the system volume one an install left: the package's manifest as
+  `Storage/installed.manifest`, which an update compares against, and
+  `Prefs/Env-Archive/Sys/install.prefs` (`ENVARC:Sys/install.prefs`),
+  which names the device and unit, both partitions, the boot partition
+  by its name in the GPT, and the board the manifest names. It names no
+  source and no date: the files came from a build, not from somewhere the
+  machine could look again, so `C:Update` is told where a package is.
+
+`./zig build card` runs it so for a Raspberry Pi 4B's card, and
+`tools/mkstick` puts the partition the firmware reads in front of the
+container.
 
 `--system-file` is a file of the system the image has no room for - a
 large font, the emoji's names: it goes into the tree and the manifest,
