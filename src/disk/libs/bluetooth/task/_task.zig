@@ -1346,8 +1346,8 @@ fn report(work: *Work) void {
     if (any) _notify.changed(base);
 }
 
-/// A link up, not made or down - a pairing over, a link not made secure -
-/// in the log: the device, how, and why.
+/// A link up, not made or down - a pairing over, a link not made secure,
+/// a stranger's link refused - in the log: the device, how, and why.
 fn sayLink(sys: *ExecBase, id: u32, note: *const connections.Note) void {
     const bytes = note.address.bytes;
     const over: [*:0]const u8 = if (!note.le) "BR/EDR" else if (note.address.kind == bluetooth.BTADDR_LE_RANDOM) "LE random" else "LE";
@@ -1364,6 +1364,7 @@ fn sayLink(sys: *ExecBase, id: u32, note: *const connections.Note) void {
         .paired => exec.kprintf(sys, line ++ "paired\n", head),
         .not_paired => sayReason(sys, line ++ "not paired: ", head, note.reason),
         .not_secured => sayReason(sys, line ++ "not made secure: ", head, note.reason),
+        .refused => exec.kprintf(sys, line ++ "refused: no bond with it, the machine hidden\n", head),
     }
 }
 

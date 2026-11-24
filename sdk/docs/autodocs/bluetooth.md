@@ -1779,7 +1779,10 @@ Connections did not make one, and its identity - the address the bond
 is then kept by, and the key that resolves the private addresses it
 uses. Since 1.21 the device is given this machine's identity where it
 asks for it: the controller's public address and the identity
-resolving key kept for it (BTBF_IDENTITY_GIVEN). On a link the device
+resolving key kept for it (BTBF_IDENTITY_GIVEN). Since 1.24 a
+controller that is hidden advertises for such a device, from its
+private address, so that the device links to it again
+(SetBTControllerAttrs). On a link the device
 made to this machine while it advertised -
 its peripheral - the device is asked to begin the pairing (Security
 Request), which the library answers as the responder, by Secure
@@ -2629,7 +2632,12 @@ from its public address. It makes way for a scan or a link it cannot
 advertise beside - LE Read Supported States says which - and goes on
 after, BTCF_ADVERTISING set while it advertises; a name changed is
 advertised at once. Since 1.22 a controller made hidden takes a new
-private address over LE (BTController's `private_address`).
+private address over LE (BTController's `private_address`). Since
+1.24 a controller hidden goes on advertising over LE while a bond
+says a device was given this machine's identity - from its private
+address, saying nothing, every second or so, BTCF_ADVERTISING set - so
+that such a device finds it and links to it; a link from a device that
+resolves to no bond is ended at once.
 
 On, visible until told otherwise and the name are kept for the
 controller's next start, by its address: in
@@ -3020,7 +3028,9 @@ The profile drivers bound to the device's services let go of it
 first, told that it is forgotten (BTPU_FORGET), while its link is
 still there to tell the device so. Then the key is forgotten, its file
 and the services kept with it deleted before the call returns, and a
-link to the device ended. AddBTNotify's signal comes.
+link to the device ended. Since 1.24 a controller that is hidden stops
+advertising once no bond is left that was given this machine's
+identity (SetBTControllerAttrs). AddBTNotify's signal comes.
 
 **CONTEXT**
 

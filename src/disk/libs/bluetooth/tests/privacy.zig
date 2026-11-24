@@ -21,7 +21,15 @@
 //! listened for beginning the scan afresh; another link made meanwhile,
 //! the scan off for it; not heard in its time, or no longer wanted, let go
 //! of; a bond without the key, and no crypto.library, initiated to at
-//! once.
+//! once. Hidden, advertising while a bond says a device was given the
+//! identity - from the private address, every 1 to 1.28 s, saying nothing
+//! but the flags a controller without BR/EDR needs, BTCF_ADVERTISING -
+//! the visible advertising begun only once the hidden one's end is
+//! answered, the hidden one behind a new address, none once the last such
+//! bond is forgotten; a link to it from a device a bond resolves taken
+//! on, from the private address, and a stranger's ended at once, nothing
+//! it sends read, not listed, its refusal noted and not its end - ended
+//! again where the queue had no room.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -35,18 +43,23 @@ const bonds = @import("../hci/bonds.zig");
 const connections = @import("../hci/connections.zig");
 const discovery = @import("../hci/discovery.zig");
 const local = @import("../hci/local.zig");
+const pairing = @import("../hci/pairing.zig");
 const privacy = @import("../hci/privacy.zig");
 const smpcrypto = @import("../hci/smpcrypto.zig");
 const _connection = @import("../connection/_connection.zig");
+const _controller = @import("../controller/_controller.zig");
+const l2cap = bluetooth.l2cap;
 const Port = @import("_port.zig").Port;
 
 const testing = std.testing;
 
-/// A controller that keeps the commands it is sent; `settle` answers them.
+/// A controller that keeps the commands it is sent, and counts the ACL
+/// packets; `settle` answers the commands.
 const Recorder = struct {
     sent: [128]Sent = undefined,
     count: usize = 0,
     answered: usize = 0,
+    acl_sent: usize = 0,
 
     const Sent = struct {
         opcode: u16,
@@ -56,6 +69,7 @@ const Recorder = struct {
 
     fn send(context: *anyopaque, packet_type: u8, bytes: []const u8) bool {
         const recorder: *Recorder = @ptrCast(@alignCast(context));
+        if (packet_type == hcidev.HCI_ACLDATA_PKT) recorder.acl_sent += 1;
         if (packet_type != hcidev.HCI_COMMAND_PKT) return true;
         const sent = &recorder.sent[recorder.count];
         sent.opcode = _hci.le16(bytes[0..2]);
@@ -230,6 +244,25 @@ fn firstAddress(layer: *Hci, recorder: *Recorder) bluetooth.BTAddress {
 fn lastGiven(recorder: *const Recorder) [6]u8 {
     return recorder.lastOf(hci.HCI_OP_LE_SET_RANDOM_ADDRESS).?.params[0..6].*;
 }
+
+/// A PDU of the device's on the attribute channel of the link with
+/// `handle`, in one packet.
+fn attIn(layer: *Hci, handle: u16, pdu: []const u8) void {
+    var packet: [hci.HCI_ACL_HDR + l2cap.L2CAP_HDR + 32]u8 = undefined;
+    const head = handle | hci.ACL_START << hci.ACL_BOUNDARY_SHIFT;
+    const length = l2cap.L2CAP_HDR + pdu.len;
+    packet[0..4].* = .{ @truncate(head), @truncate(head >> 8), @intCast(length), 0 };
+    packet[4..8].* = .{ @intCast(pdu.len), 0, @truncate(l2cap.CID_ATT), @truncate(l2cap.CID_ATT >> 8) };
+    @memcpy(packet[8..][0..pdu.len], pdu);
+    _hci.received(layer, hcidev.HCI_ACLDATA_PKT, packet[0 .. hci.HCI_ACL_HDR + length]);
+}
+
+/// A Read By Type Request for the device name, over every handle.
+const name_request = [_]u8{ 0x08, 0x01, 0x00, 0xFF, 0xFF, 0x00, 0x2A };
+
+/// The hidden advertising begun: its parameters, what it says, its scan
+/// response, and on.
+const hidden_begun = [_]u16{ hci.HCI_OP_LE_SET_ADVERTISING_PARAMETERS, hci.HCI_OP_LE_SET_ADVERTISING_DATA, hci.HCI_OP_LE_SET_SCAN_RESPONSE_DATA, hci.HCI_OP_LE_SET_ADVERTISING_ENABLE };
 
 test "made from the key - resolved by it, its top bits 01 - and given once the controller is up: the advertising stopped before it and begun again behind it, the address the controller's once answered" {
     var recorder = Recorder{};
@@ -437,9 +470,13 @@ test "a link to a device given the identity - found by its address or by its key
     try testing.expectEqual(bluetooth.BTADDR_BREDR, plain.identity.kind);
     try testing.expect(plain.flags & bluetooth.BTLF_BONDED != 0);
 
-    // A device's link to the advertising: the public address.
+    // A device's link to the visible advertising - begun once the links
+    // as central are down, the controller not having said it advertises
+    // beside them: the public address.
+    for ([_]u8{ 0x41, 0x42, 0x43 }) |handle| event(&layer, hci.HCI_EV_DISCONNECTION_COMPLETE, &.{ 0, handle, 0x00, hci.HCI_ERR_REMOTE_USER_TERMINATED });
     try testing.expectEqual(@as(i32, 0), local.setVisible(&layer, bluetooth.BT_VISIBLE_ALWAYS));
     settle(&layer, &recorder);
+    try testing.expect(layer.advertising.on and layer.advertising.kind == .visible);
     const visitor = bluetooth.BTAddress{ .bytes = .{ 0x45, 0x10, 0xEF, 0x5E, 0x00, 0x00 }, .kind = bluetooth.BTADDR_LE_PUBLIC };
     leLinked(&layer, 0x0044, hci.ROLE_PERIPHERAL, visitor);
     settle(&layer, &recorder);
@@ -622,4 +659,161 @@ test "listening: another link made meanwhile, the scan off for it and on again a
     settle(&layer, &recorder);
     try testing.expectEqualSlices(u16, &.{hci.HCI_OP_LE_CREATE_CONNECTION}, recorder.opcodes(before, &seen));
     try testing.expectEqualSlices(u8, &keyed_identity.bytes, recorder.lastOf(hci.HCI_OP_LE_CREATE_CONNECTION).?.params[6..12]);
+}
+
+test "hidden, it advertises while a bond says a device was given the identity: from the private address, every 1 to 1.28 s, saying nothing - the flags alone without BR/EDR - BTCF_ADVERTISING; made visible, the visible advertising begun only once the hidden one's end is answered; made hidden, the hidden one behind a new address; the last such bond forgotten, it stops" {
+    var recorder = Recorder{};
+    var port = Port{};
+    var layer = upLayer(&recorder, &port);
+    // No bond given the identity: none, a private address or not.
+    _ = firstAddress(&layer, &recorder);
+    _ = bonds.keepLe(&layer, other_peer, &.{ .ltk = ltk, .key_size = 16, .authenticated = true, .secure = true }, "other").?;
+    _hci.tick(&layer);
+    settle(&layer, &recorder);
+    try testing.expectEqual(@as(usize, 0), recorder.countOf(0, hci.HCI_OP_LE_SET_ADVERTISING_ENABLE));
+
+    // One given it: connectable, undirected, every 1 to 1.28 s, from the
+    // private address, on all three channels, to anyone - saying nothing,
+    // the scan response empty.
+    _ = bonds.keepLe(&layer, given_peer, &.{ .ltk = ltk, .key_size = 16, .authenticated = true, .secure = true, .given = true }, "given").?;
+    var before = recorder.count;
+    _hci.tick(&layer);
+    settle(&layer, &recorder);
+    var seen: [16]u16 = undefined;
+    try testing.expectEqualSlices(u16, &hidden_begun, recorder.opcodes(before, &seen));
+    const params = recorder.lastOf(hci.HCI_OP_LE_SET_ADVERTISING_PARAMETERS).?;
+    try testing.expectEqualSlices(u8, &.{ 0x40, 0x06, 0x00, 0x08, hci.LE_ADV_IND, hci.LE_ADDR_RANDOM, 0, 0, 0, 0, 0, 0, 0, 7, 0 }, params.params[0..params.length]);
+    const data = recorder.lastOf(hci.HCI_OP_LE_SET_ADVERTISING_DATA).?;
+    try testing.expectEqual(@as(usize, 32), data.length);
+    try testing.expect(std.mem.allEqual(u8, data.params[0..32], 0));
+    const response = recorder.lastOf(hci.HCI_OP_LE_SET_SCAN_RESPONSE_DATA).?;
+    try testing.expect(std.mem.allEqual(u8, response.params[0..32], 0));
+    try testing.expectEqual(@as(u8, 1), recorder.lastOf(hci.HCI_OP_LE_SET_ADVERTISING_ENABLE).?.params[0]);
+    const hidden_flags = _controller.flagsOf(&layer);
+    try testing.expect(hidden_flags & bluetooth.BTCF_ADVERTISING != 0 and hidden_flags & bluetooth.BTCF_VISIBLE == 0);
+
+    // Made visible: the hidden advertising ended, the visible begun only
+    // once the controller has answered that end.
+    before = recorder.count;
+    try testing.expectEqual(@as(i32, 0), local.setVisible(&layer, bluetooth.BT_VISIBLE_ALWAYS));
+    try testing.expectEqualSlices(u16, &.{ hci.HCI_OP_WRITE_SCAN_ENABLE, hci.HCI_OP_LE_SET_ADVERTISING_ENABLE }, recorder.opcodes(before, &seen));
+    try testing.expectEqual(@as(u8, 0), recorder.lastOf(hci.HCI_OP_LE_SET_ADVERTISING_ENABLE).?.params[0]);
+    answerNext(&layer, &recorder, hci.HCI_SUCCESS);
+    try testing.expectEqual(@as(usize, 0), recorder.countOf(before, hci.HCI_OP_LE_SET_ADVERTISING_PARAMETERS));
+    answerNext(&layer, &recorder, hci.HCI_SUCCESS);
+    try testing.expectEqual(@as(usize, 1), recorder.countOf(before, hci.HCI_OP_LE_SET_ADVERTISING_PARAMETERS));
+    settle(&layer, &recorder);
+    const visible = recorder.lastOf(hci.HCI_OP_LE_SET_ADVERTISING_PARAMETERS).?;
+    try testing.expectEqualSlices(u8, &.{ 0xA0, 0x00, 0xF0, 0x00, hci.LE_ADV_IND, hci.LE_ADDR_PUBLIC }, visible.params[0..6]);
+    try testing.expect(layer.advertising.on and layer.advertising.kind == .visible);
+
+    // Made hidden: a new private address, and the hidden advertising
+    // begun from it, behind it.
+    const old = layer.privacy.address;
+    before = recorder.count;
+    try testing.expectEqual(@as(i32, 0), local.setVisible(&layer, 0));
+    settle(&layer, &recorder);
+    const sent = recorder.opcodes(before, &seen);
+    const given_at = std.mem.indexOfScalar(u16, sent, hci.HCI_OP_LE_SET_RANDOM_ADDRESS).?;
+    const begun_at = std.mem.indexOfScalar(u16, sent, hci.HCI_OP_LE_SET_ADVERTISING_PARAMETERS).?;
+    try testing.expect(given_at < begun_at);
+    try testing.expectEqual(@as(usize, 1), recorder.countOf(before, hci.HCI_OP_LE_SET_ADVERTISING_PARAMETERS));
+    try testing.expect(!std.mem.eql(u8, &old, &layer.privacy.address));
+    try testing.expectEqual(hci.LE_ADDR_RANDOM, recorder.lastOf(hci.HCI_OP_LE_SET_ADVERTISING_PARAMETERS).?.params[5]);
+    try testing.expect(layer.advertising.on and layer.advertising.kind == .hidden);
+
+    // The bond forgotten: it stops.
+    before = recorder.count;
+    try testing.expectEqual(@as(i32, 0), pairing.unpair(&layer, given_peer));
+    try testing.expectEqualSlices(u16, &.{hci.HCI_OP_LE_SET_ADVERTISING_ENABLE}, recorder.opcodes(before, &seen));
+    try testing.expectEqual(@as(u8, 0), recorder.lastOf(hci.HCI_OP_LE_SET_ADVERTISING_ENABLE).?.params[0]);
+    settle(&layer, &recorder);
+    try testing.expect(!layer.advertising.on);
+    try testing.expect(_controller.flagsOf(&layer) & bluetooth.BTCF_ADVERTISING == 0);
+
+    // A controller without BR/EDR: the flags alone, which it must say.
+    layer.features[0][4] |= 1 << 5; // BR/EDR not supported
+    _ = bonds.keepLe(&layer, keyed_identity, &.{ .ltk = ltk, .key_size = 16, .authenticated = true, .secure = true, .irk = device_irk, .given = true }, "sensor").?;
+    _hci.tick(&layer);
+    settle(&layer, &recorder);
+    try testing.expect(layer.advertising.on and layer.advertising.kind == .hidden);
+    const flags_only = recorder.lastOf(hci.HCI_OP_LE_SET_ADVERTISING_DATA).?;
+    try testing.expectEqualSlices(u8, &.{ 3, 2, hci.AD_FLAGS, hci.AD_FLAG_NO_BREDR, 0 }, flags_only.params[0..5]);
+}
+
+test "a link to the hidden advertising: a device a bond resolves taken on, from the private address; a stranger's ended at once - Remote User Terminated - nothing it sends read, not listed, its refusal noted and not its end; ended again where the queue had no room" {
+    var recorder = Recorder{};
+    var port = Port{};
+    var layer = upLayer(&recorder, &port);
+    _ = bonds.keepLe(&layer, keyed_identity, &.{ .ltk = ltk, .key_size = 16, .authenticated = true, .secure = true, .irk = device_irk, .given = true }, "sensor").?;
+    const own_private = firstAddress(&layer, &recorder);
+    try testing.expect(layer.advertising.on and layer.advertising.kind == .hidden);
+
+    // A stranger, at a private address no bond's key made: ended at once,
+    // nothing asked of it.
+    const stranger = bluetooth.BTAddress{ .bytes = .{ 0x11, 0x22, 0x33, 0x44, 0x55, 0x66 }, .kind = bluetooth.BTADDR_LE_RANDOM };
+    layer.note_count = 0;
+    var before = recorder.count;
+    leLinked(&layer, 0x0050, hci.ROLE_PERIPHERAL, stranger);
+    try testing.expectEqual(@as(usize, 1), recorder.countOf(before, hci.HCI_OP_DISCONNECT));
+    try testing.expectEqual(@as(usize, 0), recorder.countOf(before, hci.HCI_OP_LE_READ_REMOTE_FEATURES));
+    try testing.expectEqualSlices(u8, &.{ 0x50, 0x00, hci.HCI_ERR_REMOTE_USER_TERMINATED }, recorder.lastOf(hci.HCI_OP_DISCONNECT).?.params[0..3]);
+    // What it sends unread: its request for the name goes unanswered.
+    attIn(&layer, 0x0050, &name_request);
+    try testing.expectEqual(@as(usize, 0), recorder.acl_sent);
+    // Not listed; its refusal noted, and not its end.
+    try testing.expect(!_connection.listed(connections.find(&layer, stranger).?));
+    try testing.expectEqual(@as(u8, 1), layer.note_count);
+    try testing.expectEqual(connections.NoteKind.refused, layer.notes[0].kind);
+    settle(&layer, &recorder);
+    event(&layer, hci.HCI_EV_DISCONNECTION_COMPLETE, &.{ 0, 0x50, 0x00, hci.HCI_ERR_LOCAL_HOST_TERMINATED });
+    try testing.expectEqual(@as(u8, 1), layer.note_count);
+    try testing.expect(connections.find(&layer, stranger) == null);
+
+    // The device whose bond keeps its key, linking from a private address
+    // the key made: taken on, from the private address the advertising
+    // went from, and what it sends read.
+    try testing.expect(layer.advertising.on and layer.advertising.kind == .hidden);
+    settle(&layer, &recorder);
+    before = recorder.count;
+    leLinked(&layer, 0x0051, hci.ROLE_PERIPHERAL, keyed_private);
+    try testing.expectEqual(@as(usize, 0), recorder.countOf(before, hci.HCI_OP_DISCONNECT));
+    const link = connections.find(&layer, keyed_private).?;
+    try testing.expect(connections.sameAddress(own_private, link.own));
+    featuresRead(&layer, 0x0051);
+    settle(&layer, &recorder);
+    const record = recordOf(&layer, keyed_identity);
+    try testing.expect(connections.sameAddress(keyed_private, record.address));
+    try testing.expect(connections.sameAddress(keyed_identity, record.identity));
+    try testing.expect(connections.sameAddress(own_private, record.own_address));
+    try testing.expect(record.flags & bluetooth.BTLF_BONDED != 0);
+    try testing.expect(_connection.listed(link));
+    const acl_before = recorder.acl_sent;
+    attIn(&layer, 0x0051, &name_request);
+    try testing.expect(recorder.acl_sent > acl_before);
+    event(&layer, hci.HCI_EV_DISCONNECTION_COMPLETE, &.{ 0, 0x51, 0x00, hci.HCI_ERR_REMOTE_USER_TERMINATED });
+    settle(&layer, &recorder);
+    try testing.expect(layer.advertising.on and layer.advertising.kind == .hidden);
+
+    // A stranger whose end finds the queue full: ended once there is room,
+    // a second later.
+    layer.credits = 0;
+    while (_hci.command(&layer, 0xFC00, &.{}, _hci.COMMAND_TIMEOUT_MS)) {}
+    const another = bluetooth.BTAddress{ .bytes = .{ 0x12, 0x22, 0x33, 0x44, 0x55, 0x66 }, .kind = bluetooth.BTADDR_LE_RANDOM };
+    leLinked(&layer, 0x0052, hci.ROLE_PERIPHERAL, another);
+    const held = connections.find(&layer, another).?;
+    try testing.expect(held.state == .up and held.refused);
+    try testing.expect(!_connection.listed(held));
+    attIn(&layer, 0x0052, &name_request);
+    layer.credits = 4;
+    _hci.pump(&layer);
+    settle(&layer, &recorder);
+    try testing.expect(held.state == .up);
+    before = recorder.count;
+    layer.now += connections.REFUSE_AGAIN_MS;
+    _hci.tick(&layer);
+    try testing.expectEqual(@as(usize, 1), recorder.countOf(before, hci.HCI_OP_DISCONNECT));
+    try testing.expectEqualSlices(u8, &.{ 0x52, 0x00, hci.HCI_ERR_REMOTE_USER_TERMINATED }, recorder.lastOf(hci.HCI_OP_DISCONNECT).?.params[0..3]);
+    try testing.expect(held.state == .disconnecting);
+    try testing.expectEqual(acl_before + 1, recorder.acl_sent);
 }

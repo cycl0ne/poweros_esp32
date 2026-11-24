@@ -60,7 +60,10 @@ const _pairing = @import("_pairing.zig");
 /// is then kept by, and the key that resolves the private addresses it
 /// uses. Since 1.21 the device is given this machine's identity where it
 /// asks for it: the controller's public address and the identity
-/// resolving key kept for it (BTBF_IDENTITY_GIVEN). On a link the device
+/// resolving key kept for it (BTBF_IDENTITY_GIVEN). Since 1.24 a
+/// controller that is hidden advertises for such a device, from its
+/// private address, so that the device links to it again
+/// (SetBTControllerAttrs). On a link the device
 /// made to this machine while it advertised -
 /// its peripheral - the device is asked to begin the pairing (Security
 /// Request), which the library answers as the responder, by Secure

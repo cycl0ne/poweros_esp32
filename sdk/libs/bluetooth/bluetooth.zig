@@ -129,8 +129,10 @@ pub const BTCF_VISIBLE: u32 = 1 << 1;
 pub const BTCF_CONNECTABLE: u32 = 1 << 2;
 /// Looking for devices (StartBTDiscovery).
 pub const BTCF_DISCOVERING: u32 = 1 << 3;
-/// Advertising over LE: visible, and not making way for a scan or a link
-/// it cannot advertise beside. Since 1.16.
+/// Advertising over LE: visible - or, since 1.24, hidden (BTCF_VISIBLE
+/// clear), from its private address for the devices given the machine's
+/// identity - and not making way for a scan or a link it cannot
+/// advertise beside. Since 1.16.
 pub const BTCF_ADVERTISING: u32 = 1 << 4;
 
 /// BTCA_Visible's and BTController.visible_left's "until told otherwise".

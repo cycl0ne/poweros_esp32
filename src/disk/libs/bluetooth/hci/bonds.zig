@@ -64,6 +64,16 @@ pub const Bond = struct {
     fresh: bool = false,
 };
 
+/// Whether a bond says a device was given the machine's identity: a
+/// device that resolves its private address, for which it advertises
+/// while hidden (advertising.zig).
+pub fn identityGiven(layer: *const Hci) bool {
+    for (&layer.bonds) |*bond| {
+        if (bond.used and !bond.gone and bond.identity_given) return true;
+    }
+    return false;
+}
+
 /// The bond with the device at `address`; null for none.
 pub fn find(layer: *Hci, address: bluetooth.BTAddress) ?*Bond {
     for (&layer.bonds) |*bond| {

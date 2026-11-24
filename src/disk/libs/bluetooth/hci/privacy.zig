@@ -7,12 +7,13 @@
 //! address, and which nobody else ties to it, or to the address before.
 //!
 //! **Where it goes**: a discovery's active scan, whose scan requests
-//! carry it (discovery.zig), and the links the library makes to devices
-//! whose bonds say they were given the machine's identity
-//! (connections.zig): such a device knows the machine by it and finds its
-//! bond. The advertising while visible, a passive scan - which sends
-//! nothing - and a link to a device without the identity go from the
-//! public address, which such a device knows the machine by.
+//! carry it (discovery.zig), the advertising while hidden
+//! (advertising.zig), and the links the library makes to devices whose
+//! bonds say they were given the machine's identity (connections.zig):
+//! such a device knows the machine by it and finds its bond. The
+//! advertising while visible, a passive scan - which sends nothing - and
+//! a link to a device without the identity go from the public address,
+//! which such a device knows the machine by.
 //!
 //! **A new one** at every bring-up, every ROTATE_MS, and when the
 //! controller is made hidden. LE Set Random Address is taken only while

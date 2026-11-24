@@ -37,7 +37,10 @@
 //! LE a device links to the controller while it advertises
 //! (advertising.zig), the controller the link's peripheral; that ends
 //! the advertising, which goes on beside the link where the controller
-//! can.
+//! can. A link to the hidden advertising from a device that resolves to
+//! no bond is ended as soon as it is up (Remote User Terminated), nothing
+//! it sends read - no stranger learns what the machine is - and only its
+//! refusal noted.
 //!
 //! **Waited for.** A call that waits for the controller - a link up, a
 //! link down - has a `Wait` here, which the task looks at after each
@@ -76,8 +79,9 @@
 //! takes the link for the device at either address. **This side's address** on an LE link, the
 //! one the controller made it from, is the link's `own` once it is up,
 //! for the security manager's checks: the private address the controller
-//! had then where it was asked for from it, the public one otherwise - a
-//! device's link to the advertising among them.
+//! had then where it was asked for from it, or where a device linked to
+//! the hidden advertising; the public one otherwise - a device's link to
+//! the visible advertising among them.
 //!
 //! **The device's name**, where the discovery did not hear it, is asked
 //! for once a BR/EDR link is up (Remote Name Request): over the link it
@@ -141,6 +145,9 @@ const CANCEL_WAIT_MS: u32 = 3_000;
 pub const FEATURES_WAIT_MS: u32 = 5_000;
 /// How long a link made for channels stays once its last has closed.
 pub const IDLE_MS: u32 = 2_000;
+/// How soon a stranger's link whose end found no room in the queue is
+/// ended again.
+pub const REFUSE_AGAIN_MS: u32 = 1_000;
 /// How old what the discovery heard of a device may be for a page to go
 /// by it: a device's clock drifts from the offset heard.
 const HEARD_FRESH_MS: u64 = 60_000;
@@ -196,6 +203,10 @@ pub const Connection = struct {
     /// Ended as soon as it is up: DisconnectBTDevice, or the power going
     /// off, came while it was being made.
     unwanted: bool = false,
+    /// A device's link to the hidden advertising that resolves to no
+    /// bond: ended as soon as it is up, nothing it sends read, its refusal
+    /// noted and not its end.
+    refused: bool = false,
     class_of_device: u32 = 0,
     /// When it came up, and when what it waits for is given up on.
     since: u64 = 0,
@@ -244,7 +255,7 @@ pub const Begun = union(enum) {
 /// How many notes wait for the log.
 pub const NOTES = 8;
 
-pub const NoteKind = enum(u8) { up, not_made, down, paired, not_paired, not_secured };
+pub const NoteKind = enum(u8) { up, not_made, down, paired, not_paired, not_secured, refused };
 
 /// What happened to a link, for the log.
 pub const Note = struct {
@@ -890,7 +901,8 @@ pub fn leComplete(layer: *Hci, params: []const u8) void {
         const made = making(layer, true) orelse return;
         return failed(layer, made, failure(made, status));
     }
-    if (role == hci.ROLE_PERIPHERAL) advertising.linkMade(layer);
+    // A link the device made: to the hidden advertising, or the visible.
+    const to_hidden = role == hci.ROLE_PERIPHERAL and advertising.linkMade(layer) == .hidden;
     var connection = if (role == hci.ROLE_CENTRAL) making(layer, true) else null;
     if (connection == null) {
         connection = freeConnection(layer) orelse return refuseLink(layer, handle);
@@ -900,7 +912,12 @@ pub fn leComplete(layer: *Hci, params: []const u8) void {
     made.address = address;
     made.le = true;
     made.central = role == hci.ROLE_CENTRAL;
-    made.own = privacy.own(layer, made.central and made.own.kind == bluetooth.BTADDR_LE_RANDOM);
+    made.own = privacy.own(layer, if (made.central) made.own.kind == bluetooth.BTADDR_LE_RANDOM else to_hidden);
+    // A stranger's link to the hidden advertising: ended once it is up.
+    if (to_hidden and smp.bondOf(layer, made) == null) {
+        made.refused = true;
+        made.unwanted = true;
+    }
     if (made.incoming) {
         if (devices.find(layer, address.bytes, address.kind)) |device| setName(made, &device.name);
     }
@@ -938,11 +955,13 @@ fn up(layer: *Hci, connection: *Connection, handle: u16) void {
     layer.changed = true;
     if (connection.unwanted) {
         connection.heard = true;
-        note(layer, connection, .up, 0);
+        note(layer, connection, if (connection.refused) .refused else .up, 0);
         answer(layer, .connect, connection.address, 0);
         if (!end(layer, connection, hci.HCI_ERR_REMOTE_USER_TERMINATED)) {
             connection.unwanted = false;
             answer(layer, .disconnect, connection.address, bluetooth.BTERR_NOMEM);
+            // A stranger's: ended once the queue has room.
+            if (connection.refused) connection.deadline = layer.now + REFUSE_AGAIN_MS;
         }
         return;
     }
@@ -1035,7 +1054,7 @@ fn failed(layer: *Hci, connection: *Connection, result: i32) void {
 fn down(layer: *Hci, connection: *Connection, result: i32, reason: i32) void {
     const made = connection.heard;
     const why = if (made) reason else failure(connection, reason);
-    note(layer, connection, if (made) .down else .not_made, why);
+    if (!connection.refused) note(layer, connection, if (made) .down else .not_made, why);
     channels.linkGone(layer, connection, why);
     att_client.linkGone(layer, connection, why);
     pairing.linkGone(layer, connection, why);
@@ -1177,8 +1196,11 @@ pub fn tick(layer: *Hci) void {
             },
             .listening => failed(layer, connection, bluetooth.BTERR_TIMEOUT),
             .disconnecting => down(layer, connection, bluetooth.BTERR_TIMEOUT, bluetooth.BTERR_TIMEOUT),
-            // The device's features not given in time: made without them.
-            .up => established(layer, connection),
+            // A stranger's link ended again; the device's features not
+            // given in time: made without them.
+            .up => if (connection.refused) {
+                if (!end(layer, connection, hci.HCI_ERR_REMOTE_USER_TERMINATED)) connection.deadline = layer.now + REFUSE_AGAIN_MS;
+            } else established(layer, connection),
             .free => {},
         }
     }

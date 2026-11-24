@@ -61,6 +61,7 @@ const bluetooth = sdk.bluetooth;
 const hci = bluetooth.hci;
 const _hci = @import("_hci.zig");
 const Hci = _hci.Hci;
+const advertising = @import("advertising.zig");
 const bonds = @import("bonds.zig");
 const connections = @import("connections.zig");
 const channels = @import("../l2cap/channels.zig");
@@ -201,10 +202,14 @@ pub fn pair(layer: *Hci, address: bluetooth.BTAddress, agent: u32, capability: ?
 }
 
 /// UnpairBTDevice: the bond with the device at `address` ended - to be
-/// deleted by the task - and a link to it ended. 0, or BTERR_NOTBONDED.
+/// deleted by the task - a link to it ended, and the advertising while
+/// hidden ended with the last bond given the identity. 0, or
+/// BTERR_NOTBONDED.
 pub fn unpair(layer: *Hci, address: bluetooth.BTAddress) i32 {
     if (!bonds.forget(layer, address)) return bluetooth.BTERR_NOTBONDED;
     if (connections.find(layer, address)) |connection| connections.close(layer, connection, hci.HCI_ERR_REMOTE_USER_TERMINATED);
+    // The last bond given the identity gone: no advertising while hidden.
+    advertising.update(layer);
     return 0;
 }
 

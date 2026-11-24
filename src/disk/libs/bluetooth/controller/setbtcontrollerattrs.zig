@@ -51,7 +51,12 @@ const _task = @import("../task/_task.zig");
 /// advertise beside - LE Read Supported States says which - and goes on
 /// after, BTCF_ADVERTISING set while it advertises; a name changed is
 /// advertised at once. Since 1.22 a controller made hidden takes a new
-/// private address over LE (BTController's `private_address`).
+/// private address over LE (BTController's `private_address`). Since
+/// 1.24 a controller hidden goes on advertising over LE while a bond
+/// says a device was given this machine's identity - from its private
+/// address, saying nothing, every second or so, BTCF_ADVERTISING set - so
+/// that such a device finds it and links to it; a link from a device that
+/// resolves to no bond is ended at once.
 ///
 /// On, visible until told otherwise and the name are kept for the
 /// controller's next start, by its address: in

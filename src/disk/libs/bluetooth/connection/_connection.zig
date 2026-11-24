@@ -16,9 +16,9 @@ pub const Entry = extern struct {
 };
 
 /// Whether a link is listed: one that is made - up, the device having
-/// answered on it - or being ended.
+/// answered on it - or being ended; never a stranger's, refused.
 pub fn listed(connection: *const connections.Connection) bool {
-    return (connection.state == .up or connection.state == .disconnecting) and connection.heard;
+    return (connection.state == .up or connection.state == .disconnecting) and connection.heard and !connection.refused;
 }
 
 /// A link of controller `id`, whose layer is `layer`, copied into an

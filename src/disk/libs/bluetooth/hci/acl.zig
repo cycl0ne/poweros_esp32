@@ -292,7 +292,8 @@ fn giveBack(layer: *Hci, le: bool, count: u16) void {
 }
 
 /// An ACL packet the controller handed up, from its header on: added to
-/// its link's frame, which goes up to L2CAP once it is whole.
+/// its link's frame, which goes up to L2CAP once it is whole - nothing of
+/// a stranger's link being ended, which is never read.
 pub fn received(layer: *Hci, bytes: []const u8) void {
     if (bytes.len < hci.HCI_ACL_HDR) return;
     const head = _hci.le16(bytes[0..2]);
@@ -301,6 +302,8 @@ pub fn received(layer: *Hci, bytes: []const u8) void {
     const length = @min(_hci.le16(bytes[2..4]), bytes.len - hci.HCI_ACL_HDR);
     const data = bytes[hci.HCI_ACL_HDR..][0..length];
     const connection = connections.byHandle(layer, handle) orelse return;
+    // A stranger's link being ended: nothing it sends is read.
+    if (connection.refused) return;
     // Data from the device: it has answered on the link.
     if (!connection.heard) connections.established(layer, connection);
     if (boundary == hci.ACL_CONTINUING) {

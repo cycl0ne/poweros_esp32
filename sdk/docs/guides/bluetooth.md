@@ -274,7 +274,19 @@ computer, and its name: complete where it fits in the advertisement's 31
 bytes, shortened there otherwise and then in the scan response as well,
 whole where it fits there. A name changed goes out at once. A device
 that scans finds the machine by its name and may link to it, the
-controller the link's peripheral. Hidden, nothing goes out over LE.
+controller the link's peripheral.
+
+**Hidden, it advertises for the devices given its identity** (below),
+and for nobody else: while a bond says a device was given it -
+connectable and undirected, every 1 to 1.28 s on all three channels,
+from the machine's private address, and saying nothing, the flags alone
+where a controller without BR/EDR must say so. Such a device resolves
+the address, finds the machine within seconds and links to it; nobody
+else learns what the machine is, or ties it to the machine. A link to it
+from a device that resolves to no bond is ended as soon as it is up
+(`HCI_ERR_REMOTE_USER_TERMINATED`): nothing it sends is read, it is not
+listed, and the log says it was refused ("refused: no bond with it, the
+machine hidden"). Hidden without such a bond, nothing goes out over LE.
 
 The advertising makes way for what the controller cannot do beside it,
 as its supported states say: a discovery's active scan, the background
@@ -284,14 +296,18 @@ controller that did not say its states does none of them beside it. It
 pauses while the controller's eight links are taken, and a device's link
 ends it: it goes on beside the link where the controller can, otherwise
 once the link is down. Refused, it is tried again ten seconds later.
+One kind ends before the other begins - the controller has answered its
+end - so that a link a device makes is known by the advertising it was
+made to, and the address.
 
 **Over LE the machine has a private address** beside its public one: a
 resolvable private address made from the identity resolving key it
 gives the devices it bonds with (below), so that a device with the key
 knows the address for the machine's, and nobody else ties it to the
 machine, or to the address before it. A discovery's active scan goes
-from it, and so do the links the machine makes to devices given its
-identity; the advertising while visible, the background scan - which
+from it, and so do the advertising while hidden and the links the
+machine makes to devices given its identity; the advertising while
+visible, the background scan - which
 sends nothing - and a link to any other device go from the public
 address, which such a device knows the machine by. A new one is made at
 every start, every 15 minutes, and when the controller is made hidden.
@@ -304,7 +320,8 @@ has none.
 A controller that is up says how it is now in its `flags` -
 `BTCF_POWERED`, `BTCF_CONNECTABLE` (pages answered, or advertising),
 `BTCF_VISIBLE` with `visible_left` the seconds left or
-`BT_VISIBLE_ALWAYS`, `BTCF_ADVERTISING` while it advertises, and
+`BT_VISIBLE_ALWAYS`, `BTCF_ADVERTISING` while it advertises - visible,
+or hidden for the devices given its identity - and
 `BTCF_DISCOVERING` - and its name in `name`; `le_states` holds the states
 it said it takes on together (`hci.LE_STATE_*`), and `private_address`
 its private address (`BTADDR_LE_RANDOM`), zeros while it has none.
@@ -436,8 +453,9 @@ discovery found it, else by the first that is up and on.
 **A link the device makes** - a page the controller hears - is taken on
 by itself while the controller is on, the controller staying the link's
 peripheral; a link for sound is refused. Over LE a device links to the
-controller while it advertises, the controller the link's peripheral; a
-device with a bond encrypts it with the bond's key (below). A
+controller while it advertises, the controller the link's peripheral -
+hidden, a device no bond resolves has its link ended at once; a device
+with a bond encrypts it with the bond's key (below). A
 controller keeps eight links.
 
 `DisconnectBTDevice` ends a link and waits until it is down; a link
@@ -1393,7 +1411,8 @@ new rows only where one differs from what it shows.
 
 `Bluetooth` lists the controllers: number, address - dashes until the
 controller has said it - state, and once it is up whether it is on or
-off, visible - for how long more - advertising, and looking, and the
+off, visible - for how long more - advertising, `advertising privately`
+while hidden for the devices given its identity, and looking, and the
 device and unit each is. `INFO`
 adds what each is: the chip and firmware its device gave it, how it is
 reached - USB, or a UART and its rate - the versions of its HCI and link

@@ -14,7 +14,11 @@
 //! none to a central that does not ask; a link the central made from its
 //! private address - a pairing on it taking the address in its checks, and
 //! the link made again from a new one, resolved by the central's key and
-//! encrypted with the bond; PairBTDevice on a link the device
+//! encrypted with the bond; the responder hidden, advertising from its
+//! private address for the central it gave its identity, heard there by
+//! the central's link made again, resolved by the bond's key and linked to
+//! from the central's own private address, encrypted with the bond;
+//! PairBTDevice on a link the device
 //! made asking the device to pair (Security Request). Refused: a legacy Pairing
 //! Request, too short a key, a pairing with no agent there, and the
 //! central's encryption by an EDIV and Rand once the pairing is through.
@@ -160,9 +164,11 @@ const Air = struct {
         const to = from ^ 1;
         const ends = [2]u8{ @truncate(handle), @truncate(handle >> 8) };
         switch (opcode) {
+            // The central linked to the address it initiated to, the
+            // peripheral to the one the central made the link from.
             hci.HCI_OP_LE_CREATE_CONNECTION => {
                 air.status(from, opcode);
-                air.linked(from, hci.ROLE_CENTRAL, air.layers[to].address, hci.LE_ADDR_PUBLIC);
+                air.linked(from, hci.ROLE_CENTRAL, params[6..12].*, params[5]);
                 if (params[12] == hci.LE_ADDR_RANDOM) {
                     air.linked(to, hci.ROLE_PERIPHERAL, air.random[from], hci.LE_ADDR_RANDOM);
                 } else {
@@ -173,11 +179,10 @@ const Air = struct {
                 air.random[from] = params[0..6].*;
                 air.complete(from, opcode, &.{0});
             },
-            // Scanning, it hears the other advertise from its public
-            // address.
+            // Scanning, it hears the other advertise.
             hci.HCI_OP_LE_SET_SCAN_ENABLE => {
                 air.complete(from, opcode, &.{0});
-                if (params[0] == 1) air.advertised(from, air.layers[to].address);
+                if (params[0] == 1) air.advertised(from, to);
             },
             hci.HCI_OP_LE_READ_REMOTE_FEATURES => {
                 air.status(from, opcode);
@@ -236,15 +241,18 @@ const Air = struct {
         air.event(to, hci.HCI_EV_LE_META, &params);
     }
 
-    /// LE Advertising Report to side `to`: the other, connectable, at its
-    /// public address `bytes`.
-    fn advertised(air: *Air, to: u1, bytes: [6]u8) void {
+    /// LE Advertising Report to side `to`: side `other`, connectable - from
+    /// its private address while its advertising is the hidden one, from
+    /// its public one otherwise.
+    fn advertised(air: *Air, to: u1, other: u1) void {
+        const advertising = &air.layers[other].advertising;
+        const hidden = advertising.on and advertising.kind == .hidden;
         var params: [12]u8 = @splat(0);
         params[0] = hci.HCI_LE_EV_ADVERTISING_REPORT;
         params[1] = 1;
         params[2] = hci.LE_ADV_IND;
-        params[3] = hci.LE_ADDR_PUBLIC;
-        params[4..10].* = bytes;
+        params[3] = if (hidden) hci.LE_ADDR_RANDOM else hci.LE_ADDR_PUBLIC;
+        params[4..10].* = if (hidden) air.random[other] else air.layers[other].address;
         params[11] = 0xC4; // -60 dBm
         air.event(to, hci.HCI_EV_LE_META, &params);
     }
@@ -656,6 +664,60 @@ test "a link the central made from its private address: a pairing on it takes th
     try testing.expect(resolved.encrypted and connections.find(&central, peripheral_address).?.encrypted);
     try testing.expectEqual(bluetooth.BTADDR_LE_RANDOM, resolved.address.kind);
     try testing.expectEqualSlices(u8, &central.privacy.address, &resolved.address.bytes);
+}
+
+test "the responder hidden, advertising from its private address for the central it gave its identity: the central's link made again hears it there, resolves it by the bond's key and links to it from its own private address, encrypted with the bond" {
+    var central_port = Port{};
+    var peripheral_port = Port{ .counter = 129 };
+    var central = upLayer(central_bytes, &central_port, 7, bluetooth.BTIO_NOINPUTNOOUTPUT);
+    var peripheral = upLayer(peripheral_bytes, &peripheral_port, 9, bluetooth.BTIO_NOINPUTNOOUTPUT);
+    central.irk = central_irk;
+    central.has_identity = true;
+    peripheral.irk = peripheral_irk;
+    peripheral.has_identity = true;
+    var air = Air{};
+    air.wire(&central, &peripheral);
+    // Each side's private address; no bond given the identity yet, so the
+    // peripheral, hidden, does not advertise.
+    for ([_]*Hci{ &central, &peripheral }) |layer| {
+        privacy.reset(layer);
+        _hci.tick(layer);
+    }
+    air.run();
+    try testing.expect(central.privacy.has and peripheral.privacy.has);
+    try testing.expect(!peripheral.advertising.on);
+    // Paired, each given the other's identity.
+    _ = pairing.pair(&central, peripheral_address, 7, bluetooth.BTIO_NOINPUTNOOUTPUT);
+    air.run();
+    try testing.expectEqual(@as(i32, 0), (try notice(&central, .done)).result);
+    try testing.expectEqual(@as(i32, 0), (try notice(&peripheral, .done)).result);
+    try testing.expect(bonds.find(&central, peripheral_address).?.identity_given);
+    try testing.expect(bonds.find(&peripheral, central_address).?.identity_given);
+    // The link ended: the peripheral advertises for the central, from its
+    // private address.
+    const ended = connections.disconnect(&central, peripheral_address);
+    air.run();
+    connections.release(&central, ended.waiting);
+    try testing.expect(peripheral.advertising.on and peripheral.advertising.kind == .hidden);
+
+    // Made again: heard at the private address, resolved by the bond's
+    // key, linked to there from the central's own private address, and
+    // encrypted with the bond.
+    const again = connections.connect(&central, peripheral_address);
+    air.run();
+    try testing.expectEqual(@as(i32, 0), central.waits[again.waiting].result);
+    connections.release(&central, again.waiting);
+    const link = connections.find(&central, peripheral_address).?;
+    try testing.expectEqual(bluetooth.BTADDR_LE_RANDOM, link.address.kind);
+    try testing.expectEqualSlices(u8, &peripheral.privacy.address, &link.address.bytes);
+    try testing.expect(connections.sameAddress(peripheral_address, link.identity.?));
+    try testing.expectEqual(bluetooth.BTADDR_LE_RANDOM, link.own.kind);
+    try testing.expect(link.encrypted);
+    const seen = connections.find(&peripheral, central_address).?;
+    try testing.expect(seen.encrypted and !seen.refused);
+    try testing.expectEqualSlices(u8, &central.privacy.address, &seen.address.bytes);
+    try testing.expectEqual(bluetooth.BTADDR_LE_RANDOM, seen.own.kind);
+    try testing.expectEqualSlices(u8, &peripheral.privacy.address, &seen.own.bytes);
 }
 
 test "PairBTDevice on a link the device made: the device asked to pair (Security Request), its pairing answered as the library's own" {

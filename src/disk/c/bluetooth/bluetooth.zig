@@ -10,7 +10,9 @@
 //!
 //!   Bluetooth          each controller on a line: its number, its
 //!                      address, whether it is up - and then on or off,
-//!                      visible, advertising, looking - and its device
+//!                      visible, advertising - privately, hidden for the
+//!                      devices given its identity - looking - and its
+//!                      device
 //!   Bluetooth INFO     and what it is: the device and unit, the chip and
 //!                      the firmware it was given, the versions of its
 //!                      HCI and link manager and who made it, its
@@ -113,7 +115,7 @@ const BluetoothBase = sdk.interface.bluetooth.BluetoothBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Bluetooth";
-const VERSION_STRING = "\x00$VER: Bluetooth 1.15 (24.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Bluetooth 1.16 (24.11.2026)\r\n";
 
 const template = "INFO/S,SCAN/S,TIME/K/N,POWER/K,NAME/K,VISIBLE/K,CONNECT/K,DISCONNECT/K,LIST/S,LE/S,RANDOM/S,BREDR/S,CONTROLLER/K/N," ++
     "PAIR/K,PIN/K,UNPAIR/K,BONDS/S,AGENT/S,SERVICES/K";
@@ -252,7 +254,8 @@ fn line(dl: *DosBase, controller: *const bluetooth.BTController) void {
                 _ = Printf(dl, ", visible for %u s", .{controller.visible_left});
             }
         }
-        if (flags & bluetooth.BTCF_ADVERTISING != 0) _ = dl.PutStr(", advertising");
+        // Hidden, it advertises for the devices given its identity alone.
+        if (flags & bluetooth.BTCF_ADVERTISING != 0) _ = dl.PutStr(if (flags & bluetooth.BTCF_VISIBLE != 0) ", advertising" else ", advertising privately");
         if (flags & bluetooth.BTCF_DISCOVERING != 0) _ = dl.PutStr(", looking");
     }
     _ = Printf(dl, "  %s unit %u\n", .{ controller.node.name orelse @as([*:0]const u8, "?"), controller.unit });

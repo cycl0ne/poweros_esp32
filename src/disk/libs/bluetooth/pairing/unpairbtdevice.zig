@@ -30,7 +30,9 @@ const _profile = @import("../profile/_profile.zig");
 /// first, told that it is forgotten (BTPU_FORGET), while its link is
 /// still there to tell the device so. Then the key is forgotten, its file
 /// and the services kept with it deleted before the call returns, and a
-/// link to the device ended. AddBTNotify's signal comes.
+/// link to the device ended. Since 1.24 a controller that is hidden stops
+/// advertising once no bond is left that was given this machine's
+/// identity (SetBTControllerAttrs). AddBTNotify's signal comes.
 ///
 /// CONTEXT:
 /// - Waits: yes, for the profile drivers, the library's task and the
