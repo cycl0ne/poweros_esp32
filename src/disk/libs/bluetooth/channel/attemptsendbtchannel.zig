@@ -7,9 +7,9 @@ const bluetooth = sdk.bluetooth;
 const BluetoothBase = @import("../bluetooth_base.zig").BluetoothBase;
 const _task = @import("../task/_task.zig");
 
-/// Sends a frame on a channel to the device's protocol where the
-/// controller's queue has room for it now, and answers at once where it
-/// has none.
+/// Sends a frame on a channel to the device's protocol where its link's
+/// share of the controller's queue has room for it now, and answers at
+/// once where it has none.
 ///
 /// SYNOPSIS:
 /// ```zig
@@ -31,15 +31,17 @@ const _task = @import("../task/_task.zig");
 /// BTERR_NOTCONNECTED for a channel that is closed.
 ///
 /// BEHAVIOR:
-/// The frame is copied into the controller's queue where the queue has
-/// room and no frame SendBTChannel waits to queue is before it - frames
-/// go in the order they are queued, the channel's and every other
-/// channel's on the controller. Otherwise nothing is sent, and the caller
-/// decides: a stream lets the frame go and keeps its time, a protocol
-/// sends it again later or with SendBTChannel. The queue fills where the
-/// controller sends more slowly than frames come - a link far off or
-/// busy, the radio scanning, paging or pairing - and empties as it
-/// catches up.
+/// The frame is copied into the controller's queue where its link's
+/// share of the queue has room and no frame SendBTChannel waits to queue
+/// to the same device is before it - a device's frames go in the order
+/// they are queued, the channel's and its other channels'. Otherwise
+/// nothing is sent, and the caller decides: a stream lets the frame go
+/// and keeps its time, a protocol sends it again later or with
+/// SendBTChannel. A link's share fills where the controller sends to the
+/// device more slowly than frames come - a link far off or busy, the
+/// radio scanning, paging or pairing, a device gone until its link is
+/// lost - and empties as it catches up; other devices' frames do not
+/// fill it.
 ///
 /// CONTEXT:
 /// - Waits: only for the library's task to take the call, not for room.

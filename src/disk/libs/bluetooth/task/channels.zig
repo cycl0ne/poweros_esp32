@@ -2,9 +2,10 @@
 //! The task's side of the channels (l2cap/channels.zig) and the service
 //! queries (sdp/client.zig; att/client.zig over LE): the commands of
 //! OpenBTChannel, StartBTChannel, CloseBTChannel, SendBTChannel,
-//! AttemptSendBTChannel and ObtainBTServices handed to the layer, what the layer tells of the channels sent to
-//! their ports as BTChannelMessages, and those messages - and GATT's
-//! (gatt.zig) - freed as they come back.
+//! AttemptSendBTChannel and ObtainBTServices handed to the layer, and
+//! whether a send waits behind another on its link; what the layer tells
+//! of the channels sent to their ports as BTChannelMessages, and those
+//! messages - and GATT's (gatt.zig) - freed as they come back.
 //!
 //! **A channel's block** is the BTChannel its holder has: OpenBTChannel's
 //! and StartBTChannel's made in their caller's context, one a device
@@ -284,8 +285,34 @@ pub fn close(controller: *Controller, command: *const Command) void {
     l2cap_channels.closeFor(layer, record);
 }
 
+/// Whether a send on the link of the command's channel waits for room on
+/// `sending` - the task's list of sends waiting - before `upto`, or
+/// anywhere on it for null: a link's sends go in their order, and a link
+/// whose share of the controller's queue is full holds up only its own.
+/// A waiting send whose channel is gone holds up nothing.
+pub fn linkWaits(controller: *Controller, sending: *exec.List, command: *const Command, upto: ?*exec.Node) bool {
+    const handle = linkOf(controller, command.block.?) orelse return false;
+    var it = sending.iterator();
+    while (it.next()) |node| {
+        if (node == upto) return false;
+        const message: *exec.Message = @fieldParentPtr("node", node);
+        const waiting: *Command = @fieldParentPtr("message", message);
+        if (waiting.waiting_on != @as(?*anyopaque, controller)) continue;
+        const link = linkOf(controller, waiting.block.?) orelse continue;
+        if (link == handle) return true;
+    }
+    return false;
+}
+
+/// The link of the block's channel, by its handle; null where the
+/// channel is gone.
+fn linkOf(controller: *Controller, block: *anyopaque) ?u16 {
+    const record = l2cap_channels.byOwner(&controller.layer, block) orelse return null;
+    return record.handle;
+}
+
 /// SendBTChannel: the frame queued on the block's channel - 0, BTERR_BUSY
-/// while the controller's queue is full, or why not.
+/// while its link's share of the controller's queue is full, or why not.
 pub fn send(controller: *Controller, command: *Command) i32 {
     const layer = &controller.layer;
     const record = l2cap_channels.byOwner(layer, command.block.?) orelse return bluetooth.BTERR_NOTCONNECTED;
@@ -293,8 +320,9 @@ pub fn send(controller: *Controller, command: *Command) i32 {
 }
 
 /// AttemptSendBTChannel: the frame queued on the block's channel - 0 - or
-/// BTERR_BUSY where the controller's queue is full or `behind` says sends
-/// wait for room before it; BTERR_NOTCONNECTED for a channel closed.
+/// BTERR_BUSY where its link's share of the controller's queue is full or
+/// `behind` says sends on its link wait for room before it;
+/// BTERR_NOTCONNECTED for a channel closed.
 pub fn attempt(controller: *Controller, command: *Command, behind: bool) i32 {
     const layer = &controller.layer;
     const record = l2cap_channels.byOwner(layer, command.block.?) orelse return bluetooth.BTERR_NOTCONNECTED;

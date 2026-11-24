@@ -43,12 +43,14 @@
 //! links' calls are; StartBTChannel is answered once the opening has
 //! begun, which its channel's port hears the end of, and CloseBTChannel
 //! once the device is asked to close the channel - its answer is the
-//! layer's. SendBTChannel waits on a list of its own while its
-//! controller's queue is full, tried again in its order as the queue
-//! empties; AttemptSendBTChannel is answered BTERR_BUSY at once where a
-//! send would wait. What the layer tells of a channel goes to the
-//! channel's port as messages of the task's, which come back on a port of
-//! their own (channels.zig); the task does not end while one is out.
+//! layer's. SendBTChannel waits on a list of its own while its link's
+//! share of the controller's queue is full, or while a send on its link
+//! waits before it, tried again in its order as the queue empties - so a
+//! link whose device stops taking frames holds up only its own sends;
+//! AttemptSendBTChannel is answered BTERR_BUSY at once where a send would
+//! wait. What the layer tells of a channel goes to the channel's port as
+//! messages of the task's, which come back on a port of their own
+//! (channels.zig); the task does not end while one is out.
 //!
 //! **GATT.** OpenBTGatt and the calls on a block - its characteristics, a
 //! value read or written, a subscription - are parked as the links' calls
@@ -785,8 +787,8 @@ fn closeChannel(work: *Work, command: *Command) void {
 }
 
 /// SendBTChannel: the frame queued - answered - or the command put on the
-/// list of sends waiting for room, behind those there already, so that a
-/// channel's frames go in their order: true.
+/// list of sends waiting for room, behind those on its link there
+/// already, so that a link's frames go in their order: true.
 fn sendChannel(work: *Work, command: *Command) bool {
     const base = work.base;
     const sys = base.sys_base;
@@ -795,20 +797,19 @@ fn sendChannel(work: *Work, command: *Command) bool {
         return false;
     };
     command.waiting_on = controller;
-    if (work.sending.isEmpty()) {
-        sys.ObtainSemaphore(&base.lock);
-        controller.layer.now = now(work);
-        command.result = taskchannels.send(controller, command);
-        sys.ReleaseSemaphore(&base.lock);
-        if (command.result != bluetooth.BTERR_BUSY) return false;
-    }
+    sys.ObtainSemaphore(&base.lock);
+    controller.layer.now = now(work);
+    command.result = if (taskchannels.linkWaits(controller, &work.sending, command, null)) bluetooth.BTERR_BUSY else taskchannels.send(controller, command);
+    sys.ReleaseSemaphore(&base.lock);
+    if (command.result != bluetooth.BTERR_BUSY) return false;
     sys.AddTail(&work.sending, &command.message.node);
     return true;
 }
 
-/// AttemptSendBTChannel: the frame queued where the controller's queue
-/// has room and no send waits for room before it - 0 - or BTERR_BUSY at
-/// once; never put on the list of sends waiting.
+/// AttemptSendBTChannel: the frame queued where its link's share of the
+/// controller's queue has room and no send on its link waits for room
+/// before it - 0 - or BTERR_BUSY at once; never put on the list of sends
+/// waiting.
 fn attemptSend(work: *Work, command: *Command) i32 {
     const base = work.base;
     const sys = base.sys_base;
@@ -816,7 +817,7 @@ fn attemptSend(work: *Work, command: *Command) i32 {
     sys.ObtainSemaphore(&base.lock);
     defer sys.ReleaseSemaphore(&base.lock);
     controller.layer.now = now(work);
-    return taskchannels.attempt(controller, command, !work.sending.isEmpty());
+    return taskchannels.attempt(controller, command, taskchannels.linkWaits(controller, &work.sending, command, null));
 }
 
 // --- GATT -------------------------------------------------------------------------
@@ -867,20 +868,22 @@ fn closeGatt(work: *Work, command: *Command) void {
     command.result = 0;
 }
 
-/// The sends waiting for room tried again in their order, until one finds
-/// none still.
+/// The sends waiting for room tried again in their order, each only once
+/// no send on its link waits before it: a link that finds none still
+/// holds up its own sends, not the others'.
 fn retrySends(work: *Work) void {
     const base = work.base;
     const sys = base.sys_base;
-    while (work.sending.first()) |node| {
+    var it = work.sending.iterator();
+    while (it.next()) |node| {
         const message: *exec.Message = @fieldParentPtr("node", node);
         const command: *Command = @fieldParentPtr("message", message);
         const controller: *Controller = @ptrCast(@alignCast(command.waiting_on.?));
         sys.ObtainSemaphore(&base.lock);
         controller.layer.now = now(work);
-        const result = taskchannels.send(controller, command);
+        const result = if (taskchannels.linkWaits(controller, &work.sending, command, node)) bluetooth.BTERR_BUSY else taskchannels.send(controller, command);
         sys.ReleaseSemaphore(&base.lock);
-        if (result == bluetooth.BTERR_BUSY) return;
+        if (result == bluetooth.BTERR_BUSY) continue;
         command.result = result;
         sys.Remove(node);
         sys.ReplyMsg(message);

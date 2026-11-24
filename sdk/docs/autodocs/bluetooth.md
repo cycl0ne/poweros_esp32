@@ -16,7 +16,7 @@ Generated from the source by `./zig build autodoc`.
 - [AddBTListener](#addbtlistener) - Serves a PSM: the channels devices open to it are taken, and come to a port.
 - [AddBTNotify](#addbtnotify) - Asks for signals whenever a controller is added, comes up, fails or goes, is set otherwise, finds a device, or a link, a pairing or a bond begins or ends.
 - [AddBTService](#addbtservice) - Serves a record of the program's own: the SDP server answers devices with it beside its own.
-- [AttemptSendBTChannel](#attemptsendbtchannel) - Sends a frame on a channel to the device's protocol where the controller's queue has room for it now, and answers at once where it has none.
+- [AttemptSendBTChannel](#attemptsendbtchannel) - Sends a frame on a channel to the device's protocol where its link's share of the controller's queue has room for it now, and answers at once where it has none.
 - [BTDeviceKind](#btdevicekind) - Says what a device is, as one of the kinds programs name.
 - [CloseBTChannel](#closebtchannel) - Closes a channel - one OpenBTChannel opened or StartBTChannel began, or one a device opened to a listener - and gives it back.
 - [CloseBTGatt](#closebtgatt) - Closes a block OpenBTGatt opened, and gives it back.
@@ -439,7 +439,7 @@ defer bt.RemBTService(served);
 
 ## AttemptSendBTChannel
 
-Sends a frame on a channel to the device's protocol where the controller's queue has room for it now, and answers at once where it has none.
+Sends a frame on a channel to the device's protocol where its link's share of the controller's queue has room for it now, and answers at once where it has none.
 
 **SYNOPSIS**
 
@@ -467,15 +467,17 @@ BTERR_NOTCONNECTED for a channel that is closed.
 
 **BEHAVIOR**
 
-The frame is copied into the controller's queue where the queue has
-room and no frame SendBTChannel waits to queue is before it - frames
-go in the order they are queued, the channel's and every other
-channel's on the controller. Otherwise nothing is sent, and the caller
-decides: a stream lets the frame go and keeps its time, a protocol
-sends it again later or with SendBTChannel. The queue fills where the
-controller sends more slowly than frames come - a link far off or
-busy, the radio scanning, paging or pairing - and empties as it
-catches up.
+The frame is copied into the controller's queue where its link's
+share of the queue has room and no frame SendBTChannel waits to queue
+to the same device is before it - a device's frames go in the order
+they are queued, the channel's and its other channels'. Otherwise
+nothing is sent, and the caller decides: a stream lets the frame go
+and keeps its time, a protocol sends it again later or with
+SendBTChannel. A link's share fills where the controller sends to the
+device more slowly than frames come - a link far off or busy, the
+radio scanning, paging or pairing, a device gone until its link is
+lost - and empties as it catches up; other devices' frames do not
+fill it.
 
 **CONTEXT**
 
@@ -2507,15 +2509,18 @@ BTERR_NOTCONNECTED for a channel that is closed.
 
 **BEHAVIOR**
 
-The frame is copied, and the call waits while the controller's queue
-is full - until the controller has sent what is before it, or the
-channel has closed. Frames go in the order they are sent, the channel's
-and every other channel's on the controller. AttemptSendBTChannel
-answers at once instead, for a caller that must not wait.
+The frame is copied, and the call waits while its link's share of the
+controller's queue is full - until the controller has sent what is
+before it, or the channel has closed. Every link keeps a share of its
+own, so a device that stops taking frames holds up only the sends to
+it. A device's frames go in the order they are sent, the channel's
+and its other channels'; other devices' take turns with them.
+AttemptSendBTChannel answers at once instead, for a caller that must
+not wait.
 
 **CONTEXT**
 
-- Waits: yes, for room in the controller's queue.
+- Waits: yes, for room in its link's share of the controller's queue.
 - Interrupts: no.
 - Locks: none may be held.
 - Process: a Task will do.

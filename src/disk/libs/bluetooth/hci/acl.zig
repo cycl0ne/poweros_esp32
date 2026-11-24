@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! A controller's ACL data: L2CAP's frames cut into ACL packets for it,
 //! and put together again from the packets it hands up; its buffers
-//! counted.
+//! shared out among the links.
 //!
 //! **Its buffers.** The controller holds `acl_packets` ACL packets for
 //! sending over BR/EDR, each of up to `acl_mtu` bytes of data, and LE's
@@ -10,12 +10,26 @@
 //! Completed Packets says it is sent, or until its link is down: then
 //! every buffer its link's packets held is free again.
 //!
-//! **Sent in order.** A frame waits in the layer's queue until there are
-//! buffers for its packets. It is cut into packets as long as the
+//! **Each link its share.** A link whose device stops taking packets -
+//! one switched off or out of range, until the link is lost - keeps the
+//! buffers its packets hold, and its frames wait. So every link that is
+//! up keeps one buffer of its pool and one place in the layer's queue
+//! for itself: a link takes a buffer while it holds none, and another
+//! only while more are free than the other links of its pool that hold
+//! none; it queues a frame while it has none queued, and another only
+//! while more places are free than the other links that have none
+//! queued. The rest go to the links that send. One each rather than an
+//! even split: with six buffers and three links, a split leaves the link
+//! that carries sound two, this leaves it four, and each of the others
+//! still has one to send with.
+//!
+//! **Sent in turn.** The links with frames queued take turns, a packet
+//! each, from the link after the one whose packet went last. A link's
+//! frames go in their order, each cut into packets as long as the
 //! controller takes - the first marked as a frame's start, flushable
-//! over BR/EDR and not over LE, the others as going on - and the frame
-//! after it goes once its last packet has. A link that goes down takes
-//! its frames not yet sent with it.
+//! over BR/EDR and not over LE, the others as going on - and its next
+//! frame begins once the last packet of this one has gone. A link that
+//! goes down takes its frames not yet sent with it.
 //!
 //! **Put together.** A link puts one frame together at a time: its first
 //! packet starts it, those that go on add to it until it has the length
@@ -44,16 +58,17 @@ pub const FRAME_ROOM: usize = l2cap.L2CAP_HDR + FRAME_MOST;
 /// controller takes less. The task's writes have room for it.
 pub const PACKET_MOST: usize = 1024;
 /// How many frames wait to be sent: every link's signalling and the
-/// channels' frames share them.
+/// channels' frames share the places, each link keeping one for itself.
 pub const OUT = 8;
 
-/// A frame's handle once its link is gone: never a link's.
-const GONE: u16 = 0xFFFF;
+/// A free place's handle: never a link's.
+const FREE: u16 = 0xFFFF;
 
-/// A frame waiting to be sent: its link, and how much of it has gone.
+/// A frame waiting to be sent: its link, its place in the link's order,
+/// and how much of it has gone.
 pub const Out = struct {
-    handle: u16 = GONE,
-    le: bool = false,
+    handle: u16 = FREE,
+    order: u64 = 0,
     length: usize = 0,
     sent: usize = 0,
     bytes: [FRAME_ROOM]u8 = undefined,
@@ -74,7 +89,7 @@ fn poolOf(layer: *Hci, le: bool) Pool {
 /// Every frame let go and every buffer forgotten: the controller is
 /// reset, and says again what it has.
 pub fn reset(layer: *Hci) void {
-    layer.out_head = 0;
+    for (&layer.out) |*frame| frame.handle = FREE;
     layer.out_count = 0;
     layer.acl_credits = 0;
     layer.le_credits = 0;
@@ -89,13 +104,17 @@ pub fn buffersRead(layer: *Hci) void {
 
 /// A frame on channel `cid` of the link queued, `payload` after its
 /// header, and sent as far as the controller takes it: false when the
-/// link is not up, the payload is too long or the queue is full.
+/// link is not up, the payload is too long or the link's share of the
+/// queue is full.
 pub fn send(layer: *Hci, connection: *const Connection, cid: u16, payload: []const u8) bool {
     if (connection.state != .up) return false;
-    if (payload.len > FRAME_MOST or layer.out_count == OUT) return false;
-    const frame = &layer.out[(layer.out_head + layer.out_count) % OUT];
+    if (payload.len > FRAME_MOST or !roomFor(layer, connection)) return false;
+    const frame = for (&layer.out) |*place| {
+        if (place.handle == FREE) break place;
+    } else return false;
     frame.handle = connection.handle;
-    frame.le = connection.le;
+    frame.order = layer.out_order;
+    layer.out_order += 1;
     frame.length = l2cap.L2CAP_HDR + payload.len;
     frame.sent = 0;
     frame.bytes[0] = @truncate(payload.len);
@@ -108,21 +127,50 @@ pub fn send(layer: *Hci, connection: *const Connection, cid: u16, payload: []con
     return true;
 }
 
+/// Whether a frame of the link's may be queued: while it has none
+/// queued, into any place free; another only while more places are free
+/// than the other links up that have none queued.
+fn roomFor(layer: *Hci, connection: *const Connection) bool {
+    const free = OUT - layer.out_count;
+    if (free == 0) return false;
+    if (queued(layer, connection.handle) == 0) return true;
+    var keeping: usize = 0;
+    for (&layer.connections) |*other| {
+        if (other == connection or other.state != .up) continue;
+        if (queued(layer, other.handle) == 0) keeping += 1;
+    }
+    return free > keeping;
+}
+
+/// How many of the link's frames are queued.
+fn queued(layer: *const Hci, handle: u16) usize {
+    var count: usize = 0;
+    for (&layer.out) |*frame| {
+        if (frame.handle == handle) count += 1;
+    }
+    return count;
+}
+
 /// The queue's frames sent, a packet at a time, while the controller has
-/// buffers and the transport takes them: on a new frame, on buffers
-/// given back, and once the transport takes packets again.
+/// buffers the links may take and the transport takes the packets: on a
+/// new frame, on buffers given back, on a link down, and once the
+/// transport takes packets again. A frame whose link is gone, or whose
+/// buffers the controller has not said, is let go.
 pub fn pump(layer: *Hci) void {
-    while (layer.out_count > 0) {
-        const frame = &layer.out[layer.out_head];
-        const connection = if (frame.handle == GONE) null else connections.byHandle(layer, frame.handle);
-        const pool = poolOf(layer, frame.le);
-        if (connection == null or pool.mtu == 0) {
-            pop(layer);
+    for (&layer.out) |*frame| {
+        if (frame.handle == FREE) continue;
+        const connection = connections.byHandle(layer, frame.handle) orelse {
+            letGo(layer, frame);
             continue;
-        }
-        if (pool.credits.* == 0) return;
+        };
+        if (poolOf(layer, connection.le).mtu == 0) letGo(layer, frame);
+    }
+    while (nextTurn(layer)) |turn| {
+        const frame = turn.frame;
+        const connection = turn.connection;
+        const pool = poolOf(layer, connection.le);
         const piece = @min(frame.length - frame.sent, pool.mtu, PACKET_MOST);
-        const boundary: u16 = if (frame.sent != 0) hci.ACL_CONTINUING else if (frame.le) hci.ACL_START_NO_FLUSH else hci.ACL_START;
+        const boundary: u16 = if (frame.sent != 0) hci.ACL_CONTINUING else if (connection.le) hci.ACL_START_NO_FLUSH else hci.ACL_START;
         const head = frame.handle | boundary << hci.ACL_BOUNDARY_SHIFT;
         const packet = &layer.acl_packet;
         packet[0] = @truncate(head);
@@ -132,15 +180,65 @@ pub fn pump(layer: *Hci) void {
         @memcpy(packet[hci.HCI_ACL_HDR..][0..piece], frame.bytes[frame.sent..][0..piece]);
         if (!layer.port.send(layer.port.context, hcidev.HCI_ACLDATA_PKT, packet[0 .. hci.HCI_ACL_HDR + piece])) return;
         pool.credits.* -= 1;
-        connection.?.outstanding += 1;
+        connection.outstanding += 1;
+        layer.out_turn = turn.index;
         frame.sent += piece;
-        if (frame.sent == frame.length) pop(layer);
+        if (frame.sent == frame.length) letGo(layer, frame);
     }
 }
 
-fn pop(layer: *Hci) void {
-    layer.out[layer.out_head].handle = GONE;
-    layer.out_head = (layer.out_head + 1) % OUT;
+/// A link's turn: its place in the table, and its frame that goes on.
+const Turn = struct {
+    index: u8,
+    connection: *Connection,
+    frame: *Out,
+};
+
+/// Whose packet goes next: the first link - from the one after the link
+/// whose packet went last - with a frame queued and a buffer it may
+/// take, and its oldest frame; null for none.
+fn nextTurn(layer: *Hci) ?Turn {
+    if (layer.out_count == 0) return null;
+    for (1..connections.CONNECTIONS + 1) |step| {
+        const index: u8 = @intCast((layer.out_turn + step) % connections.CONNECTIONS);
+        const connection = &layer.connections[index];
+        if (connection.state != .up and connection.state != .disconnecting) continue;
+        const frame = oldest(layer, connection.handle) orelse continue;
+        if (!mayTake(layer, connection)) continue;
+        return .{ .index = index, .connection = connection, .frame = frame };
+    }
+    return null;
+}
+
+/// The link's frame queued first - the one partly sent, where there is
+/// one; null for none.
+fn oldest(layer: *Hci, handle: u16) ?*Out {
+    var found: ?*Out = null;
+    for (&layer.out) |*frame| {
+        if (frame.handle != handle) continue;
+        if (found == null or frame.order < found.?.order) found = frame;
+    }
+    return found;
+}
+
+/// Whether the link may take a buffer of its pool: one while it holds
+/// none; another only while more are free than the other links up in its
+/// pool that hold none.
+fn mayTake(layer: *Hci, connection: *const Connection) bool {
+    const pool = poolOf(layer, connection.le);
+    if (pool.credits.* == 0) return false;
+    if (connection.outstanding == 0) return true;
+    var keeping: u16 = 0;
+    for (&layer.connections) |*other| {
+        if (other == connection or other.state != .up) continue;
+        if (poolOf(layer, other.le).credits != pool.credits) continue;
+        if (other.outstanding == 0) keeping += 1;
+    }
+    return pool.credits.* > keeping;
+}
+
+fn letGo(layer: *Hci, frame: *Out) void {
+    frame.handle = FREE;
     layer.out_count -= 1;
 }
 
@@ -168,9 +266,8 @@ pub fn completedPackets(layer: *Hci, params: []const u8) void {
 pub fn released(layer: *Hci, connection: *Connection) void {
     giveBack(layer, connection.le, connection.outstanding);
     connection.outstanding = 0;
-    for (0..layer.out_count) |index| {
-        const frame = &layer.out[(layer.out_head + index) % OUT];
-        if (frame.handle == connection.handle) frame.handle = GONE;
+    for (&layer.out) |*frame| {
+        if (frame.handle == connection.handle) letGo(layer, frame);
     }
 }
 

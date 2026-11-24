@@ -869,6 +869,8 @@ fn down(layer: *Hci, connection: *Connection, result: i32, reason: i32) void {
     const address = connection.address;
     connection.* = .{};
     layer.changed = true;
+    // The buffers it held, and its places in the queue, go to the others.
+    if (layer.state == bluetooth.BTCS_UP) acl.pump(layer);
     if (!made) answer(layer, .connect, address, why);
     answer(layer, .disconnect, address, result);
 }

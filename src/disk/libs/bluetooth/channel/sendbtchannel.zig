@@ -27,14 +27,17 @@ const _task = @import("../task/_task.zig");
 /// BTERR_NOTCONNECTED for a channel that is closed.
 ///
 /// BEHAVIOR:
-/// The frame is copied, and the call waits while the controller's queue
-/// is full - until the controller has sent what is before it, or the
-/// channel has closed. Frames go in the order they are sent, the channel's
-/// and every other channel's on the controller. AttemptSendBTChannel
-/// answers at once instead, for a caller that must not wait.
+/// The frame is copied, and the call waits while its link's share of the
+/// controller's queue is full - until the controller has sent what is
+/// before it, or the channel has closed. Every link keeps a share of its
+/// own, so a device that stops taking frames holds up only the sends to
+/// it. A device's frames go in the order they are sent, the channel's
+/// and its other channels'; other devices' take turns with them.
+/// AttemptSendBTChannel answers at once instead, for a caller that must
+/// not wait.
 ///
 /// CONTEXT:
-/// - Waits: yes, for room in the controller's queue.
+/// - Waits: yes, for room in its link's share of the controller's queue.
 /// - Interrupts: no.
 /// - Locks: none may be held.
 /// - Process: a Task will do.

@@ -424,7 +424,12 @@ A link being ended is listed until it is down.
 **What a link carries.** Its data goes as L2CAP frames of up to 1024
 bytes, cut into the packets the controller takes, sent within its
 buffers - a packet holds one until the controller says it is sent - and
-put together again from the packets it hands up. On the signalling
+put together again from the packets it hands up. Every link that is up
+keeps one of the controller's buffers, and one place in the library's
+queue of frames, for itself; the rest go to the links that send, which
+take turns, a packet each. So a device that stops taking packets -
+switched off or out of range, until its link is lost - holds up only
+its own frames. On the signalling
 channel the library answers what a device asks of any link: what it
 supports - its fixed channels, the signalling one alone - and an echo.
 Over BR/EDR it opens and takes the channels to protocols (Channels and
@@ -616,18 +621,19 @@ library's, each replied once it is read:
 A channel has at most 32 of its frames out unreplied: those past them
 are let go and counted in its block (`dropped`). `SendBTChannel` sends
 a frame of at most `mtu_out` bytes - `BTERR_TOOLONG` past it - waiting
-while the controller's queue is full, and answers `BTERR_NOTCONNECTED`
-once the channel is closed. The queue fills where the controller sends
-more slowly than frames come: a link far off or busy, the radio
-scanning, paging or pairing. `AttemptSendBTChannel` answers
-`BTERR_BUSY` at once instead, the frame not sent, for a caller that must
-not wait - a stream lets the frame go and keeps its time.
-`CloseBTChannel` asks the device to close the channel and gives its
-block back without waiting for the answer; what was on the port about
-it and not taken is taken back, so that a port several channels share
-holds nothing of one that is closed. Until the device answers - five
-seconds at the most - the channel is its link's, and a link made for it
-ends two seconds after.
+while its link's share of the controller's queue is full, and answers
+`BTERR_NOTCONNECTED` once the channel is closed. A link's share fills
+where the controller sends to the device more slowly than frames come:
+a link far off or busy, the radio scanning, paging or pairing, a device
+gone until its link is lost - the other links' frames go on meanwhile.
+`AttemptSendBTChannel` answers `BTERR_BUSY` at once instead, the frame
+not sent, for a caller that must not wait - a stream lets the frame go
+and keeps its time. `CloseBTChannel` asks the device to close the
+channel and gives its block back without waiting for the answer; what
+was on the port about it and not taken is taken back, so that a port
+several channels share holds nothing of one that is closed. Until the
+device answers - five seconds at the most - the channel is its link's,
+and a link made for it ends two seconds after.
 
 **A listener** takes the channels devices open to a PSM:
 
@@ -1028,7 +1034,8 @@ devices at most, a stream each, on a task of its own, which waits for
 no channel it opens (`StartBTChannel`) or closes, and for no room for a
 packet (`AttemptSendBTChannel`): a device slow to answer - one that
 holds a channel pending while its user is asked - stops no other
-device's sound.
+device's sound, nor does one switched off while it plays, whose packets
+wait in its own share of the controller's buffers.
 
 **The stream** is set up by whichever side comes first. The driver
 serves PSM 25 - a listener for the channels of bonded devices, and a

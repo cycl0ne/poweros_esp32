@@ -184,14 +184,17 @@ pub const Hci = struct {
     scan: scan.Scan = .{},
 
     /// Its links (connections.zig) and the calls waiting on them; the
-    /// ACL data's (acl.zig): the frames waiting to be sent, the buffers
-    /// the controller has free - BR/EDR's, and LE's where it has its own
-    /// - and the room a packet is put together in.
+    /// ACL data's (acl.zig): the frames waiting to be sent, how many, the
+    /// order the next is given and the link - by its place in the table -
+    /// whose packet went last; the buffers the controller has free -
+    /// BR/EDR's, and LE's where it has its own - and the room a packet is
+    /// put together in.
     connections: [connections.CONNECTIONS]connections.Connection = @splat(.{}),
     waits: [connections.WAITS]connections.Wait = @splat(.{}),
     out: [acl.OUT]acl.Out = @splat(.{}),
-    out_head: u8 = 0,
     out_count: u8 = 0,
+    out_order: u64 = 0,
+    out_turn: u8 = connections.CONNECTIONS - 1,
     acl_credits: u16 = 0,
     le_credits: u16 = 0,
     le_own: bool = false,

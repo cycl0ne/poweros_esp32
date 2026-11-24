@@ -5,7 +5,11 @@
 //! of a kind while one is made; a device's page taken on, a link for
 //! sound refused; a name asked for over the link; the ACL data - a frame
 //! put together from its packets, one cut into packets as long as the
-//! controller takes, the buffers counted and given back; the signalling
+//! controller takes, the buffers counted and given back, each link's
+//! share of them and of the queue - a link whose device takes nothing
+//! holding up only its own frames, its end handing the rest on at once -
+//! the links' turns a packet each, LE's own buffers not held up by
+//! BR/EDR's; the signalling
 //! channels' answers, an LE peripheral's parameters taken or refused, the
 //! attribute protocol's and the security manager's refusals; a link
 //! ended, one being made taken back, the power going off, a hardware
@@ -435,6 +439,100 @@ test "a frame cut into packets as long as the controller takes, sent within its 
     // A count for a link that is gone is let go.
     event(&layer, hci.HCI_EV_NUMBER_OF_COMPLETED_PACKETS, &.{ 1, 0x42, 0x00, 0x02, 0x00 });
     try testing.expectEqual(@as(u16, 6), layer.acl_credits);
+}
+
+test "each link its share: one whose device takes nothing leaves a buffer and a place in the queue to the other, whose frames go; its end hands the rest on at once" {
+    var recorder = Recorder{};
+    var layer = upLayer(&recorder);
+    try linked(&layer, &recorder, peer, 0x0042);
+    try linked(&layer, &recorder, caller, 0x0043);
+    const stuck = connections.find(&layer, peer).?;
+    const other = connections.find(&layer, caller).?;
+    const before = recorder.packet_count;
+
+    // The device on 0x0042 takes nothing: its link takes five of the six
+    // buffers and queues seven frames of the eight, and no more.
+    var taken: usize = 0;
+    while (acl.send(&layer, stuck, 0x0040, "stuck")) taken += 1;
+    try testing.expectEqual(@as(usize, 5 + 7), taken);
+    try testing.expectEqual(before + 5, recorder.packet_count);
+    try testing.expectEqual(@as(u16, 5), stuck.outstanding);
+    try testing.expectEqual(@as(u16, 1), layer.acl_credits);
+    // The other's frames go, a buffer at a time: the second once the
+    // first is sent.
+    try testing.expect(acl.send(&layer, other, 0x0041, "one"));
+    try expectFrame(&recorder, 0x0043, 0x0041, "one");
+    try testing.expect(acl.send(&layer, other, 0x0041, "two"));
+    try testing.expectEqual(before + 6, recorder.packet_count);
+    try testing.expect(!acl.send(&layer, stuck, 0x0040, "stuck"));
+    event(&layer, hci.HCI_EV_NUMBER_OF_COMPLETED_PACKETS, &.{ 1, 0x43, 0x00, 0x01, 0x00 });
+    try expectFrame(&recorder, 0x0043, 0x0041, "two");
+
+    // Two of the stuck link's packets sent at last, the other with a
+    // frame queued: the two take turns.
+    try testing.expect(acl.send(&layer, other, 0x0041, "three"));
+    try testing.expectEqual(before + 7, recorder.packet_count);
+    event(&layer, hci.HCI_EV_NUMBER_OF_COMPLETED_PACKETS, &.{ 1, 0x42, 0x00, 0x02, 0x00 });
+    try testing.expectEqual(before + 9, recorder.packet_count);
+    try testing.expectEqual(@as(u16, 0x0042), recorder.packets[before + 7].handle);
+    try expectFrame(&recorder, 0x0043, 0x0041, "three");
+
+    // Its link lost: the buffers its packets held, and its places, go to
+    // the other at once.
+    try testing.expect(acl.send(&layer, other, 0x0041, "four"));
+    try testing.expectEqual(before + 9, recorder.packet_count);
+    disconnectionComplete(&layer, 0x0042, hci.HCI_ERR_CONNECTION_TIMEOUT);
+    try expectFrame(&recorder, 0x0043, 0x0041, "four");
+    try testing.expectEqual(@as(u8, 0), layer.out_count);
+    try testing.expectEqual(@as(u16, 3), layer.acl_credits);
+}
+
+test "the links take turns a packet each, each link's frame going on where it left off" {
+    var recorder = Recorder{};
+    var layer = upLayer(&recorder);
+    try linked(&layer, &recorder, peer, 0x0042);
+    try linked(&layer, &recorder, caller, 0x0043);
+    layer.acl_mtu = 8;
+    layer.acl_credits = 0;
+    const before = recorder.packet_count;
+    // Sixteen bytes each with their headers: two packets of eight.
+    try testing.expect(acl.send(&layer, connections.find(&layer, peer).?, 0x0040, "first frame!"));
+    try testing.expect(acl.send(&layer, connections.find(&layer, caller).?, 0x0041, "second frame"));
+    try testing.expectEqual(before, recorder.packet_count);
+    layer.acl_credits = 4;
+    acl.pump(&layer);
+    try testing.expectEqual(before + 4, recorder.packet_count);
+    const expected = [_]struct { handle: u16, boundary: u16 }{
+        .{ .handle = 0x0042, .boundary = hci.ACL_START },
+        .{ .handle = 0x0043, .boundary = hci.ACL_START },
+        .{ .handle = 0x0042, .boundary = hci.ACL_CONTINUING },
+        .{ .handle = 0x0043, .boundary = hci.ACL_CONTINUING },
+    };
+    for (expected, recorder.packets[before..][0..4]) |want, *packet| {
+        try testing.expectEqual(want.handle, packet.handle);
+        try testing.expectEqual(want.boundary, packet.boundary);
+    }
+    try testing.expectEqualSlices(u8, "t frame!", recorder.packets[before + 2].bytes());
+    try testing.expectEqualSlices(u8, "nd frame", recorder.packets[before + 3].bytes());
+}
+
+test "LE's own buffers: an LE link's frames go while BR/EDR's are all held" {
+    var recorder = Recorder{};
+    var layer = upLayer(&recorder);
+    try linked(&layer, &recorder, peer, 0x0042);
+    try leLinked(&layer, sensor, 0x0040);
+    const before = recorder.packet_count;
+    // Alone in BR/EDR's pool, the link takes all six buffers; its frames
+    // past them wait, leaving the LE link a place in the queue.
+    while (acl.send(&layer, connections.find(&layer, peer).?, 0x0040, "held")) {}
+    try testing.expectEqual(before + 6, recorder.packet_count);
+    try testing.expectEqual(@as(u16, 0), layer.acl_credits);
+    try testing.expectEqual(@as(u8, 7), layer.out_count);
+    try testing.expect(acl.send(&layer, connections.find(&layer, sensor).?, l2cap.CID_ATT, &.{ 0x52, 0x03, 0x00, 0x01 }));
+    try testing.expectEqual(before + 7, recorder.packet_count);
+    try testing.expectEqual(@as(u16, 0x0040), recorder.lastPacket().handle);
+    try testing.expectEqual(hci.ACL_START_NO_FLUSH, recorder.lastPacket().boundary);
+    try testing.expectEqual(@as(u16, 8 - 1), layer.le_credits);
 }
 
 test "LE: the peripheral's parameters taken within the bounds; a request the attribute server does not take and pairing refused" {

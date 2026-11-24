@@ -9,7 +9,9 @@
 //! count of frames out given back to its channel; a block's values with
 //! their attribute, 32 of them out at most and those past them counted,
 //! its close told, and what is on its port taken back as CloseBTGatt
-//! does.
+//! does; a send waiting for room holding up the sends on its own link
+//! only - not another link's, not another controller's, and nothing once
+//! its channel has closed.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -20,6 +22,7 @@ const utility_library = @import("host_rom").utility;
 const bluetooth_init = @import("../bluetooth_init.zig");
 const _base = @import("../bluetooth_base.zig");
 const _controller = @import("../controller/_controller.zig");
+const _task = @import("../task/_task.zig");
 const taskchannels = @import("../task/channels.zig");
 const taskgatt = @import("../task/gatt.zig");
 const att_client = @import("../att/client.zig");
@@ -93,6 +96,45 @@ test "a closed channel's messages still on its port taken back; one taken, and a
     sys.DeleteMsgPort(port);
     sys.DeleteMsgPort(replies);
     base.channel_replies = null;
+    _ = sys.RemLibrary(lib);
+    try utility_library.tearDown(kub);
+    kexec.deinit();
+}
+
+test "a send waiting for room holds up the sends on its own link only: not another link's, not another controller's, nothing once its channel has closed" {
+    const kub = try utility_library.setUp();
+    const made = kexec.InitResident(kexec.SysBase, &bluetooth_init.bluetooth_library_tag, null) orelse return error.NoLibrary;
+    const lib: *exec.Library = @ptrCast(@alignCast(made));
+    const base = _base.bluetoothBase(lib);
+    const sys = base.sys_base;
+    var controller = _controller.Controller{ .base = base, .id = 3, .layer = .{ .port = .{ .context = undefined, .send = sendNothing } } };
+    var second = _controller.Controller{ .base = base, .id = 4, .layer = .{ .port = .{ .context = undefined, .send = sendNothing } } };
+    var waits: bluetooth.BTChannel = .{};
+    var same_link: bluetooth.BTChannel = .{};
+    var other_link: bluetooth.BTChannel = .{};
+    var elsewhere: bluetooth.BTChannel = .{};
+    controller.layer.channels[0] = .{ .state = .open, .handle = 0x0042, .local_cid = 0x40, .owner = &waits };
+    controller.layer.channels[1] = .{ .state = .open, .handle = 0x0042, .local_cid = 0x41, .owner = &same_link };
+    controller.layer.channels[2] = .{ .state = .open, .handle = 0x0043, .local_cid = 0x42, .owner = &other_link };
+    second.layer.channels[0] = .{ .state = .open, .handle = 0x0042, .local_cid = 0x40, .owner = &elsewhere };
+    var sending: exec.List = undefined;
+    sending.init(.message);
+    var waiting = _task.Command{ .kind = .send_channel, .block = &waits, .waiting_on = &controller };
+    sys.AddTail(&sending, &waiting.message.node);
+
+    // Another channel on its link waits behind it; a channel on another
+    // link, or on another controller's link of the same handle, does not.
+    const behind = _task.Command{ .kind = .send_channel, .block = &same_link };
+    try testing.expect(taskchannels.linkWaits(&controller, &sending, &behind, null));
+    try testing.expect(!taskchannels.linkWaits(&controller, &sending, &.{ .kind = .attempt_send_channel, .block = &other_link }, null));
+    try testing.expect(!taskchannels.linkWaits(&second, &sending, &.{ .kind = .send_channel, .block = &elsewhere }, null));
+    // Nothing waits before the send itself.
+    try testing.expect(!taskchannels.linkWaits(&controller, &sending, &waiting, &waiting.message.node));
+    // Its channel closed: it holds up nothing.
+    controller.layer.channels[0] = .{};
+    try testing.expect(!taskchannels.linkWaits(&controller, &sending, &behind, null));
+
+    sys.Remove(&waiting.message.node);
     _ = sys.RemLibrary(lib);
     try utility_library.tearDown(kub);
     kexec.deinit();
