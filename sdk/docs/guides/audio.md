@@ -957,7 +957,9 @@ once something other than silence plays and suspending it after five
 seconds of silence (the [Bluetooth guide](bluetooth.md#headphones-and-speakers-as-outputs)).
 A device that takes an absolute volume has the volume set on it, the
 sound leaving at full scale, and a volume changed on the device becomes
-the output's volume; any other has the volume in the mix.
+the output's volume; any other has the volume in the mix. Its buttons -
+play, pause, next, the volume - are media keys, which
+`SYS:Commodities/MediaKeys` takes.
 
 A **source** is a way in, on a list of its own: a driver of the source
 kind makes them with `CreateSourceTagList`, `NextSource` walks them,

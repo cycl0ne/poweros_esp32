@@ -3,13 +3,18 @@
 //! as a source does it - a keyboard's or a mouse's driver - with nothing
 //! plugged in. Built against the SDK only.
 //!
-//!   KeySource TEXT,RETURN/S,MOUSE/S,X/K/N,Y/K/N,DX/K/N,DY/K/N,CLICK/S,WHEEL/K/N
+//!   KeySource TEXT,RETURN/S,MOUSE/S,X/K/N,Y/K/N,DX/K/N,DY/K/N,CLICK/S,WHEEL/K/N,
+//!             CODE/K/N,MEDIA/S
 //!
 //! TEXT is typed: the device is opened with KBDF_SOURCE and each character
 //! goes in with KBD_ADDEVENT as the key at its place on a US keyboard,
 //! pressed and let go, Shift held around a capital or a shifted sign;
-//! RETURN presses Return after it. What appears is the active keymap's
-//! reading of those places, as with any keyboard. MOUSE opens mouse.device
+//! RETURN presses Return after it, CODE the rawkey of that number - 115,
+//! 0x73, is play/pause - pressed and let go. What appears is the active
+//! keymap's reading of those places, as with any keyboard. MEDIA opens the
+//! source as one of media keys alone (KBDF_MEDIA), as a remote control's
+//! driver does. It says how many keyboards keyboard.device counts while
+//! the source is open (KBD_READSOURCES): one of media keys alone is none. MOUSE opens mouse.device
 //! with MOUSEF_SOURCE: X and Y put the pointer there, DX and DY move it by
 //! that much (a distance, IEQUALIFIER_RELATIVEMOUSE), CLICK presses the
 //! left button and lets it go, WHEEL turns the wheel by that many notches
@@ -28,10 +33,10 @@ const DosBase = sdk.interface.dos.DosBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "KeySource";
-const VERSION_STRING = "\x00$VER: KeySource 1.1 (11.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: KeySource 1.2 (24.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "TEXT,RETURN/S,MOUSE/S,X/K/N,Y/K/N,DX/K/N,DY/K/N,CLICK/S,WHEEL/K/N";
+const template = "TEXT,RETURN/S,MOUSE/S,X/K/N,Y/K/N,DX/K/N,DY/K/N,CLICK/S,WHEEL/K/N,CODE/K/N,MEDIA/S";
 const arg_text = 0;
 const arg_return = 1;
 const arg_mouse = 2;
@@ -41,11 +46,15 @@ const arg_dx = 5;
 const arg_dy = 6;
 const arg_click = 7;
 const arg_wheel = 8;
-const arg_count = 9;
+const arg_code = 9;
+const arg_media = 10;
+const arg_count = 11;
 
 const MSG_NODEVICE = "%s: cannot open %s as a source\n";
 const MSG_SKIPPED = "%s: no key for '%c', left out\n";
 const MSG_TYPED = "Typed %d keys\n";
+const MSG_KEYBOARDS = "Keyboards keyboard.device counts with this source open: %u\n";
+const MSG_BADCODE = "%s: CODE is a rawkey, 0 to 127\n";
 const MSG_MOUSED = "Sent %d mouse events\n";
 const MSG_FAILED = "%s: the device answered error %d\n";
 
@@ -86,17 +95,20 @@ fn send(sys: *ExecBase, io: *exec.IOStdReq, command: u16, events: []InputEvent) 
     return sys.DoIO(&io.req);
 }
 
-fn typeText(sys: *ExecBase, dl: *DosBase, text: ?[*:0]const u8, press_return: bool) i32 {
+fn typeText(sys: *ExecBase, dl: *DosBase, text: ?[*:0]const u8, press_return: bool, code: ?i32, media: bool) i32 {
     const port = sys.CreateMsgPort() orelse return dos.RETURN_FAIL;
     defer sys.DeleteMsgPort(port);
     var io: exec.IOStdReq = .{};
     io.req.message.reply_port = port;
     io.req.message.length = @sizeOf(exec.IOStdReq);
-    if (sys.OpenDevice(kb.KEYBOARDNAME, 0, &io.req, kb.KBDF_SOURCE) != 0) {
+    const as_what = kb.KBDF_SOURCE | (if (media) kb.KBDF_MEDIA else 0);
+    if (sys.OpenDevice(kb.KEYBOARDNAME, 0, &io.req, as_what) != 0) {
         _ = Printf(dl, MSG_NODEVICE, .{ COMMAND_NAME, kb.KEYBOARDNAME });
         return dos.RETURN_FAIL;
     }
     defer sys.CloseDevice(&io.req);
+    io.req.command = kb.KBD_READSOURCES;
+    if (sys.DoIO(&io.req) == 0) _ = Printf(dl, MSG_KEYBOARDS, .{@as(u32, @intCast(io.actual))});
     var typed: u32 = 0;
     if (text) |t| {
         var length: usize = 0;
@@ -132,6 +144,10 @@ fn typeText(sys: *ExecBase, dl: *DosBase, text: ?[*:0]const u8, press_return: bo
     }
     if (press_return) {
         var events = [_]InputEvent{ rawkey(kb.RAWKEY_RETURN, true), rawkey(kb.RAWKEY_RETURN, false) };
+        if (send(sys, &io, kb.KBD_ADDEVENT, &events) == 0) typed += 1;
+    }
+    if (code) |pressed| {
+        var events = [_]InputEvent{ rawkey(@intCast(pressed), true), rawkey(@intCast(pressed), false) };
         if (send(sys, &io, kb.KBD_ADDEVENT, &events) == 0) typed += 1;
     }
     _ = Printf(dl, MSG_TYPED, .{typed});
@@ -216,5 +232,12 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
 
     if (argv[arg_mouse] != 0) return useMouse(sys, dl, &argv);
     const text: ?[*:0]const u8 = if (argv[arg_text] != 0) @ptrFromInt(argv[arg_text]) else null;
-    return typeText(sys, dl, text, argv[arg_return] != 0);
+    const code = number(&argv, arg_code);
+    if (code) |pressed| {
+        if (pressed < 0 or pressed > kb.HIGH_KEYCODE) {
+            _ = Printf(dl, MSG_BADCODE, .{COMMAND_NAME});
+            return dos.RETURN_ERROR;
+        }
+    }
+    return typeText(sys, dl, text, argv[arg_return] != 0, code, argv[arg_media] != 0);
 }

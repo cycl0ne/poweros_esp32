@@ -19,6 +19,8 @@ pub fn Source(comptime name: [:0]const u8, comptime command: u16) type {
             events: [max_events]ie.InputEvent = @splat(.{}),
             count: u32 = 0,
             opens: u32 = 0,
+            /// The last open's flags.
+            flags: u32 = 0,
             closes: u32 = 0,
         };
 
@@ -41,10 +43,11 @@ pub fn Source(comptime name: [:0]const u8, comptime command: u16) type {
             return dev;
         }
 
-        fn open(dev: *exec.Device, _: *exec.IORequest, _: u32, _: u32) callconv(.c) i32 {
+        fn open(dev: *exec.Device, _: *exec.IORequest, _: u32, flags: u32) callconv(.c) i32 {
             const stand_in: *Device = @fieldParentPtr("dev", dev);
             dev.open_cnt += 1;
             stand_in.opens += 1;
+            stand_in.flags = flags;
             return 0;
         }
 

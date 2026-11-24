@@ -3,7 +3,8 @@
 //! messages (signalling.zig), the stream's signalling as this machine,
 //! the source, drives it (source.zig), the media channel's packets
 //! (`Media`), and the device's volume as this machine, AVRCP's
-//! controller, sets and follows it (avrcp.zig). Built by name into the
+//! controller, sets and follows it, and its buttons, which this machine
+//! takes as AVRCP's target (avrcp.zig). Built by name into the
 //! programs that import it - a2dp - C:test/BTAudio and btaudio.device;
 //! the owner opens the channels and sends what these make.
 //!

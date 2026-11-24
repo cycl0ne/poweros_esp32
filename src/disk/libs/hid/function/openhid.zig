@@ -47,13 +47,15 @@ const Function = _function.Function;
 /// and where a consumer control's report keeps its media keys - play,
 /// pause, stop, previous, next, rewind, fast forward, mute, the volume
 /// down and up. A keyboard or a consumer control makes the function a
-/// source of keyboard.device, a mouse or a tablet one of mouse.device,
-/// and a descriptor with several all of them, its reports told apart by
-/// their IDs; a consumer control whose reports cannot be told from the
-/// keyboard's or the mouse's is passed over. With HIDA_Boot, where the
-/// descriptor does not describe that kind, the function reads the boot
-/// protocol's report of it and nothing else, and says so with HIDF_BOOT:
-/// the driver then puts the device in the boot protocol. The sources' requests reply to HIDA_ReplyPort, or to a port
+/// source of keyboard.device - a consumer control alone one of media keys
+/// alone (KBDF_MEDIA), no keyboard - a mouse or a tablet one of
+/// mouse.device, and a descriptor with several all of them, its reports
+/// told apart by their IDs; a consumer control whose reports cannot be
+/// told from the keyboard's or the mouse's is passed over. With
+/// HIDA_Boot, where the descriptor does not describe that kind, the
+/// function reads the boot protocol's report of it and nothing else, and
+/// says so with HIDF_BOOT: the driver then puts the device in the boot
+/// protocol. The sources' requests reply to HIDA_ReplyPort, or to a port
 /// the function makes for the task that calls OpenHID.
 ///
 /// CONTEXT:
@@ -147,7 +149,10 @@ pub fn OpenHID(base: *HIDBase, descriptor: ?[*]const u8, length: u32, tags: ?[*]
         flags |= hid.HIDF_CONSUMER;
     }
     if (keyboard != null or consumer != null) {
-        if (!_function.openSource(sys, &function.keyboard_source, kb.KEYBOARDNAME, kb.KBDF_SOURCE, function.port.?)) {
+        // Media keys alone - a remote control - are no keyboard: the one
+        // on the screen still comes up for a board with nothing else.
+        const as_what = kb.KBDF_SOURCE | (if (keyboard == null) kb.KBDF_MEDIA else 0);
+        if (!_function.openSource(sys, &function.keyboard_source, kb.KEYBOARDNAME, as_what, function.port.?)) {
             _function.release(base, function);
             return null;
         }

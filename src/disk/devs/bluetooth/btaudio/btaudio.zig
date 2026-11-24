@@ -21,7 +21,8 @@
 //! again two seconds later, four times in all. The source's record
 //! (an Audio Source, a player) is served while the driver drives a device,
 //! so that a device looking for one finds it, and the controller's (a
-//! remote control's controller, for an amplifier) with it.
+//! remote control's controller, for an amplifier) and the target's (a
+//! remote control's target, a player) with it.
 //!
 //! **The sink** is there while the stream is open: made once its media
 //! channel is, named as the device's bond names it, and deleted once the
@@ -62,7 +63,20 @@
 //! audio.device, which hands it back. A device without one, or without
 //! the channel, has the volume in the sound, as an output without a
 //! volume of its own has; one whose channel closes has it there from then
-//! on. Its commands as a controller - of a player - are answered as not
+//! on.
+//!
+//! **The buttons.** A headphone is a controller too, of the player it
+//! plays for: its buttons come on the same channel, AVRCP's PASS THROUGH,
+//! this machine their target - a player, the profile at 1.4 - and are
+//! keyboard.device's media keys, through a source of media keys alone
+//! (KBDF_MEDIA) opened at the device's first: play, pause, stop, next and
+//! previous, rewind and fast forward, and the volume up and down and mute
+//! where a device sends them. A key goes down as its button is pressed
+//! and up as it is let go of - or as another is pressed, two seconds
+//! after its last press where its release does not come (a device holding
+//! a button says so again sooner), and as the channel closes. Of the
+//! device's other commands, UNIT INFO and SUBUNIT INFO are answered as a
+//! panel's, GetCapabilities as a target's without events, the rest as not
 //! implemented.
 //!
 //! **One task for every device.** The channels' messages, the listeners',
@@ -94,6 +108,8 @@ const avrcp = bluetooth.avrcp;
 const btprofile = sdk.devices.btprofile;
 const timer = sdk.devices.timer;
 const audiocontrol = sdk.devices.audiocontrol;
+const kb = sdk.devices.keyboard;
+const ie = sdk.devices.inputevent;
 const rta = sdk.rta;
 const utility = sdk.utility;
 const TagItem = utility.TagItem;
@@ -111,8 +127,8 @@ const remote_control = a2dp.avrcp;
 pub const DEVICE_NAME = "btaudio.device";
 const DRIVER_NAME = "btaudio";
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 3;
-const BUILD_DATE = "23.11.2026";
+const DEVICE_REVISION = 4;
+const BUILD_DATE = "24.11.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++
@@ -168,6 +184,9 @@ const control_answer_ms = 2000;
 /// a device's own suspension is over.
 const idle_ms = 5000;
 const hold_ms = 1000;
+/// How long a button pressed is held without its release: a device that
+/// holds one says so again sooner.
+const key_hold_ms = 2000;
 
 /// A sink's tag, this driver's own: the device it plays to.
 const BTA_Headphone = utility.TAG_USER | 0x4254;
@@ -270,6 +289,13 @@ const Headphone = struct {
     sink_id: u32,
     /// `gain_count` as the task last sent the device its volume.
     gain_acted: u32,
+    /// The device's buttons as keys: keyboard.device's request, opened as
+    /// a source of media keys alone at the first and closed with the
+    /// control channel, and when the key a button holds is let go of
+    /// where its release does not come first; 0 for none held.
+    keys: exec.IOStdReq,
+    keys_open: bool,
+    key_by: u64,
 
     // The sink's: made and deleted by the task, used by audio.device's.
     sink: ?*rta.AudioSink,
@@ -303,10 +329,12 @@ const BtAudioBase = extern struct {
     task: exec.Task = .{},
     stack: ?*anyopaque = null,
     /// The task's ports: the channels' and the listener's messages, the
-    /// commands, and its timer's request.
+    /// commands, its timer's request, and the buttons' keys' requests -
+    /// which keyboard.device answers at once, none coming back there.
     port: ?*exec.MsgPort = null,
     command_port: ?*exec.MsgPort = null,
     timer_port: ?*exec.MsgPort = null,
+    key_port: ?*exec.MsgPort = null,
     starter: ?*exec.Task = null,
     start_signal: i8 = -1,
     /// The task's own signals: the sinks' - a buffer handed over, a sink
@@ -323,12 +351,14 @@ const BtAudioBase = extern struct {
     timer_at: u64 = 0,
     eclock_hz: u64 = 0,
     /// The task's: the controllers' changes told; while it drives a
-    /// device, the listeners on PSM 25 and 23 and the two records served.
+    /// device, the listeners on PSM 25 and 23 and the three records
+    /// served.
     notify: ?*bluetooth.BTNotify = null,
     listener: ?*bluetooth.BTListener = null,
     record: ?*bluetooth.BTRecord = null,
     control_listener: ?*bluetooth.BTListener = null,
     control_record: ?*bluetooth.BTRecord = null,
+    target_record: ?*bluetooth.BTRecord = null,
     /// The devices driven, a slot each: added by the binder (a bind),
     /// taken by the task (an unbind), under the lock.
     devices: [max_devices]?*anyopaque = @splat(null),
@@ -393,6 +423,18 @@ const control_record = sequence(&(attribute(sdp.ATTR_SERVICE_CLASS_ID_LIST, &seq
     attribute(sdp.ATTR_SERVICE_NAME, &text("Remote Control")) ++
     attribute(avdtp.ATTR_SUPPORTED_FEATURES, &uint16(avrcp.AVRCP_CATEGORY_AMPLIFIER))));
 
+/// The target's record: a remote control's target reached over AVCTP on
+/// PSM 23, the profile at 1.4 - the controller's, so that a device that
+/// reads either finds the same - and the protocol at 1.3, for a player:
+/// a headphone's buttons.
+const target_record = sequence(&(attribute(sdp.ATTR_SERVICE_CLASS_ID_LIST, &sequence(&uuid16(avrcp.UUID_REMOTE_CONTROL_TARGET))) ++
+    attribute(sdp.ATTR_PROTOCOL_DESCRIPTOR_LIST, &sequence(&(sequence(&(uuid16(sdp.UUID_L2CAP) ++ uint16(l2cap.PSM_AVCTP))) ++ sequence(&(uuid16(avrcp.UUID_AVCTP) ++ uint16(avrcp.AVCTP_VERSION)))))) ++
+    attribute(sdp.ATTR_BROWSE_GROUP_LIST, &sequence(&uuid16(sdp.UUID_PUBLIC_BROWSE_ROOT))) ++
+    attribute(sdp.ATTR_LANGUAGE_BASE_LIST, &sequence(&(uint16(0x656E) ++ uint16(0x006A) ++ uint16(0x0100)))) ++
+    attribute(sdp.ATTR_PROFILE_DESCRIPTOR_LIST, &sequence(&sequence(&(uuid16(avrcp.UUID_REMOTE_CONTROL) ++ uint16(avrcp.AVRCP_VERSION))))) ++
+    attribute(sdp.ATTR_SERVICE_NAME, &text("Remote Control Target")) ++
+    attribute(avdtp.ATTR_SUPPORTED_FEATURES, &uint16(avrcp.AVRCP_CATEGORY_PLAYER))));
+
 // --- the task ---------------------------------------------------------------------
 
 fn btAudioTask(sys: *ExecBase) callconv(.c) void {
@@ -440,10 +482,11 @@ fn setUpTask(base: *Base) bool {
     base.port = sys.CreateMsgPort();
     base.command_port = sys.CreateMsgPort();
     base.timer_port = sys.CreateMsgPort();
+    base.key_port = sys.CreateMsgPort();
     base.sound_signal = sys.AllocSignal(-1);
     base.gone_signal = sys.AllocSignal(-1);
     base.notify_signal = sys.AllocSignal(-1);
-    if (base.port == null or base.command_port == null) return false;
+    if (base.port == null or base.command_port == null or base.key_port == null) return false;
     if (base.sound_signal < 0 or base.gone_signal < 0 or base.notify_signal < 0) return false;
     const timer_port = base.timer_port orelse return false;
     base.timer_io = .{};
@@ -560,7 +603,8 @@ fn checkTimer(base: *Base) void {
 }
 
 /// When the task is next to look: a channel to open, a command or a
-/// media channel given up on, a stream without sound to suspend.
+/// media channel given up on, a stream without sound to suspend, a key
+/// whose release is late.
 fn nextWake(base: *Base) ?u64 {
     var driven: [max_devices]?*Headphone = undefined;
     snapshot(base, &driven);
@@ -568,13 +612,14 @@ fn nextWake(base: *Base) ?u64 {
     for (driven) |slot| {
         const device = slot orelse continue;
         const source = &device.source;
-        var times: [6]u64 = @splat(0);
+        var times: [7]u64 = @splat(0);
         if (device.signalling_channel == null) times[0] = device.open_at;
         if (source.waiting()) times[1] = device.answer_by;
         times[2] = device.media_by;
         if (source.phase == .streaming and !source.waiting()) times[3] = device.last_sound +% ticksOf(base, idle_ms);
         if (device.control_channel == null) times[4] = device.control_at;
         if (device.remote.waiting()) times[5] = device.control_by;
+        times[6] = device.key_by;
         for (times) |ticks| {
             if (ticks == 0) continue;
             earliest = if (earliest) |other| @min(other, ticks) else ticks;
@@ -654,7 +699,7 @@ fn opened(base: *Base, channel: *bluetooth.BTChannel) void {
 /// A channel the device or its link ended: the signalling channel ends
 /// the stream with it; the media channel the stream, which is closed; the
 /// control channel the device's volume, which the sound carries from then
-/// on.
+/// on, and its buttons.
 fn closed(base: *Base, channel: *bluetooth.BTChannel) void {
     if (findByChannel(base, channel)) |device| {
         if (channel == device.signalling_channel) {
@@ -816,8 +861,10 @@ fn controlOpened(base: *Base, device: *Headphone, channel: *bluetooth.BTChannel)
     sendControl(base, device, device.remote.begin());
 }
 
-/// The control channel gone: the volume in the sound from then on.
+/// The control channel gone: the volume in the sound from then on, and
+/// the key a button holds let go of.
 fn controlEnded(base: *Base, device: *Headphone) void {
+    closeKeys(base, device);
     device.remote = .{};
     device.control_by = 0;
     device.volume_known = false;
@@ -835,7 +882,8 @@ fn sendControl(base: *Base, device: *Headphone, bytes: []const u8) void {
 
 /// What a frame of the control channel, or a command given up on, meant:
 /// the volume set on the device from now on, or kept in the sound; the
-/// device's volume as it says it; its own change of it.
+/// device's volume as it says it; its own change of it; its buttons, as
+/// keys, the release of a key held waited for from a press.
 fn controlOutcome(base: *Base, device: *Headphone, what: remote_control.Outcome) void {
     switch (what) {
         .none => {},
@@ -857,7 +905,58 @@ fn controlOutcome(base: *Base, device: *Headphone, what: remote_control.Outcome)
             device.volume_known = true;
             changedThere(base, device, value);
         },
+        .keys => |keys| {
+            pressKeys(base, device, keys.up, keys.down);
+            if (keys.pressed) device.key_by = now(base) +% ticksOf(base, key_hold_ms);
+            if (device.remote.held == null) device.key_by = 0;
+        },
     }
+}
+
+/// Keys of the device's buttons handed to keyboard.device - the one let
+/// go of first - through the device's source, opened at the first.
+fn pressKeys(base: *Base, device: *Headphone, up: ?u8, down: ?u8) void {
+    var events: [2]ie.InputEvent = @splat(.{});
+    var count: usize = 0;
+    if (up) |code| {
+        events[count] = .{ .class = ie.IECLASS_RAWKEY, .code = code | ie.IECODE_UP_PREFIX };
+        count += 1;
+        sayAt(base, exec.LOG_DEBUG, "%s: %02x:%02x:%02x:%02x:%02x:%02x: key %02x up\n", device.address, .{@as(u32, code)});
+    }
+    if (down) |code| {
+        events[count] = .{ .class = ie.IECLASS_RAWKEY, .code = code };
+        count += 1;
+        sayAt(base, exec.LOG_DEBUG, "%s: %02x:%02x:%02x:%02x:%02x:%02x: key %02x down\n", device.address, .{@as(u32, code)});
+    }
+    if (count == 0 or !openKeys(base, device)) return;
+    const keys = &device.keys;
+    keys.req.command = kb.KBD_ADDEVENT;
+    keys.data = &events;
+    keys.length = @intCast(count * @sizeOf(ie.InputEvent));
+    _ = base.sys_base.DoIO(&keys.req);
+}
+
+/// keyboard.device opened for the device's buttons, once: a source of
+/// media keys alone, which is no keyboard. False where it does not open.
+fn openKeys(base: *Base, device: *Headphone) bool {
+    if (device.keys_open) return true;
+    device.keys = .{};
+    device.keys.req.message.reply_port = base.key_port;
+    device.keys.req.message.length = @sizeOf(exec.IOStdReq);
+    if (base.sys_base.OpenDevice(kb.KEYBOARDNAME, 0, &device.keys.req, kb.KBDF_SOURCE | kb.KBDF_MEDIA) != 0) {
+        say(base, "%s: %02x:%02x:%02x:%02x:%02x:%02x: keyboard.device does not open - its buttons do nothing\n", device.address, .{});
+        return false;
+    }
+    device.keys_open = true;
+    return true;
+}
+
+/// The device's source closed, which lets go of the key it holds.
+fn closeKeys(base: *Base, device: *Headphone) void {
+    device.key_by = 0;
+    if (!device.keys_open) return;
+    device.keys_open = false;
+    base.sys_base.CloseDevice(&device.keys.req);
 }
 
 /// The device changed its volume itself - its buttons: the output's
@@ -911,8 +1010,13 @@ fn percentOfGain(gain: u32) u32 {
 }
 
 /// The control channel opened from here once its time has come; a
-/// command on it given up on; a volume audio.device handed over sent.
+/// command on it given up on; the key a button holds let go of once its
+/// release is late; a volume audio.device handed over sent.
 fn tendControl(base: *Base, device: *Headphone) void {
+    if (device.key_by != 0 and now(base) >= device.key_by) {
+        device.key_by = 0;
+        pressKeys(base, device, device.remote.letGo(), null);
+    }
     if (device.control_channel == null) {
         if (device.control_at != 0 and now(base) >= device.control_at) openControl(base, device);
         return;
@@ -1268,21 +1372,23 @@ fn nameOf(base: *Base, device: *Headphone) void {
     }
 }
 
-/// The listeners on PSM 25 and 23 and the source's and the controller's
-/// records, added where they are not: false where PSM 25 is served by
-/// someone else.
+/// The listeners on PSM 25 and 23 and the source's, the controller's and
+/// the target's records, added where they are not: false where PSM 25 is
+/// served by someone else.
 fn serve(base: *Base) bool {
     const bt = base.bt_base.?;
     if (base.record == null) base.record = bt.AddBTService(&record, record.len);
     if (base.control_record == null) base.control_record = bt.AddBTService(&control_record, control_record.len);
+    if (base.target_record == null) base.target_record = bt.AddBTService(&target_record, target_record.len);
     if (base.listener == null) base.listener = bt.AddBTListener(l2cap.PSM_AVDTP, base.port.?, bluetooth.BTLSF_SECURE);
     if (base.control_listener == null) base.control_listener = bt.AddBTListener(l2cap.PSM_AVCTP, base.port.?, bluetooth.BTLSF_SECURE);
     return base.listener != null;
 }
 
 /// A device let go of, on the task: its sink deleted, its channels
-/// closed, the media's first, those opening given up, its slot freed - and the listeners and the
-/// records taken away with the last device. What a listener leaves on the
+/// closed, the media's first, those opening given up, the key its button
+/// holds let go of, its slot freed - and the listeners and the records
+/// taken away with the last device. What a listener leaves on the
 /// port is read as a device's channel it does not drive: closed.
 fn letGo(base: *Base, device: *Headphone, flags: u32) void {
     _ = flags;
@@ -1299,6 +1405,7 @@ fn letGo(base: *Base, device: *Headphone, flags: u32) void {
         device.control_channel = null;
         bt.CloseBTChannel(channel);
     }
+    closeKeys(base, device);
     sys.ObtainSemaphore(&base.lock);
     var left: usize = 0;
     for (&base.devices) |*slot| {
@@ -1313,10 +1420,12 @@ fn letGo(base: *Base, device: *Headphone, flags: u32) void {
         bt.RemBTListener(base.control_listener);
         bt.RemBTService(base.record);
         bt.RemBTService(base.control_record);
+        bt.RemBTService(base.target_record);
         base.listener = null;
         base.control_listener = null;
         base.record = null;
         base.control_record = null;
+        base.target_record = null;
     }
 }
 

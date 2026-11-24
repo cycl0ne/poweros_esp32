@@ -212,6 +212,8 @@ test "media keys: a remote's alone, and a keyboard's beside its keys, each repor
     try testing.expectEqual(hid.HIDF_CONSUMER, function.flags);
     try testing.expectEqual(@as(u32, 1), rig.keyboard.opens);
     try testing.expectEqual(@as(u32, 0), rig.mouse.opens);
+    // Media keys alone are no keyboard.
+    try testing.expectEqual(kb.KBDF_SOURCE | kb.KBDF_MEDIA, rig.keyboard.flags);
     // Play/pause pressed, then volume up with it, then both let go.
     input(&rig, function, &.{ 0x02, 0x08 });
     var events = KeyboardSource.taken(rig.keyboard);
@@ -235,6 +237,7 @@ test "media keys: a remote's alone, and a keyboard's beside its keys, each repor
     const both = rig.hb.OpenHID(&keyboard_media, keyboard_media.len, null) orelse return error.NotOpened;
     try testing.expectEqual(hid.HIDF_KEYBOARD | hid.HIDF_CONSUMER, both.flags);
     try testing.expectEqual(@as(u32, 2), rig.keyboard.opens);
+    try testing.expectEqual(kb.KBDF_SOURCE, rig.keyboard.flags);
     // A held, then next pressed: the media report does not let A go.
     input(&rig, both, &.{ 0x01, 0x00, 0x00, 0x04, 0, 0, 0, 0, 0 });
     events = KeyboardSource.taken(rig.keyboard);

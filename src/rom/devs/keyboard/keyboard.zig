@@ -15,6 +15,9 @@
 //! down once (`Keys.pressFrom` counts the holders), and a source that
 //! closes lets go of what it still holds (`Keys.letGo`). Every board has
 //! the device; with no source it opens all the same and its readers wait.
+//! KBD_READSOURCES counts the sources but those opened with KBDF_MEDIA as
+//! well - a remote control's, a headphone's buttons - which are no
+//! keyboard.
 //!
 //! **The emulator's keyboard** is a source the device keeps itself, on the
 //! qemu board only (its keyboard part): our QEMU build's display queues the
@@ -46,8 +49,8 @@ pub const DEVICE_NAME = kb.KEYBOARDNAME;
 const DEVICE_VERSION = 1;
 /// 1: sources (KBDF_SOURCE, KBD_ADDEVENT, KBD_READSOURCES), and on every
 /// board. 2: the emulator's stack is the system's, not the first
-/// opener's. 3: the standard stack.
-const DEVICE_REVISION = 4;
+/// opener's. 3: the standard stack. 4: the media keys. 5: KBDF_MEDIA.
+const DEVICE_REVISION = 5;
 const BUILD_DATE = "24.11.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
@@ -92,7 +95,8 @@ const KeyboardBase = extern struct {
     queue: rawkey.Queue = .{},
     /// The keys the emulator's keyboard holds down.
     emulator: rawkey.Held = @splat(0),
-    /// The sources open (KBDF_SOURCE), for KBD_READSOURCES.
+    /// The sources open (KBDF_SOURCE) that are keyboards - not those of
+    /// media keys alone (KBDF_MEDIA) - for KBD_READSOURCES.
     sources: u32 = 0,
 };
 
@@ -101,6 +105,8 @@ const KeyboardBase = extern struct {
 const Source = extern struct {
     unit: exec.Unit = .{},
     held: rawkey.Held = @splat(0),
+    /// Opened with KBDF_MEDIA: media keys alone, no keyboard.
+    media: u8 = 0,
 };
 
 fn keyboardBase(dev: *exec.Device) *KeyboardBase {
@@ -404,10 +410,10 @@ fn open(dev: *exec.Device, io: *exec.IORequest, unit_number: u32, flags: u32) ca
     if (flags & kb.KBDF_SOURCE != 0) {
         const memory = sys.AllocMem(@sizeOf(Source), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return exec.IOERR_OPENFAIL;
         const source: *Source = @ptrCast(@alignCast(memory));
-        source.* = .{};
+        source.* = .{ .media = @intFromBool(flags & kb.KBDF_MEDIA != 0) };
         source.unit.open_cnt = 1;
         io.unit = &source.unit;
-        kbb.sources += 1;
+        if (source.media == 0) kbb.sources += 1;
     } else {
         io.unit = &kbb.unit;
     }
@@ -428,8 +434,8 @@ fn close(dev: *exec.Device, io: *exec.IORequest) callconv(.c) ?*anyopaque {
         kbb.keys.letGo(&source.held, &kbb.queue, time);
         serveReads(kbb);
         sys.ReleaseLock(&kbb.lock);
+        if (source.media == 0) kbb.sources -= 1;
         sys.FreeMem(source, @sizeOf(Source));
-        kbb.sources -= 1;
     }
     io.unit = null;
     kbb.unit.open_cnt -= 1;

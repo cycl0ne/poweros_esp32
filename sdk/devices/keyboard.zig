@@ -16,6 +16,9 @@
 //! from, so a reader sees one keyboard however many are plugged in. A key
 //! held on two keyboards is down once, and goes up when the last of them
 //! lets it go; a source that closes lets go of every key it still holds.
+//! A source of media keys alone - a remote control, a headphone's buttons
+//! - opens with `KBDF_MEDIA` too: it is no keyboard, and the keyboard on
+//! the screen still comes up for a machine whose only keys are those.
 //! The device opens with no source at all, and its readers then simply
 //! wait.
 //!
@@ -38,6 +41,10 @@ pub const KEYBOARDNAME = "keyboard.device";
 /// its own (io_Unit), which keeps the keys this source holds down; it may
 /// still read like any other open.
 pub const KBDF_SOURCE: u32 = 1 << 0;
+/// With KBDF_SOURCE: a source of media keys alone - a remote control, a
+/// headphone's buttons - which is no keyboard: KBD_READSOURCES leaves it
+/// out. Since 1.5.
+pub const KBDF_MEDIA: u32 = 1 << 1;
 
 /// Wait for keys and take them: io_Data an array of `InputEvent`, io_Length
 /// its size in bytes, a whole number of them. It returns when at least one
@@ -56,8 +63,8 @@ pub const KBD_READMATRIX: u16 = devices.CMD_NONSTD + 1;
 /// not, changes nothing. Answered at once; io_Actual the bytes taken.
 pub const KBD_ADDEVENT: u16 = devices.CMD_NONSTD + 2;
 /// How many keyboards there are now: io_Actual the sources open - each
-/// keyboard's driver, a USB keyboard's among them - and the emulator's
-/// keyboard if it gives keys. Answered at once; what intuition asks
+/// keyboard's driver, a USB keyboard's among them, but no source of media
+/// keys alone (KBDF_MEDIA) - and the emulator's keyboard if it gives keys. Answered at once; what intuition asks
 /// before it puts a keyboard on the screen.
 pub const KBD_READSOURCES: u16 = devices.CMD_NONSTD + 3;
 

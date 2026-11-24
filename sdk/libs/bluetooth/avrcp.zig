@@ -3,8 +3,9 @@
 //! Profile's numbers - its services' classes and the categories of their
 //! features, its own commands and events - and those of the protocol under
 //! it, AVCTP, and of the AV/C frames that carries. Its channel opens to
-//! l2cap.PSM_AVCTP. A controller sends the commands; a target - the
-//! device that plays, for its volume - answers them.
+//! l2cap.PSM_AVCTP. A controller sends the commands, a target answers
+//! them: a headphone is the target of its own volume, and the controller
+//! of the player whose buttons it has.
 //!
 //! **An AVCTP packet** begins with a byte: the transaction label in its
 //! upper four bits - a command's, which its response carries back - the
@@ -30,6 +31,15 @@
 //! volume now and whose CHANGED response comes once the device changes it,
 //! the event registered again after each. GetCapabilities with
 //! AVRCP_CAPABILITY_EVENTS lists the events a target has.
+//!
+//! **The buttons** are PASS THROUGH (AVC_OP_PASS_THROUGH), a CONTROL to
+//! the panel: the button (AVC_PASS_*) in the first operand's lower seven
+//! bits, the length of the data after it in the second - 0 for these -
+//! sent as it is pressed, again while it is held, and with
+//! AVC_PASS_RELEASED as it is let go of. The target answers ACCEPTED with
+//! the same operands, or NOT IMPLEMENTED for a button it has not. UNIT
+//! INFO and SUBUNIT INFO, STATUS commands to the unit (AVC_SUBUNIT_UNIT),
+//! are what a controller asks first: answered STABLE, the unit a panel.
 
 /// The services' classes (BTService.class16): a target's record; the
 /// profile, which a controller's record names as well as its own class.
@@ -89,6 +99,29 @@ pub const AVC_OP_SUBUNIT_INFO: u8 = 0x31;
 pub const AVC_OP_PASS_THROUGH: u8 = 0x7C;
 /// The bytes of an AV/C frame's header: the type, the subunit, the opcode.
 pub const AVC_HEADER = 3;
+/// The unit itself as a frame's subunit, its type 0x1F and its ID 7:
+/// UNIT INFO's and SUBUNIT INFO's.
+pub const AVC_SUBUNIT_UNIT: u8 = 0xFF;
+/// The first operand of UNIT INFO's answer, and of SUBUNIT INFO's command
+/// and answer - its first page, without an extension.
+pub const AVC_INFO_FIRST: u8 = 0x07;
+/// PASS THROUGH's first operand: the button in its lower seven bits,
+/// AVC_PASS_RELEASED where it was let go of.
+pub const AVC_PASS_OPERATION: u8 = 0x7F;
+pub const AVC_PASS_RELEASED: u8 = 0x80;
+/// The buttons: the volume up and down and mute; play, stop, pause,
+/// rewind and fast forward; the next and the one before (forward and
+/// backward).
+pub const AVC_PASS_VOLUME_UP: u8 = 0x41;
+pub const AVC_PASS_VOLUME_DOWN: u8 = 0x42;
+pub const AVC_PASS_MUTE: u8 = 0x43;
+pub const AVC_PASS_PLAY: u8 = 0x44;
+pub const AVC_PASS_STOP: u8 = 0x45;
+pub const AVC_PASS_PAUSE: u8 = 0x46;
+pub const AVC_PASS_REWIND: u8 = 0x48;
+pub const AVC_PASS_FAST_FORWARD: u8 = 0x49;
+pub const AVC_PASS_FORWARD: u8 = 0x4B;
+pub const AVC_PASS_BACKWARD: u8 = 0x4C;
 
 /// The profile's commands after the opcode: the company ID, the PDU, the
 /// packet type and the parameters' length - this many bytes.

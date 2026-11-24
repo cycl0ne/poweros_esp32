@@ -360,6 +360,7 @@ flowchart TB
     m_bsdsocket_library -.-> m_slip_device
     m_bsdsocket_library --> m_timer_device
     m_btaudio_device --> m_bluetooth_library
+    m_btaudio_device --> m_keyboard_device
     m_btaudio_device --> m_rta_library
     m_btaudio_device --> m_timer_device
     m_bthid_device --> m_bluetooth_library

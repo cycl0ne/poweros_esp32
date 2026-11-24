@@ -135,13 +135,15 @@ hid.library/OpenHID
 	and where a consumer control's report keeps its media keys - play,
 	pause, stop, previous, next, rewind, fast forward, mute, the volume
 	down and up. A keyboard or a consumer control makes the function a
-	source of keyboard.device, a mouse or a tablet one of mouse.device,
-	and a descriptor with several all of them, its reports told apart by
-	their IDs; a consumer control whose reports cannot be told from the
-	keyboard's or the mouse's is passed over. With HIDA_Boot, where the
-	descriptor does not describe that kind, the function reads the boot
-	protocol's report of it and nothing else, and says so with HIDF_BOOT:
-	the driver then puts the device in the boot protocol. The sources' requests reply to HIDA_ReplyPort, or to a port
+	source of keyboard.device - a consumer control alone one of media keys
+	alone (KBDF_MEDIA), no keyboard - a mouse or a tablet one of
+	mouse.device, and a descriptor with several all of them, its reports
+	told apart by their IDs; a consumer control whose reports cannot be
+	told from the keyboard's or the mouse's is passed over. With
+	HIDA_Boot, where the descriptor does not describe that kind, the
+	function reads the boot protocol's report of it and nothing else, and
+	says so with HIDF_BOOT: the driver then puts the device in the boot
+	protocol. The sources' requests reply to HIDA_ReplyPort, or to a port
 	the function makes for the task that calls OpenHID.
 
    CONTEXT

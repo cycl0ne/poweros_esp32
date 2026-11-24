@@ -1085,11 +1085,25 @@ full scale; past 100% the device is at its loudest and the sound
 carries the rest. A volume changed on the device - its buttons - becomes
 the output's volume, as `Audio LIST` shows it. A device without it, or
 without the channel, has the volume in the sound, on top of its own.
-Its commands as a controller - of a player - are answered as not
-implemented. The log says which it is - `the volume set on the device`,
-or `takes no absolute volume: the volume in the sound` - and, at
-`C:Log LEVEL debug`, each volume set on the device and each changed
-there.
+The log says which it is - `the volume set on the device`, or `takes no
+absolute volume: the volume in the sound` - and, at `C:Log LEVEL
+debug`, each volume set on the device and each changed there.
+
+**The buttons** of a headphone - play, pause, stop, next and previous,
+rewind and fast forward, and the volume and mute where it sends them -
+come on the same channel (AVRCP's PASS THROUGH), the driver serving a
+record of this machine as a remote control's target (0x110C, a player)
+for a device to find, and are media keys of keyboard.device, as a
+keyboard's are: down as a button is pressed, up as it is let go of, two
+seconds after its last press where its release does not come, and as
+the channel closes. `SYS:Commodities/MediaKeys` takes them wherever the
+active window is - play, pause and the others go to the Player, the
+volume keys and mute to the output played through - and without it the
+active window has them (the [commodities
+guide](commodities.md)). At `C:Log LEVEL debug` the log says each key,
+`key 78 down`, `key 78 up`. The source the keys come through counts as
+no keyboard: a board without one still has the keyboard on the
+screen.
 
 **Pairing one** makes its bond over BR/EDR, where its sound goes: a
 headphone that advertises over LE as well - a scan hears it so - is
@@ -1100,7 +1114,8 @@ offers a device's services as it bonds, so a device bonded while
 `btaudio.device` was not on the disk is driven once it is paired again
 (`Bluetooth UNPAIR`, then `PAIR`). The same goes the other way: a device
 that keeps the records it read as it paired - a computer, say - knows
-the controller's record, and offers its volume, once it pairs again.
+the controller's and the target's records, and offers its volume and
+sends its buttons, once it pairs again.
 
 The log says each stream's configuration -
 `SBC at 48000 Hz, joint stereo, bitpool 53, 8 frames a packet, 357 kbit/s` -

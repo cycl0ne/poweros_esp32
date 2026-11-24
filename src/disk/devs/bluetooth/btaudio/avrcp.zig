@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 //! A device's volume, as this machine - AVRCP's controller - sets it and
-//! follows it on AVCTP's channel. Frames in, frames out: the owner hands
-//! `heard` each frame of the channel and sends what comes back. The
-//! numbers are sdk/libs/bluetooth/avrcp.zig's.
+//! follows it on AVCTP's channel, and the device's buttons, which this
+//! machine - AVRCP's target - takes there. Frames in, frames out: the
+//! owner hands `heard` each frame of the channel and sends what comes
+//! back. The numbers are sdk/libs/bluetooth/avrcp.zig's.
 //!
 //! **Asking.** `begin` asks the device for the events it has
 //! (GetCapabilities). One that has AVRCP_EVENT_VOLUME_CHANGED takes an
@@ -22,9 +23,16 @@
 //! as a CHANGED answer to the registration: `.changed`, and the event
 //! registered again under a new label.
 //!
-//! **The device's commands** - a headphone is a controller too, of the
-//! player it plays for - are answered NOT IMPLEMENTED, and one for a
-//! profile other than AVRCP with IPID: this machine is no target.
+//! **The device's commands.** A headphone is a controller too, of the
+//! player it plays for. Its buttons come as PASS THROUGH: those of
+//! `buttons` are ACCEPTED and are keyboard.device's media keys (`.keys`),
+//! a rawkey down as its button is pressed and up as it is let go of - one
+//! pressed while another is held letting go of that one first, one
+//! pressed again while held holding on - and the owner lets go of the key
+//! held (`letGo`) where its release is late. UNIT INFO and SUBUNIT INFO
+//! are answered STABLE, the unit a panel, and GetCapabilities as a
+//! target's that has the SIG's company ID and no events; the rest NOT
+//! IMPLEMENTED, and a command for a profile other than AVRCP with IPID.
 //!
 //! **The volume** is a percent as a person sets it, as loud as it sounds
 //! (sdk/devices/audiocontrol.zig), and the device's absolute volume is a
@@ -33,6 +41,7 @@
 
 const sdk = @import("sdk");
 const avrcp = sdk.bluetooth.avrcp;
+const kb = sdk.devices.keyboard;
 
 /// Where the controller is with the device.
 pub const Phase = enum {
@@ -57,6 +66,18 @@ pub const Outcome = union(enum) {
     volume: u8,
     /// The device changed its volume itself.
     changed: u8,
+    /// One of the device's buttons, as keys.
+    keys: Keys,
+};
+
+/// A button of the device's as keyboard.device's keys: the key let go of
+/// and the key pressed - both where one is pressed while another is held
+/// - and whether a press came, the button's first or one while it is
+/// held, from which its release is waited for anew.
+pub const Keys = struct {
+    up: ?u8 = null,
+    down: ?u8 = null,
+    pressed: bool = false,
 };
 
 pub const Step = struct { send: []const u8 = &.{}, outcome: Outcome = .none };
@@ -67,6 +88,20 @@ const frame_most = avrcp.AVCTP_HEADER + avrcp.AVC_HEADER + avrcp.AVRCP_PDU_HEADE
 /// The longest of the device's commands answered whole; a longer one is
 /// answered with its headers alone.
 const echo_most = 64;
+
+/// The device's buttons taken - PASS THROUGH's - and the keys they are.
+const buttons = [_]struct { operation: u8, code: u8 }{
+    .{ .operation = avrcp.AVC_PASS_VOLUME_UP, .code = kb.RAWKEY_VOLUMEUP },
+    .{ .operation = avrcp.AVC_PASS_VOLUME_DOWN, .code = kb.RAWKEY_VOLUMEDOWN },
+    .{ .operation = avrcp.AVC_PASS_MUTE, .code = kb.RAWKEY_MUTE },
+    .{ .operation = avrcp.AVC_PASS_PLAY, .code = kb.RAWKEY_MEDIA_PLAY },
+    .{ .operation = avrcp.AVC_PASS_STOP, .code = kb.RAWKEY_MEDIA_STOP },
+    .{ .operation = avrcp.AVC_PASS_PAUSE, .code = kb.RAWKEY_MEDIA_PAUSE },
+    .{ .operation = avrcp.AVC_PASS_REWIND, .code = kb.RAWKEY_MEDIA_REWIND },
+    .{ .operation = avrcp.AVC_PASS_FAST_FORWARD, .code = kb.RAWKEY_MEDIA_FASTFORWARD },
+    .{ .operation = avrcp.AVC_PASS_FORWARD, .code = kb.RAWKEY_MEDIA_NEXT },
+    .{ .operation = avrcp.AVC_PASS_BACKWARD, .code = kb.RAWKEY_MEDIA_PREVIOUS },
+};
 
 pub const Controller = struct {
     phase: Phase = .idle,
@@ -81,6 +116,8 @@ pub const Controller = struct {
     interim: bool = false,
     /// A volume to set once the one set is answered.
     pending: ?u8 = null,
+    /// The key a button of the device's holds down, its rawkey.
+    held: ?u8 = null,
     out: [frame_most]u8 = undefined,
     echo: [echo_most]u8 = undefined,
 
@@ -133,6 +170,14 @@ pub const Controller = struct {
         return .{};
     }
 
+    /// The key a button holds let go of, its release late: its rawkey,
+    /// null where none is held.
+    pub fn letGo(controller: *Controller) ?u8 {
+        const code = controller.held orelse return null;
+        controller.held = null;
+        return code;
+    }
+
     /// A frame of the channel: an answer to one of this side's commands,
     /// or the device's own command.
     pub fn heard(controller: *Controller, frame: []const u8) Step {
@@ -141,7 +186,7 @@ pub const Controller = struct {
         // Parts of a long message: nothing this side asks for is one.
         if (first & avrcp.AVCTP_PACKET_MASK != avrcp.AVCTP_PACKET_SINGLE) return .{};
         const label: u4 = @intCast(first >> avrcp.AVCTP_LABEL_SHIFT);
-        if (first & avrcp.AVCTP_RESPONSE == 0) return .{ .send = controller.answer(frame) };
+        if (first & avrcp.AVCTP_RESPONSE == 0) return controller.answer(frame);
         const pid = @as(u16, frame[1]) << 8 | frame[2];
         if (first & avrcp.AVCTP_IPID != 0 or pid != avrcp.AVRCP_PID) return controller.refused(label);
         const av = frame[avrcp.AVCTP_HEADER..];
@@ -249,39 +294,94 @@ pub const Controller = struct {
         return controller.command(label, avrcp.AVC_CTYPE_NOTIFY, avrcp.AVRCP_PDU_REGISTER_NOTIFICATION, &.{ avrcp.AVRCP_EVENT_VOLUME_CHANGED, 0, 0, 0, 0 });
     }
 
-    /// The device's command answered: NOT IMPLEMENTED with what it said,
-    /// its headers alone where it is long; IPID for another profile.
-    fn answer(controller: *Controller, frame: []const u8) []const u8 {
+    /// The device's command answered: UNIT INFO and SUBUNIT INFO STABLE,
+    /// the unit a panel; GetCapabilities as a target's without events; a
+    /// button of `buttons` ACCEPTED and made keys; the rest NOT
+    /// IMPLEMENTED with what it said - its headers alone where it is long
+    /// - and IPID for another profile.
+    fn answer(controller: *Controller, frame: []const u8) Step {
         const head = (frame[0] & 0xF0) | avrcp.AVCTP_PACKET_SINGLE | avrcp.AVCTP_RESPONSE;
         const pid = @as(u16, frame[1]) << 8 | frame[2];
         if (pid != avrcp.AVRCP_PID) {
             controller.echo[0..3].* = .{ head | avrcp.AVCTP_IPID, frame[1], frame[2] };
-            return controller.echo[0..3];
+            return .{ .send = controller.echo[0..3] };
         }
-        const length = if (frame.len <= echo_most) frame.len else avrcp.AVCTP_HEADER + avrcp.AVC_HEADER;
-        const kept = @min(length, frame.len);
+        const av = frame[avrcp.AVCTP_HEADER..];
+        if (av.len >= avrcp.AVC_HEADER) {
+            const ctype = av[0] & avrcp.AVC_TYPE_MASK;
+            const operands = av[avrcp.AVC_HEADER..];
+            switch (av[2]) {
+                avrcp.AVC_OP_UNIT_INFO => if (ctype == avrcp.AVC_CTYPE_STATUS) {
+                    return .{ .send = controller.unitAnswer(head, av[2], [_]u8{ avrcp.AVC_INFO_FIRST, avrcp.AVC_SUBUNIT_PANEL } ++ avrcp.AVRCP_COMPANY_ID) };
+                },
+                avrcp.AVC_OP_SUBUNIT_INFO => if (ctype == avrcp.AVC_CTYPE_STATUS) {
+                    return .{ .send = controller.unitAnswer(head, av[2], .{ avrcp.AVC_INFO_FIRST, avrcp.AVC_SUBUNIT_PANEL, 0xFF, 0xFF, 0xFF }) };
+                },
+                avrcp.AVC_OP_PASS_THROUGH => if (ctype == avrcp.AVC_CTYPE_CONTROL and av[1] == avrcp.AVC_SUBUNIT_PANEL and operands.len >= 1) {
+                    if (keyOf(operands[0] & avrcp.AVC_PASS_OPERATION)) |code| {
+                        const keys = controller.button(code, operands[0] & avrcp.AVC_PASS_RELEASED == 0);
+                        return .{ .send = controller.echoed(frame, head, avrcp.AVC_RESPONSE_ACCEPTED), .outcome = .{ .keys = keys } };
+                    }
+                },
+                avrcp.AVC_OP_VENDOR_DEPENDENT => if (ctype == avrcp.AVC_CTYPE_STATUS) {
+                    if (capabilityAsked(operands)) |id| return .{ .send = controller.offered(head, id) };
+                },
+                else => {},
+            }
+        }
+        return .{ .send = controller.echoed(frame, head, avrcp.AVC_RESPONSE_NOT_IMPLEMENTED) };
+    }
+
+    /// A button pressed or let go of, as keys: one pressed while another
+    /// is held lets go of that one first, one pressed again while held
+    /// holds on, and the release of a key not held is nothing.
+    fn button(controller: *Controller, code: u8, pressed: bool) Keys {
+        if (!pressed) {
+            if (controller.held != code) return .{};
+            controller.held = null;
+            return .{ .up = code };
+        }
+        if (controller.held == code) return .{ .pressed = true };
+        const before = controller.held;
+        controller.held = code;
+        return .{ .up = before, .down = code, .pressed = true };
+    }
+
+    /// A STATUS command to the unit answered STABLE, with these operands.
+    fn unitAnswer(controller: *Controller, head: u8, opcode: u8, operands: [5]u8) []const u8 {
+        const echo = &controller.echo;
+        echo[0..3].* = .{ head, @intCast(avrcp.AVRCP_PID >> 8), @intCast(avrcp.AVRCP_PID & 0xFF) };
+        echo[3..6].* = .{ avrcp.AVC_RESPONSE_STABLE, avrcp.AVC_SUBUNIT_UNIT, opcode };
+        echo[6..11].* = operands;
+        return echo[0..11];
+    }
+
+    /// GetCapabilities answered as a target's that has no events: the
+    /// company IDs - the SIG's alone - or the events, none.
+    fn offered(controller: *Controller, head: u8, id: u8) []const u8 {
+        var parameters: [5]u8 = .{ id, 0, 0, 0, 0 };
+        var length: usize = 2;
+        if (id == avrcp.AVRCP_CAPABILITY_COMPANY_ID) {
+            parameters[1] = 1;
+            parameters[2..5].* = avrcp.AVRCP_COMPANY_ID;
+            length = 5;
+        }
+        return vendorFrame(&controller.echo, head, avrcp.AVC_RESPONSE_STABLE, avrcp.AVRCP_PDU_GET_CAPABILITIES, parameters[0..length]);
+    }
+
+    /// The device's command sent back answered `response`: whole, or its
+    /// headers alone where it is long.
+    fn echoed(controller: *Controller, frame: []const u8, head: u8, response: u8) []const u8 {
+        const kept = if (frame.len <= echo_most) frame.len else avrcp.AVCTP_HEADER + avrcp.AVC_HEADER;
         @memcpy(controller.echo[0..kept], frame[0..kept]);
         controller.echo[0] = head;
-        if (kept > avrcp.AVCTP_HEADER) controller.echo[avrcp.AVCTP_HEADER] = avrcp.AVC_RESPONSE_NOT_IMPLEMENTED;
+        if (kept > avrcp.AVCTP_HEADER) controller.echo[avrcp.AVCTP_HEADER] = response;
         return controller.echo[0..kept];
     }
 
     /// A command of the profile's, in `out`.
     fn command(controller: *Controller, label: u4, ctype: u8, pdu: u8, parameters: []const u8) []const u8 {
-        const out = &controller.out;
-        out[0] = @as(u8, label) << avrcp.AVCTP_LABEL_SHIFT | avrcp.AVCTP_PACKET_SINGLE;
-        out[1] = @intCast(avrcp.AVRCP_PID >> 8);
-        out[2] = @intCast(avrcp.AVRCP_PID & 0xFF);
-        out[3] = ctype;
-        out[4] = avrcp.AVC_SUBUNIT_PANEL;
-        out[5] = avrcp.AVC_OP_VENDOR_DEPENDENT;
-        out[6..9].* = avrcp.AVRCP_COMPANY_ID;
-        out[9] = pdu;
-        out[10] = avrcp.AVRCP_PACKET_SINGLE;
-        out[11] = 0;
-        out[12] = @intCast(parameters.len);
-        @memcpy(out[13..][0..parameters.len], parameters);
-        return out[0 .. 13 + parameters.len];
+        return vendorFrame(&controller.out, @as(u8, label) << avrcp.AVCTP_LABEL_SHIFT | avrcp.AVCTP_PACKET_SINGLE, ctype, pdu, parameters);
     }
 
     /// The next label, past those waiting.
@@ -297,6 +397,42 @@ pub const Controller = struct {
 
 fn sameCompany(bytes: *const [3]u8) bool {
     return bytes[0] == avrcp.AVRCP_COMPANY_ID[0] and bytes[1] == avrcp.AVRCP_COMPANY_ID[1] and bytes[2] == avrcp.AVRCP_COMPANY_ID[2];
+}
+
+/// A frame of the profile's own in `into`: AVCTP's first byte, the AV/C
+/// type - a command's or a response's - the panel, the PDU and its
+/// parameters.
+fn vendorFrame(into: []u8, first: u8, ctype: u8, pdu: u8, parameters: []const u8) []const u8 {
+    into[0] = first;
+    into[1] = @intCast(avrcp.AVRCP_PID >> 8);
+    into[2] = @intCast(avrcp.AVRCP_PID & 0xFF);
+    into[3] = ctype;
+    into[4] = avrcp.AVC_SUBUNIT_PANEL;
+    into[5] = avrcp.AVC_OP_VENDOR_DEPENDENT;
+    into[6..9].* = avrcp.AVRCP_COMPANY_ID;
+    into[9] = pdu;
+    into[10] = avrcp.AVRCP_PACKET_SINGLE;
+    into[11] = 0;
+    into[12] = @intCast(parameters.len);
+    @memcpy(into[13..][0..parameters.len], parameters);
+    return into[0 .. 13 + parameters.len];
+}
+
+/// What a GetCapabilities of the device's asks for - the company IDs or
+/// the events - where the operands are one, in a single packet.
+fn capabilityAsked(operands: []const u8) ?u8 {
+    if (operands.len < avrcp.AVRCP_PDU_HEADER + 1 or !sameCompany(operands[0..3])) return null;
+    if (operands[3] != avrcp.AVRCP_PDU_GET_CAPABILITIES or operands[4] & avrcp.AVRCP_PACKET_MASK != avrcp.AVRCP_PACKET_SINGLE) return null;
+    const id = operands[avrcp.AVRCP_PDU_HEADER];
+    return if (id == avrcp.AVRCP_CAPABILITY_COMPANY_ID or id == avrcp.AVRCP_CAPABILITY_EVENTS) id else null;
+}
+
+/// The key of a button of `buttons`, null for another.
+fn keyOf(operation: u8) ?u8 {
+    for (buttons) |known| {
+        if (known.operation == operation) return known.code;
+    }
+    return null;
 }
 
 /// The device's absolute volume for a percent, 0 to 100: in proportion,
@@ -437,18 +573,34 @@ test "a volume set and not answered, the next sent after it" {
     try testing.expect(controller.registered != null);
 }
 
-test "the device's commands answered: not implemented, or another profile" {
+test "the device's commands answered: the unit, its panel, what it has; the rest not implemented" {
     var controller: Controller = .{};
     _ = controller.begin();
-    // UNIT INFO, as a controller asks first.
+    // UNIT INFO, as a controller asks first: a panel, of the SIG.
     const unit = [_]u8{ 0x50, 0x11, 0x0E, 0x01, 0xFF, 0x30, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
     var step = controller.heard(&unit);
-    try testing.expectEqualSlices(u8, &.{ 0x52, 0x11, 0x0E, 0x08, 0xFF, 0x30, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF }, step.send);
+    try testing.expectEqualSlices(u8, &.{ 0x52, 0x11, 0x0E, 0x0C, 0xFF, 0x30, 0x07, 0x48, 0x00, 0x19, 0x58 }, step.send);
     try testing.expectEqual(Outcome.none, step.outcome);
-    // Play pressed: no target here.
-    const play = [_]u8{ 0x60, 0x11, 0x0E, 0x00, 0x48, 0x7C, 0x44, 0x00 };
-    step = controller.heard(&play);
-    try testing.expectEqualSlices(u8, &.{ 0x62, 0x11, 0x0E, 0x08, 0x48, 0x7C, 0x44, 0x00 }, step.send);
+    // SUBUNIT INFO's first page: the panel alone.
+    const subunit = [_]u8{ 0x60, 0x11, 0x0E, 0x01, 0xFF, 0x31, 0x07, 0xFF, 0xFF, 0xFF, 0xFF };
+    step = controller.heard(&subunit);
+    try testing.expectEqualSlices(u8, &.{ 0x62, 0x11, 0x0E, 0x0C, 0xFF, 0x31, 0x07, 0x48, 0xFF, 0xFF, 0xFF }, step.send);
+    // UNIT INFO as a CONTROL is none this side has.
+    const control_unit = [_]u8{ 0x50, 0x11, 0x0E, 0x00, 0xFF, 0x30, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
+    try testing.expectEqual(@as(u8, 0x08), controller.heard(&control_unit).send[3]);
+    // GetCapabilities: the SIG's company ID, and no events.
+    const companies = [_]u8{ 0x10, 0x11, 0x0E, 0x01, 0x48, 0x00, 0x00, 0x19, 0x58, 0x10, 0x00, 0x00, 0x01, 0x02 };
+    step = controller.heard(&companies);
+    try testing.expectEqualSlices(u8, &.{ 0x12, 0x11, 0x0E, 0x0C, 0x48, 0x00, 0x00, 0x19, 0x58, 0x10, 0x00, 0x00, 0x05, 0x02, 0x01, 0x00, 0x19, 0x58 }, step.send);
+    const events = [_]u8{ 0x20, 0x11, 0x0E, 0x01, 0x48, 0x00, 0x00, 0x19, 0x58, 0x10, 0x00, 0x00, 0x01, 0x03 };
+    step = controller.heard(&events);
+    try testing.expectEqualSlices(u8, &.{ 0x22, 0x11, 0x0E, 0x0C, 0x48, 0x00, 0x00, 0x19, 0x58, 0x10, 0x00, 0x00, 0x02, 0x03, 0x00 }, step.send);
+    // The track's attributes: not implemented.
+    const attributes = [_]u8{ 0x30, 0x11, 0x0E, 0x01, 0x48, 0x00, 0x00, 0x19, 0x58, 0x20, 0x00, 0x00, 0x09, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+    step = controller.heard(&attributes);
+    try testing.expectEqual(@as(u8, 0x32), step.send[0]);
+    try testing.expectEqual(@as(u8, 0x08), step.send[3]);
+    try testing.expectEqual(@as(usize, attributes.len), step.send.len);
     // A profile of another identifier.
     const other = [_]u8{ 0x70, 0x11, 0x0C, 0x01, 0x48, 0x00 };
     step = controller.heard(&other);
@@ -461,6 +613,70 @@ test "the device's commands answered: not implemented, or another profile" {
     // Parts of a long message pass.
     const part = [_]u8{ 0x94, 0x02, 0x11, 0x0E };
     try testing.expectEqual(@as(usize, 0), controller.heard(&part).send.len);
+}
+
+test "the device's buttons: pressed, held, let go of, never let go of, and one not taken" {
+    var controller: Controller = .{};
+    _ = controller.begin();
+    // Play pressed: accepted, its key down.
+    const play = [_]u8{ 0x60, 0x11, 0x0E, 0x00, 0x48, 0x7C, 0x44, 0x00 };
+    var step = controller.heard(&play);
+    try testing.expectEqualSlices(u8, &.{ 0x62, 0x11, 0x0E, 0x09, 0x48, 0x7C, 0x44, 0x00 }, step.send);
+    try testing.expectEqual(Outcome{ .keys = .{ .down = 0x78, .pressed = true } }, step.outcome);
+    // Pressed again as it is held: held on, no key again.
+    step = controller.heard(&play);
+    try testing.expectEqual(@as(u8, 0x09), step.send[3]);
+    try testing.expectEqual(Outcome{ .keys = .{ .pressed = true } }, step.outcome);
+    // Let go of: its key up; let go of again, nothing.
+    const released = [_]u8{ 0x70, 0x11, 0x0E, 0x00, 0x48, 0x7C, 0xC4, 0x00 };
+    step = controller.heard(&released);
+    try testing.expectEqualSlices(u8, &.{ 0x72, 0x11, 0x0E, 0x09, 0x48, 0x7C, 0xC4, 0x00 }, step.send);
+    try testing.expectEqual(Outcome{ .keys = .{ .up = 0x78 } }, step.outcome);
+    try testing.expectEqual(Outcome{ .keys = .{} }, controller.heard(&released).outcome);
+    try testing.expectEqual(@as(?u8, null), controller.letGo());
+
+    // The volume up held, the next pressed without its release: the
+    // first let go of as the second goes down.
+    const up = [_]u8{ 0x80, 0x11, 0x0E, 0x00, 0x48, 0x7C, 0x41, 0x00 };
+    try testing.expectEqual(Outcome{ .keys = .{ .down = 0x7C, .pressed = true } }, controller.heard(&up).outcome);
+    const next = [_]u8{ 0x90, 0x11, 0x0E, 0x00, 0x48, 0x7C, 0x4B, 0x00 };
+    try testing.expectEqual(Outcome{ .keys = .{ .up = 0x7C, .down = 0x75, .pressed = true } }, controller.heard(&next).outcome);
+    // A release of the one let go of is nothing.
+    const up_released = [_]u8{ 0xA0, 0x11, 0x0E, 0x00, 0x48, 0x7C, 0xC1, 0x00 };
+    try testing.expectEqual(Outcome{ .keys = .{} }, controller.heard(&up_released).outcome);
+    // Never let go of: the owner lets go of it once its release is late.
+    try testing.expectEqual(@as(?u8, 0x75), controller.letGo());
+    try testing.expectEqual(@as(?u8, null), controller.letGo());
+
+    // Every button, and its key.
+    const keys = [_][2]u8{ .{ 0x41, 0x7C }, .{ 0x42, 0x7B }, .{ 0x43, 0x7A }, .{ 0x44, 0x78 }, .{ 0x45, 0x72 }, .{ 0x46, 0x79 }, .{ 0x48, 0x76 }, .{ 0x49, 0x77 }, .{ 0x4B, 0x75 }, .{ 0x4C, 0x74 } };
+    for (keys) |pair| {
+        var frame = [_]u8{ 0xB0, 0x11, 0x0E, 0x00, 0x48, 0x7C, pair[0], 0x00 };
+        try testing.expectEqual(Outcome{ .keys = .{ .down = pair[1], .pressed = true } }, controller.heard(&frame).outcome);
+        frame[6] = pair[0] | 0x80;
+        try testing.expectEqual(Outcome{ .keys = .{ .up = pair[1] } }, controller.heard(&frame).outcome);
+    }
+
+    // Select, a menu's, and the vendor's own: not implemented, no key.
+    const select = [_]u8{ 0xC0, 0x11, 0x0E, 0x00, 0x48, 0x7C, 0x00, 0x00 };
+    step = controller.heard(&select);
+    try testing.expectEqualSlices(u8, &.{ 0xC2, 0x11, 0x0E, 0x08, 0x48, 0x7C, 0x00, 0x00 }, step.send);
+    try testing.expectEqual(Outcome.none, step.outcome);
+    const vendor_unique = [_]u8{ 0xD0, 0x11, 0x0E, 0x00, 0x48, 0x7C, 0x7E, 0x05, 0x00, 0x19, 0x58, 0x00, 0x00 };
+    step = controller.heard(&vendor_unique);
+    try testing.expectEqual(@as(u8, 0x08), step.send[3]);
+    try testing.expectEqual(Outcome.none, step.outcome);
+    // Play as a STATUS, and one to another subunit: not implemented.
+    const status_play = [_]u8{ 0xE0, 0x11, 0x0E, 0x01, 0x48, 0x7C, 0x44, 0x00 };
+    try testing.expectEqual(Outcome.none, controller.heard(&status_play).outcome);
+    const elsewhere = [_]u8{ 0xF0, 0x11, 0x0E, 0x00, 0x20, 0x7C, 0x44, 0x00 };
+    try testing.expectEqual(@as(u8, 0x08), controller.heard(&elsewhere).send[3]);
+    try testing.expectEqual(@as(?u8, null), controller.held);
+
+    // The channel opened again starts with nothing held.
+    _ = controller.heard(&play);
+    _ = controller.begin();
+    try testing.expectEqual(@as(?u8, null), controller.letGo());
 }
 
 test "a percent and the device's volume, one in proportion to the other" {
