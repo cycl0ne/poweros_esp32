@@ -1,28 +1,30 @@
 // SPDX-License-Identifier: MIT
 //! The background scan: LE's advertising listened to, passively, while a
-//! GATT block waits for its device (att/client.zig, BTGO_WAIT) - and a
-//! link made to the device as soon as an advertising report of its comes
-//! that it may be connected by: one with the address the block names,
-//! or with a resolvable private address that the identity resolving key
-//! of the device's bond made (smpcrypto.zig). Such a link is made for
-//! GATT, as a link for channels (connections.zig), and keeps the identity
-//! it was found by beside the address it was reached at.
+//! link listens for its device (connections.zig) or a GATT block waits for
+//! its device (att/client.zig, BTGO_WAIT) - and the link made to the
+//! device as soon as an advertising report of its comes that it may be
+//! connected by: one with the address the link or the block names, or
+//! with a resolvable private address that the identity resolving key of
+//! the device's bond made (smpcrypto.zig). The link that listened is
+//! initiated to that address (`connections.reached`); for a block, a link
+//! is made for GATT, as a link for channels. Either keeps the identity it
+//! was found by beside the address it was reached at.
 //!
-//! **On** while a block waits for a device that has no link and the
-//! controller is up and on and can both scan and initiate; **off** while
-//! a discovery runs - its own scan takes the controller's - and while the
-//! library makes an LE link: a controller initiates to one device at a
-//! time, and one that scans may not initiate. `update` sets it after
-//! every packet and every tick, and after each block that waits is
-//! opened or closed. LE's advertising makes way for it where the
-//! controller cannot do both (advertising.zig).
+//! **On** while a link listens, or a block waits for a device that has no
+//! link, and the controller is up and on and can both scan and initiate;
+//! **off** while a discovery runs - its own scan takes the controller's -
+//! and while the library makes an LE link: a controller initiates to one
+//! device at a time, and one that scans may not initiate. `update` sets it
+//! after every packet and every tick, after each block that waits is
+//! opened or closed, and as a link begins to listen. LE's advertising
+//! makes way for it where the controller cannot do both (advertising.zig).
 //!
 //! **Each advertiser is reported once** while it is on - the controller
 //! filters the duplicates - and again once it is turned on afresh, which
-//! it is after each link made or not made and each discovery: so a
-//! device that comes back is heard again. A scan the controller refuses,
-//! or a device heard whose link cannot be begun, has it turned off and
-//! tried again RETRY_MS later.
+//! it is after each link made or not made, each discovery, and as a link
+//! begins to listen: so a device that comes back is heard again. A scan
+//! the controller refuses, or a device heard whose link cannot be begun,
+//! has it turned off and tried again RETRY_MS later.
 //!
 //! Pure, as the rest of the layer.
 
@@ -59,6 +61,7 @@ fn wanted(layer: *Hci) bool {
     if (layer.state != bluetooth.BTCS_UP or !layer.powered or layer.scan.retry_at != null) return false;
     if (!discovery.canScan(layer) or !connections.canInitiate(layer)) return false;
     if (discovery.running(layer) or connections.makingLe(layer)) return false;
+    if (connections.listening(layer)) return true;
     for (&layer.att_clients) |*one| {
         if (one.state == .waiting and connections.find(layer, one.address) == null) return true;
     }
@@ -124,9 +127,9 @@ pub fn answered(layer: *Hci, opcode: u16, returned: []const u8) void {
     later(layer);
 }
 
-/// LE Advertising Report, past its subevent: a device a block waits for,
-/// advertising so that it may be connected, linked to - the first such
-/// of the reports.
+/// LE Advertising Report, past its subevent: a device a link listens for,
+/// or a block waits for, advertising so that it may be connected, linked
+/// to - the first such of the reports.
 pub fn advertisingReport(layer: *Hci, params: []const u8) void {
     if (!layer.scan.on or params.len < 1) return;
     const reports: usize = params[0];
@@ -144,10 +147,30 @@ pub fn advertisingReport(layer: *Hci, params: []const u8) void {
             hci.LE_ADDR_PUBLIC, hci.LE_ADDR_PUBLIC_IDENTITY => bluetooth.BTADDR_LE_PUBLIC,
             else => bluetooth.BTADDR_LE_RANDOM,
         } };
+        if (listener(layer, heard)) |connection| {
+            if (connections.reached(layer, connection, heard) != 0) later(layer);
+            return;
+        }
         if (connections.find(layer, heard) != null) continue;
         const identity = awaited(layer, heard) orelse continue;
         return reach(layer, heard, identity);
     }
+}
+
+/// The link that listens for the device heard at `heard`: the one asked
+/// for at that address, or at the address of the bond whose identity
+/// resolving key made it. Null for none.
+fn listener(layer: *Hci, heard: bluetooth.BTAddress) ?*connections.Connection {
+    const private = heard.kind == bluetooth.BTADDR_LE_RANDOM and smpcrypto.resolvable(&heard.bytes);
+    for (&layer.connections) |*connection| {
+        if (connection.state != .listening) continue;
+        if (connections.sameAddress(connection.address, heard)) return connection;
+        if (!private) continue;
+        const port = if (layer.crypto) |*crypto| crypto else continue;
+        const bond = bonds.find(layer, connection.address) orelse continue;
+        if (bond.has_irk and smpcrypto.resolves(port, &bond.irk, &heard.bytes)) return connection;
+    }
+    return null;
 }
 
 /// The address of the block that waits for the device heard at `heard`:
@@ -170,7 +193,7 @@ fn awaited(layer: *Hci, heard: bluetooth.BTAddress) ?bluetooth.BTAddress {
 /// wait for `identity` - kept with it where the two differ. One that
 /// cannot be begun has the scan tried again later.
 fn reach(layer: *Hci, heard: bluetooth.BTAddress, identity: bluetooth.BTAddress) void {
-    if (connections.make(layer, heard) != 0) return later(layer);
+    if (connections.makeNow(layer, heard) != 0) return later(layer);
     const connection = connections.find(layer, heard).?;
     connection.for_channels = true;
     if (!connections.sameAddress(heard, identity)) connection.identity = identity;

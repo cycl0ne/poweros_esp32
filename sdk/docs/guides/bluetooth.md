@@ -414,7 +414,12 @@ const result = bt.ConnectBTDevice(bluetooth.BT_ALL_CONTROLLERS, &device);
   bond says it was given the machine's identity, from its public address
   otherwise - asking for an interval of 30 to 50 ms, no
   latency, and the link lost after 420 ms unheard. A device that does not
-  advertise within 20 seconds is given up on (`BTERR_TIMEOUT`). The
+  advertise within 20 seconds is given up on (`BTERR_TIMEOUT`). A device
+  whose bond keeps its identity resolving key may advertise from a
+  private address, a new one now and then: the library listens for its
+  advertising first, by the background scan, and the controller connects
+  to the address it is heard at - the identity, or a private address the
+  key made - the link keeping the identity beside it. The
   controller has a link as soon as it has sent its request, so the link
   is up once the device has answered on it: its features read (LE Read
   Remote Features), or a frame of its come. One the device never answers
@@ -422,7 +427,8 @@ const result = bt.ConnectBTDevice(bluetooth.BT_ALL_CONTROLLERS, &device);
   (`HCI_ERR_FAILED_TO_ESTABLISH`).
 
 A controller pages one device at a time and initiates to one: another
-link of the same kind asked for meanwhile is `BTERR_BUSY`. A discovery
+link of the same kind asked for meanwhile is `BTERR_BUSY`; a link that
+listens for its device initiates nothing, and waits for no other. A discovery
 it runs is stopped first. With `BT_ALL_CONTROLLERS` the link is made by
 the controller with a link to the device already, else by the one whose
 discovery found it, else by the first that is up and on.
@@ -634,8 +640,8 @@ The log says each pairing over, and why one failed (`C:Log`). Over LE
 this side gives a device its identity and no other key, and signs
 nothing; a pairing's checks take the address each side made the link
 from - this side's private one on a link made from it. A device that
-advertises only private addresses is reached by the address a discovery
-heard, not by its identity.
+advertises only private addresses is paired with at the address a
+discovery heard; once bonded, it is reached by its identity.
 
 ## Channels and services
 
@@ -871,8 +877,9 @@ if (bt.OpenBTGatt(controller, &keyboard, port, &gatt, bluetooth.BTGO_WAIT) != 0)
   meanwhile - until the device comes back or `CloseBTGatt`. A value the
   device sends while the block is opened is the block's too.
 - A link already up is taken at once: the block may open before the
-  call returns. A block without `BTGO_WAIT` reaches a device that
-  advertises at private addresses only over a link that is up.
+  call returns. A block without `BTGO_WAIT` has its link made as
+  `ConnectBTDevice` makes one: a device whose bond keeps its identity
+  resolving key is reached at the private address it advertises from.
 
 **ObtainBTServices**, given an LE address, asks the device's server for
 its primary services, each a `BTService` with `BTSF_GATT`: its UUID in
@@ -1492,15 +1499,18 @@ or by a name a `SCAN` heard. The link is over LE for a device the scan
 heard over LE, and for an address given with `LE` - its public address -
 or `RANDOM` - its random one; over BR/EDR otherwise, and with `BREDR`
 for a device the scan heard over LE too, as a headphone that advertises
-as well is heard. A link not made
+as well is heard. A device bonded over LE that gave its identity is
+reached by that identity, at whatever private address it advertises
+from. A link not made
 says why: the device did not answer, did not answer in time - an LE
 device that does not advertise - or refused, the controller is making
 another such link, or what the controller answered. A link to a device
 with a bond that could not be made secure is up still, and says so and
 why: the device has no key for this machine any more, or did not take
 it. `DISCONNECT` ends
-the link to a device, by its address or its name (`DisconnectBTDevice`),
-with `LE`, `RANDOM` or `BREDR` its link of that kind.
+the link to a device, by its address, the identity its private one
+resolved to, or its name (`DisconnectBTDevice`), with `LE`, `RANDOM` or
+`BREDR` its link of that kind.
 
 `LIST` shows the links (`ObtainBTConnections`): the device's address,
 the kind of link - `BR/EDR`, `LE`, `LE random` - which side the

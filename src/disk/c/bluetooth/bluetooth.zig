@@ -35,10 +35,13 @@
 //!                      (its public address) or RANDOM (its random one);
 //!                      over BR/EDR otherwise, and with BREDR for a device
 //!                      a scan heard over LE too - a headphone that
-//!                      advertises as well
+//!                      advertises as well; a device bonded over LE by its
+//!                      identity, reached at the private address it
+//!                      advertises from
 //!   DISCONNECT <device>
-//!                      the link to the device ended - with LE, RANDOM or
-//!                      BREDR, its link of that kind
+//!                      the link to the device ended - by its address, or
+//!                      the identity its private one resolved to - with
+//!                      LE, RANDOM or BREDR, its link of that kind
 //!   LIST               the links, each on a line: the device's address,
 //!                      the kind of link, which side is its central, how
 //!                      long it has been up, the device's name; with INFO,
@@ -110,7 +113,7 @@ const BluetoothBase = sdk.interface.bluetooth.BluetoothBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Bluetooth";
-const VERSION_STRING = "\x00$VER: Bluetooth 1.14 (24.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Bluetooth 1.15 (24.11.2026)\r\n";
 
 const template = "INFO/S,SCAN/S,TIME/K/N,POWER/K,NAME/K,VISIBLE/K,CONNECT/K,DISCONNECT/K,LIST/S,LE/S,RANDOM/S,BREDR/S,CONTROLLER/K/N," ++
     "PAIR/K,PIN/K,UNPAIR/K,BONDS/S,AGENT/S,SERVICES/K";
@@ -591,16 +594,39 @@ fn linkNamed(bt: *BluetoothBase, controller: u32, text: [*:0]const u8, argv: *co
     var it = list_of_links.iterator();
     while (it.next()) |node| {
         const link: *bluetooth.BTConnection = @fieldParentPtr("node", node);
-        if (argv[arg_random] != 0 and link.address.kind != bluetooth.BTADDR_LE_RANDOM) continue;
-        if (argv[arg_le] != 0 and link.address.kind != bluetooth.BTADDR_LE_PUBLIC) continue;
-        if (argv[arg_bredr] != 0 and link.address.kind != bluetooth.BTADDR_BREDR) continue;
+        // By its own address, or - over LE from a private address - by
+        // the device's identity.
+        const by_identity = hasIdentity(link) and kindAsked(argv, link.identity.kind);
         if (bytes) |wanted| {
-            if (sameBytes(&link.address.bytes, &wanted)) return link.address;
+            if (kindAsked(argv, link.address.kind) and sameBytes(&link.address.bytes, &wanted)) return link.address;
+            if (by_identity and sameBytes(&link.identity.bytes, &wanted)) return link.identity;
         } else if (link.node.name) |name| {
-            if (sameName(name, text)) return link.address;
+            if ((kindAsked(argv, link.address.kind) or by_identity) and sameName(name, text)) return link.address;
         }
     }
     return null;
+}
+
+/// Whether LE, RANDOM or BREDR - where one is given - asks for an address
+/// of `kind`.
+fn kindAsked(argv: *const [arg_count]usize, kind: u8) bool {
+    if (argv[arg_random] != 0 and kind != bluetooth.BTADDR_LE_RANDOM) return false;
+    if (argv[arg_le] != 0 and kind != bluetooth.BTADDR_LE_PUBLIC) return false;
+    if (argv[arg_bredr] != 0 and kind != bluetooth.BTADDR_BREDR) return false;
+    return true;
+}
+
+/// Whether the link is from a private address its bond resolved to the
+/// device's identity.
+fn hasIdentity(link: *const bluetooth.BTConnection) bool {
+    return link.identity.kind != bluetooth.BTADDR_BREDR;
+}
+
+/// Whether the link is to the device at `address`: its own address, or
+/// the identity its private one resolved to.
+fn linkTo(link: *const bluetooth.BTConnection, address: *const bluetooth.BTAddress) bool {
+    if (link.address.kind == address.kind and sameBytes(&link.address.bytes, &address.bytes)) return true;
+    return hasIdentity(link) and link.identity.kind == address.kind and sameBytes(&link.identity.bytes, &address.bytes);
 }
 
 /// CONNECT: the link made, and shown once it is up.
@@ -630,6 +656,7 @@ fn hasLink(bt: *BluetoothBase, controller: u32, address: *const bluetooth.BTAddr
     while (it.next()) |node| {
         const link: *const bluetooth.BTConnection = @fieldParentPtr("node", node);
         if (sameBytes(&link.address.bytes, &address.bytes)) return true;
+        if (hasIdentity(link) and sameBytes(&link.identity.bytes, &address.bytes)) return true;
     }
     return false;
 }
@@ -667,7 +694,7 @@ fn showLinks(dl: *DosBase, bt: *BluetoothBase, controller: u32, only: ?*const bl
     while (it.next()) |node| {
         const link: *bluetooth.BTConnection = @fieldParentPtr("node", node);
         if (only) |wanted| {
-            if (link.address.kind != wanted.kind or !sameBytes(&link.address.bytes, &wanted.bytes)) continue;
+            if (!linkTo(link, wanted)) continue;
         }
         any = true;
         linkLine(dl, link);

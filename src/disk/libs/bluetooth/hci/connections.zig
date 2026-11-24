@@ -16,6 +16,20 @@
 //! that runs is stopped first: a controller that inquires pages slowly,
 //! and one that scans may not initiate.
 //!
+//! **Listened for.** An LE link to a device whose bond keeps its identity
+//! resolving key - which may advertise from a private address, a new one
+//! now and then - is not initiated to the address it is asked for at: it
+//! listens for the device's advertising first (`.listening`), by the
+//! background scan (scan.zig), begun afresh so that a device it reported
+//! already is reported again, and is initiated to the address the device
+//! is heard at - the one asked for, or a private address the key made -
+//! keeping the one asked for as its `identity`, the calls waiting for it
+//! waiting at the address heard (`reached`). A link that listens
+//! initiates nothing, so other links are made meanwhile, the scan pausing
+//! for them; one whose device is not heard in LE_CONNECT_TIMEOUT_MS is
+//! not made (BTERR_TIMEOUT), and one no longer wanted is let go of at
+//! once.
+//!
 //! **Made by the device**: a page the controller hears (Connection
 //! Request) is taken on while the controller is on and the table has
 //! room, the controller staying the link's peripheral (Accept
@@ -57,9 +71,9 @@
 //!
 //! **A device's identity.** An LE link to a resolvable private address
 //! that a bond's identity resolving key made keeps the bond's address as
-//! its `identity` - found by the scan, when the link is up, or given by
-//! the pairing that made the bond - and `find` takes the link for the
-//! device at either address. **This side's address** on an LE link, the
+//! its `identity` - found by the scan, or by the link that listened, when
+//! the link is up, or given by the pairing that made the bond - and `find`
+//! takes the link for the device at either address. **This side's address** on an LE link, the
 //! one the controller made it from, is the link's `own` once it is up,
 //! for the security manager's checks: the private address the controller
 //! had then where it was asked for from it, the public one otherwise - a
@@ -131,7 +145,9 @@ pub const IDLE_MS: u32 = 2_000;
 /// by it: a device's clock drifts from the offset heard.
 const HEARD_FRESH_MS: u64 = 60_000;
 
-pub const State = enum(u8) { free, connecting, up, disconnecting };
+/// A link's state: being made - listening for its device's advertising
+/// first, over LE - up, or being ended.
+pub const State = enum(u8) { free, connecting, up, disconnecting, listening };
 
 pub const Connection = struct {
     state: State = .free,
@@ -356,7 +372,7 @@ pub fn connect(layer: *Hci, address: bluetooth.BTAddress) Begun {
             known.idle_until = null;
             return if (!known.heard or securing(known)) waitFor(layer, .connect, known.address) else .{ .done = 0 };
         },
-        .connecting => if (!known.unwanted) {
+        .connecting, .listening => if (!known.unwanted) {
             known.for_channels = false;
             return waitFor(layer, .connect, known.address);
         },
@@ -370,8 +386,98 @@ pub fn connect(layer: *Hci, address: bluetooth.BTAddress) Begun {
 }
 
 /// A link to the device at `address` begun, none being there, and
-/// nobody waiting for it: 0, or why not.
+/// nobody waiting for it: 0, or why not. Over LE to a device whose bond
+/// keeps its identity resolving key, the device listened for first
+/// (`listen`); made at once otherwise (`makeNow`).
 pub fn make(layer: *Hci, address: bluetooth.BTAddress) i32 {
+    if (address.kind == bluetooth.BTADDR_BREDR or !listens(layer, address)) return makeNow(layer, address);
+    if (find(layer, address) != null) return bluetooth.BTERR_BUSY;
+    if (!canInitiate(layer)) return bluetooth.BTERR_UNSUPPORTED;
+    return listen(layer, address);
+}
+
+/// Whether a link to `address`, over LE, listens for the device first:
+/// its bond, kept at that address, has its identity resolving key - it
+/// may advertise from a private address - and the controller can scan,
+/// and resolve one.
+fn listens(layer: *Hci, address: bluetooth.BTAddress) bool {
+    if (layer.crypto == null or !discovery.canScan(layer)) return false;
+    const bond = bonds.find(layer, address) orelse return false;
+    return bond.has_irk;
+}
+
+/// A link that listens for its device begun: its record at the address
+/// asked for, LE_CONNECT_TIMEOUT_MS to be heard in; a discovery that runs
+/// stopped, as for any link, and the background scan begun afresh, so
+/// that a device it reported already is reported again. 0, or why not.
+fn listen(layer: *Hci, address: bluetooth.BTAddress) i32 {
+    const connection = freeConnection(layer) orelse return bluetooth.BTERR_NOMEM;
+    // Room for the discovery's end, the scan's, the advertising's, and the
+    // scan begun again.
+    if (_hci.QUEUE - layer.queue_count < 5) return bluetooth.BTERR_NOMEM;
+    discovery.stop(layer);
+    scan.stop(layer);
+    connection.* = .{
+        .state = .listening,
+        .address = address,
+        .le = true,
+        .central = true,
+        .deadline = layer.now + LE_CONNECT_TIMEOUT_MS,
+    };
+    if (devices.find(layer, address.bytes, address.kind)) |device| {
+        connection.class_of_device = device.class_of_device;
+        setName(connection, &device.name);
+    }
+    scan.update(layer);
+    layer.changed = true;
+    return 0;
+}
+
+/// The device a link listens for heard at `heard` - the address the link
+/// was asked for at, or a private address the bond's key made: the link
+/// initiated to it, the address asked for kept as its identity where the
+/// two differ, the calls waiting for it waiting at the address heard. 0,
+/// or why not - the link listening on.
+pub fn reached(layer: *Hci, connection: *Connection, heard: bluetooth.BTAddress) i32 {
+    if (making(layer, true) != null) return bluetooth.BTERR_BUSY;
+    // Room for the scan's end, the advertising's and the link's command.
+    if (_hci.QUEUE - layer.queue_count < 3) return bluetooth.BTERR_NOMEM;
+    scan.stop(layer);
+    advertising.makeWay(layer, hci.LE_STATE_ADV_INITIATING);
+    const identity = connection.address;
+    const private = privacy.towards(layer, identity);
+    if (!initiate(layer, heard, private)) return bluetooth.BTERR_NOMEM;
+    connection.state = .connecting;
+    connection.address = heard;
+    if (!sameAddress(heard, identity)) connection.identity = identity;
+    connection.own = .{ .kind = if (private) bluetooth.BTADDR_LE_RANDOM else bluetooth.BTADDR_LE_PUBLIC };
+    connection.deadline = layer.now + LE_CONNECT_TIMEOUT_MS;
+    rewait(layer, identity, heard);
+    layer.changed = true;
+    return 0;
+}
+
+/// The calls waiting for the link at `from` to be up, waiting for it at
+/// `to`: the address it is made to.
+fn rewait(layer: *Hci, from: bluetooth.BTAddress, to: bluetooth.BTAddress) void {
+    for (&layer.waits) |*wait| {
+        if (wait.used and !wait.done and wait.kind == .connect and sameAddress(wait.address, from)) wait.address = to;
+    }
+}
+
+/// Whether a link listens for its device, which the background scan is on
+/// for.
+pub fn listening(layer: *const Hci) bool {
+    for (&layer.connections) |*connection| {
+        if (connection.state == .listening) return true;
+    }
+    return false;
+}
+
+/// A link to the device at `address` begun at once - paged, or initiated
+/// to that address - none being there, and nobody waiting for it: 0, or
+/// why not.
+pub fn makeNow(layer: *Hci, address: bluetooth.BTAddress) i32 {
     const le_link = address.kind != bluetooth.BTADDR_BREDR;
     if (find(layer, address) != null) return bluetooth.BTERR_BUSY;
     if (if (le_link) !canInitiate(layer) else !canPage(layer)) return bluetooth.BTERR_UNSUPPORTED;
@@ -416,6 +522,11 @@ pub fn securing(connection: *const Connection) bool {
 pub fn disconnect(layer: *Hci, address: bluetooth.BTAddress) Begun {
     if (layer.state != bluetooth.BTCS_UP) return .{ .done = bluetooth.BTERR_NOTUP };
     const connection = find(layer, address) orelse return .{ .done = bluetooth.BTERR_NOTCONNECTED };
+    // Listening, nothing asked of the controller yet: let go of at once.
+    if (connection.state == .listening) {
+        letGo(layer, connection);
+        return .{ .done = 0 };
+    }
     const wait = freeWait(layer) orelse return .{ .done = bluetooth.BTERR_NOMEM };
     // Waited for at the link's own address, which its end answers.
     const own = connection.address;
@@ -426,7 +537,7 @@ pub fn disconnect(layer: *Hci, address: bluetooth.BTAddress) Begun {
             // Its making taken back, if the device has not answered yet.
             if (!connection.heard) connection.unwanted = true;
         },
-        .disconnecting, .free => {},
+        .disconnecting, .free, .listening => {},
     }
     return waitOn(layer, wait, .disconnect, own);
 }
@@ -438,13 +549,22 @@ pub fn dropAll(layer: *Hci) void {
 }
 
 /// A link ended, whatever its state: one up ended for `reason`, one being
-/// made taken back.
+/// made taken back, one listening let go of.
 pub fn close(layer: *Hci, connection: *Connection, reason: u8) void {
     switch (connection.state) {
         .up => _ = end(layer, connection, reason),
         .connecting => drop(layer, connection),
+        .listening => letGo(layer, connection),
         .disconnecting, .free => {},
     }
+}
+
+/// A link that listens let go of: not made, its calls answered
+/// HCI_ERR_LOCAL_HOST_TERMINATED, and the background scan off where
+/// nothing else wants it.
+fn letGo(layer: *Hci, connection: *Connection) void {
+    failed(layer, connection, hci.HCI_ERR_LOCAL_HOST_TERMINATED);
+    scan.update(layer);
 }
 
 /// A link being made no longer wanted: taken back if the library is
@@ -1032,8 +1152,9 @@ pub fn named(layer: *Hci, connection: *const Connection) void {
 // --- the time ---------------------------------------------------------------------
 
 /// Whatever is due at `layer.now`: a link being made taken back, or
-/// given up on once that was not answered; a link being ended taken to
-/// be down; a link made for channels ended once nothing is left on it.
+/// given up on once that was not answered - one listening for a device
+/// not heard given up on at once; a link being ended taken to be down; a
+/// link made for channels ended once nothing is left on it.
 pub fn tick(layer: *Hci) void {
     for (&layer.connections) |*connection| {
         if (connection.idle_until) |idle_due| {
@@ -1054,6 +1175,7 @@ pub fn tick(layer: *Hci) void {
                     failed(layer, connection, failure(connection, hci.HCI_ERR_CONNECTION_TIMEOUT));
                 } else cancel(layer, connection);
             },
+            .listening => failed(layer, connection, bluetooth.BTERR_TIMEOUT),
             .disconnecting => down(layer, connection, bluetooth.BTERR_TIMEOUT, bluetooth.BTERR_TIMEOUT),
             // The device's features not given in time: made without them.
             .up => established(layer, connection),

@@ -8,7 +8,9 @@
 //! **One device, two kinds of address.** A device reached over BR/EDR
 //! and over LE has one public address for both: a BR/EDR address and a
 //! public LE address of the same bytes are one device. A random LE
-//! address is a device of its own. The entry keeps the address of its
+//! address is a device of its own - save a link's from a private address
+//! its bond's key resolves, which is the bond's device: the link says the
+//! identity it resolved to. The entry keeps the address of its
 //! bond, or else of its link - what pairing, linking and forgetting it
 //! again go by - and a device a search heard both ways is listed by its
 //! BR/EDR address, which its profiles for both, sound and input, use.
@@ -123,7 +125,9 @@ pub const Table = struct {
     }
 
     pub fn addLink(table: *Table, link: *const bluetooth.BTConnection) void {
-        const device = table.entry(&link.address) orelse return;
+        // From a private address its bond resolves: the bond's device.
+        const address = if (link.identity.kind != bluetooth.BTADDR_BREDR) &link.identity else &link.address;
+        const device = table.entry(address) orelse return;
         device.linked = true;
         device.link_flags |= link.flags;
         device.takeName(link.node.name, false);
@@ -179,6 +183,19 @@ test "a bond, a link and a device found at one address are one device, the bonds
     const speaker = &table.devices[1];
     try testing.expect(!speaker.bonded and speaker.found);
     try testing.expectEqualStrings("Speaker", nameOf(speaker));
+}
+
+test "a link from a private address its bond resolves is the bond's device, listed by the identity" {
+    var table: Table = .{};
+    const bond: bluetooth.BTBond = .{ .node = .{ .name = "Sensor" }, .address = madeAddress(bluetooth.BTADDR_LE_PUBLIC, 0x07) };
+    const link: bluetooth.BTConnection = .{ .node = .{ .name = "Sensor" }, .address = madeAddress(bluetooth.BTADDR_LE_RANDOM, 0x47), .identity = madeAddress(bluetooth.BTADDR_LE_PUBLIC, 0x07), .flags = bluetooth.BTLF_LE | bluetooth.BTLF_ENCRYPTED };
+    table.addBond(&bond);
+    table.addLink(&link);
+    try testing.expectEqual(@as(usize, 1), table.count);
+    const sensor = &table.devices[0];
+    try testing.expect(sensor.bonded and sensor.linked);
+    try testing.expectEqual(bluetooth.BTADDR_LE_PUBLIC, sensor.address.kind);
+    try testing.expectEqual(bluetooth.BTLF_LE | bluetooth.BTLF_ENCRYPTED, sensor.link_flags);
 }
 
 test "a BR/EDR address and a public LE one of the same bytes are one device; a random one is not" {

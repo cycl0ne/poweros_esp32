@@ -13,7 +13,15 @@
 //! public one, each link keeping the address it was made from across a
 //! change - its record saying it, and the identity a device's private
 //! address resolved to, bonded so; none without crypto.library, the
-//! identity, or the command.
+//! identity, or the command. A link to a device whose bond keeps its key
+//! listening for its advertising first: the scan begun afresh, other
+//! devices and advertising not to be connected passed over, the link
+//! initiated to the private address the key made - the identity kept, the
+//! call answered there - or to the identity heard; a second device
+//! listened for beginning the scan afresh; another link made meanwhile,
+//! the scan off for it; not heard in its time, or no longer wanted, let go
+//! of; a bond without the key, and no crypto.library, initiated to at
+//! once.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -113,6 +121,12 @@ const given_peer = bluetooth.BTAddress{ .bytes = .{ 0x61, 0x10, 0xEF, 0x5E, 0x00
 const other_peer = bluetooth.BTAddress{ .bytes = .{ 0x62, 0x10, 0xEF, 0x5E, 0x00, 0x00 }, .kind = bluetooth.BTADDR_LE_PUBLIC };
 const ltk: [16]u8 = @splat(0x5A);
 
+/// A device that gives its identity, its key and identity, and a private
+/// address the key made.
+const device_irk = [16]u8{ 0x9B, 0x7D, 0x39, 0x0A, 0xA6, 0x10, 0x10, 0x34, 0x05, 0xAD, 0xC8, 0x57, 0xA3, 0x34, 0x02, 0xEC };
+const keyed_identity = bluetooth.BTAddress{ .bytes = .{ 0x44, 0x10, 0xEF, 0x5E, 0x00, 0x00 }, .kind = bluetooth.BTADDR_LE_PUBLIC };
+const keyed_private = bluetooth.BTAddress{ .bytes = .{ 0xAA, 0xFB, 0x0D, 0x94, 0x81, 0x70 }, .kind = bluetooth.BTADDR_LE_RANDOM };
+
 /// A layer up and on, BR/EDR and LE, taking every command, with LE's own
 /// buffers, `port` its cryptography and the identity its key.
 fn upLayer(recorder: *Recorder, port: *Port) Hci {
@@ -177,6 +191,24 @@ fn featuresRead(layer: *Hci, handle: u16) void {
     params[3] = @truncate(handle >> 8);
     params[4] = 0x01; // encryption
     event(layer, hci.HCI_EV_LE_META, &params);
+}
+
+/// LE Advertising Report: the device at `address` advertising as
+/// `event_type` (hci.LE_ADV_*) says.
+fn report(layer: *Hci, event_type: u8, address: bluetooth.BTAddress) void {
+    var params: [12]u8 = @splat(0);
+    params[0] = hci.HCI_LE_EV_ADVERTISING_REPORT;
+    params[1] = 1;
+    params[2] = event_type;
+    params[3] = if (address.kind == bluetooth.BTADDR_LE_RANDOM) hci.LE_ADDR_RANDOM else hci.LE_ADDR_PUBLIC;
+    @memcpy(params[4..10], &address.bytes);
+    params[11] = 0xC4; // -60 dBm
+    event(layer, hci.HCI_EV_LE_META, &params);
+}
+
+/// Encryption Change on the link with `handle`: encrypted.
+fn encrypted(layer: *Hci, handle: u16) void {
+    event(layer, hci.HCI_EV_ENCRYPTION_CHANGE, &.{ hci.HCI_SUCCESS, @truncate(handle), @truncate(handle >> 8), 1 });
 }
 
 /// The record ObtainBTConnections would give of the link to `address`.
@@ -377,9 +409,8 @@ test "a link to a device given the identity - found by its address or by its key
 
     // A device at a private address its key made, its bond given the
     // identity: from the private address.
-    const device_irk = [16]u8{ 0x9B, 0x7D, 0x39, 0x0A, 0xA6, 0x10, 0x10, 0x34, 0x05, 0xAD, 0xC8, 0x57, 0xA3, 0x34, 0x02, 0xEC };
-    const identity = bluetooth.BTAddress{ .bytes = .{ 0x44, 0x10, 0xEF, 0x5E, 0x00, 0x00 }, .kind = bluetooth.BTADDR_LE_PUBLIC };
-    const private = bluetooth.BTAddress{ .bytes = .{ 0xAA, 0xFB, 0x0D, 0x94, 0x81, 0x70 }, .kind = bluetooth.BTADDR_LE_RANDOM };
+    const identity = keyed_identity;
+    const private = keyed_private;
     _ = bonds.keepLe(&layer, identity, &.{ .ltk = ltk, .key_size = 16, .authenticated = true, .secure = true, .irk = device_irk, .given = true }, "sensor").?;
     try testing.expect(privacy.towards(&layer, private));
     _ = connections.connect(&layer, private);
@@ -439,4 +470,156 @@ test "none without crypto.library, the identity, or the command: the public addr
         settle(&layer, &recorder);
         try testing.expectEqual(hci.LE_ADDR_PUBLIC, recorder.lastOf(hci.HCI_OP_LE_SET_SCAN_PARAMETERS).?.params[5]);
     }
+}
+
+test "a link to a device whose bond keeps its key listens for its advertising first: the scan begun afresh, others passed over, initiated to the private address the key made - the identity kept, the call answered there - or to the identity heard" {
+    var recorder = Recorder{};
+    var port = Port{};
+    var layer = upLayer(&recorder, &port);
+    _ = bonds.keepLe(&layer, keyed_identity, &.{ .ltk = ltk, .key_size = 16, .authenticated = true, .secure = true, .irk = device_irk }, "sensor").?;
+    var before = recorder.count;
+    const begun = connections.connect(&layer, keyed_identity);
+    try testing.expect(begun == .waiting);
+    settle(&layer, &recorder);
+    // Listening: the background scan on, passive, nothing initiated; the
+    // link not listed.
+    var seen: [16]u16 = undefined;
+    try testing.expectEqualSlices(u16, &.{ hci.HCI_OP_LE_SET_SCAN_PARAMETERS, hci.HCI_OP_LE_SET_SCAN_ENABLE }, recorder.opcodes(before, &seen));
+    try testing.expectEqual(hci.LE_SCAN_PASSIVE, recorder.lastOf(hci.HCI_OP_LE_SET_SCAN_PARAMETERS).?.params[0]);
+    const link = connections.find(&layer, keyed_identity).?;
+    try testing.expectEqual(connections.State.listening, link.state);
+    try testing.expect(!_connection.listed(link));
+    try testing.expect(layer.scan.on);
+    // Another device, and the device's advertising not to be connected
+    // by: passed over.
+    before = recorder.count;
+    report(&layer, hci.LE_ADV_IND, other_peer);
+    report(&layer, hci.LE_ADV_NONCONN_IND, keyed_private);
+    try testing.expectEqual(before, recorder.count);
+    try testing.expectEqual(connections.State.listening, link.state);
+    // Heard at a private address its key made: the scan off, the link
+    // initiated to that address, keeping the identity.
+    report(&layer, hci.LE_ADV_IND, keyed_private);
+    settle(&layer, &recorder);
+    try testing.expectEqualSlices(u16, &.{ hci.HCI_OP_LE_SET_SCAN_ENABLE, hci.HCI_OP_LE_CREATE_CONNECTION }, recorder.opcodes(before, &seen));
+    try testing.expectEqual(@as(u8, 0), recorder.lastOf(hci.HCI_OP_LE_SET_SCAN_ENABLE).?.params[0]);
+    const create = recorder.lastOf(hci.HCI_OP_LE_CREATE_CONNECTION).?;
+    try testing.expectEqual(hci.LE_ADDR_RANDOM, create.params[5]);
+    try testing.expectEqualSlices(u8, &keyed_private.bytes, create.params[6..12]);
+    try testing.expectEqual(connections.State.connecting, link.state);
+    try testing.expect(connections.sameAddress(keyed_private, link.address));
+    try testing.expect(connections.sameAddress(keyed_identity, link.identity.?));
+    try testing.expect(connections.find(&layer, keyed_identity) == link);
+    // Up and encrypted with the bond: the call answered.
+    leLinked(&layer, 0x0040, hci.ROLE_CENTRAL, keyed_private);
+    featuresRead(&layer, 0x0040);
+    settle(&layer, &recorder);
+    try testing.expect(recorder.lastOf(hci.HCI_OP_LE_ENABLE_ENCRYPTION) != null);
+    try testing.expect(!layer.waits[begun.waiting].done);
+    encrypted(&layer, 0x0040);
+    settle(&layer, &recorder);
+    try testing.expect(layer.waits[begun.waiting].done);
+    try testing.expectEqual(@as(i32, 0), layer.waits[begun.waiting].result);
+    try testing.expect(!layer.scan.on);
+    const record = recordOf(&layer, keyed_identity);
+    try testing.expect(connections.sameAddress(keyed_private, record.address));
+    try testing.expect(connections.sameAddress(keyed_identity, record.identity));
+    try testing.expect(record.flags & bluetooth.BTLF_BONDED != 0 and record.flags & bluetooth.BTLF_ENCRYPTED != 0);
+
+    // A device heard at its identity: initiated to it, no identity of the
+    // link's own.
+    const public_irk = [16]u8{ 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10 };
+    _ = bonds.keepLe(&layer, given_peer, &.{ .ltk = ltk, .key_size = 16, .authenticated = true, .secure = true, .irk = public_irk }, "pi").?;
+    before = recorder.count;
+    _ = connections.connect(&layer, given_peer);
+    settle(&layer, &recorder);
+    try testing.expectEqualSlices(u16, &.{ hci.HCI_OP_LE_SET_SCAN_PARAMETERS, hci.HCI_OP_LE_SET_SCAN_ENABLE }, recorder.opcodes(before, &seen));
+    report(&layer, hci.LE_ADV_IND, given_peer);
+    settle(&layer, &recorder);
+    const to_public = recorder.lastOf(hci.HCI_OP_LE_CREATE_CONNECTION).?;
+    try testing.expectEqual(hci.LE_ADDR_PUBLIC, to_public.params[5]);
+    try testing.expectEqualSlices(u8, &given_peer.bytes, to_public.params[6..12]);
+    const second = connections.find(&layer, given_peer).?;
+    try testing.expectEqual(connections.State.connecting, second.state);
+    try testing.expect(second.identity == null);
+}
+
+test "listening: another link made meanwhile, the scan off for it and on again after; not heard in its time, or no longer wanted, let go of; a bond without the key, or no crypto.library, initiated to at once" {
+    var recorder = Recorder{};
+    var port = Port{};
+    var layer = upLayer(&recorder, &port);
+    _ = bonds.keepLe(&layer, keyed_identity, &.{ .ltk = ltk, .key_size = 16, .authenticated = true, .secure = true, .irk = device_irk }, "sensor").?;
+    // Two calls for the one link, both waiting.
+    const first = connections.connect(&layer, keyed_identity);
+    const second = connections.connect(&layer, keyed_identity);
+    try testing.expect(first == .waiting and second == .waiting);
+    settle(&layer, &recorder);
+    // Another device listened for meanwhile: the scan begun afresh, so
+    // that a device it reported already is reported again. Let go of: the
+    // scan on still, for the first.
+    const watch_irk = [16]u8{ 0x21, 0x43, 0x65, 0x87, 0xA9, 0xCB, 0xED, 0x0F, 0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0 };
+    const watch = bluetooth.BTAddress{ .bytes = .{ 0x46, 0x10, 0xEF, 0x5E, 0x00, 0x00 }, .kind = bluetooth.BTADDR_LE_PUBLIC };
+    _ = bonds.keepLe(&layer, watch, &.{ .ltk = ltk, .key_size = 16, .authenticated = true, .secure = true, .irk = watch_irk }, "watch").?;
+    var before = recorder.count;
+    const watching = connections.connect(&layer, watch);
+    settle(&layer, &recorder);
+    var seen: [16]u16 = undefined;
+    try testing.expectEqualSlices(u16, &.{ hci.HCI_OP_LE_SET_SCAN_ENABLE, hci.HCI_OP_LE_SET_SCAN_PARAMETERS, hci.HCI_OP_LE_SET_SCAN_ENABLE }, recorder.opcodes(before, &seen));
+    try testing.expectEqual(connections.Begun{ .done = 0 }, connections.disconnect(&layer, watch));
+    try testing.expectEqual(@as(i32, hci.HCI_ERR_LOCAL_HOST_TERMINATED), layer.waits[watching.waiting].result);
+    connections.release(&layer, watching.waiting);
+    try testing.expect(layer.scan.on);
+    // Another link, made at once: the scan off while it is made, the
+    // device not heard meanwhile.
+    before = recorder.count;
+    try testing.expect(connections.connect(&layer, other_peer) == .waiting);
+    settle(&layer, &recorder);
+    try testing.expectEqualSlices(u16, &.{ hci.HCI_OP_LE_SET_SCAN_ENABLE, hci.HCI_OP_LE_CREATE_CONNECTION }, recorder.opcodes(before, &seen));
+    try testing.expect(!layer.scan.on);
+    before = recorder.count;
+    report(&layer, hci.LE_ADV_IND, keyed_private);
+    try testing.expectEqual(before, recorder.count);
+    // Once it is up: the scan on again, the device heard.
+    leLinked(&layer, 0x0041, hci.ROLE_CENTRAL, other_peer);
+    settle(&layer, &recorder);
+    try testing.expect(layer.scan.on);
+    // Not heard in its time: not made, both calls answered, the scan off.
+    layer.now += connections.LE_CONNECT_TIMEOUT_MS;
+    _hci.tick(&layer);
+    settle(&layer, &recorder);
+    try testing.expect(connections.find(&layer, keyed_identity) == null);
+    for ([_]connections.Begun{ first, second }) |begun| {
+        try testing.expect(layer.waits[begun.waiting].done);
+        try testing.expectEqual(bluetooth.BTERR_TIMEOUT, layer.waits[begun.waiting].result);
+    }
+    try testing.expect(!layer.scan.on);
+    connections.release(&layer, first.waiting);
+    connections.release(&layer, second.waiting);
+
+    // No longer wanted: let go of at once, its call answered.
+    const third = connections.connect(&layer, keyed_identity);
+    settle(&layer, &recorder);
+    try testing.expectEqual(connections.Begun{ .done = 0 }, connections.disconnect(&layer, keyed_identity));
+    try testing.expect(connections.find(&layer, keyed_identity) == null);
+    try testing.expectEqual(@as(i32, hci.HCI_ERR_LOCAL_HOST_TERMINATED), layer.waits[third.waiting].result);
+    settle(&layer, &recorder);
+    try testing.expect(!layer.scan.on);
+    connections.release(&layer, third.waiting);
+
+    // A bond without the key: initiated to at once.
+    _ = bonds.keepLe(&layer, given_peer, &.{ .ltk = ltk, .key_size = 16, .authenticated = true, .secure = true }, "plain").?;
+    before = recorder.count;
+    _ = connections.connect(&layer, given_peer);
+    settle(&layer, &recorder);
+    try testing.expectEqualSlices(u16, &.{hci.HCI_OP_LE_CREATE_CONNECTION}, recorder.opcodes(before, &seen));
+    leLinked(&layer, 0x0042, hci.ROLE_CENTRAL, given_peer);
+    settle(&layer, &recorder);
+
+    // No crypto.library: the device's own address, at once.
+    layer.crypto = null;
+    before = recorder.count;
+    _ = connections.connect(&layer, keyed_identity);
+    settle(&layer, &recorder);
+    try testing.expectEqualSlices(u16, &.{hci.HCI_OP_LE_CREATE_CONNECTION}, recorder.opcodes(before, &seen));
+    try testing.expectEqualSlices(u8, &keyed_identity.bytes, recorder.lastOf(hci.HCI_OP_LE_CREATE_CONNECTION).?.params[6..12]);
 }

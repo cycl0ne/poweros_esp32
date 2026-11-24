@@ -410,7 +410,7 @@ fn linkFor(layer: *Hci, address: bluetooth.BTAddress) i32 {
     if (!layer.powered) return bluetooth.BTERR_OFF;
     if (connections.find(layer, address)) |connection| {
         return switch (connection.state) {
-            .up, .connecting => if (connection.att.dead) bluetooth.BTERR_TIMEOUT else 0,
+            .up, .connecting, .listening => if (connection.att.dead) bluetooth.BTERR_TIMEOUT else 0,
             .disconnecting, .free => bluetooth.BTERR_BUSY,
         };
     }

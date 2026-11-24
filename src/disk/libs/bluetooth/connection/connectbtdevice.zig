@@ -69,6 +69,16 @@ const _task = @import("../task/_task.zig");
 /// which the device resolves by that identity; one to any other device
 /// from the public address.
 ///
+/// Since 1.23 an LE link to a device whose bond keeps its identity
+/// resolving key - one that may advertise from a private address, a new
+/// one now and then - is not initiated to the address given: the
+/// controller listens for the device's advertising first, passively,
+/// and links to the address it is heard at - the one given, or a private
+/// address the key made - within the same 20 seconds. The link keeps the
+/// address given as the device's identity (BTConnection's `identity`), by
+/// which DisconnectBTDevice and ConnectBTDevice find it too. A link that
+/// listens initiates nothing: another link is made meanwhile.
+///
 /// CONTEXT:
 /// - Waits: yes, until the link is up or not made.
 /// - Interrupts: no.

@@ -269,7 +269,7 @@ pub fn begin(layer: *Hci, address: bluetooth.BTAddress, psm: u16, user: User) Be
                 }
             },
             // Asked for once it is up.
-            .connecting => channel.* = made,
+            .connecting, .listening => channel.* = made,
             .disconnecting, .free => return .{ .failed = bluetooth.BTERR_BUSY },
         }
         return .{ .channel = channel };

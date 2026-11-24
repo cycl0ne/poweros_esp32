@@ -110,7 +110,7 @@ const _pairing = @import("_pairing.zig");
 /// BUGS:
 /// Over LE this side gives the device its identity and no other key, and
 /// signs nothing. A device that advertises only private addresses is
-/// reached by the address a discovery heard, not by its identity.
+/// reached, before it has a bond here, by the address a discovery heard.
 ///
 /// SEE ALSO:
 /// `AddBTAgent`, `UnpairBTDevice`, `ObtainBTBonds`, `ConnectBTDevice`

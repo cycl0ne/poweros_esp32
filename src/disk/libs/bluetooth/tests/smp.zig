@@ -135,6 +135,19 @@ fn leConnectionComplete(layer: *Hci, address: bluetooth.BTAddress) void {
     event(layer, hci.HCI_EV_LE_META, &params);
 }
 
+/// The device advertising at `address`, so that it may be connected: a
+/// link that listens for it is initiated to it.
+fn advertises(layer: *Hci, address: bluetooth.BTAddress) void {
+    var params: [12]u8 = @splat(0);
+    params[0] = hci.HCI_LE_EV_ADVERTISING_REPORT;
+    params[1] = 1;
+    params[2] = hci.LE_ADV_IND;
+    params[3] = if (address.kind == bluetooth.BTADDR_LE_RANDOM) hci.LE_ADDR_RANDOM else hci.LE_ADDR_PUBLIC;
+    params[4..10].* = address.bytes;
+    params[11] = 0xC4; // -60 dBm
+    event(layer, hci.HCI_EV_LE_META, &params);
+}
+
 /// The LE link the library is making to `address` up, and the device's
 /// features read over it.
 fn linkedUp(layer: *Hci, recorder: *const Recorder, address: bluetooth.BTAddress) !void {
@@ -517,11 +530,13 @@ test "LE legacy pairing: a passkey typed, the device's keys kept, its file, and 
     var not_le = bonds.Bond{ .address = device.address };
     try testing.expect(!bondfiles.parse(&other, &not_le));
 
-    // The link down, and made again: made secure with the bond before
-    // ConnectBTDevice is answered.
+    // The link down, and made again - the device listened for, its bond
+    // keeping its key: made secure with the bond before ConnectBTDevice
+    // is answered.
     event(&layer, hci.HCI_EV_DISCONNECTION_COMPLETE, &.{ 0, @truncate(handle), @truncate(handle >> 8), hci.HCI_ERR_REMOTE_USER_TERMINATED });
     const waiting = connections.connect(&layer, device.address);
     try testing.expect(waiting == .waiting);
+    advertises(&layer, device.address);
     try linkedUp(&layer, &recorder, device.address);
     try testing.expect(!layer.waits[waiting.waiting].done);
     try expectEncryption(&layer, &recorder, &ltk, 0x1234, &rand, 0);
@@ -638,8 +653,10 @@ test "LE: a private address resolved to its bond and made secure; a device that 
     connections.release(&layer, waiting.waiting);
     event(&layer, hci.HCI_EV_DISCONNECTION_COMPLETE, &.{ 0, @truncate(handle), @truncate(handle >> 8), hci.HCI_ERR_REMOTE_USER_TERMINATED });
 
-    // The device no longer has the key: the link is up, not made secure.
+    // The device no longer has the key: the link - listened for, heard at
+    // the identity - is up, not made secure.
     const again = connections.connect(&layer, identity);
+    advertises(&layer, identity);
     try linkedUp(&layer, &recorder, identity);
     try expectEncryption(&layer, &recorder, &ltk, 0, &zero8, hci.HCI_ERR_PIN_OR_KEY_MISSING);
     try testing.expectEqual(@as(i32, hci.HCI_ERR_PIN_OR_KEY_MISSING), layer.waits[again.waiting].result);

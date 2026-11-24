@@ -154,7 +154,8 @@ const Air = struct {
 
     /// A command answered: the link made - the central seen by the address
     /// it made it from - and ended, the devices' features, LE's encryption
-    /// between the two, a random address kept; the rest taken.
+    /// between the two, a random address kept, a scan that hears the other
+    /// advertise; the rest taken.
     fn command(air: *Air, from: u1, opcode: u16, params: []const u8) void {
         const to = from ^ 1;
         const ends = [2]u8{ @truncate(handle), @truncate(handle >> 8) };
@@ -171,6 +172,12 @@ const Air = struct {
             hci.HCI_OP_LE_SET_RANDOM_ADDRESS => {
                 air.random[from] = params[0..6].*;
                 air.complete(from, opcode, &.{0});
+            },
+            // Scanning, it hears the other advertise from its public
+            // address.
+            hci.HCI_OP_LE_SET_SCAN_ENABLE => {
+                air.complete(from, opcode, &.{0});
+                if (params[0] == 1) air.advertised(from, air.layers[to].address);
             },
             hci.HCI_OP_LE_READ_REMOTE_FEATURES => {
                 air.status(from, opcode);
@@ -226,6 +233,19 @@ const Air = struct {
         params[6..12].* = bytes;
         params[12] = 0x18; // every 30 ms
         params[16] = 0x2A; // supervised for 420 ms
+        air.event(to, hci.HCI_EV_LE_META, &params);
+    }
+
+    /// LE Advertising Report to side `to`: the other, connectable, at its
+    /// public address `bytes`.
+    fn advertised(air: *Air, to: u1, bytes: [6]u8) void {
+        var params: [12]u8 = @splat(0);
+        params[0] = hci.HCI_LE_EV_ADVERTISING_REPORT;
+        params[1] = 1;
+        params[2] = hci.LE_ADV_IND;
+        params[3] = hci.LE_ADDR_PUBLIC;
+        params[4..10].* = bytes;
+        params[11] = 0xC4; // -60 dBm
         air.event(to, hci.HCI_EV_LE_META, &params);
     }
 

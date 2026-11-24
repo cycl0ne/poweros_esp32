@@ -182,7 +182,7 @@ pub fn pair(layer: *Hci, address: bluetooth.BTAddress, agent: u32, capability: ?
                 }
                 return 0;
             },
-            .connecting => {
+            .connecting, .listening => {
                 if (connection.unwanted) return bluetooth.BTERR_BUSY;
                 begin(layer, connection, .pair, true, agent, capability);
                 connection.pairing.stage = .linking;
