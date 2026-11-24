@@ -437,7 +437,7 @@ while (it.next()) |node| {
 
 | Field | What it is |
 |---|---|
-| `node.name` | the device's name: what the discovery heard, or - over BR/EDR - what the device answers over the link once it is up |
+| `node.name` | the device's name: what the discovery heard - over LE, else what its bond keeps - or what the device says over the link once it is up: over BR/EDR its answer to the name request, over LE, on a link the device made, its GATT server's Device Name |
 | `flags` | `BTLF_LE` for a link over LE, `BTLF_INCOMING` for one the device made, `BTLF_CENTRAL` while the controller is its central, `BTLF_ENCRYPTED` while it is encrypted, `BTLF_AUTHENTICATED` once the two have shown each other a link key, `BTLF_BONDED` for a device with a bond, `BTLF_PAIRING` while it is being paired or made secure |
 | `handle` | the controller's number for the link |
 | `age` | how many milliseconds it has been up |
@@ -530,7 +530,8 @@ compare, an agent that can answer is asked whether the device may pair
 **The bonds** are kept in `ENVARC:Sys/bluetooth/<controller>/<device>`,
 each address its twelve hex digits: a keyword file a bond - the device's
 name and class at the pairing, the link key and its kind, whether a PIN
-made it - read again as the controller comes up. A controller keeps 32.
+made it - read again as the controller comes up. A name the link learns
+after a pairing that knew none is the bond's then. A controller keeps 32.
 `ObtainBTBonds` lists them - the keys stay the library's - and
 `UnpairBTDevice` ends one: the profile drivers that drive the device let
 go of it - told to have it forget this machine too - the key forgotten,
@@ -573,7 +574,10 @@ device may pair - and the device's identity is taken; the machine gives
 no key of its own. The device then encrypts the link with the new key,
 and the bond is kept as any other, its key the same on both sides.
 `PairBTDevice` on such a link asks the device to pair (Security
-Request); a device that does not is given up on after a minute.
+Request); a device that does not is given up on after a minute. A
+device that links to the machine, whose name neither a discovery heard
+nor its bond keeps, is asked for it: its GATT server's Device Name, read
+once the link is up, names the link and the device's bond.
 
 An LE bond's file is `<device>.le` for a public address, `<device>.random`
 for a static random one: the device's name, the long term key and what

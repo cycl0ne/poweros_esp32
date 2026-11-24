@@ -61,7 +61,11 @@
 //!
 //! **The device's name**, where the discovery did not hear it, is asked
 //! for once a BR/EDR link is up (Remote Name Request): over the link it
-//! comes at once.
+//! comes at once. Over LE a link takes the name its bond keeps where the
+//! discovery heard none, and a device that links to the controller with
+//! neither is asked by GATT's client, its server's Device Name read
+//! (att/client.zig). A name that comes after a pairing that knew none is
+//! its bond's too (`named`).
 //!
 //! **Made secure.** A BR/EDR link the library makes to a device it has a
 //! bond with is authenticated with the bond's key and encrypted before
@@ -86,6 +90,7 @@ const _hci = @import("_hci.zig");
 const Hci = _hci.Hci;
 const acl = @import("acl.zig");
 const advertising = @import("advertising.zig");
+const bonds = @import("bonds.zig");
 const devices = @import("devices.zig");
 const discovery = @import("discovery.zig");
 const pairing = @import("pairing.zig");
@@ -761,6 +766,9 @@ pub fn leComplete(layer: *Hci, params: []const u8) void {
     made.address = address;
     made.le = true;
     made.central = role == hci.ROLE_CENTRAL;
+    if (made.incoming) {
+        if (devices.find(layer, address.bytes, address.kind)) |device| setName(made, &device.name);
+    }
     made.interval = _hci.le16(params[11..13]);
     made.latency = _hci.le16(params[13..15]);
     made.supervision = _hci.le16(params[15..17]);
@@ -819,7 +827,8 @@ fn askFeatures(layer: *Hci, connection: *const Connection) bool {
     return _hci.command(layer, hci.HCI_OP_LE_READ_REMOTE_FEATURES, &params, _hci.COMMAND_TIMEOUT_MS);
 }
 
-/// The device has answered on a link that is up: the link made - a
+/// The device has answered on a link that is up: the link made - over
+/// LE, a bonded device's identity and name taken from its bond; a
 /// pairing that waited for it begun, a bonded device's link made secure
 /// before its callers are answered. Nothing for one being ended, whose
 /// callers its end answers.
@@ -828,9 +837,10 @@ pub fn established(layer: *Hci, connection: *Connection) void {
     connection.heard = true;
     connection.deadline = null;
     layer.changed = true;
-    if (connection.le and connection.identity == null) {
+    if (connection.le) {
         if (smp.bondOf(layer, connection)) |bond| {
-            if (!sameAddress(bond.address, connection.address)) connection.identity = bond.address;
+            if (connection.identity == null and !sameAddress(bond.address, connection.address)) connection.identity = bond.address;
+            if (connection.name[0] == 0) setName(connection, &bond.name);
         }
     }
     note(layer, connection, .up, 0);
@@ -992,7 +1002,16 @@ pub fn nameComplete(layer: *Hci, params: []const u8) void {
     if (params.len < 7 or params[0] != hci.HCI_SUCCESS) return;
     const connection = find(layer, .{ .bytes = params[1..7].*, .kind = bluetooth.BTADDR_BREDR }) orelse return;
     setName(connection, params[7..]);
+    named(layer, connection);
+}
+
+/// The link's name come from its device - its Remote Name Request
+/// answered, its GATT server's Device Name read: the bond's too where
+/// that was kept without one.
+pub fn named(layer: *Hci, connection: *const Connection) void {
     layer.changed = true;
+    const bond = smp.bondOf(layer, connection) orelse return;
+    bonds.named(layer, bond, &connection.name);
 }
 
 // --- the time ---------------------------------------------------------------------

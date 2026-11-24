@@ -6,6 +6,10 @@
 //! also for a private address the bond's identity resolving key made -
 //! and refused, and noted, for a device without a bond, a key that goes
 //! by an EDIV and Rand, a legacy bond's key, and a handle no link has.
+//! The device's name asked of its GATT server - an answer cut at its PDU
+//! read on by Read Blob - the link's, and a bond's kept without one; not
+//! asked where a discovery heard it or its bond keeps one; a server
+//! without one leaving the link unnamed.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -18,6 +22,7 @@ const Hci = _hci.Hci;
 const acl = @import("../hci/acl.zig");
 const bonds = @import("../hci/bonds.zig");
 const connections = @import("../hci/connections.zig");
+const devices = @import("../hci/devices.zig");
 const Port = @import("_port.zig").Port;
 
 const testing = std.testing;
@@ -84,6 +89,7 @@ const Recorder = struct {
 const ours = [6]u8{ 0x00, 0x10, 0xEF, 0x5E, 0x00, 0x00 };
 const phone = bluetooth.BTAddress{ .bytes = .{ 0x50, 0x10, 0xEF, 0x5E, 0x00, 0x00 }, .kind = bluetooth.BTADDR_LE_PUBLIC };
 const laptop = bluetooth.BTAddress{ .bytes = .{ 0x51, 0x10, 0xEF, 0x5E, 0x00, 0x00 }, .kind = bluetooth.BTADDR_LE_PUBLIC };
+const watch = bluetooth.BTAddress{ .bytes = .{ 0x52, 0x10, 0xEF, 0x5E, 0x00, 0x00 }, .kind = bluetooth.BTADDR_LE_PUBLIC };
 const ltk = [16]u8{ 0x10, 0x32, 0x54, 0x76, 0x98, 0xBA, 0xDC, 0xFE, 0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF };
 const zero8: [8]u8 = @splat(0);
 
@@ -310,4 +316,53 @@ test "a central at a private address its bond's identity resolving key made: the
     try testing.expect(connections.find(&layer, phone).? == link);
     keyAsked(&layer, 0x0041, zero8, 0);
     try expectKeyGiven(&layer, &recorder, 0x0041, &ltk);
+}
+
+test "a device that links, its name not heard: its GATT server's Device Name read, an answer cut at its PDU read on by Read Blob - the link's name, and its bond's, kept without one" {
+    var recorder = Recorder{};
+    var port = Port{};
+    var layer = upLayer(&recorder, &port);
+    const bond = bonds.keepLe(&layer, phone, &.{ .ltk = ltk, .key_size = 16, .authenticated = true, .secure = true }, "").?;
+    bond.dirty = false;
+    layer.bonds_changed = false;
+    const link = try linkedBy(&layer, &recorder, phone, 0x0041);
+    // This machine's MTU first; the device keeps the default.
+    try expectAtt(&recorder, 0x0041, &.{ 0x02, 0x05, 0x02 });
+    attIn(&layer, 0x0041, &.{ 0x03, 23, 0x00 });
+    try expectAtt(&recorder, 0x0041, &.{ 0x08, 0x01, 0x00, 0xFF, 0xFF, 0x00, 0x2A });
+    // An entry that fills the PDU: its 19 bytes, and the rest asked for.
+    attIn(&layer, 0x0041, "\x09\x15\x03\x00" ++ "The phone with a lo");
+    try expectAtt(&recorder, 0x0041, &.{ 0x0C, 0x03, 0x00, 19, 0x00 });
+    try testing.expectEqual(@as(u8, 0), bond.name[0]);
+    attIn(&layer, 0x0041, "\x0Dng name");
+    try testing.expectEqualStrings("The phone with a long name", std.mem.sliceTo(&link.name, 0));
+    try testing.expectEqualStrings("The phone with a long name", std.mem.sliceTo(&bond.name, 0));
+    try testing.expect(bond.dirty and layer.bonds_changed);
+}
+
+test "a device's name asked for only where none is known: the one a discovery heard taken, or its bond's; a server without one leaving the link unnamed" {
+    var recorder = Recorder{};
+    var port = Port{};
+    var layer = upLayer(&recorder, &port);
+    // Heard by a discovery with its name: taken, nothing asked.
+    devices.setName(devices.heard(&layer, laptop.bytes, laptop.kind, -40).?, "Laptop");
+    const before = recorder.packet_count;
+    const heard_link = try linkedBy(&layer, &recorder, laptop, 0x0042);
+    try testing.expectEqualStrings("Laptop", std.mem.sliceTo(&heard_link.name, 0));
+    try testing.expectEqual(before, recorder.packet_count);
+
+    // A bond with a name: taken, nothing asked.
+    _ = bonds.keepLe(&layer, phone, &.{ .ltk = ltk, .key_size = 16, .authenticated = true, .secure = true }, "Phone").?;
+    const link = try linkedBy(&layer, &recorder, phone, 0x0041);
+    try testing.expectEqualStrings("Phone", std.mem.sliceTo(&link.name, 0));
+    try testing.expectEqual(before, recorder.packet_count);
+
+    // A server without the name: the link unnamed, nothing more asked.
+    const unnamed = try linkedBy(&layer, &recorder, watch, 0x0043);
+    attIn(&layer, 0x0043, &.{ 0x03, 23, 0x00 });
+    try expectAtt(&recorder, 0x0043, &.{ 0x08, 0x01, 0x00, 0xFF, 0xFF, 0x00, 0x2A });
+    const asked = recorder.packet_count;
+    attIn(&layer, 0x0043, &.{ 0x01, 0x08, 0x01, 0x00, 0x0A });
+    try testing.expectEqual(@as(u8, 0), unnamed.name[0]);
+    try testing.expectEqual(asked, recorder.packet_count);
 }

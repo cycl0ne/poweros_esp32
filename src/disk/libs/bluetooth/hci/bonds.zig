@@ -2,7 +2,8 @@
 //! A controller's bonds: a table in its HCI layer, a record a device it
 //! has paired with and kept the key of - the device's address, the key
 //! and its kind, the device's class and name as they were at the
-//! pairing. Over BR/EDR the key is the link key; over LE it is the long
+//! pairing, or the name as its link learnt it after a pairing that knew
+//! none. Over BR/EDR the key is the link key; over LE it is the long
 //! term key, with what names it to the device's controller (EDIV and
 //! Rand), its size, how it was made, and the device's identity
 //! resolving key where it gave one - the bond's address is then the
@@ -94,6 +95,17 @@ pub fn keep(layer: *Hci, address: bluetooth.BTAddress, key: *const [hci.LINK_KEY
     layer.bonds_changed = true;
     layer.changed = true;
     return bond;
+}
+
+/// A bond kept without a name given the one its device's link learnt,
+/// and marked to be written. Nothing for a bond with a name, or an empty
+/// one.
+pub fn named(layer: *Hci, bond: *Bond, name: []const u8) void {
+    if (bond.name[0] != 0 or name.len == 0 or name[0] == 0) return;
+    setName(bond, name);
+    bond.dirty = true;
+    layer.bonds_changed = true;
+    layer.changed = true;
 }
 
 /// A free place; a gone bond's is not free until its file is deleted.

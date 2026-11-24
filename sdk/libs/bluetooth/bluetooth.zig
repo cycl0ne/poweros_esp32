@@ -456,7 +456,8 @@ pub const BTBF_IDENTITY: u32 = 1 << 3;
 /// A bond, as ObtainBTBonds lists it.
 pub const BTBond = extern struct {
     /// On the list ObtainBTBonds answers. ln_Name is the device's name as
-    /// it was at the pairing, UTF-8; empty when none was known.
+    /// it was at the pairing - or as its link learnt it after, where none
+    /// was known then - UTF-8; empty while none is known.
     node: exec.Node = .{},
     /// The controller it is a bond of (BTController.id).
     controller: u32 = 0,

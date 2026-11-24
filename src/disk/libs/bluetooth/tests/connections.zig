@@ -3,7 +3,8 @@
 //! answers by hand: a page by what the discovery heard, LE's initiating,
 //! a page not answered, initiating taken back at its time, a second link
 //! of a kind while one is made; a device's page taken on, a link for
-//! sound refused; a name asked for over the link; the ACL data - a frame
+//! sound refused; a name asked for over the link, and given to a bond
+//! kept without one; the ACL data - a frame
 //! put together from its packets, one cut into packets as long as the
 //! controller takes, the buffers counted and given back, each link's
 //! share of them and of the queue - a link whose device takes nothing
@@ -24,6 +25,7 @@ const hcidev = sdk.devices.hci;
 const _hci = @import("../hci/_hci.zig");
 const Hci = _hci.Hci;
 const acl = @import("../hci/acl.zig");
+const bonds = @import("../hci/bonds.zig");
 const connections = @import("../hci/connections.zig");
 const devices = @import("../hci/devices.zig");
 const local = @import("../hci/local.zig");
@@ -234,7 +236,7 @@ const peer = bluetooth.BTAddress{ .bytes = .{ 0x01, 0x10, 0xEF, 0x5E, 0x00, 0x00
 const caller = bluetooth.BTAddress{ .bytes = .{ 0x02, 0x10, 0xEF, 0x5E, 0x00, 0x00 } };
 const sensor = bluetooth.BTAddress{ .bytes = .{ 0x03, 0x10, 0xEF, 0x5E, 0x00, 0xC0 }, .kind = bluetooth.BTADDR_LE_RANDOM };
 
-test "a page by what the discovery heard: the link up, its name asked for over it" {
+test "a page by what the discovery heard: the link up, its name asked for over it and given to a bond kept without one" {
     var recorder = Recorder{};
     var layer = upLayer(&recorder);
     const device = devices.heard(&layer, peer.bytes, bluetooth.BTADDR_BREDR, -50).?;
@@ -268,11 +270,18 @@ test "a page by what the discovery heard: the link up, its name asked for over i
     const asked = recorder.last();
     try testing.expectEqual(hci.HCI_OP_REMOTE_NAME_REQUEST, asked.opcode);
     try testing.expectEqualSlices(u8, &peer.bytes, asked.bytes()[0..6]);
+    // Paired before the name came: the bond kept without one.
+    const key: [hci.LINK_KEY_SIZE]u8 = @splat(0x5A);
+    const bond = bonds.keep(&layer, peer, &key, hci.LINK_KEY_AUTHENTICATED_P256, false, 0x0C0104, "").?;
+    bond.dirty = false;
+    layer.bonds_changed = false;
     var name: [255]u8 = @splat(0);
     @memcpy(name[1..7], &peer.bytes);
     @memcpy(name[7..14], "poweros");
     event(&layer, hci.HCI_EV_REMOTE_NAME_REQUEST_COMPLETE, &name);
     try testing.expectEqualStrings("poweros", std.mem.sliceTo(&link.name, 0));
+    try testing.expectEqualStrings("poweros", std.mem.sliceTo(&bond.name, 0));
+    try testing.expect(bond.dirty and layer.bonds_changed);
     // Up already: answered at once.
     try testing.expectEqual(connections.Begun{ .done = 0 }, connections.connect(&layer, peer));
     // A role change makes the device the central.

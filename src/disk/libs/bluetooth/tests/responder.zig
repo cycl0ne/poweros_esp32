@@ -4,14 +4,15 @@
 //! carried to the other, LE's encryption between them as two controllers
 //! do it - the library's initiator against its own responder. The number
 //! compared on both sides, each bond the same key, and the link encrypted
-//! with it when it is made again; the passkey shown on either side and
-//! typed on the other, and one typed wrong; Just Works allowed by the
-//! responder's agent - the central's DHKey check kept while it is asked -
-//! and refused by it; the central's identity taken after the encryption,
-//! the bond kept by it; PairBTDevice on a link the device made asking the
-//! device to pair (Security Request). Refused: a legacy Pairing Request,
-//! too short a key, a pairing with no agent there, and the central's
-//! encryption by an EDIV and Rand once the pairing is through.
+//! with it when it is made again; the central's name read from its GATT
+//! server, the responder's link and bond named with it; the passkey shown
+//! on either side and typed on the other, and one typed wrong; Just Works
+//! allowed by the responder's agent - the central's DHKey check kept while
+//! it is asked - and refused by it; the central's identity taken after the
+//! encryption, the bond kept by it; PairBTDevice on a link the device made
+//! asking the device to pair (Security Request). Refused: a legacy Pairing
+//! Request, too short a key, a pairing with no agent there, and the
+//! central's encryption by an EDIV and Rand once the pairing is through.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -308,11 +309,12 @@ fn expectNotPaired(central: *Hci, peripheral: *Hci, central_result: i32, periphe
     try testing.expect(bonds.find(peripheral, central_address) == null);
 }
 
-test "the library's initiator against its own responder: the number compared on both sides, each bond the same key, the link encrypted with it when made again" {
+test "the library's initiator against its own responder: the number compared on both sides, each bond the same key, the link encrypted with it when made again; the central's name read" {
     var central_port = Port{};
     var peripheral_port = Port{ .counter = 129 };
     var central = upLayer(central_bytes, &central_port, 7, bluetooth.BTIO_KEYBOARDDISPLAY);
     var peripheral = upLayer(peripheral_bytes, &peripheral_port, 9, bluetooth.BTIO_DISPLAYYESNO);
+    @memcpy(central.name[0..8], "poweros\x00");
     var air = Air{};
     air.wire(&central, &peripheral);
     try testing.expectEqual(@as(i32, 0), pairing.pair(&central, peripheral_address, 7, bluetooth.BTIO_KEYBOARDDISPLAY));
@@ -338,6 +340,9 @@ test "the library's initiator against its own responder: the number compared on 
     air.run();
     try expectBonded(&central, &peripheral, true);
     try testing.expectEqual(connections.NoteKind.paired, peripheral.notes[peripheral.note_count - 1].kind);
+    // The central's name, from its GATT server: the link's and the bond's.
+    try testing.expectEqualStrings("poweros", std.mem.sliceTo(&connections.find(&peripheral, central_address).?.name, 0));
+    try testing.expectEqualStrings("poweros", std.mem.sliceTo(&bonds.find(&peripheral, central_address).?.name, 0));
 
     // The link made again: encrypted with the bond's key, given by the
     // responder from its own bond.

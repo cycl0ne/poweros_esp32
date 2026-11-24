@@ -31,6 +31,12 @@
 //!   the procedure runs - so writes asked for one after the other each
 //!   leave what is wanted then - and a subscription the device refuses
 //!   taken back.
+//! - **name**, without a call, on a link a device made to the controller
+//!   whose name neither a discovery heard nor its bond keeps: Read By
+//!   Type of GAP's Device Name over every handle, then Read Blob from
+//!   where its answer ended while an answer may have been cut; what comes
+//!   is the link's name, and its bond's where that has none
+//!   (hci/connections.zig).
 //!
 //! A request the device refuses ends its procedure with BTERR_ATT less
 //! the device's reason - except where the refusal is how its answer ends:
@@ -80,7 +86,7 @@ pub const SUBSCRIPTIONS = 16;
 /// The most messages of a block's values out unreplied.
 pub const OUT_MOST = 32;
 
-pub const Kind = enum(u8) { open, services, characteristics, read, write, write_command, configure };
+pub const Kind = enum(u8) { open, services, characteristics, read, write, write_command, configure, name };
 pub const Stage = enum(u8) { free, queued, running, done };
 
 pub const Procedure = struct {
@@ -94,8 +100,8 @@ pub const Procedure = struct {
     serial: u32 = 0,
     /// When it was asked for: a link's run in this order.
     order: u64 = 0,
-    /// The attribute - read, write; configure: the value whose
-    /// configuration it writes - or the handles from `start` to `end`;
+    /// The attribute - read, write, name once found; configure: the value
+    /// whose configuration it writes - or the handles from `start` to `end`;
     /// where its next request starts, 0 for a characteristic whose
     /// descriptors are not asked for yet.
     start: u16 = 0,
@@ -113,7 +119,7 @@ pub const Procedure = struct {
     /// write, write_command: the caller's value.
     value: []const u8 = &.{},
     /// services, characteristics, read: the caller's room, and how much of
-    /// it is filled.
+    /// it is filled; name: how much of the link's name has come.
     into: []u8 = &.{},
     have: usize = 0,
     /// Once done.
@@ -433,12 +439,24 @@ fn queue(layer: *Hci, made: Procedure) connections.Begun {
 
 // --- running them ---------------------------------------------------------------------
 
-/// A link up and heard, or made secure with its bond - or not: its
-/// procedures run, the blocks that wait for its device taken - and one
-/// made for them that nothing is on ended in a while.
+/// A link up and heard, or made secure with its bond - or not: the name
+/// of a device that made it asked for, its procedures run, the blocks
+/// that wait for its device taken - and one made for them that nothing
+/// is on ended in a while.
 pub fn linkUp(layer: *Hci, connection: *Connection) void {
+    askName(layer, connection);
     pump(layer, connection);
     if (connection.state == .up and !uses(layer, connection)) connections.idle(layer, connection.address);
+}
+
+/// The name of a device that linked to the controller, where neither a
+/// discovery heard it nor its bond keeps it, asked of its GATT server once
+/// a link: the name procedure, without a call.
+fn askName(layer: *Hci, connection: *Connection) void {
+    if (!connection.le or !connection.incoming or connection.state != .up) return;
+    if (connection.name_asked or connection.name[0] != 0) return;
+    connection.name_asked = true;
+    _ = queue(layer, .{ .kind = .name, .address = connection.address });
 }
 
 /// The link's next procedure run - its MTU exchanged first - while it is
@@ -518,6 +536,7 @@ fn begin(layer: *Hci, connection: *Connection, procedure: *Procedure) void {
             put16(request[3..5], wanted(layer, connection, procedure.start));
             ask(layer, connection, procedure, &request);
         },
+        .name => askRange(layer, connection, procedure, att.ATT_READ_BY_TYPE_REQ, 1, 0xFFFF, att.GATT_DEVICE_NAME),
     }
 }
 
@@ -578,7 +597,7 @@ fn refusal(layer: *Hci, connection: *Connection, procedure: *Procedure, asked: u
             nextCharacteristic(procedure);
             return askDescriptors(layer, connection, procedure);
         },
-        .read => if (asked == att.ATT_READ_BLOB_REQ and (code == att.ATT_ERR_ATTRIBUTE_NOT_LONG or code == att.ATT_ERR_INVALID_OFFSET)) {
+        .read, .name => if (asked == att.ATT_READ_BLOB_REQ and (code == att.ATT_ERR_ATTRIBUTE_NOT_LONG or code == att.ATT_ERR_INVALID_OFFSET)) {
             return finish(layer, procedure, 0);
         },
         else => {},
@@ -592,6 +611,7 @@ fn step(layer: *Hci, connection: *Connection, procedure: *Procedure, pdu: []cons
         .services => groupsAnswered(layer, connection, procedure, pdu),
         .characteristics => if (procedure.finding) descriptorsAnswered(layer, connection, procedure, pdu) else declarationsAnswered(layer, connection, procedure, pdu),
         .read => partAnswered(layer, connection, procedure, pdu),
+        .name => nameAnswered(layer, connection, procedure, pdu),
         .write, .configure => finish(layer, procedure, 0),
         .open, .write_command => {},
     }
@@ -759,11 +779,39 @@ fn partAnswered(layer: *Hci, connection: *Connection, procedure: *Procedure, pdu
     finish(layer, procedure, 0);
 }
 
+/// GAP's Device Name, its value as Read By Type's first entry or Read
+/// Blob's part: put in the link's name after what came before - and,
+/// where the answer may have been cut and the name has room, the rest
+/// asked for. An entry is cut where it fills the PDU, or as long as its
+/// length byte says.
+fn nameAnswered(layer: *Hci, connection: *Connection, procedure: *Procedure, pdu: []const u8) void {
+    var part = pdu[1..];
+    var cut = part.len == connection.att.mtu - 1;
+    if (procedure.start == 0) {
+        if (pdu.len < 4 or pdu[1] < 2 or pdu.len < 2 + @as(usize, pdu[1])) return finish(layer, procedure, bluetooth.BTERR_PROTOCOL);
+        procedure.start = le16(pdu[2..4]);
+        part = pdu[4 .. 2 + @as(usize, pdu[1])];
+        cut = pdu.len == connection.att.mtu or pdu[1] == 255;
+    }
+    const room = connection.name[0..hci.HCI_MAX_NAME];
+    const taken = @min(part.len, room.len - procedure.have);
+    @memcpy(room[procedure.have..][0..taken], part[0..taken]);
+    procedure.have += taken;
+    if (cut and procedure.have < room.len) {
+        var request: [5]u8 = .{ att.ATT_READ_BLOB_REQ, 0, 0, 0, 0 };
+        put16(request[1..3], procedure.start);
+        put16(request[3..5], @intCast(procedure.have));
+        return ask(layer, connection, procedure, &request);
+    }
+    finish(layer, procedure, 0);
+}
+
 /// The procedure over with `result`: its link free for the next; its
 /// call answered and its end kept for the task - or, without a call, its
 /// record freed; an open's block open, or gone - or, one that waits,
-/// waiting again; a refused subscription taken back; the link, made for
-/// procedures, ended once nothing is on it.
+/// waiting again; a refused subscription taken back; the name that came
+/// the link's - its bond's too; the link, made for procedures, ended once
+/// nothing is on it.
 fn finish(layer: *Hci, procedure: *Procedure, result: i32) void {
     const place = placeOf(layer, procedure);
     if (connections.find(layer, procedure.address)) |connection| {
@@ -783,6 +831,9 @@ fn finish(layer: *Hci, procedure: *Procedure, result: i32) void {
             if (bySerial(layer, procedure.client)) |asking| {
                 if (subscriptionOf(asking, procedure.start)) |subscription| subscription.* = .{};
             }
+        },
+        .name => if (procedure.have != 0) {
+            if (connections.find(layer, procedure.address)) |connection| connections.named(layer, connection);
         },
         else => {},
     }
