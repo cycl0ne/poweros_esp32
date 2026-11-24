@@ -19,6 +19,17 @@
 //! The Player answers between two of its looks, so a program that must
 //! not wait - a docklet, which the dock calls - sends the question and
 //! takes the answer from its port at its next look.
+//!
+//! A `Key` is a media key pressed elsewhere (SYS:Commodities/MediaKeys
+//! sends them), which the Player carries out as its window's own keys and
+//! replies, sent the same way and told from a `State` by its length:
+//!
+//!   var key: player.Key = .{
+//!       .message = .{ .reply_port = reply_port, .length = @sizeOf(player.Key) },
+//!       .code = keyboard.RAWKEY_MEDIA_PLAYPAUSE,
+//!   };
+//!   if (!sys.SafePutToPort(&key.message, player.PORT_NAME)) return; // no Player
+//!   // the reply comes to reply_port; `key` is the Player's until then
 
 const exec = @import("../exec/exec.zig");
 
@@ -51,4 +62,15 @@ pub const State = extern struct {
     pub fn asking(reply_port: *exec.MsgPort) State {
         return .{ .message = .{ .reply_port = reply_port, .length = @sizeOf(State) } };
     }
+};
+
+/// A media key pressed, for the Player that runs to carry out as its
+/// window's own keys: one of `sdk.devices.keyboard`'s RAWKEY_MEDIA_*,
+/// RAWKEY_MUTE, RAWKEY_VOLUMEDOWN or RAWKEY_VOLUMEUP - the last three the
+/// Player's own sound. The sender's memory; the Player's from the send
+/// until the reply. Since Player 1.34.
+pub const Key = extern struct {
+    message: exec.Message = .{},
+    /// The key's rawkey.
+    code: u32 = 0,
 };

@@ -326,6 +326,7 @@ const window_programs = [_]Program{
     .{ .disk = "Commodities/Blanker", .source = "commodities/blanker/blanker.zig", .name = "blanker", .set = .commodities, .imports = &.{"commodity"} },
     .{ .disk = "Commodities/Emoji", .source = "commodities/emoji/emoji.zig", .name = "emoji", .set = .commodities, .imports = &.{"commodity"}, .strings = "commodities/emoji/emoji.cd" },
     .{ .disk = "Commodities/FKey", .source = "commodities/fkey/fkey.zig", .name = "fkey", .set = .commodities, .imports = &.{"commodity"} },
+    .{ .disk = "Commodities/MediaKeys", .source = "commodities/mediakeys/mediakeys.zig", .name = "mediakeys", .set = .commodities, .imports = &.{"commodity"} },
 };
 
 /// Commands built with an inner module.
@@ -1105,6 +1106,7 @@ pub const files = [_]File{
     .{ .disk = "Commodities/Docs/Blanker.md", .source = "commodities/blanker/README.md" },
     .{ .disk = "Commodities/Docs/Emoji.md", .source = "commodities/emoji/README.md" },
     .{ .disk = "Commodities/Docs/FKey.md", .source = "commodities/fkey/README.md" },
+    .{ .disk = "Commodities/Docs/MediaKeys.md", .source = "commodities/mediakeys/README.md" },
 };
 
 pub fn build(b: *std.Build) void {

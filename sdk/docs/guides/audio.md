@@ -794,6 +794,11 @@ into the song it is and how long the song is (0 for a station), and
 the song's title and artist. A `State` that comes back unanswered came
 from a Player that was ending. The dock's `player.docklet` asks twice a
 second, taking each answer at its next look, so the dock never waits.
+A `sdk.player.Key` sent the same way is a media key the Player carries
+out as its window's own: `SYS:Commodities/MediaKeys`, which
+S:Startup-Sequence starts, sends it play, pause, stop, previous, next,
+rewind and fast forward from whatever window is active, and turns the
+volume and mute of the output played through itself.
 
 ## Keeping a picture in step
 

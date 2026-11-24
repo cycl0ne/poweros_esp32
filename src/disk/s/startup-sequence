@@ -158,6 +158,13 @@ If EXISTS C:Bluetooth
   Run >NIL: C:Bluetooth >NIL:
 EndIf
 
+; The media keys - play, pause, the volume - from any keyboard or a
+; headphone's buttons, wherever the active window is: a commodity with
+; no window. A disk without commodities has none.
+If EXISTS SYS:Commodities/MediaKeys
+  Run >NIL: SYS:Commodities/MediaKeys >NIL:
+EndIf
+
 If $Desktop EQ 0 VAL
   EndCLI >NIL:
 EndIf

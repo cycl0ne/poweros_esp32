@@ -351,6 +351,12 @@ ends when Keep or Remove changed them.
   where F goes to the field.
 - Cursor left and right jump ten seconds back and on; cursor up and down
   turn the volume up and down by five.
+- A keyboard's media keys, and a headphone's buttons: play/pause is the
+  space bar, play goes on and pause pauses, stop stops, previous and
+  next are P and N, rewind and fast forward cursor left and right - from
+  any window while SYS:Commodities/MediaKeys runs, which it does from
+  the boot on. In the Player's window without it, mute and the volume
+  keys are the Player's own sound; with it, they are the machine's.
 - Return plays the song selected in the playlist, Del takes it out; on
   the Radio page Return plays the station selected, Del lets a kept one
   go.

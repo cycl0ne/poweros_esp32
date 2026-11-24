@@ -20,7 +20,10 @@
 //! the front, which is all a start with nothing given asks. A program's
 //! question what plays (`sdk.player.State`, the dock's player.docklet
 //! asks it) is answered at the same port: playing, paused or stopped, how
-//! far, how long, the title and the artist.
+//! far, how long, the title and the artist. A media key pressed in any
+//! window comes to it there too (`sdk.player.Key`, from
+//! SYS:Commodities/MediaKeys), and is carried out as the window's own
+//! media keys are.
 //!
 //! The window's title is the song's. At its top, the song's cover beside
 //! what its tags say, one block of lines in the middle of the room: the
@@ -313,8 +316,8 @@ const Text = sdk.locale.Strings(strings);
 const Id = strings.Id;
 
 pub const COMMAND_NAME = "Player";
-const VERSION = "1.33";
-const DATE = "11.11.2026";
+const VERSION = "1.34";
+const DATE = "24.11.2026";
 const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (" ++ DATE ++ ")\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while the window is active.
@@ -2522,14 +2525,20 @@ const App = struct {
     /// ADD - and, without ADD, the window brought to the front. Each
     /// answered once it is dealt with, as the names are the sender's. A
     /// program's question what plays (`sdk.player.State`) is answered
-    /// too.
+    /// too, and a media key (`sdk.player.Key`) carried out.
     fn handedOver(app: *App) void {
         if (@sizeOf(one.Handed) == @sizeOf(sdk.player.State)) @compileError("a Handed and a State are told apart by their length");
+        if (@sizeOf(sdk.player.Key) == @sizeOf(sdk.player.State) or @sizeOf(sdk.player.Key) == @sizeOf(one.Handed)) @compileError("a Key is told from a State and a Handed by its length");
         const port = app.public orelse return;
         while (app.sys.GetMsg(port)) |message| {
             defer app.sys.ReplyMsg(message);
             if (message.length == @sizeOf(sdk.player.State)) {
                 app.tellState(@ptrCast(@alignCast(message)));
+                continue;
+            }
+            if (message.length == @sizeOf(sdk.player.Key)) {
+                const pressed: *const sdk.player.Key = @ptrCast(@alignCast(message));
+                app.mediaKey(pressed.code);
                 continue;
             }
             if (message.length != @sizeOf(one.Handed)) continue;
@@ -2976,7 +2985,7 @@ const App = struct {
     /// A key that is no character: left and right ten seconds back and on,
     /// up and down the volume; Del takes the song selected out where the
     /// list is shown, and the station kept that is selected on the Radio
-    /// page.
+    /// page; and the media keys.
     fn rawKey(app: *App, code: usize) void {
         switch (code) {
             keyboard.RAWKEY_LEFT => app.jump(-jump_seconds),
@@ -2988,8 +2997,44 @@ const App = struct {
                 page_radio => app.radio.remove(),
                 else => {},
             },
+            else => app.mediaKey(@intCast(code)),
+        }
+    }
+
+    /// A media key, pressed in the window or sent to the port
+    /// (`sdk.player.Key`): play/pause is the space bar; play goes on or
+    /// starts and pause pauses, each nothing where it is so already; stop
+    /// is the deck's stop, previous and next its ends, rewind and fast
+    /// forward the cursor's left and right; mute and the volume keys are
+    /// the Player's own sound, as its Mute button and the cursor's up and
+    /// down.
+    fn mediaKey(app: *App, code: u32) void {
+        switch (code) {
+            keyboard.RAWKEY_MEDIA_PLAYPAUSE => app.togglePause(),
+            keyboard.RAWKEY_MEDIA_PLAY => if (!app.goingOn()) app.togglePause(),
+            keyboard.RAWKEY_MEDIA_PAUSE => if (app.goingOn()) app.togglePause(),
+            keyboard.RAWKEY_MEDIA_STOP => {
+                app.decked(td.BUT_STOP);
+                app.showDeck(td.BUT_STOP, false);
+            },
+            keyboard.RAWKEY_MEDIA_PREVIOUS => app.previous(),
+            keyboard.RAWKEY_MEDIA_NEXT => app.next(),
+            keyboard.RAWKEY_MEDIA_REWIND => app.jump(-jump_seconds),
+            keyboard.RAWKEY_MEDIA_FASTFORWARD => app.jump(jump_seconds),
+            keyboard.RAWKEY_MUTE => app.mute(!app.muted),
+            keyboard.RAWKEY_VOLUMEUP => app.volumeBy(volume_step),
+            keyboard.RAWKEY_VOLUMEDOWN => app.volumeBy(-volume_step),
             else => {},
         }
+    }
+
+    /// Whether the sound goes on: playing, or a station on its way that
+    /// is to play - not paused, stopped, or a station on its way that is
+    /// to wait paused.
+    fn goingOn(app: *const App) bool {
+        const state = app.engine.state;
+        if (state == .playing) return true;
+        return state != .paused and app.connecting() and app.station_how != .pause;
     }
 
     /// Files dropped on the window, every one of each drop: added - a

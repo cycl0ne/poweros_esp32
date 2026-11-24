@@ -170,7 +170,8 @@ The programs on the disk:
   with and linked to - Update, CPULoad, NetLoad, MemMap, Clock, and
   SystemScan on the 64-bit machines
 - **`SYS:Commodities`** - Exchange, Blanker, FKey, Emoji, AutoPoint,
-  ClickToFront, MouseBlanker, NoCapsLock and NumericPad
+  ClickToFront, MouseBlanker, NoCapsLock, NumericPad and MediaKeys - the
+  media keys of keyboards and headphones from any window
 - **`C:`** - 65 commands, test programs in `C:test`, network tools in
   `C:net`, and in `C:dbg` the tools that list the tasks, show where one
   stands and end one that is stuck; scripts, redirection, line editing

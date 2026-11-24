@@ -321,6 +321,7 @@ command line, and each has its page in `SYS:Commodities/Docs`.
 | ClickToFront | a double click brings a window to the front | `QUALIFIER` |
 | Blanker | the screen darkens when nothing happens, and the display sleeps where nothing is drawn on it | `SECONDS`, `CYCLECOLORS`, `ANIMATION` |
 | FKey | functions on freely chosen keys | the keys, in `ENV:Sys/fkey.keys` |
+| MediaKeys | the media keys from any window: the volume and mute of the output played through, and play, pause, stop, previous, next, rewind and fast forward to the Player; started at boot | `STEP` |
 | Emoji | a window to pick an emoji from, typed into the window being worked in | the ones used last and the skin tone, in `ENV:Sys/emoji.used` |
 
 All of them take `CX_PRIORITY`; the ones with a window take `CX_POPKEY`
