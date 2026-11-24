@@ -32,7 +32,7 @@ pub fn describe(id: u32, layer: *_hci.Hci, connection: *const connections.Connec
     if (connection.central) flags |= bluetooth.BTLF_CENTRAL;
     if (connection.encrypted) flags |= bluetooth.BTLF_ENCRYPTED;
     if (connection.authenticated) flags |= bluetooth.BTLF_AUTHENTICATED;
-    if (bonds.find(layer, connection.address) != null) flags |= bluetooth.BTLF_BONDED;
+    if (bonds.find(layer, connection.identity orelse connection.address) != null) flags |= bluetooth.BTLF_BONDED;
     if (connection.pairing.stage != .idle) flags |= bluetooth.BTLF_PAIRING;
     entry.public = .{
         .controller = id,
@@ -44,6 +44,8 @@ pub fn describe(id: u32, layer: *_hci.Hci, connection: *const connections.Connec
         .supervision = connection.supervision,
         .age = @intCast(@min(now -| connection.since, 0xFFFF_FFFF)),
         .class_of_device = connection.class_of_device,
+        .identity = connection.identity orelse .{},
+        .own_address = if (connection.le) connection.own else .{},
     };
     entry.public.node.name = @ptrCast(&entry.name);
 }

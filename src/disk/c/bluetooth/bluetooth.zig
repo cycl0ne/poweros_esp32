@@ -15,7 +15,8 @@
 //!                      the firmware it was given, the versions of its
 //!                      HCI and link manager and who made it, its
 //!                      buffers, what it can do, what it advertises
-//!                      beside, its name and class
+//!                      beside, its name, its private address over LE
+//!                      and its class
 //!   POWER ON|OFF       the controller on, or off: off, it answers nobody
 //!   NAME <name>        the name it shows others; NAME "" the machine's
 //!   VISIBLE ON|OFF|<seconds>
@@ -43,7 +44,9 @@
 //!                      long it has been up, the device's name; with INFO,
 //!                      who made it, whether it is encrypted and
 //!                      authenticated, to a device with a bond, its
-//!                      handle and its class, LE's parameters
+//!                      handle and its class, the device's identity and
+//!                      this machine's private address where they differ
+//!                      from the link's, LE's parameters
 //!   PAIR <device>      a bond made with the device - its address, or the
 //!                      name a scan heard, over LE where CONNECT would
 //!                      link over LE - what the pairing needs asked here:
@@ -107,7 +110,7 @@ const BluetoothBase = sdk.interface.bluetooth.BluetoothBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Bluetooth";
-const VERSION_STRING = "\x00$VER: Bluetooth 1.13 (24.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Bluetooth 1.14 (24.11.2026)\r\n";
 
 const template = "INFO/S,SCAN/S,TIME/K/N,POWER/K,NAME/K,VISIBLE/K,CONNECT/K,DISCONNECT/K,LIST/S,LE/S,RANDOM/S,BREDR/S,CONTROLLER/K/N," ++
     "PAIR/K,PIN/K,UNPAIR/K,BONDS/S,AGENT/S,SERVICES/K";
@@ -346,7 +349,7 @@ fn has(bits: []const u8, n: u32) bool {
 }
 
 /// The device and unit, chip, firmware, versions, buffers, features, what
-/// it advertises beside.
+/// it advertises beside, its name, private address and class.
 fn info(dl: *DosBase, controller: *const bluetooth.BTController) void {
     if (controller.chip) |chip| _ = Printf(dl, "  chip        %s\n", .{chip});
     if (controller.firmware) |firmware| _ = Printf(dl, "  firmware    %s\n", .{firmware});
@@ -408,6 +411,11 @@ fn info(dl: *DosBase, controller: *const bluetooth.BTController) void {
     _ = dl.PutStr("\n");
     if (le) advertisingInfo(dl, &controller.le_states);
     if (controller.name[0] != 0) _ = Printf(dl, "  name        %s\n", .{controller.name});
+    const private = &controller.private_address.bytes;
+    if (private[0] | private[1] | private[2] | private[3] | private[4] | private[5] != 0) {
+        var text: [18]u8 = undefined;
+        _ = Printf(dl, "  private     %s\n", .{addressText(private, &text)});
+    }
     _ = Printf(dl, "  class       %06lx\n", .{@as(u64, controller.class_of_device)});
 }
 
@@ -682,7 +690,8 @@ fn linkLine(dl: *DosBase, link: *const bluetooth.BTConnection) void {
 }
 
 /// Who made the link, whether it is encrypted, its controller and
-/// handle, the device's class, LE's parameters.
+/// handle, the device's class, its identity and this machine's private
+/// address, LE's parameters.
 fn linkInfo(dl: *DosBase, link: *const bluetooth.BTConnection) void {
     const made: [*:0]const u8 = if (link.flags & bluetooth.BTLF_INCOMING != 0) "the device" else "this machine";
     const encrypted: [*:0]const u8 = if (link.flags & bluetooth.BTLF_ENCRYPTED != 0) ", encrypted" else ", not encrypted";
@@ -691,6 +700,9 @@ fn linkInfo(dl: *DosBase, link: *const bluetooth.BTConnection) void {
     _ = Printf(dl, "      made by %s%s%s%s; controller %u, handle %u", .{ made, encrypted, authenticated, bonded, link.controller, @as(u32, link.handle) });
     if (link.class_of_device != 0) _ = Printf(dl, ", class %06lx", .{@as(u64, link.class_of_device)});
     _ = dl.PutStr("\n");
+    var text: [18]u8 = undefined;
+    if (link.identity.kind != bluetooth.BTADDR_BREDR) _ = Printf(dl, "      its identity %s\n", .{addressText(&link.identity.bytes, &text)});
+    if (link.own_address.kind == bluetooth.BTADDR_LE_RANDOM) _ = Printf(dl, "      from this machine's private address %s\n", .{addressText(&link.own_address.bytes, &text)});
     if (link.flags & bluetooth.BTLF_LE != 0) {
         // In units of 1.25 ms, and of 10 ms.
         const hundredths = @as(u32, link.interval) * 125;

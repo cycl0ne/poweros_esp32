@@ -108,10 +108,9 @@ const _pairing = @import("_pairing.zig");
 /// a pairing with the specification's debug key keeps none.
 ///
 /// BUGS:
-/// Over LE this side gives the device its identity and no other key: it
-/// uses its public address and signs nothing. A device that advertises only
-/// private addresses is reached by the address a discovery heard, not by
-/// its identity.
+/// Over LE this side gives the device its identity and no other key, and
+/// signs nothing. A device that advertises only private addresses is
+/// reached by the address a discovery heard, not by its identity.
 ///
 /// SEE ALSO:
 /// `AddBTAgent`, `UnpairBTDevice`, `ObtainBTBonds`, `ConnectBTDevice`

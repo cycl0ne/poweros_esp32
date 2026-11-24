@@ -8,8 +8,10 @@
 //! **Made by the library** (`connect`): a page over BR/EDR - Create
 //! Connection, with what the discovery heard of the device, its page
 //! scan repetition mode and clock offset, and a role switch allowed - or
-//! LE's initiating to the one address (LE Create Connection). A
-//! controller pages one device at a time and initiates to one: a second
+//! LE's initiating to the one address (LE Create Connection), from the
+//! controller's private address where the device's bond says it was given
+//! the machine's identity, from its public one otherwise (privacy.zig).
+//! A controller pages one device at a time and initiates to one: a second
 //! link of the same kind asked for meanwhile is BTERR_BUSY. A discovery
 //! that runs is stopped first: a controller that inquires pages slowly,
 //! and one that scans may not initiate.
@@ -57,7 +59,11 @@
 //! that a bond's identity resolving key made keeps the bond's address as
 //! its `identity` - found by the scan, when the link is up, or given by
 //! the pairing that made the bond - and `find` takes the link for the
-//! device at either address.
+//! device at either address. **This side's address** on an LE link, the
+//! one the controller made it from, is the link's `own` once it is up,
+//! for the security manager's checks: the private address the controller
+//! had then where it was asked for from it, the public one otherwise - a
+//! device's link to the advertising among them.
 //!
 //! **The device's name**, where the discovery did not hear it, is asked
 //! for once a BR/EDR link is up (Remote Name Request): over the link it
@@ -94,6 +100,7 @@ const bonds = @import("bonds.zig");
 const devices = @import("devices.zig");
 const discovery = @import("discovery.zig");
 const pairing = @import("pairing.zig");
+const privacy = @import("privacy.zig");
 const channels = @import("../l2cap/channels.zig");
 const _att = @import("../att/_att.zig");
 const att_client = @import("../att/client.zig");
@@ -143,6 +150,10 @@ pub const Connection = struct {
     /// private one its identity resolving key made; null where the two
     /// are the same, or it is not known.
     identity: ?bluetooth.BTAddress = null,
+    /// LE: the address this side made the link from (privacy.zig) - while
+    /// it is being made, only whether it is the private one
+    /// (BTADDR_LE_RANDOM); once it is up, the address.
+    own: bluetooth.BTAddress = .{},
     /// Made for channels or GATT, not asked for by ConnectBTDevice:
     /// ended at `idle_until`, once its last channel and block have closed
     /// and its last request has been answered.
@@ -375,13 +386,15 @@ pub fn make(layer: *Hci, address: bluetooth.BTAddress) i32 {
         advertising.makeWay(layer, hci.LE_STATE_ADV_INITIATING);
     }
     const heard = devices.find(layer, address.bytes, address.kind);
-    const sent = if (le_link) initiate(layer, address) else page(layer, address, heard);
+    const private = le_link and privacy.towards(layer, address);
+    const sent = if (le_link) initiate(layer, address, private) else page(layer, address, heard);
     if (!sent) return bluetooth.BTERR_NOMEM;
     connection.* = .{
         .state = .connecting,
         .address = address,
         .le = le_link,
         .central = true,
+        .own = .{ .kind = if (private) bluetooth.BTADDR_LE_RANDOM else bluetooth.BTADDR_LE_PUBLIC },
         .deadline = layer.now + (if (le_link) LE_CONNECT_TIMEOUT_MS else PAGE_WAIT_MS),
     };
     if (heard) |device| {
@@ -560,16 +573,17 @@ fn page(layer: *Hci, address: bluetooth.BTAddress, heard: ?*const devices.Device
     return _hci.command(layer, hci.HCI_OP_CREATE_CONNECTION, &params, _hci.COMMAND_TIMEOUT_MS);
 }
 
-/// LE Create Connection to `address`: scanning for it all the time, the
-/// link's parameters this layer's.
-fn initiate(layer: *Hci, address: bluetooth.BTAddress) bool {
+/// LE Create Connection to `address`, from the controller's private
+/// address where `private`: scanning for it all the time, the link's
+/// parameters this layer's.
+fn initiate(layer: *Hci, address: bluetooth.BTAddress, private: bool) bool {
     var params: [25]u8 = undefined;
     put16(params[0..2], hci.LE_CONNECT_SCAN_INTERVAL);
     put16(params[2..4], hci.LE_CONNECT_SCAN_WINDOW);
     params[4] = 0; // this address, not the filter accept list
     params[5] = if (address.kind == bluetooth.BTADDR_LE_PUBLIC) hci.LE_ADDR_PUBLIC else hci.LE_ADDR_RANDOM;
     params[6..12].* = address.bytes;
-    params[12] = hci.LE_ADDR_PUBLIC; // its own address
+    params[12] = if (private) hci.LE_ADDR_RANDOM else hci.LE_ADDR_PUBLIC; // its own address
     put16(params[13..15], hci.LE_CONNECT_INTERVAL_MIN);
     put16(params[15..17], hci.LE_CONNECT_INTERVAL_MAX);
     put16(params[17..19], hci.LE_CONNECT_LATENCY);
@@ -766,6 +780,7 @@ pub fn leComplete(layer: *Hci, params: []const u8) void {
     made.address = address;
     made.le = true;
     made.central = role == hci.ROLE_CENTRAL;
+    made.own = privacy.own(layer, made.central and made.own.kind == bluetooth.BTADDR_LE_RANDOM);
     if (made.incoming) {
         if (devices.find(layer, address.bytes, address.kind)) |device| setName(made, &device.name);
     }

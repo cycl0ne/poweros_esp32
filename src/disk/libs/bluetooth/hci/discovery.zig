@@ -3,8 +3,9 @@
 //! one after the other -
 //!
 //!   LE's advertising listened to, actively - every advertiser asked for
-//!   its scan response, which often carries its name - each advertiser
-//!   reported once (the controller filters the duplicates);
+//!   its scan response, which often carries its name, from the
+//!   controller's private address where it has one (privacy.zig) - each
+//!   advertiser reported once (the controller filters the duplicates);
 //!   an inquiry, the general one, its results with RSSI and extended ones
 //!   where the controller has them (the mode the bring-up set);
 //!   the names not heard asked for (Remote Name Request), a BR/EDR device
@@ -45,6 +46,7 @@ const Hci = _hci.Hci;
 const advertising = @import("advertising.zig");
 const devices = @import("devices.zig");
 const eir = @import("eir.zig");
+const privacy = @import("privacy.zig");
 const scan = @import("scan.zig");
 
 /// The shortest and longest a discovery may be asked to take, and what
@@ -163,7 +165,7 @@ fn beginLe(layer: *Hci) void {
         @truncate(LE_SCAN_INTERVAL >> 8),
         @truncate(LE_SCAN_WINDOW),
         @truncate(LE_SCAN_WINDOW >> 8),
-        hci.LE_ADDR_PUBLIC, // its own address, as the scan requests carry it
+        privacy.scanning(layer), // its own address, as the scan requests carry it
         0, // every advertiser
     };
     if (_hci.QUEUE - layer.queue_count < 2 or

@@ -50,7 +50,8 @@ const _task = @import("../task/_task.zig");
 /// from its public address. It makes way for a scan or a link it cannot
 /// advertise beside - LE Read Supported States says which - and goes on
 /// after, BTCF_ADVERTISING set while it advertises; a name changed is
-/// advertised at once.
+/// advertised at once. Since 1.22 a controller made hidden takes a new
+/// private address over LE (BTController's `private_address`).
 ///
 /// On, visible until told otherwise and the name are kept for the
 /// controller's next start, by its address: in

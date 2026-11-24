@@ -772,7 +772,11 @@ Since 1.4, a BR/EDR link to a device the controller has a bond with
 before the call returns; one that could not be stays up. Since 1.5 an
 LE link to one is encrypted with the bond's long term key the same
 way - the device found by its address, or by the identity resolving
-key that made the private address it uses.
+key that made the private address it uses. Since 1.22 an LE link to a
+device whose bond says it was given this machine's identity
+(BTBF_IDENTITY_GIVEN) is made from the controller's private address,
+which the device resolves by that identity; one to any other device
+from the public address.
 
 **CONTEXT**
 
@@ -1199,7 +1203,10 @@ whether it is authenticated, to a device with a bond, being paired),
 the controller's handle for it, LE's parameters, how long it has been
 up, and the device's name and class where they are known. A link
 being made is not listed until it is up - over LE, since 1.6, until
-the device has answered on it.
+the device has answered on it. Since 1.22 an LE link also has the
+device's identity, where it links from a private address its bond's
+key resolves - a link of a bonded device's is BTLF_BONDED so too - and
+the address this side made it from: its public or its private one.
 
 Each node is a copy, its name with it: nothing the library does later
 reaches it.
@@ -1814,10 +1821,9 @@ a pairing with the specification's debug key keeps none.
 
 **BUGS**
 
-Over LE this side gives the device its identity and no other key: it
-uses its public address and signs nothing. A device that advertises only
-private addresses is reached by the address a discovery heard, not by
-its identity.
+Over LE this side gives the device its identity and no other key, and
+signs nothing. A device that advertises only private addresses is
+reached by the address a discovery heard, not by its identity.
 
 **SEE ALSO**
 
@@ -2612,7 +2618,8 @@ link to it: its name, and that it is a computer, every 100 to 150 ms
 from its public address. It makes way for a scan or a link it cannot
 advertise beside - LE Read Supported States says which - and goes on
 after, BTCF_ADVERTISING set while it advertises; a name changed is
-advertised at once.
+advertised at once. Since 1.22 a controller made hidden takes a new
+private address over LE (BTController's `private_address`).
 
 On, visible until told otherwise and the name are kept for the
 controller's next start, by its address: in

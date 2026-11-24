@@ -63,7 +63,11 @@ const _task = @import("../task/_task.zig");
 /// before the call returns; one that could not be stays up. Since 1.5 an
 /// LE link to one is encrypted with the bond's long term key the same
 /// way - the device found by its address, or by the identity resolving
-/// key that made the private address it uses.
+/// key that made the private address it uses. Since 1.22 an LE link to a
+/// device whose bond says it was given this machine's identity
+/// (BTBF_IDENTITY_GIVEN) is made from the controller's private address,
+/// which the device resolves by that identity; one to any other device
+/// from the public address.
 ///
 /// CONTEXT:
 /// - Waits: yes, until the link is up or not made.

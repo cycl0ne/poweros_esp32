@@ -35,7 +35,10 @@ const _connection = @import("_connection.zig");
 /// the controller's handle for it, LE's parameters, how long it has been
 /// up, and the device's name and class where they are known. A link
 /// being made is not listed until it is up - over LE, since 1.6, until
-/// the device has answered on it.
+/// the device has answered on it. Since 1.22 an LE link also has the
+/// device's identity, where it links from a private address its bond's
+/// key resolves - a link of a bonded device's is BTLF_BONDED so too - and
+/// the address this side made it from: its public or its private one.
 ///
 /// Each node is a copy, its name with it: nothing the library does later
 /// reaches it.

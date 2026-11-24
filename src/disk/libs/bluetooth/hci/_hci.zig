@@ -4,7 +4,8 @@
 //! answer matched to the command it answers; a time-out for each command;
 //! what the controller said it is, which bringup.zig asks for; what it
 //! shows others and whether it is on (local.zig), and over LE its
-//! advertising while it is visible (advertising.zig); the devices it found
+//! advertising while it is visible (advertising.zig) and its private
+//! address (privacy.zig); the devices it found
 //! (discovery.zig, devices.zig); its links to devices (connections.zig),
 //! and the scan that makes them to the devices GATT blocks wait for
 //! (scan.zig)
@@ -36,7 +37,8 @@
 //! **Its own times** - a discovery's phase, the end of being visible for
 //! a time, a link being made or ended, a pairing and its agent's answer,
 //! a channel's or a GATT request's answer, the background scan and the
-//! advertising tried again - are deadlines like a command's:
+//! advertising tried again, a new private address - are deadlines like a
+//! command's:
 //! `nextDeadline` answers the earliest of them all, and `tick` runs
 //! whichever has passed.
 
@@ -53,6 +55,7 @@ const devices = @import("devices.zig");
 const discovery = @import("discovery.zig");
 const local = @import("local.zig");
 const pairing = @import("pairing.zig");
+const privacy = @import("privacy.zig");
 const scan = @import("scan.zig");
 const smp = @import("smp.zig");
 const smpcrypto = @import("smpcrypto.zig");
@@ -195,10 +198,12 @@ pub const Hci = struct {
     /// Its discovery, and what it found.
     discovery: discovery.Discovery = .{},
     devices: [devices.DEVICES]devices.Device = @splat(.{}),
-    /// The scan for the devices GATT blocks wait for (scan.zig), and LE's
-    /// advertising (advertising.zig).
+    /// The scan for the devices GATT blocks wait for (scan.zig), LE's
+    /// advertising (advertising.zig), and the private address
+    /// (privacy.zig).
     scan: scan.Scan = .{},
     advertising: advertising.Advertising = .{},
+    privacy: privacy.Privacy = .{},
 
     /// Its links (connections.zig) and the calls waiting on them; the
     /// ACL data's (acl.zig): the frames waiting to be sent, how many, the
@@ -303,6 +308,7 @@ pub fn start(layer: *Hci) void {
     discovery.reset(layer);
     scan.reset(layer);
     advertising.reset(layer);
+    privacy.reset(layer);
     connections.reset(layer, hci.HCI_ERR_HARDWARE_FAILURE);
     bringup.next(layer);
 }
@@ -319,6 +325,7 @@ pub fn fail(layer: *Hci, failure: i32) void {
     discovery.reset(layer);
     scan.reset(layer);
     advertising.reset(layer);
+    privacy.reset(layer);
     connections.reset(layer, failure);
 }
 
@@ -392,7 +399,7 @@ pub fn nextDeadline(layer: *const Hci) ?u64 {
         if (earliest == null or pending.deadline < earliest.?) earliest = pending.deadline;
     }
     if (layer.state != bluetooth.BTCS_UP) return earliest;
-    for ([_]?u64{ discovery.deadline(layer), scan.deadline(layer), advertising.deadline(layer), local.deadline(layer), connections.deadline(layer), pairing.deadline(layer), channels.deadline(layer), sdp_client.deadline(layer), att_client.deadline(layer) }) |due| {
+    for ([_]?u64{ discovery.deadline(layer), scan.deadline(layer), advertising.deadline(layer), privacy.deadline(layer), local.deadline(layer), connections.deadline(layer), pairing.deadline(layer), channels.deadline(layer), sdp_client.deadline(layer), att_client.deadline(layer) }) |due| {
         const time = due orelse continue;
         if (earliest == null or time < earliest.?) earliest = time;
     }
@@ -401,8 +408,8 @@ pub fn nextDeadline(layer: *const Hci) ?u64 {
 
 /// Whatever is due at `layer.now` done: the commands whose time has
 /// passed given up on, a discovery's phase ended, being visible ended, a
-/// link's making taken back or given up on - and the background scan and
-/// the advertising set as they are wanted then.
+/// link's making taken back or given up on - and the private address, the
+/// background scan and the advertising set as they are wanted then.
 pub fn tick(layer: *Hci) void {
     for (&layer.pending) |*pending| {
         if (!pending.used or pending.deadline > layer.now) continue;
@@ -416,6 +423,7 @@ pub fn tick(layer: *Hci) void {
         discovery.tick(layer);
         scan.tick(layer);
         advertising.tick(layer);
+        privacy.tick(layer);
         local.tick(layer);
         connections.tick(layer);
         pairing.tick(layer);
@@ -423,6 +431,7 @@ pub fn tick(layer: *Hci) void {
         sdp_client.tick(layer);
         att_client.tick(layer);
     }
+    privacy.update(layer);
     scan.update(layer);
     advertising.update(layer);
     pump(layer);
@@ -435,6 +444,7 @@ fn timedOut(layer: *Hci, opcode: u16) void {
             discovery.timedOut(layer, opcode);
             scan.answered(layer, opcode, &.{});
             advertising.answered(layer, opcode, &.{});
+            privacy.answered(layer, opcode, &.{});
             connections.answered(layer, opcode, &.{});
             pairing.answered(layer, opcode, &.{});
         },
@@ -443,8 +453,8 @@ fn timedOut(layer: *Hci, opcode: u16) void {
 }
 
 /// A packet the controller sent, from its header on: an event, or a
-/// link's data - and then the background scan and the advertising set as
-/// they are wanted.
+/// link's data - and then the private address, the background scan and
+/// the advertising set as they are wanted.
 pub fn received(layer: *Hci, packet_type: u8, bytes: []const u8) void {
     switch (packet_type) {
         hcidev.HCI_EVENT_PKT => {
@@ -455,6 +465,7 @@ pub fn received(layer: *Hci, packet_type: u8, bytes: []const u8) void {
         hcidev.HCI_ACLDATA_PKT => if (layer.state == bluetooth.BTCS_UP) acl.received(layer, bytes),
         else => {},
     }
+    privacy.update(layer);
     scan.update(layer);
     advertising.update(layer);
 }
@@ -546,6 +557,7 @@ fn completed(layer: *Hci, opcode: u16, returned: []const u8) void {
             discovery.answered(layer, opcode, returned);
             scan.answered(layer, opcode, returned);
             advertising.answered(layer, opcode, returned);
+            privacy.answered(layer, opcode, returned);
             connections.answered(layer, opcode, returned);
             pairing.answered(layer, opcode, returned);
         },

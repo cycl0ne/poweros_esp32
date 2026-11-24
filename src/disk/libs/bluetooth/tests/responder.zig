@@ -11,7 +11,10 @@
 //! it is asked - and refused by it; the central's identity taken after the
 //! encryption, the bond kept by it; each side's identity given to the
 //! other where it has one - the responder's first - each bond marked, and
-//! none to a central that does not ask; PairBTDevice on a link the device
+//! none to a central that does not ask; a link the central made from its
+//! private address - a pairing on it taking the address in its checks, and
+//! the link made again from a new one, resolved by the central's key and
+//! encrypted with the bond; PairBTDevice on a link the device
 //! made asking the device to pair (Security Request). Refused: a legacy Pairing
 //! Request, too short a key, a pairing with no agent there, and the
 //! central's encryption by an EDIV and Rand once the pairing is through.
@@ -28,6 +31,7 @@ const acl = @import("../hci/acl.zig");
 const bonds = @import("../hci/bonds.zig");
 const connections = @import("../hci/connections.zig");
 const pairing = @import("../hci/pairing.zig");
+const privacy = @import("../hci/privacy.zig");
 const smp = @import("../hci/smp.zig");
 const Port = @import("_port.zig").Port;
 
@@ -69,6 +73,8 @@ const Air = struct {
     smp_length: [2]usize = .{ 0, 0 },
     request: [7]u8 = @splat(0),
     response: [7]u8 = @splat(0),
+    /// Each side's random address, as LE Set Random Address gave it.
+    random: [2][6]u8 = @splat(@splat(0)),
 
     const Side = struct { air: *Air, index: u1 };
     const Item = struct { to: u1, packet_type: u8, length: usize, bytes: [96]u8 };
@@ -146,16 +152,25 @@ const Air = struct {
         return true;
     }
 
-    /// A command answered: the link made and ended, the devices' features,
-    /// LE's encryption between the two; the rest taken.
+    /// A command answered: the link made - the central seen by the address
+    /// it made it from - and ended, the devices' features, LE's encryption
+    /// between the two, a random address kept; the rest taken.
     fn command(air: *Air, from: u1, opcode: u16, params: []const u8) void {
         const to = from ^ 1;
         const ends = [2]u8{ @truncate(handle), @truncate(handle >> 8) };
         switch (opcode) {
             hci.HCI_OP_LE_CREATE_CONNECTION => {
                 air.status(from, opcode);
-                air.linked(from, hci.ROLE_CENTRAL, air.layers[to].address);
-                air.linked(to, hci.ROLE_PERIPHERAL, air.layers[from].address);
+                air.linked(from, hci.ROLE_CENTRAL, air.layers[to].address, hci.LE_ADDR_PUBLIC);
+                if (params[12] == hci.LE_ADDR_RANDOM) {
+                    air.linked(to, hci.ROLE_PERIPHERAL, air.random[from], hci.LE_ADDR_RANDOM);
+                } else {
+                    air.linked(to, hci.ROLE_PERIPHERAL, air.layers[from].address, hci.LE_ADDR_PUBLIC);
+                }
+            },
+            hci.HCI_OP_LE_SET_RANDOM_ADDRESS => {
+                air.random[from] = params[0..6].*;
+                air.complete(from, opcode, &.{0});
             },
             hci.HCI_OP_LE_READ_REMOTE_FEATURES => {
                 air.status(from, opcode);
@@ -200,14 +215,14 @@ const Air = struct {
     }
 
     /// LE Connection Complete to side `to`, its controller in `role`, the
-    /// other's public address.
-    fn linked(air: *Air, to: u1, role: u8, bytes: [6]u8) void {
+    /// other's address of `kind` (hci.LE_ADDR_*).
+    fn linked(air: *Air, to: u1, role: u8, bytes: [6]u8, kind: u8) void {
         var params: [19]u8 = @splat(0);
         params[0] = hci.HCI_LE_EV_CONNECTION_COMPLETE;
         params[2] = @truncate(handle);
         params[3] = @truncate(handle >> 8);
         params[4] = role;
-        params[5] = hci.LE_ADDR_PUBLIC;
+        params[5] = kind;
         params[6..12].* = bytes;
         params[12] = 0x18; // every 30 ms
         params[16] = 0x2A; // supervised for 420 ms
@@ -555,6 +570,72 @@ test "a central that does not ask for the responder's identity is given none, it
     try testing.expect(!smp.hasIdentity(&central));
     peripheral.address = @splat(0);
     try testing.expect(!smp.hasIdentity(&peripheral));
+}
+
+test "a link the central made from its private address: a pairing on it takes the address in its checks, the peripheral's bond kept by the central's identity; made again from a new one, resolved by the central's key and encrypted with the bond" {
+    var central_port = Port{};
+    var peripheral_port = Port{ .counter = 129 };
+    var central = upLayer(central_bytes, &central_port, 7, bluetooth.BTIO_NOINPUTNOOUTPUT);
+    var peripheral = upLayer(peripheral_bytes, &peripheral_port, 9, bluetooth.BTIO_NOINPUTNOOUTPUT);
+    central.irk = central_irk;
+    central.has_identity = true;
+    peripheral.irk = peripheral_irk;
+    peripheral.has_identity = true;
+    var air = Air{};
+    air.wire(&central, &peripheral);
+    // The central's private address; a bond of its with the peripheral,
+    // given its identity, whose key the peripheral does not have.
+    privacy.reset(&central);
+    _hci.tick(&central);
+    air.run();
+    try testing.expect(central.privacy.has);
+    const first = bluetooth.BTAddress{ .bytes = central.privacy.address, .kind = bluetooth.BTADDR_LE_RANDOM };
+    const stale: [16]u8 = @splat(0xA5);
+    _ = bonds.keepLe(&central, peripheral_address, &.{ .ltk = stale, .key_size = 16, .authenticated = false, .secure = true, .given = true }, "peripheral").?;
+    // The link made from it: the peripheral sees the central there, and
+    // has no key for it.
+    const linked = connections.connect(&central, peripheral_address);
+    air.run();
+    try testing.expectEqual(@as(i32, hci.HCI_ERR_PIN_OR_KEY_MISSING), central.waits[linked.waiting].result);
+    connections.release(&central, linked.waiting);
+    const link = connections.find(&central, peripheral_address).?;
+    try testing.expect(connections.sameAddress(first, link.own));
+    const seen = connections.find(&peripheral, first).?;
+    try testing.expect(!seen.encrypted and seen.identity == null);
+    try testing.expect(connections.sameAddress(peripheral_address, seen.own));
+
+    // The bond ended, and a pairing on the link: both sides' checks over
+    // the private address.
+    try testing.expect(bonds.forget(&central, peripheral_address));
+    try testing.expectEqual(@as(i32, 0), pairing.pair(&central, peripheral_address, 7, bluetooth.BTIO_NOINPUTNOOUTPUT));
+    air.run();
+    try testing.expectEqual(@as(i32, 0), (try notice(&central, .done)).result);
+    try testing.expectEqual(@as(i32, 0), (try notice(&peripheral, .done)).result);
+    const theirs = bonds.find(&central, peripheral_address).?;
+    const ours = bonds.find(&peripheral, central_address).?;
+    try testing.expectEqualSlices(u8, &theirs.key, &ours.key);
+    try testing.expectEqualSlices(u8, &central_irk, &ours.irk);
+    try testing.expect(theirs.identity_given and ours.identity_given);
+    try testing.expect(seen.encrypted and link.encrypted);
+    try testing.expect(connections.find(&peripheral, central_address) == seen);
+
+    // Made again from a new private address: the peripheral resolves it
+    // by the central's key, and the link is encrypted with the bond.
+    const ended = connections.disconnect(&central, peripheral_address);
+    air.run();
+    connections.release(&central, ended.waiting);
+    central.now += privacy.ROTATE_MS;
+    _hci.tick(&central);
+    air.run();
+    try testing.expect(!std.mem.eql(u8, &first.bytes, &central.privacy.address));
+    const again = connections.connect(&central, peripheral_address);
+    air.run();
+    try testing.expectEqual(@as(i32, 0), central.waits[again.waiting].result);
+    connections.release(&central, again.waiting);
+    const resolved = connections.find(&peripheral, central_address).?;
+    try testing.expect(resolved.encrypted and connections.find(&central, peripheral_address).?.encrypted);
+    try testing.expectEqual(bluetooth.BTADDR_LE_RANDOM, resolved.address.kind);
+    try testing.expectEqualSlices(u8, &central.privacy.address, &resolved.address.bytes);
 }
 
 test "PairBTDevice on a link the device made: the device asked to pair (Security Request), its pairing answered as the library's own" {

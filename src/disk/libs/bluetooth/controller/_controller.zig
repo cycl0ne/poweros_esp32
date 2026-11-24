@@ -199,6 +199,7 @@ pub fn describe(controller: *const Controller, entry: *Entry, now: u64) void {
         .le_features = layer.le_features,
         .commands = layer.commands,
         .le_states = layer.le_states,
+        .private_address = if (layer.privacy.has) .{ .bytes = layer.privacy.address, .kind = bluetooth.BTADDR_LE_RANDOM } else .{},
     };
     public.node.name = @ptrCast(&entry.device_name);
 }

@@ -213,6 +213,10 @@ pub const BTController = extern struct {
     /// Supported States (hci.LE_STATE_*), bit `n % 8` of byte `n / 8`;
     /// zeros where it has not. Since 1.16.
     le_states: [8]u8 = @splat(0),
+    /// The resolvable private address it uses over LE, BTADDR_LE_RANDOM,
+    /// made from the identity it gives the devices it bonds with; zeros
+    /// while it has none. Since 1.22.
+    private_address: BTAddress = .{},
 };
 
 /// BTDevice.flags: how it was heard.
@@ -363,6 +367,15 @@ pub const BTConnection = extern struct {
     /// The device's class of device (hci.COD_*), as its page or the
     /// discovery gave it; 0 where none is known.
     class_of_device: u32 = 0,
+    /// LE: the device's identity - the address its bond is kept by -
+    /// where `address` is a private one the bond's identity resolving key
+    /// made; zeros where the two are the same, or it is not known. Since
+    /// 1.22.
+    identity: BTAddress = .{},
+    /// LE: the address this side made the link from - the controller's
+    /// public address (BTADDR_LE_PUBLIC), or its private one
+    /// (BTADDR_LE_RANDOM); zeros over BR/EDR. Since 1.22.
+    own_address: BTAddress = .{},
 };
 
 /// A task told when the controllers change (AddBTNotify): the library's,

@@ -285,12 +285,29 @@ pauses while the controller's eight links are taken, and a device's link
 ends it: it goes on beside the link where the controller can, otherwise
 once the link is down. Refused, it is tried again ten seconds later.
 
+**Over LE the machine has a private address** beside its public one: a
+resolvable private address made from the identity resolving key it
+gives the devices it bonds with (below), so that a device with the key
+knows the address for the machine's, and nobody else ties it to the
+machine, or to the address before it. A discovery's active scan goes
+from it, and so do the links the machine makes to devices given its
+identity; the advertising while visible, the background scan - which
+sends nothing - and a link to any other device go from the public
+address, which such a device knows the machine by. A new one is made at
+every start, every 15 minutes, and when the controller is made hidden.
+The controller takes it only while it advertises, scans and initiates
+nothing: the change waits for a discovery's LE scan and for a link
+being made, and the advertising and the background scan pause for it.
+A controller without LE, or without crypto.library to make its key,
+has none.
+
 A controller that is up says how it is now in its `flags` -
 `BTCF_POWERED`, `BTCF_CONNECTABLE` (pages answered, or advertising),
 `BTCF_VISIBLE` with `visible_left` the seconds left or
 `BT_VISIBLE_ALWAYS`, `BTCF_ADVERTISING` while it advertises, and
 `BTCF_DISCOVERING` - and its name in `name`; `le_states` holds the states
-it said it takes on together (`hci.LE_STATE_*`).
+it said it takes on together (`hci.LE_STATE_*`), and `private_address`
+its private address (`BTADDR_LE_RANDOM`), zeros while it has none.
 
 **What is set is kept** for the controller's next start, by its address,
 in `ENVARC:Sys/bluetooth/<address>/` - the address's twelve hex digits,
@@ -313,7 +330,7 @@ given (2 to 60; 0 for about ten), in three parts:
 
 1. **LE's advertising**, for a third of the time: listened to actively,
    every advertiser asked for its scan response, which often has its
-   name.
+   name - from the controller's private address where it has one.
 2. **An inquiry**, for the rest: the BR/EDR devices that are visible
    answer, with their signal and, from a controller with extended
    results, their names and services.
@@ -393,7 +410,9 @@ const result = bt.ConnectBTDevice(bluetooth.BT_ALL_CONTROLLERS, &device);
   takes the role over; a device that does not answer is given up on
   after the controller's page timeout, about five seconds.
 - **Over LE** the controller listens for the device's advertising and
-  connects as its central, asking for an interval of 30 to 50 ms, no
+  connects as its central - from its private address where the device's
+  bond says it was given the machine's identity, from its public address
+  otherwise - asking for an interval of 30 to 50 ms, no
   latency, and the link lost after 420 ms unheard. A device that does not
   advertise within 20 seconds is given up on (`BTERR_TIMEOUT`). The
   controller has a link as soon as it has sent its request, so the link
@@ -431,7 +450,8 @@ var it = list.iterator();
 while (it.next()) |node| {
     const link: *const bluetooth.BTConnection = @fieldParentPtr("node", node);
     // link.node.name, .controller, .address, .flags (BTLF_*), .handle,
-    // .age, .class_of_device, .interval, .latency, .supervision
+    // .age, .class_of_device, .interval, .latency, .supervision,
+    // .identity, .own_address
 }
 ```
 
@@ -443,6 +463,8 @@ while (it.next()) |node| {
 | `age` | how many milliseconds it has been up |
 | `class_of_device` | the device's class, as its page said or the discovery heard |
 | `interval`, `latency`, `supervision` | LE's: how often the two speak, in units of 1.25 ms; how many of those times the peripheral may let pass; how long the link lasts unheard, in units of 10 ms |
+| `identity` | LE's: the device's identity - the address its bond is kept by - where it linked from a private address the bond's key resolves; zeros otherwise. Such a link is `BTLF_BONDED` |
+| `own_address` | LE's: the address the controller made the link from - its public one (`BTADDR_LE_PUBLIC`) or its private one (`BTADDR_LE_RANDOM`); zeros over BR/EDR |
 
 A link being ended is listed until it is down.
 
@@ -609,10 +631,11 @@ its link staying up unencrypted; the log says so ("not made secure:
 0x06").
 
 The log says each pairing over, and why one failed (`C:Log`). Over LE
-this side gives a device its identity and no other key - it uses its
-public address and signs nothing - and a device that advertises only
-private addresses is reached by the address a discovery heard, not by
-its identity.
+this side gives a device its identity and no other key, and signs
+nothing; a pairing's checks take the address each side made the link
+from - this side's private one on a link made from it. A device that
+advertises only private addresses is reached by the address a discovery
+heard, not by its identity.
 
 ## Channels and services
 
@@ -1357,6 +1380,7 @@ new rows only where one differs from what it shows.
               LE encryption LE data length LE privacy LE 2M PHY
               LE Coded PHY extended advertising
   name        poweros
+  private     6E:3A:91:4C:D2:07
   class       000104
 ```
 
@@ -1368,8 +1392,8 @@ adds what each is: the chip and firmware its device gave it, how it is
 reached - USB, or a UART and its rate - the versions of its HCI and link
 manager and who made it, its buffers, what it can do of note - `(on)`
 after Secure Simple Pairing when the stack has switched it on - what it
-advertises beside, by the states it said, its name and its class
-(`000104`: a desktop computer).
+advertises beside, by the states it said, its name, its private address
+over LE, and its class (`000104`: a desktop computer).
 
 The Raspberry Pi 4 Model B's, the first time it is asked - its device
 still setting the controller up - and a moment later:
@@ -1392,6 +1416,7 @@ still setting the controller up - and a moment later:
               (on) Secure Connections extended inquiry sniff subrating
               LE encryption LE data length
   name        poweros
+  private     52:9D:0B:E4:71:38
   class       000104
 ```
 
@@ -1481,8 +1506,28 @@ with `LE`, `RANDOM` or `BREDR` its link of that kind.
 the kind of link - `BR/EDR`, `LE`, `LE random` - which side the
 controller is, how long the link has been up, and the device's name;
 with `INFO`, who made it, whether it is encrypted, its controller and
-handle, the device's class, and an LE link's interval, latency and how
-long it lasts unheard.
+handle, the device's class, the device's identity where it linked from a
+private address, the private address this machine made the link from,
+and an LE link's interval, latency and how long it lasts unheard.
+
+An LE link made from the private address - by the machine that made it,
+and by the device, which knows the address for the machine's:
+
+```
+1> Bluetooth LIST INFO
+  00:00:5E:EF:10:46  LE         central          2 s  poweros
+      made by this machine, encrypted, authenticated, bonded; controller 0, handle 512, class 000104
+      from this machine's private address 6E:3A:91:4C:D2:07
+      every 48.75 ms, latency 0, lost after 420 ms unheard
+```
+
+```
+1> Bluetooth LIST INFO
+  6E:3A:91:4C:D2:07  LE random  peripheral       2 s  poweros
+      made by the device, encrypted, authenticated, bonded; controller 0, handle 64
+      its identity 00:00:5E:EF:10:42
+      every 48.75 ms, latency 0, lost after 420 ms unheard
+```
 
 Paired - the one machine answering with `AGENT`, the other pairing:
 

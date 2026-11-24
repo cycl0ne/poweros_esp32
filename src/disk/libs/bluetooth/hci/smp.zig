@@ -27,7 +27,10 @@
 //! confirm checked, the six digits both show for the agent to compare),
 //! or Passkey Entry (twenty rounds of confirms and nonces, a bit of the
 //! passkey each). f5 makes the MacKey and the long term key, f6 the two
-//! DHKey checks; the link is encrypted with the long term key.
+//! DHKey checks; the link is encrypted with the long term key. The
+//! checks take the two addresses the link was made between: the device's,
+//! and the one this side made it from - its public address or its private
+//! one (the link's `own`, privacy.zig).
 //! **Legacy pairing**: the temporary key - 0 for Just Works, the passkey
 //! otherwise - c1's confirms, the randoms exchanged and checked, s1's
 //! short-term key, the link encrypted with it, and the long term key the
@@ -79,9 +82,9 @@
 //! answered with the key of the device's bond where Secure Connections
 //! made it, cut to the bond's size: such a key goes by no EDIV and Rand,
 //! and is the same on both sides. A key that goes by an EDIV and Rand
-//! would be one this side gave - it gives no long term key - so that, a legacy
-//! bond's key - the device's own, for this side's links to it as their
-//! central - and a device without a bond are refused, and noted.
+//! would be one this side gave - it gives no long term key - so that, a
+//! legacy bond's key - the device's own, for this side's links to it as
+//! their central - and a device without a bond are refused, and noted.
 //!
 //! Pure, as the rest of the layer: the cipher, the random bytes and the
 //! curve come through the layer's port (smpcrypto.zig).
@@ -324,8 +327,13 @@ pub fn resultOf(reason: u8) i32 {
 /// The bond of the device on the link: by its address, or - a resolvable
 /// private one - by the identity resolving key that made it.
 pub fn bondOf(layer: *Hci, connection: *const Connection) ?*bonds.Bond {
-    if (bonds.find(layer, connection.address)) |bond| return bond;
-    const address = connection.address;
+    return bondAt(layer, connection.address);
+}
+
+/// The bond of the device at `address`: kept by it, or by the identity
+/// whose resolving key made it. Null for none.
+pub fn bondAt(layer: *Hci, address: bluetooth.BTAddress) ?*bonds.Bond {
+    if (bonds.find(layer, address)) |bond| return bond;
     if (address.kind != bluetooth.BTADDR_LE_RANDOM or !smpcrypto.resolvable(&address.bytes)) return null;
     const port = portOf(layer) orelse return null;
     for (&layer.bonds) |*bond| {
@@ -581,8 +589,7 @@ fn randomed(layer: *Hci, connection: *Connection, payload: []const u8) void {
     const smp = &connection.smp;
     smp.theirs = payload[1..17].*;
     if (!smp.secure) {
-        const ours_address = layer.address;
-        const expected = smpcrypto.c1(port, &smp.tk, &smp.theirs, &smp.request, &smp.response, 0, &ours_address, peerType(connection), &connection.address.bytes);
+        const expected = smpcrypto.c1(port, &smp.tk, &smp.theirs, &smp.request, &smp.response, ownType(connection), &connection.own.bytes, peerType(connection), &connection.address.bytes);
         if (!same(&expected, &smp.confirm)) return fail(layer, connection, REASON_CONFIRM_VALUE_FAILED);
         const stk = smpcrypto.s1(port, &smp.tk, &smp.theirs, &smp.ours);
         const zero: [8]u8 = @splat(0);
@@ -617,7 +624,7 @@ fn checked(layer: *Hci, connection: *Connection, payload: []const u8) void {
     if (payload.len < 17) return fail(layer, connection, REASON_INVALID_PARAMETERS);
     const port = portOf(layer) orelse return fail(layer, connection, REASON_UNSPECIFIED);
     const smp = &connection.smp;
-    const ours_address = addressOf(&layer.address, 0);
+    const ours_address = addressOf(&connection.own.bytes, ownType(connection));
     const theirs_address = addressOf(&connection.address.bytes, peerType(connection));
     const r = passkeyValue(smp);
     const io_cap = [3]u8{ smp.response[1], smp.response[2], smp.response[3] };
@@ -933,7 +940,7 @@ fn checkCentral(layer: *Hci, connection: *Connection) void {
     const port = portOf(layer) orelse return fail(layer, connection, REASON_UNSPECIFIED);
     const smp = &connection.smp;
     const central_address = addressOf(&connection.address.bytes, peerType(connection));
-    const ours_address = addressOf(&layer.address, 0);
+    const ours_address = addressOf(&connection.own.bytes, ownType(connection));
     const keys = smpcrypto.f5(port, &smp.dhkey, &smp.theirs, &smp.ours, &central_address, &ours_address);
     smp.mac_key = keys.mac_key;
     smp.ltk = keys.ltk;
@@ -986,8 +993,7 @@ fn legacyConfirm(layer: *Hci, connection: *Connection) void {
     const smp = &connection.smp;
     smp.tk = passkeyValue(smp);
     port.random(port.context, &smp.ours);
-    const ours_address = layer.address;
-    const value = smpcrypto.c1(port, &smp.tk, &smp.ours, &smp.request, &smp.response, 0, &ours_address, peerType(connection), &connection.address.bytes);
+    const value = smpcrypto.c1(port, &smp.tk, &smp.ours, &smp.request, &smp.response, ownType(connection), &connection.own.bytes, peerType(connection), &connection.address.bytes);
     sendConfirm(layer, connection, &value);
 }
 
@@ -1049,7 +1055,7 @@ fn sendConfirm(layer: *Hci, connection: *Connection, value: *const [16]u8) void 
 fn sendCheck(layer: *Hci, connection: *Connection) void {
     const port = portOf(layer) orelse return fail(layer, connection, REASON_UNSPECIFIED);
     const smp = &connection.smp;
-    const ours_address = addressOf(&layer.address, 0);
+    const ours_address = addressOf(&connection.own.bytes, ownType(connection));
     const theirs_address = addressOf(&connection.address.bytes, peerType(connection));
     const keys = smpcrypto.f5(port, &smp.dhkey, &smp.ours, &smp.theirs, &ours_address, &theirs_address);
     smp.mac_key = keys.mac_key;
@@ -1106,6 +1112,11 @@ fn send(layer: *Hci, connection: *const Connection, payload: []const u8) bool {
 /// random.
 fn peerType(connection: *const Connection) u8 {
     return if (connection.address.kind == bluetooth.BTADDR_LE_RANDOM) 1 else 0;
+}
+
+/// This side's: the address it made the link from.
+fn ownType(connection: *const Connection) u8 {
+    return if (connection.own.kind == bluetooth.BTADDR_LE_RANDOM) 1 else 0;
 }
 
 /// An address and its type, as f5 and f6 take them.

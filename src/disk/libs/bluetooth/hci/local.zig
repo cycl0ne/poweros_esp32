@@ -8,7 +8,8 @@
 //! **What it answers** is Write Scan Enable's: pages while it is on - it
 //! can be connected to - and inquiries too while it is visible - it is
 //! found. Over LE it is found by its advertising while it is visible
-//! (advertising.zig). Off, it answers nothing and looks for nothing: its
+//! (advertising.zig), and made hidden it takes a new private address
+//! (privacy.zig). Off, it answers nothing and looks for nothing: its
 //! discovery is stopped and its links are ended. Visible for a time ends
 //! at that time (`tick`); visible until told otherwise has no end;
 //! visible while off counts down all the same, and shows again once it
@@ -36,6 +37,7 @@ const advertising = @import("advertising.zig");
 const connections = @import("connections.zig");
 const discovery = @import("discovery.zig");
 const eir = @import("eir.zig");
+const privacy = @import("privacy.zig");
 
 /// The most bytes the controller's own name has.
 pub const NAME_MOST: usize = hci.HCI_MAX_NAME - 1;
@@ -107,10 +109,12 @@ pub fn setPowered(layer: *Hci, on: bool) i32 {
 /// (BT_VISIBLE_ALWAYS): 0, or BTERR_*.
 pub fn setVisible(layer: *Hci, seconds: u32) i32 {
     if (seconds != 0 and !_hci.bredr(layer) and !advertising.can(layer)) return bluetooth.BTERR_UNSUPPORTED;
+    const hidden = layer.visible and seconds == 0;
     layer.visible = seconds != 0;
     layer.visible_until = if (seconds == 0 or seconds == bluetooth.BT_VISIBLE_ALWAYS) null else layer.now + @as(u64, seconds) * 1000;
     layer.changed = true;
     const result = writeScan(layer);
+    if (hidden) privacy.renew(layer);
     advertising.update(layer);
     return result;
 }
@@ -155,7 +159,8 @@ fn writeName(layer: *Hci) i32 {
 
 // --- the time ---------------------------------------------------------------------
 
-/// Visible for a time ended, once it is up.
+/// Visible for a time ended, once it is up: hidden, with a new private
+/// address.
 pub fn tick(layer: *Hci) void {
     const until = layer.visible_until orelse return;
     if (layer.now < until) return;
@@ -163,6 +168,7 @@ pub fn tick(layer: *Hci) void {
     layer.visible_until = null;
     layer.changed = true;
     _ = writeScan(layer);
+    privacy.renew(layer);
     advertising.update(layer);
 }
 
