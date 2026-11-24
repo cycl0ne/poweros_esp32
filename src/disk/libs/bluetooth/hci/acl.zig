@@ -12,16 +12,19 @@
 //!
 //! **Each link its share.** A link whose device stops taking packets -
 //! one switched off or out of range, until the link is lost - keeps the
-//! buffers its packets hold, and its frames wait. So every link that is
-//! up keeps one buffer of its pool and one place in the layer's queue
-//! for itself: a link takes a buffer while it holds none, and another
-//! only while more are free than the other links of its pool that hold
-//! none; it queues a frame while it has none queued, and another only
-//! while more places are free than the other links that have none
-//! queued. The rest go to the links that send. One each rather than an
-//! even split: with six buffers and three links, a split leaves the link
-//! that carries sound two, this leaves it four, and each of the others
-//! still has one to send with.
+//! buffers its packets hold, and its frames wait. So a link holds at
+//! most an even share of its pool among the links up in it, rounded up,
+//! and queues at most an even share of the layer's queue among all the
+//! links up, and every link that is up keeps one of each for itself: a
+//! link takes a buffer while it holds none, and another while it holds
+//! less than its share and more are free than the other links of its
+//! pool that hold none; its frames take the queue's places the same
+//! way. A link that sends without pause takes all it may, and keeps it
+//! should its device then stop: the share is what it leaves the others.
+//! With six buffers and three links up, it holds two, and the link that
+//! carries sound - a packet every 21 ms or so - has two to send with
+//! while the controller still tries the link that has stopped; one is
+//! too few for that pace.
 //!
 //! **Sent in turn.** The links with frames queued take turns, a packet
 //! each, from the link after the one whose packet went last. A link's
@@ -58,7 +61,8 @@ pub const FRAME_ROOM: usize = l2cap.L2CAP_HDR + FRAME_MOST;
 /// controller takes less. The task's writes have room for it.
 pub const PACKET_MOST: usize = 1024;
 /// How many frames wait to be sent: every link's signalling and the
-/// channels' frames share the places, each link keeping one for itself.
+/// channels' frames share the places, each link up taking its share of
+/// them at most and keeping one for itself.
 pub const OUT = 8;
 
 /// A free place's handle: never a link's.
@@ -128,18 +132,27 @@ pub fn send(layer: *Hci, connection: *const Connection, cid: u16, payload: []con
 }
 
 /// Whether a frame of the link's may be queued: while it has none
-/// queued, into any place free; another only while more places are free
-/// than the other links up that have none queued.
+/// queued, into any place free; another while it has fewer than its
+/// share of the places queued and more are free than the other links up
+/// that have none queued.
 fn roomFor(layer: *Hci, connection: *const Connection) bool {
     const free = OUT - layer.out_count;
     if (free == 0) return false;
-    if (queued(layer, connection.handle) == 0) return true;
+    const mine = queued(layer, connection.handle);
+    if (mine == 0) return true;
+    var links: usize = 1;
     var keeping: usize = 0;
     for (&layer.connections) |*other| {
         if (other == connection or other.state != .up) continue;
+        links += 1;
         if (queued(layer, other.handle) == 0) keeping += 1;
     }
-    return free > keeping;
+    return mine < share(OUT, links) and free > keeping;
+}
+
+/// An even share of `most` among `links`, rounded up.
+fn share(most: usize, links: usize) usize {
+    return (most + links - 1) / links;
 }
 
 /// How many of the link's frames are queued.
@@ -222,19 +235,21 @@ fn oldest(layer: *Hci, handle: u16) ?*Out {
 }
 
 /// Whether the link may take a buffer of its pool: one while it holds
-/// none; another only while more are free than the other links up in its
-/// pool that hold none.
+/// none; another while it holds fewer than its share of the pool and
+/// more are free than the other links up in its pool that hold none.
 fn mayTake(layer: *Hci, connection: *const Connection) bool {
     const pool = poolOf(layer, connection.le);
     if (pool.credits.* == 0) return false;
     if (connection.outstanding == 0) return true;
+    var links: usize = 1;
     var keeping: u16 = 0;
     for (&layer.connections) |*other| {
         if (other == connection or other.state != .up) continue;
         if (poolOf(layer, other.le).credits != pool.credits) continue;
+        links += 1;
         if (other.outstanding == 0) keeping += 1;
     }
-    return pool.credits.* > keeping;
+    return connection.outstanding < share(pool.most, links) and pool.credits.* > keeping;
 }
 
 fn letGo(layer: *Hci, frame: *Out) void {

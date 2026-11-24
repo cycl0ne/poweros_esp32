@@ -79,7 +79,7 @@ B's controller, `SYS:System/Bluetooth`, `C:Bluetooth`, `C:test/BTEcho`,
 | `DEVS:bluetooth/firmware/broadcom/` | | the CYW43455's Bluetooth patch, `BCM4345C0.hcd`, and the licence for passing it on, from `scripts/fetch-cyw43455.sh` (the BCM2711 boards' disk) |
 | `SYS:System/Bluetooth` | | the controllers set - on or off, their name, visible - and the devices around found, paired with, linked to and forgotten, in a window that answers the pairings |
 | `C:Bluetooth` | | the controllers - listed, with `INFO` what each is, and set - the devices around them (`SCAN`), the links to them (`CONNECT`, `DISCONNECT`, `LIST`), the bonds (`PAIR`, `UNPAIR`, `BONDS`, `AGENT`), and what a device offers (`SERVICES`), over LE with its characteristics |
-| `C:test/BTEcho` | | channels to and from the devices around: a PSM served, each frame sent back, or a channel opened to a device's PSM, each line typed sent; in the disk's `tests` set |
+| `C:test/BTEcho` | | channels to and from the devices around: a PSM served, each frame sent back, or a channel opened to a device's PSM, each line typed - or a file - sent; in the disk's `tests` set |
 | `C:test/BTGatt` | | the attributes of an LE device's GATT server read, written and watched as they change, with `WAIT` across the link's ends; in the disk's `tests` set |
 | `bluetooth/bthid.device` | `DEVS:bluetooth/` | keyboards, mice and media keys over BR/EDR and over LE: a profile driver, their reports read by hid.library ([btprofile](../autodocs/btprofile.md)) |
 | `bluetooth/btaudio.device` | `DEVS:bluetooth/` | headphones and speakers over BR/EDR as sound outputs: a profile driver, a sink of rta.library for each device while its stream is open ([btprofile](../autodocs/btprofile.md)) |
@@ -449,12 +449,14 @@ A link being ended is listed until it is down.
 **What a link carries.** Its data goes as L2CAP frames of up to 1024
 bytes, cut into the packets the controller takes, sent within its
 buffers - a packet holds one until the controller says it is sent - and
-put together again from the packets it hands up. Every link that is up
-keeps one of the controller's buffers, and one place in the library's
-queue of frames, for itself; the rest go to the links that send, which
-take turns, a packet each. So a device that stops taking packets -
-switched off or out of range, until its link is lost - holds up only
-its own frames. On the signalling
+put together again from the packets it hands up. A link holds at most
+an even share of the controller's buffers among the links that are up,
+rounded up, and of the library's queue of frames, and every link that
+is up keeps one of each for itself; the links that send take turns, a
+packet each. So a device that stops taking packets - switched off or
+out of range, until its link is lost - holds up only its own frames,
+and leaves the others enough to keep a stream's pace: with six buffers
+and three links, two each. On the signalling
 channel the library answers what a device asks of any link: what it
 supports - its fixed channels, the signalling one alone - and an echo.
 Over BR/EDR it opens and takes the channels to protocols (Channels and
@@ -1591,7 +1593,10 @@ and sends each frame of each channel a device opens to it back as it
 came, eight channels at once, until CTRL-C. With `TO` it opens a channel
 to a device's PSM (`OpenBTChannel`), by its address: each line typed
 goes as a frame, without its end of line, and each frame that comes is
-shown after `<`, until CTRL-C or the device closes it. `CONTROLLER`
+shown after `<`, until CTRL-C or the device closes it. With a file for
+its input (`<file`) the file goes in frames as long as the channel
+takes, each as soon as the last is taken - a load for a link - and the
+channel is closed at its end. `CONTROLLER`
 names the controller, as `Bluetooth`'s does. A device that wants its
 links encrypted takes a channel from a machine it has a bond with
 (`Bluetooth PAIR`).

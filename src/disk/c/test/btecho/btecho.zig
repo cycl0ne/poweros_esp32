@@ -13,7 +13,10 @@
 //!                      a channel opened to the device's PSM: each line
 //!                      typed sent as a frame, without its end of line,
 //!                      and each frame that comes shown; until CTRL-C, or
-//!                      the device closes it
+//!                      the device closes it. Its input a file (<file):
+//!                      the file sent in frames as long as the channel
+//!                      takes, each as soon as the last is taken, and the
+//!                      channel closed at its end
 //!   CONTROLLER <n>     the controller to open it over; without it, the
 //!                      one with a link to the device, else the one that
 //!                      found it, else the first that is on
@@ -35,7 +38,7 @@ const BluetoothBase = sdk.interface.bluetooth.BluetoothBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "BTEcho";
-const VERSION_STRING = "\x00$VER: BTEcho 1.0 (23.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: BTEcho 1.1 (24.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "PSM/K/N,TO/K,CONTROLLER/K/N";
@@ -182,6 +185,8 @@ fn talk(sys: *ExecBase, dl: *DosBase, bt: *BluetoothBase, controller: u32, text:
     const open = channel.?;
     _ = Printf(dl, "Open, frames of %u bytes each way at most; each line typed is sent, CTRL-C stops\n", .{@as(u32, @min(open.mtu_in, open.mtu_out))});
     const input = dl.Input();
+    // Typing is waited for; a file goes as fast as the channel takes it.
+    const typed = dl.IsInteractive(input);
     var line: [1024]u8 = undefined;
     while (true) {
         while (sys.GetMsg(port)) |message| {
@@ -203,7 +208,7 @@ fn talk(sys: *ExecBase, dl: *DosBase, bt: *BluetoothBase, controller: u32, text:
             _ = dl.PutStr("***Break\n");
             return dos.RETURN_WARN;
         }
-        if (!dl.WaitForChar(input, typed_us)) continue;
+        if (typed and !dl.WaitForChar(input, typed_us)) continue;
         const got = dl.Read(input, &line, @min(line.len, open.mtu_out));
         if (got <= 0) return dos.RETURN_OK;
         var length: usize = @intCast(got);
