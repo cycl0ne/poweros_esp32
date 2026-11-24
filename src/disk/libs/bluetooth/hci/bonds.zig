@@ -5,9 +5,9 @@
 //! pairing, or the name as its link learnt it after a pairing that knew
 //! none. Over BR/EDR the key is the link key; over LE it is the long
 //! term key, with what names it to the device's controller (EDIV and
-//! Rand), its size, how it was made, and the device's identity
-//! resolving key where it gave one - the bond's address is then the
-//! device's identity.
+//! Rand), its size, how it was made, the device's identity resolving key
+//! where it gave one - the bond's address is then the device's identity
+//! - and whether this machine gave the device its own.
 //!
 //! **Read and written by the task.** The task fills the table from the
 //! bond files once the controller's address is known (`loaded`), and
@@ -49,6 +49,9 @@ pub const Bond = struct {
     /// LE: the device's identity resolving key, where it gave one.
     irk: [16]u8 = @splat(0),
     has_irk: bool = false,
+    /// LE: this machine's identity given to the device in the pairing, so
+    /// that it knows the private addresses this machine makes.
+    identity_given: bool = false,
     class_of_device: u32 = 0,
     /// The device's name, UTF-8, ended by a NUL; empty when none was
     /// known.
@@ -134,6 +137,8 @@ pub const LeKeys = struct {
     authenticated: bool,
     secure: bool,
     irk: ?[16]u8 = null,
+    /// This machine's identity went to the device.
+    given: bool = false,
 };
 
 /// An LE bond kept - made, or new keys for one there is - and marked to
@@ -151,6 +156,7 @@ pub fn keepLe(layer: *Hci, address: bluetooth.BTAddress, keys: *const LeKeys, na
         .le_secure = keys.secure,
         .irk = keys.irk orelse @splat(0),
         .has_irk = keys.irk != null,
+        .identity_given = keys.given,
         .dirty = true,
     };
     setName(bond, name);

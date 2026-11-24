@@ -68,6 +68,7 @@ pub fn describe(id: u32, bond: *const bonds.Bond, entry: *Entry) void {
     if (bonds.secure(bond)) flags |= bluetooth.BTBF_SECURE;
     if (bond.legacy) flags |= bluetooth.BTBF_LEGACY;
     if (bond.has_irk) flags |= bluetooth.BTBF_IDENTITY;
+    if (bond.identity_given) flags |= bluetooth.BTBF_IDENTITY_GIVEN;
     entry.public = .{
         .controller = id,
         .flags = flags,

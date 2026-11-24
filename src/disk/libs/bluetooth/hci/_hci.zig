@@ -174,6 +174,13 @@ pub const Hci = struct {
     /// a NUL - set by the task before the bring-up writes them.
     class_of_device: u32 = 0,
     name: [hci.HCI_MAX_NAME + 1]u8 = @splat(0),
+    /// This machine's identity over LE: the identity resolving key it
+    /// gives the devices it bonds with, in the security manager's order -
+    /// made once and kept by the task (task/bondfiles.zig), set before the
+    /// bring-up goes on - and whether there is one: none without the
+    /// port's cryptography or where it could not be kept.
+    irk: [16]u8 = @splat(0),
+    has_identity: bool = false,
 
     // Its settings (local.zig): on, visible and until when - null for no
     // end. The bring-up stops once the address is known and asks for

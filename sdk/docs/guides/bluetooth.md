@@ -558,10 +558,13 @@ methods are BR/EDR's: a number both show (`BTAK_CONFIRM`), a passkey the
 device shows (`BTAK_PASSKEY`) or one shown here to be typed on it
 (`BTAK_SHOW`), or nothing to compare. Without them it is legacy
 pairing, with a passkey or none. The link is encrypted with the key the
-pairing made, and the device's keys are taken: its long term key where
-Secure Connections did not make one, and its identity - the address its
-bond is kept by, and the key that resolves the private addresses it
-uses. A pairing with the specification's debug key keeps no bond.
+pairing made, and the keys go, the responder's first: the device's long
+term key where Secure Connections did not make one, and its identity -
+the address its bond is kept by, and the key that resolves the private
+addresses it uses - and the machine's identity, where the device asks
+for it: the controller's public address and an identity resolving key
+of its own. A pairing with the specification's debug key keeps no
+bond.
 
 On a link a device made to the machine while it advertises - the
 device its central - the device begins the pairing and the library
@@ -572,9 +575,10 @@ too short a key, and one when no agent is there to ask (Pairing Not
 Supported). The agent is asked as for a device's pairing over BR/EDR -
 the number both show, a passkey to type or one to show, or, where
 there is nothing to compare and it can answer yes or no, whether the
-device may pair - and the device's identity is taken; the machine gives
-no key of its own. The device then encrypts the link with the new key,
-and the bond is kept as any other, its key the same on both sides.
+device may pair - the device's identity is taken, and the machine's
+given where the device asks for it. The device then encrypts the link
+with the new key, and the bond is kept as any other, its key the same
+on both sides.
 `PairBTDevice` on such a link asks the device to pair (Security
 Request); a device that does not is given up on after a minute. A
 device that links to the machine, whose name neither a discovery heard
@@ -584,8 +588,13 @@ once the link is up, names the link and the device's bond.
 An LE bond's file is `<device>.le` for a public address, `<device>.random`
 for a static random one: the device's name, the long term key and what
 it goes by (`LTK`, `EDIV`, `Rand`), the key's size, whether the pairing
-was protected (`Authenticated`) and used Secure Connections, and the
-device's identity resolving key (`IRK`). `ConnectBTDevice` to an LE
+was protected (`Authenticated`) and used Secure Connections, whether
+the device was given the machine's identity (`IdentityGiven`), and the
+device's identity resolving key (`IRK`). The machine's own identity
+resolving key is in the controller's `identity` file beside them: made
+once, the first time the controller comes up with crypto.library there,
+and kept for good - a device bonded with it knows the machine's private
+addresses by it - so it is given to nobody. `ConnectBTDevice` to an LE
 device with a bond encrypts the link with the bond's key before it
 returns, as over BR/EDR; a link from a private address the bond's key
 resolves is that bond's, and so is a Security Request on it.
@@ -600,10 +609,10 @@ its link staying up unencrypted; the log says so ("not made secure:
 0x06").
 
 The log says each pairing over, and why one failed (`C:Log`). Over LE
-this side gives a device none of its own keys - it uses its public
-address and signs nothing - and a device that advertises only private
-addresses is reached by the address a discovery heard, not by its
-identity.
+this side gives a device its identity and no other key - it uses its
+public address and signs nothing - and a device that advertises only
+private addresses is reached by the address a discovery heard, not by
+its identity.
 
 ## Channels and services
 
@@ -1497,7 +1506,7 @@ Paired with 00:00:5E:EF:10:44
   00:00:5E:EF:10:43  BR/EDR     confirmed    poweros
       controller 0, class 000104, key type 8, Secure Connections
   00:00:5E:EF:10:44  LE         confirmed    Sensor
-      controller 0, a key of 16 bytes, Secure Connections, its identity kept
+      controller 0, a key of 16 bytes, Secure Connections, its identity kept, this machine's given
 1> Bluetooth LIST INFO
   00:00:5E:EF:10:43  BR/EDR     central         12 s  poweros
       made by this machine, encrypted, authenticated, bonded; controller 0, handle 51
@@ -1517,7 +1526,8 @@ confirmed - `confirmed`, `unconfirmed`, or `PIN` - and its name; with
 `INFO`, the controller, the device's class where the pairing learned it -
 a link the device made says it - the kind of its key, or an LE key's
 size, whether it was made with Secure Connections, whether the device
-gave its identity, and the profile drivers that drive it. `UNPAIR` ends
+gave its identity and was given the machine's, and the profile drivers
+that drive it. `UNPAIR` ends
 a bond, by the device's address or name (`UnpairBTDevice`) - with `LE`,
 `RANDOM` or `BREDR` the bond of that kind, for a device with two - a
 driver that drives the device telling it first.

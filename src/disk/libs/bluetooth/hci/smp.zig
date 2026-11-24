@@ -12,12 +12,13 @@
 //! **The pairing.** A Pairing Request with the agent's IO capability, no
 //! out-of-band data, bonding, protection from a man in the middle where
 //! the agent's user can give it, Secure Connections, a key of up to 16
-//! bytes, and the device's keys asked for: its long term key (where
-//! Secure Connections does not make one) and its identity; this side
-//! gives none. The device's Pairing Response settles the rest: a key of
-//! fewer than MIN_ENCRYPTION_KEY_SIZE bytes ends it; Secure Connections
-//! where both set it; the method by the two IO capabilities, Just Works
-//! where neither asks for the protection.
+//! bytes, the device's keys asked for - its long term key (where Secure
+//! Connections does not make one) and its identity - and this side's
+//! identity offered where it has one. The device's Pairing Response
+//! settles the rest: a key of fewer than MIN_ENCRYPTION_KEY_SIZE bytes
+//! ends it; Secure Connections where both set it; the method by the two
+//! IO capabilities, Just Works where neither asks for the protection;
+//! this side's identity given where the device keeps it asked for.
 //!
 //! **Secure Connections**: a P-256 key pair for the pairing, the public
 //! keys exchanged - the device's checked on the curve and against this
@@ -40,7 +41,8 @@
 //! capability, no out-of-band data, a bond where the central asks for
 //! one, protection from a man in the middle where the agent's user can
 //! give it, a key of up to 16 bytes, the central's identity asked for and
-//! no key of this side's given. The public keys exchanged, each method
+//! this side's given where the central asks for it. The public keys
+//! exchanged, each method
 //! runs from the other side: this side's confirm first, or Passkey
 //! Entry's rounds answered, the central's confirms checked against its
 //! nonces, the six digits compared; the central's DHKey check checked and
@@ -56,10 +58,16 @@
 //! for the library's own pairing, and for the device's an agent that can
 //! answer yes or no is asked whether it may pair.
 //!
+//! **The keys** go once the link is encrypted, the responder's first:
+//! this side's identity - the identity resolving key the task keeps
+//! (`layer.irk`) and the public address - where the device asked for it,
+//! then the device's, or the device's, then this side's. A long term key
+//! of this side's, or a signing key, is never given.
+//!
 //! **Kept**: a bond where both asked for bonding and a long term key was
 //! made or given, by the device's identity address where it gave one,
-//! with its identity resolving key; never with the specification's debug
-//! key.
+//! with its identity resolving key, and marked where this side's identity
+//! went; never with the specification's debug key.
 //!
 //! **A bonded device's link** - one the library made, or one whose device
 //! asks for security - is encrypted with the bond's key. A link from a
@@ -71,7 +79,7 @@
 //! answered with the key of the device's bond where Secure Connections
 //! made it, cut to the bond's size: such a key goes by no EDIV and Rand,
 //! and is the same on both sides. A key that goes by an EDIV and Rand
-//! would be one this side gave - it gives none - so that, a legacy
+//! would be one this side gave - it gives no long term key - so that, a legacy
 //! bond's key - the device's own, for this side's links to it as their
 //! central - and a device without a bond are refused, and noted.
 //!
@@ -202,8 +210,11 @@ pub const Smp = struct {
     response: [7]u8 = @splat(0),
     /// The key's size agreed, in bytes.
     key_size: u8 = MAX_KEY_SIZE,
-    /// The keys the device is still to give (KEYDIST_*).
+    /// The keys the device is still to give (KEYDIST_*); this side's it
+    /// asked for (KEYDIST_ID: the identity), and whether that went.
     expected: u8 = 0,
+    giving: u8 = 0,
+    gave_identity: bool = false,
     /// Passkey Entry's passkey, and the round it is in.
     passkey: u32 = 0,
     round: u8 = 0,
@@ -252,6 +263,18 @@ pub fn canPair(layer: *const Hci) bool {
 /// answered with a key, and the port's cryptography.
 pub fn canRespond(layer: *const Hci) bool {
     return _hci.supports(layer, hci.CMDBIT_LE_LONG_TERM_KEY_REPLY) and layer.crypto != null;
+}
+
+/// Whether this side has an identity to give: the identity resolving key
+/// the task keeps, and a public address to be known by.
+pub fn hasIdentity(layer: *const Hci) bool {
+    return layer.has_identity and !allZero(&layer.address);
+}
+
+/// The keys this side offers a device (KEYDIST_*): its identity where it
+/// has one.
+fn offered(layer: *const Hci) u8 {
+    return if (hasIdentity(layer)) KEYDIST_ID else 0;
 }
 
 /// The IO capability this side pairs with over LE for an agent's
@@ -334,7 +357,7 @@ pub fn start(layer: *Hci, connection: *Connection) bool {
         return send(layer, connection, &.{ SECURITY_REQUEST, auth });
     }
     connection.smp = .{ .phase = .response };
-    connection.smp.request = .{ PAIRING_REQUEST, io, 0, auth, MAX_KEY_SIZE, 0, KEYDIST_ENC | KEYDIST_ID };
+    connection.smp.request = .{ PAIRING_REQUEST, io, 0, auth, MAX_KEY_SIZE, offered(layer), KEYDIST_ENC | KEYDIST_ID };
     return send(layer, connection, &connection.smp.request);
 }
 
@@ -480,6 +503,8 @@ fn pairingResponse(layer: *Hci, connection: *Connection, payload: []const u8) vo
     // long term key instead.
     smp.expected = payload[6] & smp.request[6];
     if (smp.secure) smp.expected &= ~KEYDIST_ENC;
+    // Those of this side's it keeps asked for.
+    smp.giving = payload[5] & smp.request[5];
     const mitm = (smp.request[3] | peer_auth) & AUTH_MITM != 0;
     smp.method = if (mitm) methodOf(smp.request[1], peer_io, smp.secure) else .just_works;
     if (smp.secure) return sendPublicKey(layer, connection);
@@ -636,7 +661,7 @@ fn given(layer: *Hci, connection: *Connection, payload: []const u8) void {
         },
         else => {},
     }
-    if (smp.phase == .keys and smp.expected == 0) complete(layer, connection);
+    if (smp.phase == .keys and smp.expected == 0) keysIn(layer, connection);
 }
 
 /// Encryption Change on an LE link being paired or made secure: a bonded
@@ -656,7 +681,34 @@ pub fn encryptionChanged(layer: *Hci, connection: *Connection, status: u8) void 
     if (!connection.encrypted) return abandon(layer, connection, hci.HCI_ERR_INSUFFICIENT_SECURITY);
     record.stage = .authenticating;
     smp.phase = .keys;
-    if (smp.expected == 0) complete(layer, connection);
+    // The responder's keys go first.
+    if (smp.responder and !giveKeys(layer, connection)) return fail(layer, connection, REASON_UNSPECIFIED);
+    if (smp.expected == 0) keysIn(layer, connection);
+}
+
+/// The device's keys all in: the central's own given after them, and the
+/// pairing over.
+fn keysIn(layer: *Hci, connection: *Connection) void {
+    if (!connection.smp.responder and !giveKeys(layer, connection)) return fail(layer, connection, REASON_UNSPECIFIED);
+    complete(layer, connection);
+}
+
+/// This side's keys the device asked for sent: its identity - the
+/// identity resolving key, then the public address. False where the
+/// frames could not be queued.
+fn giveKeys(layer: *Hci, connection: *Connection) bool {
+    const smp = &connection.smp;
+    if (smp.giving & KEYDIST_ID == 0) return true;
+    var information: [17]u8 = undefined;
+    information[0] = IDENTITY_INFORMATION;
+    information[1..17].* = layer.irk;
+    var address: [8]u8 = undefined;
+    address[0] = IDENTITY_ADDRESS_INFORMATION;
+    address[1] = hci.LE_ADDR_PUBLIC;
+    address[2..8].* = layer.address;
+    if (!send(layer, connection, &information) or !send(layer, connection, &address)) return false;
+    smp.gave_identity = true;
+    return true;
 }
 
 /// The agent's answer to the link's question: refused, the pairing
@@ -760,9 +812,11 @@ fn pairingRequest(layer: *Hci, connection: *Connection, payload: []const u8) voi
     const smp = &connection.smp;
     smp.* = .{ .phase = .public_key, .responder = true, .secure = true, .key_size = @min(request[4], MAX_KEY_SIZE) };
     smp.request = request;
-    // The central's identity asked for; this side gives no key.
+    // The central's identity asked for, and this side's given where the
+    // central asks for it.
     smp.expected = request[5] & KEYDIST_ID;
-    smp.response = .{ PAIRING_RESPONSE, io, 0, auth, MAX_KEY_SIZE, smp.expected, 0 };
+    smp.giving = request[6] & offered(layer);
+    smp.response = .{ PAIRING_RESPONSE, io, 0, auth, MAX_KEY_SIZE, smp.expected, smp.giving };
     const mitm = (request[3] | auth) & AUTH_MITM != 0;
     smp.method = if (mitm) responderMethod(methodOf(request[1], io, true)) else .just_works;
     if (!send(layer, connection, &smp.response)) fail(layer, connection, REASON_UNSPECIFIED);
@@ -1026,6 +1080,7 @@ fn complete(layer: *Hci, connection: *Connection) void {
             .authenticated = smp.method != .just_works,
             .secure = smp.secure,
             .irk = if (smp.has_irk) smp.irk else null,
+            .given = smp.gave_identity,
         };
         const address = if (smp.has_identity) smp.identity else connection.address;
         if (bonds.keepLe(layer, address, &keys, &connection.name) == null) connection.pairing.full = true;

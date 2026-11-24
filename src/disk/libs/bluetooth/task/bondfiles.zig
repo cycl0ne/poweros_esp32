@@ -25,8 +25,17 @@
 //!   KeySize = 16       its size in bytes
 //!   Authenticated = YES   protected from a man in the middle
 //!   SecureConnections = YES
+//!   IdentityGiven = YES   this machine's identity given to the device
 //!   IRK = 00112233445566778899AABBCCDDEEFF
 //!                      the device's identity resolving key, where it gave one
+//!
+//! **The controller's own identity** is in the directory's `identity`
+//! file - `IRK = ...`, the identity resolving key it gives the devices it
+//! bonds with over LE, in the security manager's order - made once, the
+//! first time the controller is brought up with crypto.library there, and
+//! kept for good: a device bonded to it knows the machine's private
+//! addresses by it. Its name is no address, so the bonds' reader passes
+//! over it.
 //!
 //! Read by the task with the controller's settings, while its bring-up
 //! waits: a file whose name is not an address, or that holds no whole
@@ -130,7 +139,7 @@ fn bytesOf(text: []const u8, into: []u8) bool {
     return true;
 }
 
-const Keyword = enum { name, class, link_key, key_type, legacy, ltk, ediv, rand, key_size, authenticated, secure_connections, irk, other };
+const Keyword = enum { name, class, link_key, key_type, legacy, ltk, ediv, rand, key_size, authenticated, secure_connections, identity_given, irk, other };
 
 fn keywordOf(word: []const u8) Keyword {
     const names = .{
@@ -140,6 +149,7 @@ fn keywordOf(word: []const u8) Keyword {
         .{ "EDIV", Keyword.ediv },                            .{ "Rand", Keyword.rand },
         .{ "KeySize", Keyword.key_size },                     .{ "Authenticated", Keyword.authenticated },
         .{ "SecureConnections", Keyword.secure_connections }, .{ "IRK", Keyword.irk },
+        .{ "IdentityGiven", Keyword.identity_given },
     };
     inline for (names) |pair| {
         if (settings.same(word, pair[0])) return pair[1];
@@ -190,6 +200,7 @@ pub fn parse(scanner: *Scanner, into: *bonds.Bond) bool {
             },
             .authenticated => into.le_authenticated = settings.yesOf(scanner) orelse into.le_authenticated,
             .secure_connections => into.le_secure = settings.yesOf(scanner) orelse into.le_secure,
+            .identity_given => into.identity_given = settings.yesOf(scanner) orelse into.identity_given,
             .irk => into.has_irk = bytesOf(value, &into.irk),
             .other => {},
         }
@@ -249,6 +260,7 @@ pub fn format(bond: *const bonds.Bond, into: *[TEXT_MOST]u8) usize {
         writer.text("\n");
         writer.yes("Authenticated", bond.le_authenticated);
         writer.yes("SecureConnections", bond.le_secure);
+        writer.yes("IdentityGiven", bond.identity_given);
         if (bond.has_irk) {
             writer.text("IRK = ");
             writer.hex(&bond.irk);
@@ -265,6 +277,62 @@ pub fn format(bond: *const bonds.Bond, into: *[TEXT_MOST]u8) usize {
     writer.text("\n");
     writer.yes("Legacy", bond.legacy);
     return writer.at;
+}
+
+/// The controller's identity file: its directory's `identity`.
+fn identityPath(controller: *const [6]u8) Path {
+    var path = pathOf(controller, null);
+    const leaf = "/identity";
+    @memcpy(path[directory.len + 12 ..][0..leaf.len], leaf);
+    return path;
+}
+
+const identity_head = "/* bluetooth.library's identity for its controller at this address: give it to nobody */\nIRK = ";
+
+/// The identity file's text.
+pub const IdentityText = [identity_head.len + 32 + 1]u8;
+
+/// The identity file's text for the key `irk`.
+pub fn formatIdentity(irk: *const [16]u8) IdentityText {
+    var text: IdentityText = undefined;
+    @memcpy(text[0..identity_head.len], identity_head);
+    for (irk, 0..) |byte, index| {
+        text[identity_head.len + index * 2] = digits[byte >> 4];
+        text[identity_head.len + index * 2 + 1] = digits[byte & 15];
+    }
+    text[text.len - 1] = '\n';
+    return text;
+}
+
+/// An identity file's key into `into`: false where it holds none whole.
+pub fn parseIdentity(scanner: *Scanner, into: *[16]u8) bool {
+    var whole = false;
+    while (scanner.next()) {
+        // Known before the scanner moves on, which overwrites its token.
+        const key = settings.same(scanner.token[0..scanner.len], "IRK");
+        if (!scanner.next() or scanner.len != 1 or scanner.token[0] != '=') return false;
+        if (!scanner.next()) return false;
+        if (key) whole = bytesOf(scanner.token[0..scanner.len], into);
+    }
+    return whole;
+}
+
+/// The controller's identity read into `into`: false where none is kept.
+pub fn readIdentity(dl: *DosBase, controller: *const [6]u8, into: *[16]u8) bool {
+    var path = identityPath(controller);
+    const file = dl.Open(@ptrCast(&path), dos.MODE_OLDFILE) orelse return false;
+    var scanner = Scanner.ofFile(dl, file);
+    const whole = parseIdentity(&scanner, into);
+    _ = dl.Close(file);
+    return whole;
+}
+
+/// The controller's identity written, the directories it needs made:
+/// false when it could not be.
+pub fn writeIdentity(dl: *DosBase, controller: *const [6]u8, irk: *const [16]u8) bool {
+    var path = identityPath(controller);
+    const text = formatIdentity(irk);
+    return settings.putFile(dl, @ptrCast(&path), &text);
 }
 
 /// The bond's file written - in `room` - the directories it needs made:

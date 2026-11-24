@@ -59,9 +59,10 @@
 //!   BONDS              the bonds, each on a line: the device's address,
 //!                      the kind of link it is for, how its pairing was
 //!                      confirmed, the device's name; with INFO, its
-//!                      controller, class and key - an LE key's size, and
-//!                      whether the device gave its identity - and the
-//!                      profile drivers that drive it (bthid.device)
+//!                      controller, class and key - an LE key's size,
+//!                      whether the device gave its identity and was
+//!                      given this machine's - and the profile drivers
+//!                      that drive it (bthid.device)
 //!   AGENT              the pairings the devices begin answered here, as
 //!                      PAIR's are, until CTRL-C
 //!   SERVICES <device>  the services the device offers - its address, or
@@ -106,7 +107,7 @@ const BluetoothBase = sdk.interface.bluetooth.BluetoothBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Bluetooth";
-const VERSION_STRING = "\x00$VER: Bluetooth 1.12 (24.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Bluetooth 1.13 (24.11.2026)\r\n";
 
 const template = "INFO/S,SCAN/S,TIME/K/N,POWER/K,NAME/K,VISIBLE/K,CONNECT/K,DISCONNECT/K,LIST/S,LE/S,RANDOM/S,BREDR/S,CONTROLLER/K/N," ++
     "PAIR/K,PIN/K,UNPAIR/K,BONDS/S,AGENT/S,SERVICES/K";
@@ -955,7 +956,8 @@ fn showBonds(dl: *DosBase, bt: *BluetoothBase, controller: u32, with_info: bool)
             const secure: [*:0]const u8 = if (bond.flags & bluetooth.BTBF_SECURE != 0) ", Secure Connections" else "";
             if (le) {
                 const identity: [*:0]const u8 = if (bond.flags & bluetooth.BTBF_IDENTITY != 0) ", its identity kept" else "";
-                _ = Printf(dl, ", a key of %u bytes%s%s\n", .{ bond.key_size, secure, identity });
+                const given: [*:0]const u8 = if (bond.flags & bluetooth.BTBF_IDENTITY_GIVEN != 0) ", this machine's given" else "";
+                _ = Printf(dl, ", a key of %u bytes%s%s%s\n", .{ bond.key_size, secure, identity, given });
             } else {
                 _ = Printf(dl, ", key type %u%s\n", .{ bond.key_type, secure });
             }

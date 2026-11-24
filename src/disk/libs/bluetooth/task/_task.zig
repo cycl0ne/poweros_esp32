@@ -591,12 +591,17 @@ fn settle(work: *Work) void {
         if (!layer.wants_settings) continue;
         const kept = &work.kept;
         kept.* = .{};
+        var identity: [16]u8 = @splat(0);
+        var has_identity = false;
         if (base.dos) |dl| {
             settings.read(dl, &layer.address, kept);
             loadBonds(work, dl, controller);
+            has_identity = loadIdentity(dl, layer, &identity);
         }
         sys.ObtainSemaphore(&base.lock);
         layer.now = now(work);
+        layer.irk = identity;
+        layer.has_identity = has_identity;
         layer.powered = kept.powered;
         layer.visible = kept.visible;
         layer.visible_until = null;
@@ -1049,6 +1054,21 @@ fn agentsChanged(work: *Work, gone: u32) void {
 
 /// A controller's bond files read into its table, each put in under the
 /// lock.
+/// The controller's identity resolving key into `into`: the one kept,
+/// or - the first time - one made from the port's random bytes and kept.
+/// False where there is none: no cryptography, no public address, or a
+/// key that could not be kept - one made again at the next start would
+/// leave the devices bonded with the first not knowing the machine.
+fn loadIdentity(dl: *DosBase, layer: *const _hci.Hci, into: *[16]u8) bool {
+    for (layer.address) |byte| {
+        if (byte != 0) break;
+    } else return false;
+    if (bondfiles.readIdentity(dl, &layer.address, into)) return true;
+    const port = layer.crypto orelse return false;
+    port.random(port.context, into);
+    return bondfiles.writeIdentity(dl, &layer.address, into);
+}
+
 fn loadBonds(work: *Work, dl: *DosBase, controller: *Controller) void {
     const base = work.base;
     const sys = base.sys_base;

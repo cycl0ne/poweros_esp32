@@ -9,8 +9,10 @@
 //! on either side and typed on the other, and one typed wrong; Just Works
 //! allowed by the responder's agent - the central's DHKey check kept while
 //! it is asked - and refused by it; the central's identity taken after the
-//! encryption, the bond kept by it; PairBTDevice on a link the device made
-//! asking the device to pair (Security Request). Refused: a legacy Pairing
+//! encryption, the bond kept by it; each side's identity given to the
+//! other where it has one - the responder's first - each bond marked, and
+//! none to a central that does not ask; PairBTDevice on a link the device
+//! made asking the device to pair (Security Request). Refused: a legacy Pairing
 //! Request, too short a key, a pairing with no agent there, and the
 //! central's encryption by an EDIV and Rand once the pairing is through.
 
@@ -55,12 +57,18 @@ const Air = struct {
     /// The central's LE Enable Encryption answered, and the peripheral not
     /// asked: the test asks it.
     hold_encryption: bool = false,
-    /// Where not 0, the keys the central's Pairing Request says it gives:
-    /// the library's own gives none, and the test gives them by hand.
+    /// Where not 0, the keys the central's Pairing Request says it gives -
+    /// the library's own gives its identity where it has one, and the test
+    /// gives them by hand - and, where not null, those it asks of the
+    /// responder.
     central_keys: u8 = 0,
-    /// The frame each side sent last on the security manager's channel.
+    central_asks: ?u8 = null,
+    /// The frame each side sent last on the security manager's channel;
+    /// the Pairing Request and Response as the other side had them.
     smp_sent: [2][80]u8 = undefined,
     smp_length: [2]usize = .{ 0, 0 },
+    request: [7]u8 = @splat(0),
+    response: [7]u8 = @splat(0),
 
     const Side = struct { air: *Air, index: u1 };
     const Item = struct { to: u1, packet_type: u8, length: usize, bytes: [96]u8 };
@@ -122,6 +130,11 @@ const Air = struct {
                 if (_hci.le16(bytes[hci.HCI_ACL_HDR + 2 ..][0..2]) == l2cap.CID_SMP) {
                     const payload = bytes[hci.HCI_ACL_HDR + l2cap.L2CAP_HDR ..];
                     if (side.index == 0 and payload[0] == smp.PAIRING_REQUEST and air.central_keys != 0) packet[hci.HCI_ACL_HDR + l2cap.L2CAP_HDR + 5] = air.central_keys;
+                    if (side.index == 0 and payload[0] == smp.PAIRING_REQUEST) {
+                        if (air.central_asks) |asked| packet[hci.HCI_ACL_HDR + l2cap.L2CAP_HDR + 6] = asked;
+                        air.request = packet[hci.HCI_ACL_HDR + l2cap.L2CAP_HDR ..][0..7].*;
+                    }
+                    if (payload[0] == smp.PAIRING_RESPONSE) air.response = payload[0..7].*;
                     @memcpy(air.smp_sent[side.index][0..payload.len], payload);
                     air.smp_length[side.index] = payload.len;
                 }
@@ -471,6 +484,77 @@ test "the central's identity taken: its identity resolving key and static addres
     try testing.expectEqualSlices(u8, &bonds.find(&central, peripheral_address).?.key, &bond.key);
     try testing.expect(bonds.find(&peripheral, central_address) == null);
     try testing.expect(connections.find(&peripheral, identity) == link);
+}
+
+/// The identity resolving keys of the two machines.
+const central_irk = [16]u8{ 0x10, 0x32, 0x54, 0x76, 0x98, 0xBA, 0xDC, 0xFE, 0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF };
+const peripheral_irk = [16]u8{ 0xEF, 0xCD, 0xAB, 0x89, 0x67, 0x45, 0x23, 0x01, 0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54, 0x32, 0x10 };
+
+test "each machine's identity given to the other: offered and asked for, the responder's first, each bond keeping the other's and marked given" {
+    var central_port = Port{};
+    var peripheral_port = Port{ .counter = 129 };
+    var central = upLayer(central_bytes, &central_port, 7, bluetooth.BTIO_NOINPUTNOOUTPUT);
+    var peripheral = upLayer(peripheral_bytes, &peripheral_port, 9, bluetooth.BTIO_NOINPUTNOOUTPUT);
+    central.irk = central_irk;
+    central.has_identity = true;
+    peripheral.irk = peripheral_irk;
+    peripheral.has_identity = true;
+    var air = Air{};
+    air.wire(&central, &peripheral);
+    _ = pairing.pair(&central, peripheral_address, 7, bluetooth.BTIO_NOINPUTNOOUTPUT);
+    air.run();
+    // The central's identity offered, the responder's asked for; the
+    // responder wants the one and gives the other.
+    try testing.expectEqual(smp.KEYDIST_ID, air.request[5]);
+    try testing.expectEqual(smp.KEYDIST_ENC | smp.KEYDIST_ID, air.request[6]);
+    try testing.expectEqual(smp.KEYDIST_ID, air.response[5]);
+    try testing.expectEqual(smp.KEYDIST_ID, air.response[6]);
+    try testing.expectEqual(@as(i32, 0), (try notice(&central, .done)).result);
+    try testing.expectEqual(@as(i32, 0), (try notice(&peripheral, .done)).result);
+    // The central's identity went last: its address, after its key.
+    try testing.expectEqualSlices(u8, &(.{ smp.IDENTITY_ADDRESS_INFORMATION, hci.LE_ADDR_PUBLIC } ++ central_bytes), air.lastSmp(0));
+    try testing.expectEqualSlices(u8, &(.{ smp.IDENTITY_ADDRESS_INFORMATION, hci.LE_ADDR_PUBLIC } ++ peripheral_bytes), air.lastSmp(1));
+    const theirs = bonds.find(&central, peripheral_address).?;
+    const ours = bonds.find(&peripheral, central_address).?;
+    try testing.expect(theirs.has_irk and ours.has_irk);
+    try testing.expectEqualSlices(u8, &peripheral_irk, &theirs.irk);
+    try testing.expectEqualSlices(u8, &central_irk, &ours.irk);
+    try testing.expect(theirs.identity_given and ours.identity_given);
+    try testing.expectEqualSlices(u8, &theirs.key, &ours.key);
+    try testing.expect(connections.find(&peripheral, central_address).?.encrypted);
+}
+
+test "a central that does not ask for the responder's identity is given none, its own taken; neither side without a key of its own offers one" {
+    var central_port = Port{};
+    var peripheral_port = Port{ .counter = 129 };
+    var central = upLayer(central_bytes, &central_port, 7, bluetooth.BTIO_NOINPUTNOOUTPUT);
+    var peripheral = upLayer(peripheral_bytes, &peripheral_port, 9, bluetooth.BTIO_NOINPUTNOOUTPUT);
+    central.irk = central_irk;
+    central.has_identity = true;
+    peripheral.irk = peripheral_irk;
+    peripheral.has_identity = true;
+    var air = Air{ .central_asks = smp.KEYDIST_ENC };
+    air.wire(&central, &peripheral);
+    _ = pairing.pair(&central, peripheral_address, 7, bluetooth.BTIO_NOINPUTNOOUTPUT);
+    air.run();
+    try testing.expectEqual(@as(i32, 0), (try notice(&central, .done)).result);
+    try testing.expectEqual(@as(i32, 0), (try notice(&peripheral, .done)).result);
+    try testing.expectEqual(smp.KEYDIST_ENC, air.request[6]);
+    try testing.expectEqual(smp.KEYDIST_ID, air.response[5]);
+    try testing.expectEqual(@as(u8, 0), air.response[6]);
+    const theirs = bonds.find(&central, peripheral_address).?;
+    const ours = bonds.find(&peripheral, central_address).?;
+    // The responder gave nothing; the central gave its identity.
+    try testing.expect(!theirs.has_irk and theirs.identity_given);
+    try testing.expect(ours.has_irk and !ours.identity_given);
+    try testing.expectEqualSlices(u8, &central_irk, &ours.irk);
+
+    // Without a key of its own, or without a public address, a side
+    // offers none.
+    central.has_identity = false;
+    try testing.expect(!smp.hasIdentity(&central));
+    peripheral.address = @splat(0);
+    try testing.expect(!smp.hasIdentity(&peripheral));
 }
 
 test "PairBTDevice on a link the device made: the device asked to pair (Security Request), its pairing answered as the library's own" {

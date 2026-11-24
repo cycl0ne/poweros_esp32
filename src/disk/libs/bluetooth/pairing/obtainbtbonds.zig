@@ -33,7 +33,9 @@ const _profile = @import("../profile/_profile.zig");
 /// the key that resolves its private addresses (BTBF_IDENTITY) - its key
 /// kind 0. Since 1.9 each names the profile drivers its device's services
 /// are bound to (BTBond.drivers). Since 1.19 a bond kept without a name
-/// has the one its device's link learns after. A controller's bonds are
+/// has the one its device's link learns after. Since 1.21 an LE bond whose
+/// device was given this machine's identity in its pairing says so
+/// (BTBF_IDENTITY_GIVEN). A controller's bonds are
 /// there once it has read them, as it comes up.
 ///
 /// CONTEXT:

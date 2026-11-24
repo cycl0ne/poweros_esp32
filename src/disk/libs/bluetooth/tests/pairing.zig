@@ -7,7 +7,8 @@
 //! secure, and one whose device lost the bond; too short a key; an agent
 //! that does not answer, one that goes; a pairing that made its link and
 //! no bond, and one on a link there before; the calls' refusals; a bond
-//! ended; the bond file written and read again.
+//! ended; the bond file written and read again - an LE one with this
+//! machine's identity given - and the machine's own identity file.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -554,4 +555,45 @@ test "a bond's file: written, and read back the same" {
     try testing.expectEqual(@as(?bluetooth.BTAddress, le_peer), bondfiles.addressOf("00005EEF1001.le"));
     const random_peer = bluetooth.BTAddress{ .bytes = peer.bytes, .kind = bluetooth.BTADDR_LE_RANDOM };
     try testing.expectEqual(@as(?bluetooth.BTAddress, random_peer), bondfiles.addressOf("00005EEF1001.random"));
+}
+
+test "an LE bond's file: this machine's identity given, the longest name fitting, read back the same; the machine's own identity file" {
+    var recorder = Recorder{};
+    var layer = upLayer(&recorder);
+    const le_peer = bluetooth.BTAddress{ .bytes = peer.bytes, .kind = bluetooth.BTADDR_LE_PUBLIC };
+    const irk = [16]u8{ 0x9B, 0x7D, 0x39, 0x0A, 0xA6, 0x10, 0x10, 0x34, 0x05, 0xAD, 0xC8, 0x57, 0xA3, 0x34, 0x02, 0xEC };
+    const longest: [bluetooth.BT_BOND_NAME_MOST]u8 = @splat('n');
+    const bond = bonds.keepLe(&layer, le_peer, &.{ .ltk = key, .ediv = 0xBEEF, .rand = @splat(0xA5), .key_size = 10, .authenticated = true, .secure = false, .irk = irk, .given = true }, &longest).?;
+    var text: [bondfiles.TEXT_MOST]u8 = undefined;
+    const length = bondfiles.format(bond, &text);
+    try testing.expect(std.mem.indexOf(u8, text[0..length], "\nIdentityGiven = YES\nIRK = 9B7D390AA610103405ADC857A33402EC\n") != null);
+    var scanner = Scanner.ofText(text[0..length]);
+    var read = bonds.Bond{ .address = le_peer };
+    try testing.expect(bondfiles.parse(&scanner, &read));
+    try testing.expect(read.identity_given and read.has_irk and read.le_authenticated and !read.le_secure);
+    try testing.expectEqualSlices(u8, &irk, &read.irk);
+    try testing.expectEqualSlices(u8, &key, &read.key);
+    try testing.expectEqual(@as(u16, 0xBEEF), read.ediv);
+    try testing.expectEqual(@as(u8, 10), read.key_size);
+    try testing.expectEqualSlices(u8, &longest, std.mem.sliceTo(&read.name, 0));
+    // A file from before the mark: not given.
+    var older = Scanner.ofText("LTK = 1032547698BADCFE0123456789ABCDEF\nKeySize = 16\n");
+    read = .{ .address = le_peer };
+    try testing.expect(bondfiles.parse(&older, &read));
+    try testing.expect(!read.identity_given);
+
+    // The machine's identity: written, read back the same; a file without
+    // a whole key holds none.
+    const own = [16]u8{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 0xFF };
+    const identity_text = bondfiles.formatIdentity(&own);
+    try testing.expect(std.mem.endsWith(u8, &identity_text, "\nIRK = 000102030405060708090A0B0C0D0EFF\n"));
+    var identity_scanner = Scanner.ofText(&identity_text);
+    var kept: [16]u8 = @splat(0);
+    try testing.expect(bondfiles.parseIdentity(&identity_scanner, &kept));
+    try testing.expectEqualSlices(u8, &own, &kept);
+    var short = Scanner.ofText("IRK = 0011\n");
+    try testing.expect(!bondfiles.parseIdentity(&short, &kept));
+    var none = Scanner.ofText("Other = 5\n");
+    try testing.expect(!bondfiles.parseIdentity(&none, &kept));
+    try testing.expectEqual(@as(?bluetooth.BTAddress, null), bondfiles.addressOf("identity"));
 }

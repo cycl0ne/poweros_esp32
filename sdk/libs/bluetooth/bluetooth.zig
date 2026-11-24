@@ -452,6 +452,10 @@ pub const BTBF_LEGACY: u32 = 1 << 2;
 /// An LE bond that keeps the device's identity resolving key: the
 /// private addresses it makes are known as its own.
 pub const BTBF_IDENTITY: u32 = 1 << 3;
+/// An LE bond whose device was given this machine's identity in the
+/// pairing: it knows the private addresses this machine makes as its own.
+/// Since bluetooth.library 1.21.
+pub const BTBF_IDENTITY_GIVEN: u32 = 1 << 4;
 
 /// A bond, as ObtainBTBonds lists it.
 pub const BTBond = extern struct {

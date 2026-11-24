@@ -18,7 +18,7 @@ const profile_drivers = @import("profile/drivers.zig");
 
 pub const LIBRARY_NAME = bluetooth.BLUETOOTHNAME;
 pub const LIBRARY_VERSION = 1;
-pub const LIBRARY_REVISION = 20;
+pub const LIBRARY_REVISION = 21;
 pub const BUILD_DATE = "24.11.2026";
 pub const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

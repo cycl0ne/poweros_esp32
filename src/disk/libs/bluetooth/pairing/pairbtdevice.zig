@@ -58,7 +58,10 @@ const _pairing = @import("_pairing.zig");
 /// and the device's keys are taken: its long term key where Secure
 /// Connections did not make one, and its identity - the address the bond
 /// is then kept by, and the key that resolves the private addresses it
-/// uses. On a link the device made to this machine while it advertised -
+/// uses. Since 1.21 the device is given this machine's identity where it
+/// asks for it: the controller's public address and the identity
+/// resolving key kept for it (BTBF_IDENTITY_GIVEN). On a link the device
+/// made to this machine while it advertised -
 /// its peripheral - the device is asked to begin the pairing (Security
 /// Request), which the library answers as the responder, by Secure
 /// Connections alone; a device that does not begin it ends the pairing
@@ -105,8 +108,8 @@ const _pairing = @import("_pairing.zig");
 /// a pairing with the specification's debug key keeps none.
 ///
 /// BUGS:
-/// Over LE this side gives the device none of its own keys: it uses its
-/// public address and signs nothing. A device that advertises only
+/// Over LE this side gives the device its identity and no other key: it
+/// uses its public address and signs nothing. A device that advertises only
 /// private addresses is reached by the address a discovery heard, not by
 /// its identity.
 ///
