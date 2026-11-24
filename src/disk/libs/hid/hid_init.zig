@@ -12,8 +12,8 @@ const hid_lvo = @import("hid_lvo.zig");
 
 pub const LIBRARY_NAME = hid.HIDNAME;
 pub const LIBRARY_VERSION = 1;
-pub const LIBRARY_REVISION = 0;
-const BUILD_DATE = "23.11.2026";
+pub const LIBRARY_REVISION = 1;
+const BUILD_DATE = "24.11.2026";
 pub const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++

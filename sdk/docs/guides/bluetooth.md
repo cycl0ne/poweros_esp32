@@ -81,7 +81,7 @@ B's controller, `SYS:System/Bluetooth`, `C:Bluetooth`, `C:test/BTEcho`,
 | `C:Bluetooth` | | the controllers - listed, with `INFO` what each is, and set - the devices around them (`SCAN`), the links to them (`CONNECT`, `DISCONNECT`, `LIST`), the bonds (`PAIR`, `UNPAIR`, `BONDS`, `AGENT`), and what a device offers (`SERVICES`), over LE with its characteristics |
 | `C:test/BTEcho` | | channels to and from the devices around: a PSM served, each frame sent back, or a channel opened to a device's PSM, each line typed sent; in the disk's `tests` set |
 | `C:test/BTGatt` | | the attributes of an LE device's GATT server read, written and watched as they change, with `WAIT` across the link's ends; in the disk's `tests` set |
-| `bluetooth/bthid.device` | `DEVS:bluetooth/` | keyboards and mice over BR/EDR and over LE: a profile driver, their reports read by hid.library ([btprofile](../autodocs/btprofile.md)) |
+| `bluetooth/bthid.device` | `DEVS:bluetooth/` | keyboards, mice and media keys over BR/EDR and over LE: a profile driver, their reports read by hid.library ([btprofile](../autodocs/btprofile.md)) |
 | `bluetooth/btaudio.device` | `DEVS:bluetooth/` | headphones and speakers over BR/EDR as sound outputs: a profile driver, a sink of rta.library for each device while its stream is open ([btprofile](../autodocs/btprofile.md)) |
 | `C:test/BTHidDevice` | | this machine as a keyboard and a mouse over BR/EDR, for a host to be tried with; in the disk's `tests` set |
 | `C:test/BTAudio` | | a sound file or a tone played to a headphone or a speaker over BR/EDR, the stream's configuration and its packets said; in the disk's `tests` set |
@@ -918,10 +918,11 @@ service bound (`C:Log`).
 `bluetooth/bthid.device` drives keyboards and mice over BR/EDR, a
 profile driver of the HID service (0x1124). It takes a device whose
 record's report descriptor (`hidp.ATTR_HID_DESCRIPTOR_LIST`) describes a
-keyboard or a mouse, or both, and hands each report the device sends to
-hid.library, which makes it into key-downs and key-ups for
-keyboard.device and into moves, buttons and the wheel for mouse.device:
-a Bluetooth keyboard is the machine's keyboard as a USB one is.
+keyboard, a mouse or media keys (a consumer control), or several, and
+hands each report the device sends to hid.library, which makes it into
+key-downs and key-ups for keyboard.device and into moves, buttons and
+the wheel for mouse.device: a Bluetooth keyboard is the machine's
+keyboard as a USB one is, its media keys among its keys.
 
 ```
 1> Bluetooth PAIR 00:00:5E:EF:10:46

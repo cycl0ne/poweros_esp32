@@ -14,8 +14,8 @@ const _function = @import("_function.zig");
 const Function = _function.Function;
 
 /// Hands one of a device's input reports to its function: its keys,
-/// moves, buttons and wheel go to keyboard.device and mouse.device as
-/// events.
+/// media keys, moves, buttons and wheel go to keyboard.device and
+/// mouse.device as events.
 ///
 /// SYNOPSIS:
 /// ```zig
@@ -41,9 +41,11 @@ const Function = _function.Function;
 /// each a RAWKEY event; a report of too many keys at once changes
 /// nothing. When Caps Lock goes down, the keyboard's Caps Lock light
 /// changes: its LEDs' output report goes to HIDA_OutputHook. A report the
+/// consumer control's layout reads becomes the media keys that went up
+/// and then down since its last report, each a RAWKEY event. A report the
 /// mouse's layout reads becomes a move - or a tablet's place - each
 /// button that changed, and the wheel's notches. The events go to their
-/// source in one request. A report of an ID neither reads is let go.
+/// source in one request. A report of an ID none reads is let go.
 ///
 /// CONTEXT:
 /// - Waits: yes, while a source takes the events, and in the hook.
@@ -74,7 +76,17 @@ pub fn HIDInput(base: *HIDBase, function: *hid.HIDFunction, report: [*]const u8,
     const record = _function.functionOf(function);
     const bytes = report[0..length];
     if (function.flags & hid.HIDF_KEYBOARD != 0) keys(base, record, bytes);
+    if (function.flags & hid.HIDF_CONSUMER != 0) media(base, record, bytes);
     if (function.flags & (hid.HIDF_MOUSE | hid.HIDF_TABLET) != 0) moves(base, record, bytes);
+}
+
+/// A consumer control's report: the media keys that changed to
+/// keyboard.device.
+fn media(base: *HIDBase, record: *Function, bytes: []const u8) void {
+    const held = report_file.consumerKeysOf(&record.consumer, bytes) orelse return;
+    const count = report_file.keyEvents(record.media, held, &record.events);
+    record.media = held;
+    hand(base, &record.keyboard_source, kb.KBD_ADDEVENT, record.events[0..count]);
 }
 
 /// A keyboard's report: the keys that changed to keyboard.device, and the

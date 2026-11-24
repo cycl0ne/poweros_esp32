@@ -43,7 +43,7 @@ and writing a controller.
 | `xhci.device` | `DEVS:` | xHCI controllers on PCI as host controllers - the VisionFive 2's VL805, the Raspberry Pi 4 Model B's, QEMU's qemu-xhci - a unit per controller, its USB 2 and USB 3 root ports answered as one hub; on the RISC-V 64 disk |
 | `pci.library` | `LIBS:` | the machine's PCI functions, among which xhci.device finds its controllers ([pci](../autodocs/pci.md)); on the RISC-V 64 disk |
 | `usb.library` | `LIBS:` | the bus: devices, hubs, descriptors, pipes, binding, notification |
-| `usb/hid.device` | `DEVS:usb/` | keyboards, mice and tablets, into keyboard.device and mouse.device |
+| `usb/hid.device` | `DEVS:usb/` | keyboards, mice, tablets and media keys, into keyboard.device and mouse.device |
 | `hid.library` | `LIBS:` | what hid.device reads with: a report descriptor read, each report made into keyboard.device's and mouse.device's events ([hid](../autodocs/hid.md)) |
 | `usb/disk.device` | `DEVS:usb/` | sticks, card readers and disks (mass storage, SCSI over Bulk-Only or USB Attached SCSI) as block devices, a drive `DU<n>:` each |
 | `usb/ftdi.device` | `DEVS:usb/` | FTDI's serial chips as serial lines, with serial.device's API |
@@ -438,9 +438,14 @@ emulator's window: hid.library hands mouse.device that place as a
 fraction of the surface (`IESUBCLASS_TABLET`, 0 to `IETABLET_MAX`), and
 intuition puts the pointer as far across the front screen. hid.device
 takes the boot subclass's keyboards and mice, and any other HID interface
-whose report descriptor describes a keyboard or a mouse, or both - told
-apart by their reports' IDs; a mouse with an absolute X and Y is a
-tablet. `C:test/KeySource` is a source from the shell, and
+whose report descriptor describes a keyboard, a mouse or a consumer
+control - a keyboard's media keys, often an interface of their own, or a
+remote control's - or several, told apart by their reports' IDs; a mouse
+with an absolute X and Y is a tablet. The media keys - play/pause, play,
+pause, stop, previous, next, rewind, fast forward, mute and the volume
+down and up - are rawkeys like the others (`sdk/devices/keyboard.zig`),
+which no keymap gives a character. `C:test/KeySource` is a source from
+the shell, and
 `KBD_READSOURCES` says how many keyboards there are - the keyboard on
 the screen comes up only while there is none.
 

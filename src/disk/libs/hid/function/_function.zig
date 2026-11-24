@@ -2,7 +2,9 @@
 //! A function as the library keeps it, behind the HIDFunction its driver
 //! holds: where its reports keep what they say (report/layout.zig), what
 //! the device holds down, its LEDs, and its sources - the requests on
-//! keyboard.device and mouse.device that its events are handed to.
+//! keyboard.device and mouse.device that its events are handed to; a
+//! consumer control's media keys go to keyboard.device beside a
+//! keyboard's.
 //!
 //! **Its sources** are opened by OpenHID with their flags for a source
 //! (KBDF_SOURCE, MOUSEF_SOURCE), their replies going to the driver's port
@@ -31,10 +33,12 @@ pub const Function = struct {
     public: hid.HIDFunction,
     keyboard: layout.KeyboardLayout,
     mouse: layout.MouseLayout,
+    consumer: layout.ConsumerLayout,
     /// What the last report held down: the keyboard's keys, the mouse's
-    /// buttons.
+    /// buttons, the consumer control's media keys.
     keys: report.KeySet,
     buttons: u8,
+    media: report.KeySet,
     /// The keyboard's LEDs as last sent (bit 1: Caps Lock).
     leds: u8,
     /// Whether `port` is the function's own, deleted with it.

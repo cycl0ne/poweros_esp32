@@ -3,9 +3,11 @@
 //! events (report/), and functions over a keyboard.device and a
 //! mouse.device that keep what they are handed (source.zig) - a keyboard
 //! and a mouse in one descriptor, each report to its source by its ID,
-//! Caps Lock's light to the driver's hook; a boot interface read by its
-//! boot report where its descriptor does not describe it; a descriptor
-//! of nothing the library drives; the sources closed and nothing left.
+//! Caps Lock's light to the driver's hook; media keys, a remote's alone
+//! and a keyboard's in a report beside its keys; a boot interface read by
+//! its boot report where its descriptor does not describe it; a
+//! descriptor of nothing the library drives; the sources closed and
+//! nothing left.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -182,6 +184,77 @@ test "a keyboard and a mouse in one descriptor: each report to its source by its
     rig.hb.CloseHID(function);
     try testing.expectEqual(@as(u32, 1), rig.keyboard.closes);
     try testing.expectEqual(@as(u32, 1), rig.mouse.closes);
+    try rig.deinit();
+}
+
+/// A keyboard's media keys in report 3, beside its keys in report 1: a
+/// consumer control of one slot of 16 bits, usages 0 to 0x3FF.
+const keyboard_media = combined[0..65].* ++ [_]u8{
+    0x05, 0x0C, 0x09, 0x01, 0xA1, 0x01, 0x85, 0x03, // Consumer, Consumer Control, Application, ID 3
+    0x15, 0x00, 0x26, 0xFF, 0x03, 0x19, 0x00, 0x2A, // usages 0 to 0x3FF
+    0xFF, 0x03, 0x75, 0x10, 0x95, 0x01, 0x81, 0x00, // one slot of 16 bits
+    0xC0,
+};
+
+/// A remote control's media keys alone, as bits in report 2: next,
+/// previous, stop, play/pause, mute, volume up, volume down, and the
+/// calculator.
+const remote = [_]u8{
+    0x05, 0x0C, 0x09, 0x01, 0xA1, 0x01, 0x85, 0x02, 0x15, 0x00, 0x25, 0x01,
+    0x75, 0x01, 0x95, 0x08, 0x09, 0xB5, 0x09, 0xB6, 0x09, 0xB7, 0x09, 0xCD,
+    0x09, 0xE2, 0x09, 0xE9, 0x09, 0xEA, 0x0A, 0x92, 0x01, 0x81, 0x02, 0xC0,
+};
+
+test "media keys: a remote's alone, and a keyboard's beside its keys, each report read by its own layout" {
+    var rig = try Rig.init();
+    // The remote: a source of keyboard.device, nothing of mouse.device.
+    const function = rig.hb.OpenHID(&remote, remote.len, null) orelse return error.NotOpened;
+    try testing.expectEqual(hid.HIDF_CONSUMER, function.flags);
+    try testing.expectEqual(@as(u32, 1), rig.keyboard.opens);
+    try testing.expectEqual(@as(u32, 0), rig.mouse.opens);
+    // Play/pause pressed, then volume up with it, then both let go.
+    input(&rig, function, &.{ 0x02, 0x08 });
+    var events = KeyboardSource.taken(rig.keyboard);
+    try testing.expectEqual(@as(usize, 1), events.len);
+    try testing.expectEqual(kb.RAWKEY_MEDIA_PLAYPAUSE, events[0].code);
+    input(&rig, function, &.{ 0x02, 0x28 });
+    events = KeyboardSource.taken(rig.keyboard);
+    try testing.expectEqual(@as(usize, 1), events.len);
+    try testing.expectEqual(kb.RAWKEY_VOLUMEUP, events[0].code);
+    input(&rig, function, &.{ 0x02, 0x00 });
+    events = KeyboardSource.taken(rig.keyboard);
+    try testing.expectEqual(@as(usize, 2), events.len);
+    try testing.expectEqual(kb.RAWKEY_MEDIA_PLAYPAUSE | ie.IECODE_UP_PREFIX, events[0].code);
+    try testing.expectEqual(kb.RAWKEY_VOLUMEUP | ie.IECODE_UP_PREFIX, events[1].code);
+    // The calculator is no key.
+    input(&rig, function, &.{ 0x02, 0x80 });
+    try testing.expectEqual(@as(usize, 0), KeyboardSource.taken(rig.keyboard).len);
+    rig.hb.CloseHID(function);
+
+    // The keyboard: its keys and its media keys, one source.
+    const both = rig.hb.OpenHID(&keyboard_media, keyboard_media.len, null) orelse return error.NotOpened;
+    try testing.expectEqual(hid.HIDF_KEYBOARD | hid.HIDF_CONSUMER, both.flags);
+    try testing.expectEqual(@as(u32, 2), rig.keyboard.opens);
+    // A held, then next pressed: the media report does not let A go.
+    input(&rig, both, &.{ 0x01, 0x00, 0x00, 0x04, 0, 0, 0, 0, 0 });
+    events = KeyboardSource.taken(rig.keyboard);
+    try testing.expectEqual(@as(usize, 1), events.len);
+    try testing.expectEqual(@as(u32, 0x20), events[0].code);
+    input(&rig, both, &.{ 0x03, 0xB5, 0x00 });
+    events = KeyboardSource.taken(rig.keyboard);
+    try testing.expectEqual(@as(usize, 1), events.len);
+    try testing.expectEqual(kb.RAWKEY_MEDIA_NEXT, events[0].code);
+    // Next let go, and the keyboard's report does not touch it.
+    input(&rig, both, &.{ 0x03, 0x00, 0x00 });
+    events = KeyboardSource.taken(rig.keyboard);
+    try testing.expectEqual(@as(usize, 1), events.len);
+    try testing.expectEqual(kb.RAWKEY_MEDIA_NEXT | ie.IECODE_UP_PREFIX, events[0].code);
+    input(&rig, both, &.{ 0x01, 0x00, 0x00, 0x00, 0, 0, 0, 0, 0 });
+    events = KeyboardSource.taken(rig.keyboard);
+    try testing.expectEqual(@as(usize, 1), events.len);
+    try testing.expectEqual(@as(u32, 0x20) | ie.IECODE_UP_PREFIX, events[0].code);
+    rig.hb.CloseHID(both);
+    try testing.expectEqual(@as(u32, 2), rig.keyboard.closes);
     try rig.deinit();
 }
 

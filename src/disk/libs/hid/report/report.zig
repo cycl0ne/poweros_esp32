@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
-//! A report into events: what a keyboard's or a mouse's report means,
-//! with no hardware and no system, so the host tests hold it.
+//! A report into events: what a keyboard's, a mouse's or a consumer
+//! control's report means, with no hardware and no system, so the host
+//! tests hold it.
 //!
 //! **A keyboard's report** is read where its layout says the keys lie
 //! (layout.zig: the keyboard's own descriptor, or the boot protocol's
@@ -12,6 +13,11 @@
 //! two keys that are one rawkey - the left and right Control - hold it
 //! down together. A report of "too many keys" (a slot of usage 0x01), or
 //! of another ID, changes nothing.
+//!
+//! **A consumer control's report** is read where its layout says the
+//! media keys lie - its bits and its slots, each a usage of the consumer
+//! page - and becomes the set of media keys held down, compared with its
+//! own last report's as a keyboard's is.
 //!
 //! **A mouse's report** is read where its layout says the buttons, the
 //! move and the wheel lie (layout.zig: the mouse's own descriptor, or the
@@ -27,6 +33,8 @@ const InputEvent = ie.InputEvent;
 const layout_file = @import("layout.zig");
 const MouseLayout = layout_file.MouseLayout;
 const KeyboardLayout = layout_file.KeyboardLayout;
+const ConsumerLayout = layout_file.ConsumerLayout;
+const kbd = sdk.devices.keyboard;
 const Field = layout_file.Field;
 
 /// No rawkey for this usage.
@@ -62,8 +70,9 @@ pub const from_usage: [256]u8 = blk: {
         .{ 0x58, 0x43 }, .{ 0x59, 0x1D }, .{ 0x5A, 0x1E }, .{ 0x5B, 0x1F }, .{ 0x5C, 0x2D },
         .{ 0x5D, 0x2E }, .{ 0x5E, 0x2F }, .{ 0x5F, 0x3D }, .{ 0x60, 0x3E }, .{ 0x61, 0x3F },
         .{ 0x62, 0x0F }, .{ 0x63, 0x3C },
-        // Help.
-        .{ 0x75, 0x5F },
+        // Help; mute, volume up, volume down.
+        .{ 0x75, 0x5F }, .{ 0x7F, 0x7A }, .{ 0x80, 0x7C },
+        .{ 0x81, 0x7B },
     };
     for (pairs) |p| t[p[0]] = p[1];
     break :blk t;
@@ -127,6 +136,48 @@ fn addUsage(set: *KeySet, usage: u32) void {
     if (usage >= from_usage.len) return;
     const rawkey = from_usage[usage];
     if (rawkey != none) set.add(rawkey);
+}
+
+/// A media key's rawkey by its usage on the consumer page (HID usage
+/// tables, page 0x0C); null for a usage that is none.
+pub fn consumerKey(usage: u32) ?u8 {
+    const rawkey: u32 = switch (usage) {
+        0xB0 => kbd.RAWKEY_MEDIA_PLAY,
+        0xB1 => kbd.RAWKEY_MEDIA_PAUSE,
+        0xB3 => kbd.RAWKEY_MEDIA_FASTFORWARD,
+        0xB4 => kbd.RAWKEY_MEDIA_REWIND,
+        0xB5 => kbd.RAWKEY_MEDIA_NEXT,
+        0xB6 => kbd.RAWKEY_MEDIA_PREVIOUS,
+        0xB7 => kbd.RAWKEY_MEDIA_STOP,
+        0xCD => kbd.RAWKEY_MEDIA_PLAYPAUSE,
+        0xE2 => kbd.RAWKEY_MUTE,
+        0xE9 => kbd.RAWKEY_VOLUMEUP,
+        0xEA => kbd.RAWKEY_VOLUMEDOWN,
+        else => return null,
+    };
+    return @intCast(rawkey);
+}
+
+/// The media keys a consumer control's report read by `layout` holds
+/// down; null for a report that is not the layout's.
+pub fn consumerKeysOf(layout: *const ConsumerLayout, report: []const u8) ?KeySet {
+    if (!layout.owns(report)) return null;
+    var set: KeySet = .{};
+    for (layout.bits[0..layout.bits_count]) |bit| {
+        const field = Field{ .offset = bit.offset, .size = 1 };
+        if (field.value(report) == 0) continue;
+        if (consumerKey(bit.usage)) |rawkey| set.add(rawkey);
+    }
+    const slots = layout.slots;
+    var index: u32 = 0;
+    while (slots.size != 0 and index < slots.count) : (index += 1) {
+        const slot = Field{ .offset = @intCast(slots.offset + index * slots.size), .size = slots.size, .signed = slots.logical_min < 0 };
+        const value = slot.value(report);
+        if (value < slots.logical_min) continue;
+        const usage = @as(u32, slots.first_usage) + @as(u32, @intCast(value - slots.logical_min));
+        if (consumerKey(usage)) |rawkey| set.add(rawkey);
+    }
+    return set;
 }
 
 /// The events from `old` to `new`, into `out`: key-ups first, then
@@ -271,6 +322,39 @@ test "a keyboard that reports every key as a bit" {
     try testing.expect(keysOf(boot_keys, &.{ 0x01, 0x02, 0, 0, 0, 0, 0, 0x04 }).?.has(0x20));
     // Another report - the consumer keys, say - is not the keyboard's.
     try testing.expect(keysOf(&bits, &.{ 0x03, 0xE9, 0x00 }) == null);
+}
+
+test "a consumer control: its slot and its bits are media keys, down and up" {
+    // A slot of 16 bits in report 3: Volume Increment held, then let go.
+    const slot = ConsumerLayout{ .report_id = 3, .slots = .{ .offset = 8, .size = 16, .count = 1, .logical_min = 0, .first_usage = 0 } };
+    const up = consumerKeysOf(&slot, &.{ 0x03, 0xE9, 0x00 }).?;
+    try testing.expect(up.has(@intCast(kbd.RAWKEY_VOLUMEUP)));
+    var events: [8]InputEvent = undefined;
+    try testing.expectEqual(@as(usize, 1), keyEvents(.{}, up, &events));
+    try testing.expectEqual(kbd.RAWKEY_VOLUMEUP, events[0].code);
+    const none_held = consumerKeysOf(&slot, &.{ 0x03, 0x00, 0x00 }).?;
+    try testing.expectEqual(@as(usize, 1), keyEvents(up, none_held, &events));
+    try testing.expectEqual(kbd.RAWKEY_VOLUMEUP | ie.IECODE_UP_PREFIX, events[0].code);
+    // A usage that is no media key - the calculator, 0x192 - holds nothing;
+    // another report is not the layout's.
+    try testing.expectEqual(KeySet{}, consumerKeysOf(&slot, &.{ 0x03, 0x92, 0x01 }).?);
+    try testing.expect(consumerKeysOf(&slot, &.{ 0x01, 0xE9, 0x00 }) == null);
+
+    // The remote's bits: play/pause (the fourth) and mute (the fifth).
+    const remote = layout_file.consumerLayout(&layout_file.remote_descriptor).?;
+    const held = consumerKeysOf(&remote, &.{ 0x02, 0x18 }).?;
+    try testing.expect(held.has(@intCast(kbd.RAWKEY_MEDIA_PLAYPAUSE)));
+    try testing.expect(held.has(@intCast(kbd.RAWKEY_MUTE)));
+    try testing.expect(!held.has(@intCast(kbd.RAWKEY_MEDIA_NEXT)));
+    // The calculator's bit, the last, is no key.
+    try testing.expectEqual(KeySet{}, consumerKeysOf(&remote, &.{ 0x02, 0x80 }).?);
+}
+
+test "the keyboard page's mute and volume keys" {
+    const held = keysOf(boot_keys, &.{ 0, 0, 0x7F, 0x80, 0x81, 0, 0, 0 }).?;
+    try testing.expect(held.has(@intCast(kbd.RAWKEY_MUTE)));
+    try testing.expect(held.has(@intCast(kbd.RAWKEY_VOLUMEUP)));
+    try testing.expect(held.has(@intCast(kbd.RAWKEY_VOLUMEDOWN)));
 }
 
 /// A keyboard that reports every key as a bit, as one sends it on its

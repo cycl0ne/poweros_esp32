@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
-//! OpenHID: a function for a keyboard or a mouse, by its report
-//! descriptor.
+//! OpenHID: a function for a keyboard, a mouse or a consumer control's
+//! media keys, by its report descriptor.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -34,21 +34,26 @@ const Function = _function.Function;
 ///
 /// RESULT:
 /// The function; its `flags` say what it drives - HIDF_KEYBOARD,
-/// HIDF_MOUSE, HIDF_TABLET - and HIDF_BOOT where it reads the boot
-/// protocol's report. Null where the descriptor describes nothing the
-/// library drives, a source does not open, or there is no memory.
+/// HIDF_MOUSE, HIDF_TABLET, HIDF_CONSUMER - and HIDF_BOOT where it reads
+/// the boot protocol's report. Null where the descriptor describes
+/// nothing the library drives, a source does not open, or there is no
+/// memory.
 ///
 /// BEHAVIOR:
-/// The descriptor's first keyboard collection and its first mouse
-/// collection are read: where each report keeps its keys - as bits, as
-/// slots of usages - its buttons, its move or its place, and its wheel,
-/// and a keyboard's LEDs' output report. A keyboard makes the function a
+/// The descriptor's first keyboard collection, its first mouse
+/// collection and its first consumer control are read: where each
+/// report keeps its keys - as bits, as slots of usages - its buttons, its
+/// move or its place, and its wheel, a keyboard's LEDs' output report,
+/// and where a consumer control's report keeps its media keys - play,
+/// pause, stop, previous, next, rewind, fast forward, mute, the volume
+/// down and up. A keyboard or a consumer control makes the function a
 /// source of keyboard.device, a mouse or a tablet one of mouse.device,
-/// and a descriptor with both both, its reports told apart by their IDs.
-/// With HIDA_Boot, where the descriptor does not describe that kind, the
-/// function reads the boot protocol's report of it and nothing else, and
-/// says so with HIDF_BOOT: the driver then puts the device in the boot
-/// protocol. The sources' requests reply to HIDA_ReplyPort, or to a port
+/// and a descriptor with several all of them, its reports told apart by
+/// their IDs; a consumer control whose reports cannot be told from the
+/// keyboard's or the mouse's is passed over. With HIDA_Boot, where the
+/// descriptor does not describe that kind, the function reads the boot
+/// protocol's report of it and nothing else, and says so with HIDF_BOOT:
+/// the driver then puts the device in the boot protocol. The sources' requests reply to HIDA_ReplyPort, or to a port
 /// the function makes for the task that calls OpenHID.
 ///
 /// CONTEXT:
@@ -69,8 +74,9 @@ const Function = _function.Function;
 /// names a port of the second.
 ///
 /// BUGS:
-/// A collection past the first keyboard and the first mouse - a consumer
-/// control's keys, a second mouse - is not read.
+/// A collection past the first keyboard, the first mouse and the first
+/// consumer control - a second mouse, a system control's power and sleep
+/// keys - is not read.
 ///
 /// SEE ALSO:
 /// `HIDInput`, `CloseHID`
@@ -94,19 +100,32 @@ pub fn OpenHID(base: *HIDBase, descriptor: ?[*]const u8, length: u32, tags: ?[*]
 
     var keyboard = layout.keyboardLayout(bytes);
     var mouse = layout.mouseLayout(bytes);
+    var consumer = layout.consumerLayout(bytes);
     var flags: u32 = 0;
     // A boot interface's kind read by its descriptor, or else by the boot
     // protocol's report alone.
     if (boot == hid.HIDBOOT_KEYBOARD and keyboard == null) {
         keyboard = layout.boot_keyboard;
         mouse = null;
+        consumer = null;
         flags = hid.HIDF_BOOT;
     } else if (boot == hid.HIDBOOT_MOUSE and mouse == null) {
         mouse = layout.boot_mouse;
         keyboard = null;
+        consumer = null;
         flags = hid.HIDF_BOOT;
     }
-    if (keyboard == null and mouse == null) return null;
+    // A report is one collection's: media keys in a report the keyboard
+    // or the mouse reads too would be read twice.
+    if (consumer) |found| {
+        if (keyboard) |other| {
+            if (other.report_id == found.report_id) consumer = null;
+        }
+        if (mouse) |other| {
+            if (other.report_id == found.report_id) consumer = null;
+        }
+    }
+    if (keyboard == null and mouse == null and consumer == null) return null;
 
     const memory = sys.AllocMem(@sizeOf(Function), exec.MEMF_CLEAR) orelse return null;
     const function: *Function = @ptrCast(@alignCast(memory));
@@ -122,6 +141,12 @@ pub fn OpenHID(base: *HIDBase, descriptor: ?[*]const u8, length: u32, tags: ?[*]
     if (keyboard) |found| {
         function.keyboard = found;
         flags |= hid.HIDF_KEYBOARD;
+    }
+    if (consumer) |found| {
+        function.consumer = found;
+        flags |= hid.HIDF_CONSUMER;
+    }
+    if (keyboard != null or consumer != null) {
         if (!_function.openSource(sys, &function.keyboard_source, kb.KEYBOARDNAME, kb.KBDF_SOURCE, function.port.?)) {
             _function.release(base, function);
             return null;

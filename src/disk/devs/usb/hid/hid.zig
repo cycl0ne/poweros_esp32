@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: MIT
-//! usb/hid.device: USB keyboards, mice and tablets. A class driver
-//! (sdk/devices/usbclass.zig): it binds HID interfaces of the boot
-//! subclass, and any other HID interface whose report descriptor
-//! describes a keyboard or a mouse, and keeps a read outstanding on each
-//! one's interrupt endpoint; every report goes to hid.library, which
-//! makes it into key-downs and key-ups for keyboard.device and moves, a
-//! tablet's places, buttons and the wheel for mouse.device - so a USB
-//! keyboard is the system's keyboard with nothing else knowing.
+//! usb/hid.device: USB keyboards, mice and tablets, and media keys. A
+//! class driver (sdk/devices/usbclass.zig): it binds HID interfaces of the
+//! boot subclass, and any other HID interface whose report descriptor
+//! describes a keyboard, a mouse or a consumer control - a keyboard's
+//! media keys, often an interface of their own, or a remote's - and keeps
+//! a read outstanding on each one's interrupt endpoint; every report goes
+//! to hid.library, which makes it into key-downs and key-ups for
+//! keyboard.device and moves, a tablet's places, buttons and the wheel
+//! for mouse.device - so a USB keyboard is the system's keyboard with
+//! nothing else knowing.
 //!
 //! **Which report.** A keyboard or a mouse is asked for its report
 //! descriptor first, and hid.library reads it (OpenHID): where it
@@ -52,8 +54,8 @@ const HIDBase = sdk.interface.hid.HIDBase;
 
 pub const DEVICE_NAME = "hid.device";
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 4;
-const BUILD_DATE = "23.11.2026";
+const DEVICE_REVISION = 5;
+const BUILD_DATE = "24.11.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++
@@ -247,8 +249,8 @@ fn letGo(hb: *HidBase, function: *Function) void {
 
 /// A HID interface taken: one of the boot subclass, keyboard or mouse,
 /// and any other whose report descriptor describes a mouse - a tablet,
-/// say - or a keyboard, or both; the rest declined. The contract is usbclass's
-/// (sdk/fd/usbclass_lib.fd).
+/// say - a keyboard or a consumer control's media keys, or several; the
+/// rest declined. The contract is usbclass's (sdk/fd/usbclass_lib.fd).
 ///
 /// INPUTS:
 /// - `hb` - the driver's base.

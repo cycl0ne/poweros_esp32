@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT
-//! bluetooth/bthid.device: Bluetooth keyboards and mice, over BR/EDR and
-//! over LE. A profile driver (sdk/devices/btprofile.zig): bluetooth.library
-//! offers it the HID service of each device this machine is bonded with -
-//! over BR/EDR the service's record, over LE its GATT service - and it
-//! takes those whose report descriptor describes a keyboard or a mouse;
+//! bluetooth/bthid.device: Bluetooth keyboards and mice, and media keys,
+//! over BR/EDR and over LE. A profile driver (sdk/devices/btprofile.zig):
+//! bluetooth.library offers it the HID service of each device this
+//! machine is bonded with - over BR/EDR the service's record, over LE its
+//! GATT service - and it takes those whose report descriptor describes a
+//! keyboard, a mouse or a consumer control's media keys;
 //! every report the device sends goes to hid.library, which makes it into
 //! key-downs and key-ups for keyboard.device and moves, buttons and the
 //! wheel for mouse.device - so a Bluetooth keyboard is the system's
@@ -58,8 +59,8 @@
 //! where it has one; an output report - the LEDs - is written to the
 //! Report of its ID and kind. The link's end - BTGM_WAITING - closes
 //! the function, letting go of what the device held, and the block waits
-//! again. A device whose report map describes no keyboard and no mouse is
-//! let be: its block closed.
+//! again. A device whose report map describes no keyboard, no mouse and
+//! no media keys is let be: its block closed.
 //!
 //! The device's own units are none: bluetooth.library opens it on
 //! `BTPROFILE_UNIT_BIND` for its two calls. It stays once loaded.
@@ -82,8 +83,8 @@ const HIDBase = sdk.interface.hid.HIDBase;
 
 pub const DEVICE_NAME = "bthid.device";
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 2;
-const BUILD_DATE = "23.11.2026";
+const DEVICE_REVISION = 3;
+const BUILD_DATE = "24.11.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++
@@ -696,8 +697,8 @@ fn reached(hb: *BtHidBase, device: *Hid) void {
 
 /// The device's HID service read, at its block's first open - or at a
 /// later one, where its link ended while it was read: ready once it is.
-/// One that describes no keyboard and no mouse, or whose service cannot
-/// be read, is let be: its block closed.
+/// One that describes no keyboard, no mouse and no media keys, or whose
+/// service cannot be read, is let be: its block closed.
 fn setUp(hb: *BtHidBase, device: *Hid, gatt: *bluetooth.BTGatt) void {
     const result = readService(hb, device, gatt);
     if (result == 0) {
@@ -751,7 +752,7 @@ fn readService(hb: *BtHidBase, device: *Hid, gatt: *bluetooth.BTGatt) i32 {
     }
     device.descriptor_length = length;
     device.function = openFunction(hb, device) orelse {
-        say(hb, "%s: %02x:%02x:%02x:%02x:%02x:%02x describes no keyboard and no mouse\n", device.address, .{});
+        say(hb, "%s: %02x:%02x:%02x:%02x:%02x:%02x describes no keyboard, no mouse and no media keys\n", device.address, .{});
         return bluetooth.BTERR_UNSUPPORTED;
     };
 
@@ -801,15 +802,16 @@ fn whatOf(function: *const hid.HIDFunction) [*:0]const u8 {
     const pointer = function.flags & (hid.HIDF_MOUSE | hid.HIDF_TABLET) != 0;
     if (keyboard and pointer) return "a keyboard and a mouse";
     if (keyboard) return "a keyboard";
+    if (!pointer) return "media keys";
     return if (function.flags & hid.HIDF_TABLET != 0) "a tablet" else "a mouse";
 }
 
 // --- the profile driver's calls -----------------------------------------------------
 
 /// A HID service taken: one over BR/EDR whose record's report descriptor
-/// describes a keyboard or a mouse, or both - and every one over LE,
-/// whose report map is read once the device is reached; the rest
-/// declined. The contract is btprofile's (sdk/fd/btprofile_lib.fd).
+/// describes a keyboard, a mouse or media keys, or several - and every
+/// one over LE, whose report map is read once the device is reached; the
+/// rest declined. The contract is btprofile's (sdk/fd/btprofile_lib.fd).
 ///
 /// INPUTS:
 /// - `hb` - the driver's base.

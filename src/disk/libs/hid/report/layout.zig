@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
-//! A keyboard's or a mouse's report descriptor read into where its report
-//! keeps what it says: so a device is read by what it says it sends,
+//! A keyboard's, a mouse's or a consumer control's report descriptor read
+//! into where its report keeps what it says: so a device is read by what it says it sends,
 //! whatever its fields - with no hardware and no system, so the host
 //! tests hold it.
 //!
@@ -33,6 +33,12 @@
 //!   has an LED output report, and that report's ID. Without keys this
 //!   reads, a keyboard whose driver says it has the boot protocol is read
 //!   by that protocol's report, which `boot_keyboard` describes.
+//! - **A consumer control** (Consumer, Consumer Control): its media keys
+//!   on the consumer page, from the report that carries the first of
+//!   them - as bits, each of a usage of its own that is a media key, held
+//!   down while set, and as an array of slots, each the usage of a key
+//!   held down. A keyboard's media keys, which it sends in a report of
+//!   their own, or a remote control's.
 
 /// One field of a report.
 pub const Field = struct {
@@ -141,6 +147,31 @@ pub const KeyboardLayout = struct {
     }
 };
 
+/// A bit of a consumer control's report: a media key, held down while it
+/// is set.
+pub const ConsumerBit = struct {
+    /// Where it lies, in bits from the report's first byte.
+    offset: u16 = 0,
+    /// Its usage on the consumer page.
+    usage: u16 = 0,
+};
+
+/// Where a consumer control's report keeps its media keys.
+pub const ConsumerLayout = struct {
+    /// The report's ID, its first byte; 0 for a device whose reports have
+    /// none.
+    report_id: u8 = 0,
+    bits: [16]ConsumerBit = @splat(.{}),
+    bits_count: u8 = 0,
+    slots: KeySlots = .{},
+
+    /// Whether `report` is this layout's: its ID matches.
+    pub fn owns(layout: *const ConsumerLayout, report: []const u8) bool {
+        if (layout.report_id == 0) return true;
+        return report.len > 0 and report[0] == layout.report_id;
+    }
+};
+
 /// The boot protocol's keyboard report: the modifiers' bits in the first
 /// byte, a reserved byte, six slots of a byte each; its LEDs a report of
 /// one byte.
@@ -155,8 +186,10 @@ const PAGE_GENERIC_DESKTOP: u32 = 0x01;
 const PAGE_KEYBOARD: u32 = 0x07;
 const PAGE_LED: u32 = 0x08;
 const PAGE_BUTTON: u32 = 0x09;
+const PAGE_CONSUMER: u32 = 0x0C;
 const USAGE_MOUSE: u32 = (PAGE_GENERIC_DESKTOP << 16) | 0x02;
 const USAGE_KEYBOARD: u32 = (PAGE_GENERIC_DESKTOP << 16) | 0x06;
+const USAGE_CONSUMER_CONTROL: u32 = (PAGE_CONSUMER << 16) | 0x01;
 const USAGE_X: u32 = (PAGE_GENERIC_DESKTOP << 16) | 0x30;
 const USAGE_Y: u32 = (PAGE_GENERIC_DESKTOP << 16) | 0x31;
 const USAGE_WHEEL: u32 = (PAGE_GENERIC_DESKTOP << 16) | 0x38;
@@ -441,6 +474,59 @@ const KeyboardReader = struct {
     }
 };
 
+/// Where `descriptor` says its consumer control's report keeps its media
+/// keys; null when it describes none this reads.
+pub fn consumerLayout(descriptor: []const u8) ?ConsumerLayout {
+    var reader: ConsumerReader = .{};
+    if (!walk(descriptor, USAGE_CONSUMER_CONTROL, &reader)) return null;
+    if (reader.layout.bits_count == 0 and reader.layout.slots.size == 0) return null;
+    return reader.layout;
+}
+
+const ConsumerReader = struct {
+    layout: ConsumerLayout = .{},
+    have_id: bool = false,
+
+    /// The media keys on the consumer page noted - the one-bit fields of
+    /// a variable item whose usage is one, the slots of an array - of the
+    /// report that has the first; the first sixteen bits and the first
+    /// array are kept. False for a report too long to note.
+    fn take(reader: *ConsumerReader, item: *const Item) bool {
+        const globals = item.globals;
+        const layout = &reader.layout;
+        if (item.tag != MAIN_INPUT or item.data & INPUT_CONSTANT != 0 or item.page() != PAGE_CONSUMER) return true;
+        if (globals.count == 0 or globals.size == 0) return true;
+        if (reader.have_id) {
+            if (globals.report_id != layout.report_id) return true;
+        } else {
+            layout.report_id = globals.report_id;
+            reader.have_id = true;
+        }
+        if (item.offset + globals.size * globals.count > 0xFFFF) return false;
+        if (item.data & INPUT_VARIABLE != 0) {
+            if (globals.size != 1) return true;
+            var index: u32 = 0;
+            while (index < globals.count) : (index += 1) {
+                const usage = item.locals.usageAt(globals.page, index);
+                if (usage >> 16 != PAGE_CONSUMER or report_file.consumerKey(usage & 0xFFFF) == null) continue;
+                if (layout.bits_count == layout.bits.len) return true;
+                layout.bits[layout.bits_count] = .{ .offset = @intCast(item.offset + index), .usage = @truncate(usage) };
+                layout.bits_count += 1;
+            }
+            return true;
+        }
+        if (globals.size > 16 or globals.count > 255 or layout.slots.size != 0) return true;
+        layout.slots = .{
+            .offset = @intCast(item.offset),
+            .size = @intCast(globals.size),
+            .count = @intCast(globals.count),
+            .logical_min = globals.logical_min,
+            .first_usage = @truncate(item.locals.usageAt(globals.page, 0)),
+        };
+        return true;
+    }
+};
+
 /// A variable field of the mouse's collection noted if it is one of
 /// those read; false for one that makes the mouse unreadable.
 fn note(layout: *MouseLayout, have_id: *bool, globals: Globals, usage: u32, offset: u32, relative: bool) bool {
@@ -503,6 +589,8 @@ fn signedOf(bytes: []const u8) i32 {
         else => @bitCast(value),
     };
 }
+
+const report_file = @import("report.zig");
 
 // --- tests (host: ./zig build test) -----------------------------------------
 
@@ -662,6 +750,41 @@ const mouse_keys_descriptor = [_]u8{
     0xC0, 0x06, 0xFF, 0xFF, 0x09, 0x01, 0xA1, 0x01, 0x85, 0x05, 0x09, 0x01,
     0x15, 0x00, 0x26, 0xFF, 0x00, 0x75, 0x08, 0x95, 0x03, 0x81, 0x02, 0xC0,
 };
+
+test "a consumer control's slots, beside a keyboard and among other collections" {
+    // Report 3 of the keyboard of bits: one slot of 16 bits, usages 0 to
+    // 0x3FF.
+    try testing.expectEqual(ConsumerLayout{
+        .report_id = 3,
+        .slots = .{ .offset = 8, .size = 16, .count = 1, .logical_min = 0, .first_usage = 0 },
+    }, consumerLayout(&bits_keyboard_descriptor).?);
+    // The mouse's second interface: report 3, before the system keys.
+    const keys = consumerLayout(&mouse_keys_descriptor).?;
+    try testing.expectEqual(@as(u8, 3), keys.report_id);
+    try testing.expectEqual(KeySlots{ .offset = 8, .size = 16, .count = 1, .logical_min = 0, .first_usage = 0 }, keys.slots);
+    // A keyboard or a mouse alone has none.
+    try testing.expect(consumerLayout(&boot_keyboard_descriptor) == null);
+    try testing.expect(consumerLayout(&boot_descriptor) == null);
+}
+
+/// A remote control's consumer collection as bits, report 2: next,
+/// previous, stop, play/pause, mute, volume up, volume down and the
+/// calculator, which is no media key.
+pub const remote_descriptor = [_]u8{
+    0x05, 0x0C, 0x09, 0x01, 0xA1, 0x01, 0x85, 0x02, 0x15, 0x00, 0x25, 0x01,
+    0x75, 0x01, 0x95, 0x08, 0x09, 0xB5, 0x09, 0xB6, 0x09, 0xB7, 0x09, 0xCD,
+    0x09, 0xE2, 0x09, 0xE9, 0x09, 0xEA, 0x0A, 0x92, 0x01, 0x81, 0x02, 0xC0,
+};
+
+test "a consumer control's bits: the media keys among them, each where it lies" {
+    const layout = consumerLayout(&remote_descriptor).?;
+    try testing.expectEqual(@as(u8, 2), layout.report_id);
+    try testing.expectEqual(@as(u8, 7), layout.bits_count);
+    try testing.expectEqual(ConsumerBit{ .offset = 8, .usage = 0xB5 }, layout.bits[0]);
+    try testing.expectEqual(ConsumerBit{ .offset = 11, .usage = 0xCD }, layout.bits[3]);
+    try testing.expectEqual(ConsumerBit{ .offset = 14, .usage = 0xEA }, layout.bits[6]);
+    try testing.expectEqual(@as(u8, 0), layout.slots.size);
+}
 
 test "a keyboard among other collections, in a report of its own" {
     const layout = keyboardLayout(&mouse_keys_descriptor).?;

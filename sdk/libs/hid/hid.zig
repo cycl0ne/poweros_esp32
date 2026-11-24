@@ -5,8 +5,10 @@
 //!
 //! **A function** is one device's reports read by its report descriptor
 //! (`OpenHID`): a keyboard collection makes it a source of
-//! keyboard.device, a mouse or a tablet one of mouse.device, a descriptor
-//! with both both - their reports told apart by their IDs. A driver hands
+//! keyboard.device, a mouse or a tablet one of mouse.device, a consumer
+//! control - a keyboard's media keys, a remote's - a source of
+//! keyboard.device too, whose keys are the media keys; a descriptor with
+//! several all of them, their reports told apart by their IDs. A driver hands
 //! it each input report as it comes (`HIDInput`) and closes it when the
 //! device goes (`CloseHID`), which lets go of the keys and buttons the
 //! device still held.
@@ -58,6 +60,9 @@ pub const HIDF_TABLET: u32 = 1 << 2;
 /// Its reports are the boot protocol's, not its descriptor's: the driver
 /// puts the device in the boot protocol.
 pub const HIDF_BOOT: u32 = 1 << 3;
+/// A consumer control: its media keys - play, pause, the volume - a
+/// source of keyboard.device. Since 1.1.
+pub const HIDF_CONSUMER: u32 = 1 << 4;
 
 /// A function, the library's from OpenHID to CloseHID. Its fields are read,
 /// never written; what follows them is the library's own.
