@@ -54,6 +54,7 @@ const discovery = @import("discovery.zig");
 const local = @import("local.zig");
 const pairing = @import("pairing.zig");
 const scan = @import("scan.zig");
+const smp = @import("smp.zig");
 const smpcrypto = @import("smpcrypto.zig");
 const channels = @import("../l2cap/channels.zig");
 const sdp_client = @import("../sdp/client.zig");
@@ -524,6 +525,7 @@ fn leEvent(layer: *Hci, params: []const u8) void {
         hci.HCI_LE_EV_CONNECTION_COMPLETE => connections.leComplete(layer, rest),
         hci.HCI_LE_EV_CONNECTION_UPDATE_COMPLETE => connections.leUpdateComplete(layer, rest),
         hci.HCI_LE_EV_READ_REMOTE_FEATURES_COMPLETE => connections.leFeatures(layer, rest),
+        hci.HCI_LE_EV_LONG_TERM_KEY_REQUEST => smp.longTermKeyRequest(layer, rest),
         hci.HCI_LE_EV_REMOTE_PARAMETERS_REQUEST => connections.leParametersRequest(layer, rest),
         else => {},
     }

@@ -45,6 +45,15 @@
 //! resolvable private address is the bond's whose identity resolving key
 //! made it.
 //!
+//! **A central's encryption** - a device that made the link to this
+//! machine, its peripheral, encrypting it (LE Long Term Key Request) - is
+//! answered with the key of the device's bond where Secure Connections
+//! made it, cut to the bond's size: such a key goes by no EDIV and Rand,
+//! and is the same on both sides. A key that goes by an EDIV and Rand
+//! would be one this side gave - it gives none - so that, a legacy
+//! bond's key - the device's own, for this side's links to it as their
+//! central - and a device without a bond are refused, and noted.
+//!
 //! Pure, as the rest of the layer: the cipher, the random bytes and the
 //! curve come through the layer's port (smpcrypto.zig).
 
@@ -300,13 +309,47 @@ fn encrypt(layer: *Hci, connection: *Connection, key: *const [16]u8, ediv: u16, 
     put16(params[0..2], connection.handle);
     params[2..10].* = rand.*;
     put16(params[10..12], ediv);
-    params[12..28].* = key.*;
-    const kept = @min(key_size, MAX_KEY_SIZE);
-    @memset(params[12 + kept .. 28], 0);
+    params[12..28].* = cut(key, key_size);
     if (!_hci.command(layer, hci.HCI_OP_LE_ENABLE_ENCRYPTION, &params, _hci.COMMAND_TIMEOUT_MS)) return false;
     connection.pairing.stage = .encrypting;
     connection.pairing.command = hci.HCI_OP_LE_ENABLE_ENCRYPTION;
     return true;
+}
+
+// --- the central's encryption -----------------------------------------------------
+
+/// LE Long Term Key Request, past its subevent: the device, the link's
+/// central, encrypts it - answered with the key of its bond made by Secure
+/// Connections, which goes by no EDIV and Rand; refused, and noted,
+/// otherwise.
+pub fn longTermKeyRequest(layer: *Hci, params: []const u8) void {
+    if (params.len < 12) return;
+    const handle = _hci.le16(params[0..2]) & hci.ACL_HANDLE_MASK;
+    const rand = params[2..10];
+    const ediv = _hci.le16(params[10..12]);
+    const connection = connections.byHandle(layer, handle) orelse return refuseKey(layer, handle);
+    if (!connection.central and ediv == 0 and allZero(rand)) {
+        if (bondOf(layer, connection)) |bond| {
+            if (bond.le_secure) return giveKey(layer, handle, &bond.key, bond.key_size);
+        }
+    }
+    connections.note(layer, connection, .not_secured, hci.HCI_ERR_PIN_OR_KEY_MISSING);
+    refuseKey(layer, handle);
+}
+
+/// LE Long Term Key Request Reply: `key`, cut to `key_size` bytes.
+fn giveKey(layer: *Hci, handle: u16, key: *const [16]u8, key_size: u8) void {
+    var params: [18]u8 = undefined;
+    put16(params[0..2], handle);
+    params[2..18].* = cut(key, key_size);
+    _ = _hci.command(layer, hci.HCI_OP_LE_LONG_TERM_KEY_REPLY, &params, _hci.COMMAND_TIMEOUT_MS);
+}
+
+/// LE Long Term Key Request Negative Reply: no key for the link.
+fn refuseKey(layer: *Hci, handle: u16) void {
+    var params: [2]u8 = undefined;
+    put16(&params, handle);
+    _ = _hci.command(layer, hci.HCI_OP_LE_LONG_TERM_KEY_NEGATIVE_REPLY, &params, _hci.COMMAND_TIMEOUT_MS);
 }
 
 // --- the device's word ------------------------------------------------------------
@@ -747,6 +790,14 @@ fn passkeyValue(smp: *const Smp) [16]u8 {
         value[3] = @truncate(smp.passkey >> 24);
     }
     return value;
+}
+
+/// `key` cut to `key_size` bytes, zeros past them: the key at the size its
+/// pairing agreed.
+fn cut(key: *const [16]u8, key_size: u8) [16]u8 {
+    var out = key.*;
+    @memset(out[@min(key_size, MAX_KEY_SIZE)..], 0);
+    return out;
 }
 
 fn same(one: []const u8, other: []const u8) bool {

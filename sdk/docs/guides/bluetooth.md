@@ -411,7 +411,8 @@ discovery found it, else by the first that is up and on.
 **A link the device makes** - a page the controller hears - is taken on
 by itself while the controller is on, the controller staying the link's
 peripheral; a link for sound is refused. Over LE a device links to the
-controller while it advertises, the controller the link's peripheral. A
+controller while it advertises, the controller the link's peripheral; a
+device with a bond encrypts it with the bond's key (below). A
 controller keeps eight links.
 
 `DisconnectBTDevice` ends a link and waits until it is down; a link
@@ -567,6 +568,15 @@ device's identity resolving key (`IRK`). `ConnectBTDevice` to an LE
 device with a bond encrypts the link with the bond's key before it
 returns, as over BR/EDR; a link from a private address the bond's key
 resolves is that bond's, and so is a Security Request on it.
+
+A device with a bond that links to the machine while it advertises -
+the link's central - encrypts the link itself: the library gives it the
+bond's key where Secure Connections made the bond, a key the same on
+both sides. A legacy bond's key is the device's own, for the machine's
+links to it, and the machine gives none of its own, so a central that
+asks for one by its EDIV and Rand - or has no bond here - is refused,
+its link staying up unencrypted; the log says so ("not made secure:
+0x06").
 
 The log says each pairing over, and why one failed (`C:Log`). Over LE
 this side gives a device none of its own keys - it uses its public
