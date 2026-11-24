@@ -668,7 +668,7 @@ pub fn answered(layer: *Hci, opcode: u16, returned: []const u8) void {
             }
             sized(layer, connection);
         },
-        hci.HCI_OP_AUTHENTICATION_REQUESTED, hci.HCI_OP_SET_CONNECTION_ENCRYPTION, hci.HCI_OP_LE_ENABLE_ENCRYPTION => {
+        hci.HCI_OP_AUTHENTICATION_REQUESTED, hci.HCI_OP_SET_CONNECTION_ENCRYPTION, hci.HCI_OP_LE_ENABLE_ENCRYPTION, hci.HCI_OP_LE_LONG_TERM_KEY_REPLY => {
             const status: i32 = if (returned.len == 0) bluetooth.BTERR_TIMEOUT else returned[0];
             if (status == hci.HCI_SUCCESS) return;
             const connection = sentBy(layer, opcode) orelse return;

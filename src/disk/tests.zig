@@ -99,6 +99,7 @@ test {
     _ = @import("libs/bluetooth/tests/discovery.zig");
     _ = @import("libs/bluetooth/tests/advertising.zig");
     _ = @import("libs/bluetooth/tests/peripheral.zig");
+    _ = @import("libs/bluetooth/tests/responder.zig");
     _ = @import("libs/bluetooth/tests/connections.zig");
     _ = @import("libs/bluetooth/tests/pairing.zig");
     _ = @import("libs/bluetooth/tests/smpcrypto.zig");

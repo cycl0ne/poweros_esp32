@@ -543,13 +543,13 @@ returns; a device that lost the bond answers
 `HCI_ERR_PIN_OR_KEY_MISSING`, the link staying up. A device with a bond
 that makes a link and authenticates it is given the bond's key.
 
-**Over LE** the library is the link's central and begins every pairing
-as the security manager's initiator: for `PairBTDevice` with an LE
-address, or for a device's Security Request - which goes to the agent as
-a device's pairing does. It asks for a bond, for protection from a man
-in the middle where the agent's user can give it, for Secure
-Connections, and for a key of up to 16 bytes; a device that takes fewer
-than 7 is refused. With Secure Connections - where the device has them -
+**Over LE**, on a link the machine made - its central - the library
+begins every pairing as the security manager's initiator: for
+`PairBTDevice` with an LE address, or for a device's Security Request -
+which goes to the agent as a device's pairing does. It asks for a bond,
+for protection from a man in the middle where the agent's user can give
+it, for Secure Connections, and for a key of up to 16 bytes; a device
+that takes fewer than 7 is refused. With Secure Connections - where the device has them -
 each side makes a P-256 key pair and the two share a secret; the
 methods are BR/EDR's: a number both show (`BTAK_CONFIRM`), a passkey the
 device shows (`BTAK_PASSKEY`) or one shown here to be typed on it
@@ -559,6 +559,21 @@ pairing made, and the device's keys are taken: its long term key where
 Secure Connections did not make one, and its identity - the address its
 bond is kept by, and the key that resolves the private addresses it
 uses. A pairing with the specification's debug key keeps no bond.
+
+On a link a device made to the machine while it advertises - the
+device its central - the device begins the pairing and the library
+answers as the responder, by **Secure Connections alone**: a legacy
+pairing's key is open to anyone who heard the pairing, so a device that
+asks for one is refused (Authentication Requirements), as is one with
+too short a key, and one when no agent is there to ask (Pairing Not
+Supported). The agent is asked as for a device's pairing over BR/EDR -
+the number both show, a passkey to type or one to show, or, where
+there is nothing to compare and it can answer yes or no, whether the
+device may pair - and the device's identity is taken; the machine gives
+no key of its own. The device then encrypts the link with the new key,
+and the bond is kept as any other, its key the same on both sides.
+`PairBTDevice` on such a link asks the device to pair (Security
+Request); a device that does not is given up on after a minute.
 
 An LE bond's file is `<device>.le` for a public address, `<device>.random`
 for a static random one: the device's name, the long term key and what

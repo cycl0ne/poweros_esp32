@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: MIT
 //! The security manager over LE: a controller's LE pairings, on the
 //! security manager's channel (CID 6), and an LE bond's link encrypted.
-//! The library is the central of its LE links and begins each pairing as
-//! the specification's initiator - for PairBTDevice, or for a device's
-//! Security Request; pairing.zig keeps the pairing's agent, questions,
-//! notices and end, as it does over BR/EDR.
+//! On a link this machine made - its central - the library begins each
+//! pairing as the specification's initiator, for PairBTDevice or for a
+//! device's Security Request. On a link a device made to it - its
+//! peripheral - the device begins it, the library its responder, and
+//! PairBTDevice asks the device to (Security Request). pairing.zig keeps
+//! the pairing's agent, questions, notices and end, as it does over
+//! BR/EDR.
 //!
 //! **The pairing.** A Pairing Request with the agent's IO capability, no
 //! out-of-band data, bonding, protection from a man in the middle where
@@ -28,6 +31,24 @@
 //! otherwise - c1's confirms, the randoms exchanged and checked, s1's
 //! short-term key, the link encrypted with it, and the long term key the
 //! device gives then.
+//!
+//! **As the responder** the library pairs by Secure Connections alone - a
+//! legacy pairing's key is open to anyone who heard the pairing - and
+//! refuses a Pairing Request without them (Authentication Requirements),
+//! one with too short a key, and one with no agent there to answer it
+//! (Pairing Not Supported). Its Pairing Response: the agent's IO
+//! capability, no out-of-band data, a bond where the central asks for
+//! one, protection from a man in the middle where the agent's user can
+//! give it, a key of up to 16 bytes, the central's identity asked for and
+//! no key of this side's given. The public keys exchanged, each method
+//! runs from the other side: this side's confirm first, or Passkey
+//! Entry's rounds answered, the central's confirms checked against its
+//! nonces, the six digits compared; the central's DHKey check checked and
+//! this side's sent - a confirm or check of the central's that comes
+//! while the agent is still being asked kept for its answer. The central
+//! encrypts the link with the new key, given it at its LE Long Term Key
+//! Request, and gives its identity; the bond is kept as the initiator's
+//! is.
 //!
 //! **The agent.** A number to compare is asked of it (BTAK_CONFIRM), a
 //! passkey the device shows to be typed (BTAK_PASSKEY), or one shown it
@@ -135,17 +156,19 @@ const PASSKEY_ROUNDS: u8 = 20;
 /// What a pairing waits for.
 pub const Phase = enum(u8) {
     idle,
+    /// The central's Pairing Request, this side's Security Request sent.
+    request,
     /// The device's Pairing Response.
     response,
     /// The agent's answer; what follows it in `then`.
     user,
-    /// The device's public key, this side's sent.
+    /// The device's public key.
     public_key,
     /// The device's Pairing Confirm.
     confirm,
-    /// The device's Pairing Random, this side's sent.
+    /// The device's Pairing Random.
     random,
-    /// The device's DHKey Check, this side's sent.
+    /// The device's DHKey Check.
     check,
     /// The link encrypted (Encryption Change); the device's keys may come
     /// meanwhile.
@@ -168,11 +191,13 @@ pub const Smp = struct {
     phase: Phase = .idle,
     method: Method = .just_works,
     then: Then = .legacy_confirm,
+    /// This side is the responder: the link's peripheral.
+    responder: bool = false,
     /// Both sides set Secure Connections.
     secure: bool = false,
     /// The device's public key is the specification's debug key.
     debug: bool = false,
-    /// The Pairing Request and Response, as sent.
+    /// The Pairing Request and Response.
     request: [7]u8 = @splat(0),
     response: [7]u8 = @splat(0),
     /// The key's size agreed, in bytes.
@@ -189,6 +214,11 @@ pub const Smp = struct {
     ours: [16]u8 = @splat(0),
     theirs: [16]u8 = @splat(0),
     confirm: [16]u8 = @splat(0),
+    /// The responder's: a confirm, or the DHKey check, of the central's
+    /// come while the agent was being asked - kept for its answer.
+    confirm_in: bool = false,
+    check_in: bool = false,
+    peer_check: [16]u8 = @splat(0),
     /// This side's key pair - the private key the most significant byte
     /// first, the public key in SMP's order - the device's public key,
     /// and the secret they share, in SMP's order.
@@ -216,6 +246,12 @@ pub const Smp = struct {
 /// encryption, and the port's cryptography.
 pub fn canPair(layer: *const Hci) bool {
     return connections.canInitiate(layer) and _hci.supports(layer, hci.CMDBIT_LE_ENABLE_ENCRYPTION) and layer.crypto != null;
+}
+
+/// Whether the controller can pair as the responder: LE's encryption
+/// answered with a key, and the port's cryptography.
+pub fn canRespond(layer: *const Hci) bool {
+    return _hci.supports(layer, hci.CMDBIT_LE_LONG_TERM_KEY_REPLY) and layer.crypto != null;
 }
 
 /// The IO capability this side pairs with over LE for an agent's
@@ -284,7 +320,8 @@ fn portOf(layer: *Hci) ?*const Crypto {
 // --- begun ------------------------------------------------------------------------
 
 /// The link's pairing begun - pairing.zig's record set for it: the
-/// Pairing Request sent. False when it could not be.
+/// Pairing Request sent - or, on a link the device made, the device asked
+/// to send its own (Security Request). False when it could not be.
 pub fn start(layer: *Hci, connection: *Connection) bool {
     if (portOf(layer) == null) return false;
     const record = &connection.pairing;
@@ -292,6 +329,10 @@ pub fn start(layer: *Hci, connection: *Connection) bool {
     const auth = AUTH_BONDING | AUTH_SC | (if (io != IO_NO_INPUT_OUTPUT) AUTH_MITM else 0);
     record.our_auth = auth;
     record.stage = .authenticating;
+    if (!connection.central) {
+        connection.smp = .{ .phase = .request, .responder = true };
+        return send(layer, connection, &.{ SECURITY_REQUEST, auth });
+    }
     connection.smp = .{ .phase = .response };
     connection.smp.request = .{ PAIRING_REQUEST, io, 0, auth, MAX_KEY_SIZE, 0, KEYDIST_ENC | KEYDIST_ID };
     return send(layer, connection, &connection.smp.request);
@@ -319,15 +360,25 @@ fn encrypt(layer: *Hci, connection: *Connection, key: *const [16]u8, ediv: u16, 
 // --- the central's encryption -----------------------------------------------------
 
 /// LE Long Term Key Request, past its subevent: the device, the link's
-/// central, encrypts it - answered with the key of its bond made by Secure
-/// Connections, which goes by no EDIV and Rand; refused, and noted,
-/// otherwise.
+/// central, encrypts it - answered with the key the pairing this side
+/// answered has just made, or with the key of its bond made by Secure
+/// Connections; either goes by no EDIV and Rand. Refused, and noted,
+/// otherwise - a pairing waiting for it given up.
 pub fn longTermKeyRequest(layer: *Hci, params: []const u8) void {
     if (params.len < 12) return;
     const handle = _hci.le16(params[0..2]) & hci.ACL_HANDLE_MASK;
     const rand = params[2..10];
     const ediv = _hci.le16(params[10..12]);
     const connection = connections.byHandle(layer, handle) orelse return refuseKey(layer, handle);
+    const smp = &connection.smp;
+    if (smp.responder and smp.phase == .encryption) {
+        if (ediv != 0 or !allZero(rand)) {
+            refuseKey(layer, handle);
+            return abandon(layer, connection, hci.HCI_ERR_PIN_OR_KEY_MISSING);
+        }
+        connection.pairing.command = hci.HCI_OP_LE_LONG_TERM_KEY_REPLY;
+        return giveKey(layer, handle, &smp.ltk, smp.key_size);
+    }
     if (!connection.central and ediv == 0 and allZero(rand)) {
         if (bondOf(layer, connection)) |bond| {
             if (bond.le_secure) return giveKey(layer, handle, &bond.key, bond.key_size);
@@ -354,15 +405,12 @@ fn refuseKey(layer: *Hci, handle: u16) void {
 
 // --- the device's word ------------------------------------------------------------
 
-/// A frame on the security manager's channel of an LE link.
+/// A frame on the security manager's channel of an LE link: this side
+/// the initiator on a link it made, the responder on one the device made.
 pub fn received(layer: *Hci, connection: *Connection, payload: []const u8) void {
     if (payload.len == 0) return;
+    if (!connection.central) return asResponder(layer, connection, payload);
     const code = payload[0];
-    if (!connection.central) {
-        // This side is the device's peripheral, and pairs with nobody.
-        if (code == PAIRING_REQUEST) _ = send(layer, connection, &.{ PAIRING_FAILED, REASON_PAIRING_NOT_SUPPORTED });
-        return;
-    }
     switch (code) {
         SECURITY_REQUEST => return securityRequest(layer, connection, payload),
         PAIRING_FAILED => return failedThere(layer, connection, payload),
@@ -472,14 +520,7 @@ fn publicKey(layer: *Hci, connection: *Connection, payload: []const u8) void {
     const port = portOf(layer) orelse return fail(layer, connection, REASON_UNSPECIFIED);
     const smp = &connection.smp;
     smp.peer_key = payload[1..65].*;
-    if (same(&smp.peer_key, &smp.public_key)) return fail(layer, connection, REASON_UNSPECIFIED);
-    smp.debug = same(&smp.peer_key, &smpcrypto.DEBUG_PUBLIC_KEY);
-    var peer: [64]u8 = undefined;
-    peer[0..32].* = smpcrypto.reversed(32, smp.peer_key[0..32]);
-    peer[32..64].* = smpcrypto.reversed(32, smp.peer_key[32..64]);
-    var secret: [32]u8 = undefined;
-    if (!port.shared(port.context, &smp.private_key, &peer, &secret)) return fail(layer, connection, REASON_DHKEY_CHECK_FAILED);
-    smp.dhkey = smpcrypto.reversed(32, &secret);
+    if (!shareSecret(layer, connection)) return;
     switch (smp.method) {
         .just_works, .compare => {
             // The device's confirm comes first.
@@ -526,8 +567,7 @@ fn randomed(layer: *Hci, connection: *Connection, payload: []const u8) void {
     }
     switch (smp.method) {
         .type_passkey, .show_passkey => {
-            const z = 0x80 | @as(u8, @intCast(smp.passkey >> @intCast(smp.round) & 1));
-            const expected = smpcrypto.f4(port, smp.peer_key[0..32], smp.public_key[0..32], &smp.theirs, z);
+            const expected = smpcrypto.f4(port, smp.peer_key[0..32], smp.public_key[0..32], &smp.theirs, roundBit(smp));
             if (!same(&expected, &smp.confirm)) return fail(layer, connection, REASON_CONFIRM_VALUE_FAILED);
             smp.round += 1;
             if (smp.round < PASSKEY_ROUNDS) return passkeyRound(layer, connection);
@@ -634,8 +674,8 @@ pub fn answered(layer: *Hci, connection: *Connection, kind: u32, accept: bool, p
     if (kind == bluetooth.BTAK_PASSKEY) smp.passkey = passkey;
     switch (smp.then) {
         .legacy_confirm => legacyConfirm(layer, connection),
-        .passkey_rounds => passkeyRound(layer, connection),
-        .check => sendCheck(layer, connection),
+        .passkey_rounds => if (smp.responder) roundsReady(layer, connection) else passkeyRound(layer, connection),
+        .check => if (smp.responder) checkReady(layer, connection) else sendCheck(layer, connection),
     }
 }
 
@@ -645,6 +685,213 @@ pub fn answered(layer: *Hci, connection: *Connection, kind: u32, accept: bool, p
 pub fn abandon(layer: *Hci, connection: *Connection, result: i32) void {
     if (connection.smp.phase != .idle) _ = send(layer, connection, &.{ PAIRING_FAILED, REASON_UNSPECIFIED });
     pairing.finish(layer, connection, result);
+}
+
+// --- the responder ----------------------------------------------------------------
+
+/// A frame on the security manager's channel of a link the device made:
+/// this side its responder. What comes out of turn is let go - but a
+/// confirm, or the DHKey check, that comes while the agent is being asked
+/// is kept for its answer.
+fn asResponder(layer: *Hci, connection: *Connection, payload: []const u8) void {
+    const code = payload[0];
+    switch (code) {
+        PAIRING_REQUEST => return pairingRequest(layer, connection, payload),
+        PAIRING_FAILED => return failedThere(layer, connection, payload),
+        PAIRING_PUBLIC_KEY, PAIRING_CONFIRM, PAIRING_RANDOM, PAIRING_DHKEY_CHECK, ENCRYPTION_INFORMATION, CENTRAL_IDENTIFICATION, IDENTITY_INFORMATION, IDENTITY_ADDRESS_INFORMATION, SIGNING_INFORMATION, KEYPRESS_NOTIFICATION => {},
+        // A Pairing Response, a Security Request: a peripheral's to send.
+        else => {
+            _ = send(layer, connection, &.{ PAIRING_FAILED, REASON_COMMAND_NOT_SUPPORTED });
+            return;
+        },
+    }
+    const smp = &connection.smp;
+    if (!smp.responder or smp.phase == .idle or connection.pairing.stage == .idle) return;
+    switch (code) {
+        PAIRING_PUBLIC_KEY => if (smp.phase == .public_key) centralKey(layer, connection, payload),
+        PAIRING_CONFIRM => if (smp.phase == .confirm) {
+            if (payload.len < 17) return fail(layer, connection, REASON_INVALID_PARAMETERS);
+            smp.confirm = payload[1..17].*;
+            responderRound(layer, connection);
+        } else if (smp.phase == .user and smp.then == .passkey_rounds) {
+            if (payload.len < 17) return fail(layer, connection, REASON_INVALID_PARAMETERS);
+            smp.confirm = payload[1..17].*;
+            smp.confirm_in = true;
+        },
+        PAIRING_RANDOM => if (smp.phase == .random) centralNonce(layer, connection, payload),
+        PAIRING_DHKEY_CHECK => if (smp.phase == .check or (smp.phase == .user and smp.then == .check)) {
+            if (payload.len < 17) return fail(layer, connection, REASON_INVALID_PARAMETERS);
+            smp.peer_check = payload[1..17].*;
+            if (smp.phase == .check) return checkCentral(layer, connection);
+            smp.check_in = true;
+        },
+        ENCRYPTION_INFORMATION, CENTRAL_IDENTIFICATION, IDENTITY_INFORMATION, IDENTITY_ADDRESS_INFORMATION, SIGNING_INFORMATION => if (smp.phase == .encryption or smp.phase == .keys) given(layer, connection, payload),
+        else => {},
+    }
+}
+
+/// The central's Pairing Request: answered - by Secure Connections alone -
+/// for the pairing this side's Security Request asked for, or for one an
+/// agent is there to answer; refused otherwise.
+fn pairingRequest(layer: *Hci, connection: *Connection, payload: []const u8) void {
+    const record = &connection.pairing;
+    const asked = connection.smp.responder and connection.smp.phase == .request;
+    // One under way: let go.
+    if (record.stage != .idle and !asked) return;
+    if (!asked) {
+        const agent = layer.agent_current;
+        if (agent == 0 or !canRespond(layer)) {
+            _ = send(layer, connection, &.{ PAIRING_FAILED, REASON_PAIRING_NOT_SUPPORTED });
+            return;
+        }
+        pairing.begin(layer, connection, .pair, false, agent, layer.agent_capability);
+    }
+    if (payload.len < 7) return fail(layer, connection, REASON_INVALID_PARAMETERS);
+    const request = payload[0..7].*;
+    record.peer_io = request[1];
+    record.peer_auth = request[3];
+    if (request[3] & AUTH_SC == 0) return fail(layer, connection, REASON_AUTHENTICATION_REQUIREMENTS);
+    if (request[4] < hci.MIN_ENCRYPTION_KEY_SIZE) return fail(layer, connection, REASON_ENCRYPTION_KEY_SIZE);
+    const io = record.our_io;
+    const bonding: u8 = if (request[3] & AUTH_BONDING_MASK == AUTH_BONDING) AUTH_BONDING else 0;
+    const auth = bonding | AUTH_SC | (if (io != IO_NO_INPUT_OUTPUT) AUTH_MITM else 0);
+    record.our_auth = auth;
+    record.stage = .authenticating;
+    const smp = &connection.smp;
+    smp.* = .{ .phase = .public_key, .responder = true, .secure = true, .key_size = @min(request[4], MAX_KEY_SIZE) };
+    smp.request = request;
+    // The central's identity asked for; this side gives no key.
+    smp.expected = request[5] & KEYDIST_ID;
+    smp.response = .{ PAIRING_RESPONSE, io, 0, auth, MAX_KEY_SIZE, smp.expected, 0 };
+    const mitm = (request[3] | auth) & AUTH_MITM != 0;
+    smp.method = if (mitm) responderMethod(methodOf(request[1], io, true)) else .just_works;
+    if (!send(layer, connection, &smp.response)) fail(layer, connection, REASON_UNSPECIFIED);
+}
+
+/// A method as the responder takes it: the side that shows the passkey
+/// and the side that types it the other way round.
+fn responderMethod(method: Method) Method {
+    return switch (method) {
+        .type_passkey => .show_passkey,
+        .show_passkey => .type_passkey,
+        else => method,
+    };
+}
+
+/// The central's public key: this side's key pair made and its public key
+/// sent, the secret shared - then by the method: this side's confirm, the
+/// passkey shown, or the agent asked for it.
+fn centralKey(layer: *Hci, connection: *Connection, payload: []const u8) void {
+    if (payload.len < 65) return fail(layer, connection, REASON_INVALID_PARAMETERS);
+    const port = portOf(layer) orelse return fail(layer, connection, REASON_UNSPECIFIED);
+    const smp = &connection.smp;
+    smp.peer_key = payload[1..65].*;
+    var public_key: [64]u8 = undefined;
+    if (!port.keyPair(port.context, &smp.private_key, &public_key)) return fail(layer, connection, REASON_UNSPECIFIED);
+    smp.public_key[0..32].* = smpcrypto.reversed(32, public_key[0..32]);
+    smp.public_key[32..64].* = smpcrypto.reversed(32, public_key[32..64]);
+    if (!shareSecret(layer, connection)) return;
+    var packet: [65]u8 = undefined;
+    packet[0] = PAIRING_PUBLIC_KEY;
+    packet[1..65].* = smp.public_key;
+    if (!send(layer, connection, &packet)) return fail(layer, connection, REASON_UNSPECIFIED);
+    switch (smp.method) {
+        .just_works, .compare => {
+            port.random(port.context, &smp.ours);
+            const value = smpcrypto.f4(port, smp.public_key[0..32], smp.peer_key[0..32], &smp.ours, 0);
+            smp.phase = .random;
+            if (!sendValue(layer, connection, PAIRING_CONFIRM, &value)) fail(layer, connection, REASON_UNSPECIFIED);
+        },
+        .show_passkey => {
+            showPasskey(layer, connection);
+            smp.phase = .confirm;
+        },
+        .type_passkey => askAgent(layer, connection, bluetooth.BTAK_PASSKEY, bluetooth.BT_NO_NUMBER, .passkey_rounds),
+    }
+}
+
+/// Passkey Entry's round as the responder, the central's confirm in: this
+/// side's nonce and confirm of the round's bit sent.
+fn responderRound(layer: *Hci, connection: *Connection) void {
+    const port = portOf(layer) orelse return fail(layer, connection, REASON_UNSPECIFIED);
+    const smp = &connection.smp;
+    port.random(port.context, &smp.ours);
+    const value = smpcrypto.f4(port, smp.public_key[0..32], smp.peer_key[0..32], &smp.ours, roundBit(smp));
+    smp.phase = .random;
+    if (!sendValue(layer, connection, PAIRING_CONFIRM, &value)) fail(layer, connection, REASON_UNSPECIFIED);
+}
+
+/// The passkey typed: Passkey Entry's first round answered where the
+/// central's confirm has come, awaited otherwise.
+fn roundsReady(layer: *Hci, connection: *Connection) void {
+    const smp = &connection.smp;
+    if (!smp.confirm_in) {
+        smp.phase = .confirm;
+        return;
+    }
+    smp.confirm_in = false;
+    responderRound(layer, connection);
+}
+
+/// The central's nonce: under Passkey Entry its confirm checked against
+/// it; this side's nonce sent - then the next round, the number compared
+/// or the pairing allowed by the agent, or the central's DHKey check
+/// awaited.
+fn centralNonce(layer: *Hci, connection: *Connection, payload: []const u8) void {
+    if (payload.len < 17) return fail(layer, connection, REASON_INVALID_PARAMETERS);
+    const port = portOf(layer) orelse return fail(layer, connection, REASON_UNSPECIFIED);
+    const smp = &connection.smp;
+    smp.theirs = payload[1..17].*;
+    const nonce = smp.ours;
+    if (smp.method == .type_passkey or smp.method == .show_passkey) {
+        const expected = smpcrypto.f4(port, smp.peer_key[0..32], smp.public_key[0..32], &smp.theirs, roundBit(smp));
+        if (!same(&expected, &smp.confirm)) return fail(layer, connection, REASON_CONFIRM_VALUE_FAILED);
+        smp.round += 1;
+        smp.phase = if (smp.round < PASSKEY_ROUNDS) .confirm else .check;
+        if (!sendValue(layer, connection, PAIRING_RANDOM, &nonce)) fail(layer, connection, REASON_UNSPECIFIED);
+        return;
+    }
+    smp.phase = .check;
+    if (!sendValue(layer, connection, PAIRING_RANDOM, &nonce)) return fail(layer, connection, REASON_UNSPECIFIED);
+    if (smp.method == .compare) {
+        const number = smpcrypto.g2(port, smp.peer_key[0..32], smp.public_key[0..32], &smp.theirs, &smp.ours);
+        return askAgent(layer, connection, bluetooth.BTAK_CONFIRM, number, .check);
+    }
+    if (consenting(connection)) askAgent(layer, connection, bluetooth.BTAK_CONFIRM, bluetooth.BT_NO_NUMBER, .check);
+}
+
+/// The agent's yes: the central's DHKey check checked where it has come,
+/// awaited otherwise.
+fn checkReady(layer: *Hci, connection: *Connection) void {
+    const smp = &connection.smp;
+    if (!smp.check_in) {
+        smp.phase = .check;
+        return;
+    }
+    smp.check_in = false;
+    checkCentral(layer, connection);
+}
+
+/// The central's DHKey check, in `peer_check`: the MacKey and the long
+/// term key made, the check checked and this side's sent - the central's
+/// encryption awaited.
+fn checkCentral(layer: *Hci, connection: *Connection) void {
+    const port = portOf(layer) orelse return fail(layer, connection, REASON_UNSPECIFIED);
+    const smp = &connection.smp;
+    const central_address = addressOf(&connection.address.bytes, peerType(connection));
+    const ours_address = addressOf(&layer.address, 0);
+    const keys = smpcrypto.f5(port, &smp.dhkey, &smp.theirs, &smp.ours, &central_address, &ours_address);
+    smp.mac_key = keys.mac_key;
+    smp.ltk = keys.ltk;
+    const r = passkeyValue(smp);
+    const central_io = [3]u8{ smp.request[1], smp.request[2], smp.request[3] };
+    const expected = smpcrypto.f6(port, &smp.mac_key, &smp.theirs, &smp.ours, &r, &central_io, &central_address, &ours_address);
+    if (!same(&expected, &smp.peer_check)) return fail(layer, connection, REASON_DHKEY_CHECK_FAILED);
+    const our_io = [3]u8{ smp.response[1], smp.response[2], smp.response[3] };
+    const value = smpcrypto.f6(port, &smp.mac_key, &smp.ours, &smp.theirs, &r, &our_io, &ours_address, &central_address);
+    smp.phase = .encryption;
+    connection.pairing.stage = .encrypting;
+    if (!sendValue(layer, connection, PAIRING_DHKEY_CHECK, &value)) fail(layer, connection, REASON_UNSPECIFIED);
 }
 
 // --- this side's word -------------------------------------------------------------
@@ -696,9 +943,43 @@ fn passkeyRound(layer: *Hci, connection: *Connection) void {
     const port = portOf(layer) orelse return fail(layer, connection, REASON_UNSPECIFIED);
     const smp = &connection.smp;
     port.random(port.context, &smp.ours);
-    const z = 0x80 | @as(u8, @intCast(smp.passkey >> @intCast(smp.round) & 1));
-    const value = smpcrypto.f4(port, smp.public_key[0..32], smp.peer_key[0..32], &smp.ours, z);
+    const value = smpcrypto.f4(port, smp.public_key[0..32], smp.peer_key[0..32], &smp.ours, roundBit(smp));
     sendConfirm(layer, connection, &value);
+}
+
+/// The secret shared with the device's public key, in `peer_key` - one on
+/// the curve, and not this side's own: false, the pairing failed, where it
+/// is not.
+fn shareSecret(layer: *Hci, connection: *Connection) bool {
+    const smp = &connection.smp;
+    const port = portOf(layer) orelse {
+        fail(layer, connection, REASON_UNSPECIFIED);
+        return false;
+    };
+    if (same(&smp.peer_key, &smp.public_key)) {
+        fail(layer, connection, REASON_UNSPECIFIED);
+        return false;
+    }
+    smp.debug = same(&smp.peer_key, &smpcrypto.DEBUG_PUBLIC_KEY);
+    var peer: [64]u8 = undefined;
+    peer[0..32].* = smpcrypto.reversed(32, smp.peer_key[0..32]);
+    peer[32..64].* = smpcrypto.reversed(32, smp.peer_key[32..64]);
+    var secret: [32]u8 = undefined;
+    if (!port.shared(port.context, &smp.private_key, &peer, &secret)) {
+        fail(layer, connection, REASON_DHKEY_CHECK_FAILED);
+        return false;
+    }
+    smp.dhkey = smpcrypto.reversed(32, &secret);
+    return true;
+}
+
+/// A command of 16 bytes sent - a confirm, a nonce, a DHKey check: false
+/// when it could not be.
+fn sendValue(layer: *Hci, connection: *const Connection, code: u8, value: *const [16]u8) bool {
+    var packet: [17]u8 = undefined;
+    packet[0] = code;
+    packet[1..17].* = value.*;
+    return send(layer, connection, &packet);
 }
 
 fn sendConfirm(layer: *Hci, connection: *Connection, value: *const [16]u8) void {
@@ -778,6 +1059,11 @@ fn addressOf(bytes: *const [6]u8, kind: u8) [7]u8 {
     out[0..6].* = bytes.*;
     out[6] = kind;
     return out;
+}
+
+/// Passkey Entry's round bit: 0x80 and the passkey's bit of the round.
+fn roundBit(smp: *const Smp) u8 {
+    return 0x80 | @as(u8, @intCast(smp.passkey >> @intCast(smp.round) & 1));
 }
 
 /// The passkey as a 128-bit value; 0 for the other methods.

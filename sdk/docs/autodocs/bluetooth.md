@@ -1747,16 +1747,21 @@ that can show or type nothing - the pairing is confirmed by nobody
 authenticated and encrypted; an encryption key shorter than 7 bytes
 ends it.
 
-Over LE the library is the link's central and asks the device to pair -
-with Secure Connections where the device has it, a P-256 key pair of
-the pairing's own, and with legacy pairing otherwise - for a key of up
-to 16 bytes; a device that takes fewer than 7 is refused. The agent is
-asked as over BR/EDR: BTAK_CONFIRM for the number both show,
-BTAK_PASSKEY for one the device shows, BTAK_SHOW for one to be typed
-on it. The link is encrypted with the key the pairing made, and the
-device's keys are taken: its long term key where Secure Connections
-did not make one, and its identity - the address the bond is then
-kept by, and the key that resolves the private addresses it uses.
+Over LE, on a link this machine makes - its central - the library asks
+the device to pair - with Secure Connections where the device has it, a
+P-256 key pair of the pairing's own, and with legacy pairing otherwise
+- for a key of up to 16 bytes; a device that takes fewer than 7 is
+refused. The agent is asked as over BR/EDR: BTAK_CONFIRM for the number
+both show, BTAK_PASSKEY for one the device shows, BTAK_SHOW for one to
+be typed on it. The link is encrypted with the key the pairing made,
+and the device's keys are taken: its long term key where Secure
+Connections did not make one, and its identity - the address the bond
+is then kept by, and the key that resolves the private addresses it
+uses. On a link the device made to this machine while it advertised -
+its peripheral - the device is asked to begin the pairing (Security
+Request), which the library answers as the responder, by Secure
+Connections alone; a device that does not begin it ends the pairing
+at its time, BTERR_TIMEOUT.
 
 The end goes to the agent as BTAK_DONE, its `result` 0 for a bond
 made - kept by the controller's address and the device's in
@@ -1796,9 +1801,10 @@ or until RemBTAgent, which refuses the pairing.
 
 The link stays up after the pairing; DisconnectBTDevice ends it. A
 pairing a device begins goes to the agent added last - over LE, a
-device asks for it with a Security Request. A bond is kept only where
-both sides ask for one; a pairing with the specification's debug key
-keeps none.
+device asks for it with a Security Request on a link this machine
+made, and begins it on a link it made itself, by Secure Connections
+alone (since 1.18). A bond is kept only where both sides ask for one;
+a pairing with the specification's debug key keeps none.
 
 **BUGS**
 
