@@ -4,12 +4,13 @@
 //!
 //! The speaker is in the text pen, with three waves before it: as many in
 //! the fill pen as the volume reaches - one up to a third, two up to two
-//! thirds, all three above - the rest in the track's. At 0 there is a
-//! cross where the waves would be, and on a machine without sound the
-//! speaker is struck through. It looks every second, so a volume set by
-//! Volume or in a shell (`Audio VOLUME 50`) shows at once. What it says:
-//! "Volume 60%, Speaker" - the output played through - or "No sound". A
-//! click on it runs SYS:Programs/Volume.
+//! thirds, all three above - the rest in the track's. At 0, and while the
+//! sound is off (`Audio MUTE`), there is a cross where the waves would be,
+//! and on a machine without sound the speaker is struck through. It looks
+//! every second, so a volume set by Volume or in a shell (`Audio VOLUME
+//! 50`) shows at once. What it says: "Volume 60%, Speaker" - the output
+//! played through - "Volume 60%, muted, Speaker", or "No sound". A click
+//! on it runs SYS:Programs/Volume.
 
 const sdk = @import("sdk");
 const audio = sdk.devices.audio;
@@ -20,6 +21,8 @@ pub const Data = struct {
     /// The device, opened for its triggers; null without sound.
     control: ?audiocontrol.Control = null,
     percent: u32 = 0,
+    /// The sound of the output played through is off.
+    muted: bool = false,
     /// The output played through, as the device names it.
     output: [32:0]u8 = @splat(0),
     read: bool = false,
@@ -29,7 +32,8 @@ pub const Data = struct {
 const Class = docklets.DockletClass(Data, .{
     .name = docklets.VOLUME_CLASS,
     .version = 1,
-    .date = "27.10.2026",
+    .revision = 1,
+    .date = "24.11.2026",
     .title = "Volume",
     .command = "SYS:Programs/Volume",
     .begin = begin,
@@ -63,19 +67,22 @@ fn look(base: *sdk.gadgets.Base, own: *Data) bool {
     };
     var info: audio.AudioInfo = .{};
     const percent = if (control.query(&info)) audiocontrol.percentOf(info.master) else 0;
+    const muted = info.muted != 0;
     var output: [32:0]u8 = @splat(0);
     if (info.output) |name| {
         var n: usize = 0;
         while (n < output.len and name[n] != 0) : (n += 1) output[n] = name[n];
     }
-    if (own.read and percent == own.percent and sameName(&output, &own.output)) return false;
+    if (own.read and percent == own.percent and muted == own.muted and sameName(&output, &own.output)) return false;
     own.read = true;
     own.percent = percent;
+    own.muted = muted;
     own.output = output;
+    const state: [*:0]const u8 = if (muted) ", muted" else "";
     if (output[0] != 0) {
-        _ = docklets.format(base.sys_base, &own.text, "Volume %u%%, %s", .{ percent, @as([*:0]const u8, &own.output) });
+        _ = docklets.format(base.sys_base, &own.text, "Volume %u%%%s, %s", .{ percent, state, @as([*:0]const u8, &own.output) });
     } else {
-        _ = docklets.format(base.sys_base, &own.text, "Volume %u%%", .{percent});
+        _ = docklets.format(base.sys_base, &own.text, "Volume %u%%%s", .{ percent, state });
     }
     return true;
 }
@@ -103,7 +110,7 @@ fn draw(own: *Data, f: *const docklets.Frame) void {
         f.line(back - 1, f.part(80, 100), f.part(88, 100), f.part(20, 100), p.text);
         return;
     }
-    const waves: u32 = if (own.percent == 0) 0 else if (own.percent <= 33) 1 else if (own.percent <= 66) 2 else 3;
+    const waves: u32 = if (own.percent == 0 or own.muted) 0 else if (own.percent <= 33) 1 else if (own.percent <= 66) 2 else 3;
     if (waves == 0) {
         // A cross where the waves would be.
         const cx = f.part(72, 100);

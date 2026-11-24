@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 //! audio.device's outputs and volumes, from a program: an open that takes
 //! no stream, and the commands that list the outputs, choose one, prefer
-//! one and set their volumes and equalizers - what a shell command, a
-//! preferences editor or a window with a volume slider all do.
+//! one, set their volumes and equalizers and switch their sound off and
+//! on - what a shell command, a preferences editor or a window with a
+//! volume slider all do.
 //!
 //! `Control.open` opens the device for triggers alone (`AUDIOF_TRIGGER`),
 //! which takes none of its streams, on a port of its own, and refuses a
@@ -257,10 +258,20 @@ pub const Control = struct {
     }
 
     /// The volume of the output of that number, there or not (0: the one
-    /// played through), in percent.
+    /// played through), in percent; its sound on, if it was off.
     pub fn setVolume(control: *Control, id: u32, percent: u32) void {
         control.io.volume = volumeOf(percent);
         _ = control.send(audio.AUDIOCMD_MASTER, id, null, 0);
+    }
+
+    /// The sound of the output of that number, there or not (0: the one
+    /// played through), off or on again, its volume kept: whether it was
+    /// off before. False from a device older than 2.17, which has no such
+    /// switch.
+    pub fn setMuted(control: *Control, id: u32, off: bool) bool {
+        control.io.std.actual = 0;
+        if (control.send(audio.AUDIOCMD_MUTE, id, null, @intFromBool(off)) != 0) return false;
+        return control.io.std.actual != 0;
     }
 
     /// Whether the device has an equalizer for each output: 2.12 on.

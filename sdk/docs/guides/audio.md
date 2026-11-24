@@ -258,6 +258,31 @@ part's range leaves over, so its sound leaves at full scale and its
 quiet end keeps every bit. Every other output has the master as a gain
 in the mix. The query's `master` is the master either way.
 
+## An output's sound off
+
+Since 2.17 **each output's sound can be off**, its volume kept:
+`AUDIOCMD_MUTE` with `std.length` 1 switches the sound of the output
+`output` names off - 0 the one played through - and with 0 on again;
+`std.actual` says 1 when it was off before. While it is off nothing
+leaves the output: one with a volume of its own has it set to 0, and
+the mix gives nothing whatever its range reaches. `AUDIOCMD_MASTER`
+puts it on again at the volume it sets, so a slider or a volume key
+moved while the sound is off is heard at once.
+
+```zig
+io.std.req.command = audio.AUDIOCMD_MUTE;
+io.std.length = 1; // off; 0: on
+io.output = 0;
+_ = sys.DoIO(&io.std.req);
+```
+
+`AudioOutputInfo.flags` has `AUDIOOF_MUTED` for an output whose sound
+is off, and the query's `muted` is 1 while the one played through is
+off - its `master` still the volume it plays at once on. It is kept in
+the table with the volume, for an output that is not playing too, but
+not in `audio.prefs`: every boot starts with the sound on, so a machine
+is never silent for a reason nothing shows before the desktop is up.
+
 ## An output's equalizer
 
 Since 2.12 **each output has its own equalizer**: ten bands an octave
@@ -340,6 +365,7 @@ var outputs: audiocontrol.Outputs = .{};
 outputs.read(&control);              // the list, with a chooser's labels
 _ = control.play(outputs.infos[1].id);
 control.setVolume(0, 60);            // the one played through, at 60%
+_ = control.setMuted(0, true);       // its sound off, the 60% kept
 _ = control.prefer(0x24B61A00);      // there or not
 if (control.hasEqualizer()) {
     const bands: audiocontrol.Bands = .{ 4, 3, 0, 0, 0, 0, 0, 2, 3, 0 };
@@ -396,7 +422,8 @@ Three places set it:
   Cancel puts back what was;
 - `SYS:Programs/Volume`, from its icon or the desktop's Anvil menu
   (**Volume...**): the output played through, its volume and its
-  equalizer, kept when the window closes.
+  equalizer, kept when the window closes, and Mute, which switches its
+  sound off and on and is not kept.
 
 Player has an Output chooser of its own, beside its volume, which plays
 every sound through the output picked, and an EQ chooser of the presets
@@ -1002,10 +1029,14 @@ Audio                         the output played through, its rate,
                               volume and equalizer; the preferred one;
                               the streams
 Audio LIST                    every output: name, number, sides, rates,
-                              volume, which plays and which is preferred
+                              volume, which are muted, which plays and
+                              which is preferred
 Audio OUTPUT es8311           play through that one from now on
 Audio PREFER ECD5FB99         prefer that one, there or not (NONE: none)
-Audio VOLUME 60               the one played through at 60%
+Audio VOLUME 60               the one played through at 60%, its
+                              sound on
+Audio MUTE                    its sound off, its volume kept; UNMUTE
+                              on again
 Audio EQ Techno               its equalizer: a preset, any case
 Audio EQ 4,3,0,0,0,0,0,2,3,0  or ten bands of dB, 31 Hz to 16 kHz
 Audio OUTPUT es8311 VOLUME 80 SAVE

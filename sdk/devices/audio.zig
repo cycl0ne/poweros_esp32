@@ -40,7 +40,8 @@
 //!                         device's, over every stream, as the output
 //!                         played through has it - or, with `output`
 //!                         another's number, as that output has it
-//!                         whenever it plays
+//!                         whenever it plays; an output whose sound was
+//!                         off (AUDIOCMD_MUTE) has it on again
 //!   AUDIOCMD_NEXTOUTPUT   the output after the one `output` names (0:
 //!                         the first), its number in `output` and its
 //!                         `AudioOutputInfo` to `std.data`, as much as
@@ -65,6 +66,11 @@
 //!                         or lowered that many dB, up to
 //!                         `AUDIO_EQ_RANGE`; `output` names the output,
 //!                         0 the one played through
+//!   AUDIOCMD_MUTE         an output's sound off - `std.length` 1 - or on
+//!                         again - 0; `output` names the output, 0 the one
+//!                         played through; `std.actual` says 1 when it
+//!                         was off before. Its volume stays as set and is
+//!                         what it plays at once its sound is on
 //!
 //! AbortIO takes a write back: one that waits, or the one that plays,
 //! which stops, the next going on. It takes a trigger back the same way.
@@ -149,6 +155,11 @@
 //! set there, and the mix gives it only what its range does not reach;
 //! the master reads the same.
 //!
+//! **Each output's sound can be off** (since 2.17), its volume kept:
+//! AUDIOCMD_MUTE, said by AUDIOOF_MUTED. Setting its volume puts it on
+//! again. It is not kept in the settings file: a machine starts with its
+//! sound on.
+//!
 //! **Each output has its own equalizer** (since 2.12): ten bands an
 //! octave apart, from 31 Hz to 16 kHz (`AUDIO_EQ_FREQUENCIES`), each
 //! raised or lowered by whole dB, up to `AUDIO_EQ_RANGE`. AUDIOCMD_EQUALIZER
@@ -209,6 +220,8 @@ pub const AUDIOCMD_TRIGGER: u16 = exec.CMD_NONSTD + 6;
 pub const AUDIOCMD_PREFEROUTPUT: u16 = exec.CMD_NONSTD + 7;
 /// Since 2.12.
 pub const AUDIOCMD_EQUALIZER: u16 = exec.CMD_NONSTD + 8;
+/// Since 2.17.
+pub const AUDIOCMD_MUTE: u16 = exec.CMD_NONSTD + 9;
 
 /// OpenDevice's flags: an open for triggers alone, which takes no stream.
 /// Since 2.6.
@@ -325,6 +338,9 @@ pub const AudioInfo = extern struct {
     /// The preferred output's number (AUDIOCMD_PREFEROUTPUT), there or
     /// not; 0 for none. Since 2.9.
     preferred_id: u32 = 0,
+    /// 1 while the sound of the output played through is off
+    /// (AUDIOCMD_MUTE), `master` its volume all the same. Since 2.17.
+    muted: u32 = 0,
 };
 
 /// How many of an output's rates `AudioOutputInfo` holds.
@@ -362,6 +378,8 @@ pub const AUDIOOF_DEFAULT: u32 = 1 << 0;
 pub const AUDIOOF_CURRENT: u32 = 1 << 1;
 /// The preferred one (AUDIOCMD_PREFEROUTPUT). Since 2.9.
 pub const AUDIOOF_PREFERRED: u32 = 1 << 2;
+/// Its sound is off (AUDIOCMD_MUTE). Since 2.17.
+pub const AUDIOOF_MUTED: u32 = 1 << 3;
 
 /// Bytes a frame takes in `format` with `channels` channels; 0 for a
 /// format the device does not know.

@@ -3,21 +3,22 @@
 //! how loud each is and what its equalizer does - shown and set. Built
 //! against the SDK only.
 //!
-//!   Audio OUTPUT/K,VOLUME/K/N,EQ/K,PREFER/K,LIST/S,SAVE/S
+//!   Audio OUTPUT/K,VOLUME/K/N,EQ/K,PREFER/K,MUTE/S,UNMUTE/S,LIST/S,SAVE/S
 //!
 //! On its own it shows what plays: the output played through, its rate,
 //! its sides and its volume, and its equalizer - the preset it is, or its
 //! bands; the output preferred, and whether it is there; the streams open
 //! and the sounds playing by trigger; the way in.
 //!
-//!   Output     es8311 (24B61A00), 48000 Hz, one side, volume 80%
+//!   Output     es8311 (24B61A00), 48000 Hz, one side, volume 80%, muted
 //!   Equalizer  Techno (7,6,3,0,-2,-2,0,2,4,5)
 //!   Preferred  QEMU USB Audio (ECD5FB99), not there
 //!   Streams    1 of 16, 0 of 8 sounds triggered
 //!   Input      es8311, one side
 //!
 //! LIST lists every output instead, its number, its sides and rates, its
-//! volume, and which is played through and which preferred; a preferred
+//! volume, whether its sound is off, and which is played through and which
+//! preferred; a preferred
 //! output that is not there by the name ENV:Sys/audio.prefs gives it. An
 //! output is named by its name, any case, or by its number as LIST shows
 //! it:
@@ -29,7 +30,12 @@
 //!   prefers none;
 //! - VOLUME sets how loud everything plays through the output played
 //!   through - OUTPUT's, when both are given - in percent of as recorded,
-//!   0 to 100; the device keeps it for that output;
+//!   0 to 100; the device keeps it for that output, and switches its
+//!   sound on if it was off;
+//! - MUTE switches the sound of the same output off, its volume kept, and
+//!   UNMUTE on again; after VOLUME, so `Audio VOLUME 30 MUTE` leaves it off
+//!   at 30%. The device starts every output's sound on: it is not kept in
+//!   the settings file;
 //! - EQ sets the equalizer of the same output: a preset by its name, any
 //!   case (`Audio EQ Techno`, `Audio EQ "More bass"`, `Audio EQ Flat`),
 //!   or ten numbers of dB split by commas, 31 Hz to 16 kHz, each -12 to
@@ -57,26 +63,29 @@ const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Audio";
-const VERSION_STRING = "\x00$VER: Audio 1.4 (27.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Audio 1.5 (24.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "OUTPUT/K,VOLUME/K/N,EQ/K,PREFER/K,LIST/S,SAVE/S";
+const template = "OUTPUT/K,VOLUME/K/N,EQ/K,PREFER/K,MUTE/S,UNMUTE/S,LIST/S,SAVE/S";
 const arg_output = 0;
 const arg_volume = 1;
 const arg_equalizer = 2;
 const arg_prefer = 3;
-const arg_list = 4;
-const arg_save = 5;
-const arg_count = 6;
+const arg_mute = 4;
+const arg_unmute = 5;
+const arg_list = 6;
+const arg_save = 7;
+const arg_count = 8;
 
 const MSG_NODEVICE = "%s: no %s - this machine has no sound\n";
 const MSG_NOOUTPUT = "%s: no output %s\n";
 const MSG_NOSTART = "%s: %s would not start\n";
 const MSG_BADVOLUME = "%s: VOLUME is 0 to 100 percent\n";
+const MSG_BADMUTE = "%s: MUTE or UNMUTE, not both\n";
 const MSG_BADEQ = "%s: EQ is a preset - %s - or ten numbers of dB, -12 to 12, split by commas\n";
 const MSG_NOEQ = "%s: %s has no equalizer\n";
 const MSG_NOTSAVED = "%s: %s could not be written\n";
-const MSG_OUTPUT = "Output     %s (%s), %u Hz, %s, volume %u%%\n";
+const MSG_OUTPUT = "Output     %s (%s), %u Hz, %s, volume %u%%%s\n";
 const MSG_SILENT = "Output     none\n";
 const MSG_EQUALIZER = "Equalizer  %s (%s)\n";
 const MSG_EQUALIZER_BANDS = "Equalizer  %s\n";
@@ -90,6 +99,7 @@ const MSG_LISTED = "%-20s %s  %s, ";
 const MSG_RATE = "%u ";
 const MSG_LISTED_END = "Hz, volume %u%%";
 const MSG_PLAYING = ", playing";
+const MSG_MUTED = ", muted";
 const MSG_PREFERS = ", preferred";
 const MSG_NEWLINE = "\n";
 const MSG_ABSENT = "%-20s %s  preferred, not there\n";
@@ -210,6 +220,7 @@ fn showState(dl: *DosBase, ub: *UtilityBase, control: *audiocontrol.Control, tex
             device.rate,
             sidesText(device.channels),
             audiocontrol.percentOf(device.master),
+            @as([*:0]const u8, if (device.muted != 0) MSG_MUTED else ""),
         });
         if (control.hasEqualizer()) showEqualizer(dl, &info.equalizer);
     } else _ = Printf(dl, MSG_SILENT, .{});
@@ -251,6 +262,7 @@ fn listOutputs(dl: *DosBase, ub: *UtilityBase, control: *audiocontrol.Control, t
         _ = Printf(dl, MSG_LISTED, .{ outputs.labels[at].?, hex(&number, info.id), sidesText(info.channels) });
         for (info.rates[0..info.rate_count]) |rate| _ = Printf(dl, MSG_RATE, .{rate});
         _ = Printf(dl, MSG_LISTED_END, .{audiocontrol.percentOf(info.volume)});
+        if (info.flags & audio.AUDIOOF_MUTED != 0) _ = Printf(dl, MSG_MUTED, .{});
         if (info.flags & audio.AUDIOOF_CURRENT != 0) _ = Printf(dl, MSG_PLAYING, .{});
         if (info.flags & audio.AUDIOOF_PREFERRED != 0) _ = Printf(dl, MSG_PREFERS, .{});
         _ = Printf(dl, MSG_NEWLINE, .{});
@@ -302,6 +314,12 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
             return dos.RETURN_ERROR;
         }
     }
+    const mute = argv[arg_mute] != 0;
+    const unmute = argv[arg_unmute] != 0;
+    if (mute and unmute) {
+        _ = Printf(dl, MSG_BADMUTE, .{COMMAND_NAME});
+        return dos.RETURN_ERROR;
+    }
 
     var control = audiocontrol.Control.open(sys) orelse {
         _ = Printf(dl, MSG_NODEVICE, .{ COMMAND_NAME, @as([*:0]const u8, audio.AUDIONAME) });
@@ -321,7 +339,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
 
     const output = rdargs.string(argv[arg_output]);
     const prefer = rdargs.string(argv[arg_prefer]);
-    const acted = output != null or prefer != null or volume != null or equalizer != null or argv[arg_save] != 0;
+    const acted = output != null or prefer != null or volume != null or equalizer != null or mute or unmute or argv[arg_save] != 0;
     if (output) |wanted| {
         const id = listed(&outputs, span(wanted)) orelse {
             _ = Printf(dl, MSG_NOOUTPUT, .{ COMMAND_NAME, wanted });
@@ -340,6 +358,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         _ = control.prefer(id);
     }
     if (volume) |percent| control.setVolume(0, @intCast(percent));
+    if (mute or unmute) _ = control.setMuted(0, mute);
     if (bands) |*wanted| {
         if (!control.hasEqualizer()) {
             _ = Printf(dl, MSG_NOEQ, .{ COMMAND_NAME, @as([*:0]const u8, audio.AUDIONAME) });

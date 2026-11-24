@@ -7,7 +7,9 @@
 //! The chooser lists audio.device's outputs and shows the one played
 //! through; picking another plays every sound going on through it from
 //! then on. The slider is that output's volume, in percent of as
-//! recorded, and changes it while it is dragged.
+//! recorded, and changes it while it is dragged. Mute switches its sound
+//! off, the slider keeping its volume, and on again; moving the slider
+//! switches it on too.
 //!
 //! Under them is that output's equalizer: a slider for each of its ten
 //! bands, 31 Hz to 16 kHz, from -12 dB at the bottom to +12 at the top,
@@ -25,7 +27,8 @@
 //! changed, what the device has then - each output's volume and
 //! equalizer, and the one preferred - is kept in ENV:Sys/audio.prefs and
 //! ENVARC:Sys/audio.prefs, so C:SetPrefs gives it back at the next boot;
-//! outputs the file names that are not plugged in keep their lines.
+//! outputs the file names that are not plugged in keep their lines. A
+//! sound switched off is not kept: every boot starts with it on.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -54,10 +57,11 @@ const pg = intuition.propgclass;
 const sl = sdk.gadgets.slider;
 const ch = sdk.gadgets.chooser;
 const tx = sdk.gadgets.text;
+const cb = sdk.gadgets.checkbox;
 
 pub const COMMAND_NAME = "Volume";
-const VERSION = "1.3";
-const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (27.10.2026)\r\n";
+const VERSION = "1.4";
+const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (24.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while the window is active.
 const SCREEN_TITLE = COMMAND_NAME ++ " " ++ VERSION;
@@ -72,6 +76,7 @@ const ID_OUTPUT = 1;
 const ID_VOLUME = 2;
 const ID_FLAT = 3;
 const ID_PRESET = 4;
+const ID_MUTE = 5;
 /// A band's slider's ID: this and the band.
 const ID_BAND = 16;
 
@@ -90,11 +95,13 @@ const App = struct {
     ib: *IntuitionBase,
     control: audiocontrol.Control,
     outputs: audiocontrol.Outputs = .{},
-    /// The volume shown, in percent.
+    /// The volume shown, in percent, and whether the sound is shown off.
     percent: u32 = 0,
+    muted: bool = false,
     window: ?*intuition.Window = null,
     output: *Object = undefined,
     volume: *Object = undefined,
+    mute: *Object = undefined,
     /// The equalizer shown - the output played through's - whether the
     /// device has one, and its gadgets: a slider and a value for each
     /// band, the value's text, the presets' chooser and the one it shows,
@@ -114,12 +121,18 @@ const App = struct {
         _ = app.ib.SetGadgetAttrsTagList(gadget, app.window, tags.ptr);
     }
 
-    /// The volume of the output played through, in percent; 100 with
-    /// none.
-    fn currentPercent(app: *App) u32 {
+    /// The volume of the output played through, in percent, and whether
+    /// its sound is off; 100 and on with none.
+    fn current(app: *App) Level {
         var device: audio.AudioInfo = .{};
-        if (!app.control.query(&device)) return 100;
-        return audiocontrol.percentOf(device.master);
+        if (!app.control.query(&device)) return .{};
+        return .{ .percent = audiocontrol.percentOf(device.master), .muted = device.muted != 0 };
+    }
+
+    /// The box shows the sound off or on.
+    fn showMuted(app: *App, muted: bool) void {
+        app.muted = muted;
+        app.set(app.mute, &.{ pair(cb.CHECKBOX_Checked, @intFromBool(muted)), .{} });
     }
 
     /// The outputs and the volume read again: the gadgets shown anew when
@@ -137,16 +150,18 @@ const App = struct {
                 .{},
             });
             app.set(app.volume, &.{ pair(gc.GA_Disabled, @intFromBool(app.outputs.count == 0)), .{} });
+            app.set(app.mute, &.{ pair(gc.GA_Disabled, @intFromBool(app.outputs.count == 0)), .{} });
             const no_bands = app.outputs.count == 0 or !app.equalizes;
             for (app.band_sliders) |slider| app.set(slider, &.{ pair(gc.GA_Disabled, @intFromBool(no_bands)), .{} });
             app.set(app.preset, &.{ pair(gc.GA_Disabled, @intFromBool(no_bands)), .{} });
             app.set(app.flat, &.{ pair(gc.GA_Disabled, @intFromBool(no_bands)), .{} });
         }
         app.lookBands();
-        const percent = app.currentPercent();
-        if (percent == app.percent) return;
-        app.percent = percent;
-        app.set(app.volume, &.{ pair(sl.SLIDER_Level, percent), .{} });
+        const level = app.current();
+        if (level.muted != app.muted) app.showMuted(level.muted);
+        if (level.percent == app.percent) return;
+        app.percent = level.percent;
+        app.set(app.volume, &.{ pair(sl.SLIDER_Level, level.percent), .{} });
     }
 
     /// The output picked: every sound of the machine played through it.
@@ -166,6 +181,15 @@ const App = struct {
         app.percent = percent;
         app.control.setVolume(0, percent);
         app.changed = true;
+        // A volume set switches the sound on.
+        if (app.muted) app.showMuted(false);
+    }
+
+    /// The box turned over: the sound of the output played through off or
+    /// on, its volume as it is. Not a setting the file keeps.
+    fn takeMute(app: *App, checked: bool) void {
+        app.muted = checked;
+        _ = app.control.setMuted(0, checked);
     }
 
     /// The equalizer of the output played through read again: the bands
@@ -377,6 +401,12 @@ const App = struct {
 };
 
 /// A band's dB as its value shows it: +4, 0, -12.
+/// The volume of the output played through and whether its sound is off.
+const Level = struct {
+    percent: u32 = 100,
+    muted: bool = false,
+};
+
 fn dbText(into: *[4:0]u8, db: i8) void {
     var n: usize = 0;
     if (db != 0) {
@@ -399,9 +429,9 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer sys.CloseLibrary(dos_lib);
     const dl: *DosBase = @ptrCast(dos_lib);
 
-    var libraries: [6]?*exec.Library = @splat(null);
+    var libraries: [7]?*exec.Library = @splat(null);
     defer for (libraries) |lib| sys.CloseLibrary(lib);
-    const wanted = [_][*:0]const u8{ intuition.INTUITIONNAME, motion.MOTIONNAME, sl.SLIDER_LIBRARY, ch.CHOOSER_LIBRARY, tx.TEXT_LIBRARY, sdk.utility.UTILITYNAME };
+    const wanted = [_][*:0]const u8{ intuition.INTUITIONNAME, motion.MOTIONNAME, sl.SLIDER_LIBRARY, ch.CHOOSER_LIBRARY, tx.TEXT_LIBRARY, sdk.utility.UTILITYNAME, cb.CHECKBOX_LIBRARY };
     for (wanted, 0..) |name, i| {
         libraries[i] = sys.OpenLibrary(name, 0) orelse {
             _ = Printf(dl, MSG_NOLIBRARY, .{ COMMAND_NAME, name });
@@ -422,7 +452,9 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     };
     defer app.control.close();
     app.outputs.read(&app.control);
-    app.percent = app.currentPercent();
+    const level = app.current();
+    app.percent = level.percent;
+    app.muted = level.muted;
     app.equalizes = app.control.hasEqualizer();
     if (app.equalizes) {
         var info: audio.AudioOutputInfo = .{};
@@ -457,9 +489,22 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         _ = Printf(dl, MSG_NOMEMORY, .{COMMAND_NAME});
         return dos.RETURN_FAIL;
     };
+    app.mute = ib.NewObjectTagList(null, cb.CHECKBOX_CLASS, &[_]TagItem{
+        pair(gc.GA_ID, ID_MUTE),
+        pair(gc.GA_RelVerify, 1),
+        pair(gc.GA_Disabled, @intFromBool(none)),
+        pair(cb.CHECKBOX_Checked, @intFromBool(app.muted)),
+        .{},
+    }) orelse {
+        ib.DisposeObject(app.output);
+        ib.DisposeObject(app.volume);
+        _ = Printf(dl, MSG_NOMEMORY, .{COMMAND_NAME});
+        return dos.RETURN_FAIL;
+    };
     const equalizer = app.makeEqualizer(none or !app.equalizes) orelse {
         ib.DisposeObject(app.output);
         ib.DisposeObject(app.volume);
+        ib.DisposeObject(app.mute);
         _ = Printf(dl, MSG_NOMEMORY, .{COMMAND_NAME});
         return dos.RETURN_FAIL;
     };
@@ -472,11 +517,15 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         pair(lg.LAYOUTA_AddChild, @intFromPtr(app.volume)),
         pair(lg.CHILDA_Label, @intFromPtr("_Volume")),
         pair(lg.CHILDA_WeightHeight, 0),
+        pair(lg.LAYOUTA_AddChild, @intFromPtr(app.mute)),
+        pair(lg.CHILDA_Label, @intFromPtr("_Mute")),
+        pair(lg.CHILDA_WeightHeight, 0),
         pair(lg.LAYOUTA_AddChild, @intFromPtr(equalizer)),
         .{},
     }) orelse {
         ib.DisposeObject(app.output);
         ib.DisposeObject(app.volume);
+        ib.DisposeObject(app.mute);
         ib.DisposeObject(equalizer);
         _ = Printf(dl, MSG_NOMEMORY, .{COMMAND_NAME});
         return dos.RETURN_FAIL;
@@ -536,6 +585,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
                 wc.WMHI_GADGETUP => switch (word & wc.WMHI_GADGETMASK) {
                     ID_OUTPUT => app.pickOutput(code),
                     ID_VOLUME => app.takeVolume(code),
+                    ID_MUTE => app.takeMute(code != 0),
                     ID_FLAT => app.flatten(),
                     ID_PRESET => app.takePreset(code),
                     ID_BAND...ID_BAND + band_count - 1 => |id| app.readBand(id - ID_BAND),

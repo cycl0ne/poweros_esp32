@@ -61,6 +61,11 @@
 //! range does not reach, so its sound leaves at full scale; for any other
 //! the master is a gain in the mix.
 //!
+//! The table keeps whether each output's sound is off too (AUDIOCMD_MUTE):
+//! one that is off is handed none - its part a volume of 0, the mix no
+//! gain - while its volume stays in the table for when it is on again,
+//! which AUDIOCMD_MASTER puts it.
+//!
 //! The table keeps each output's equalizer too (AUDIOCMD_EQUALIZER): its
 //! bands, in dB. Starting an output tunes the mixer's bands
 //! (`mixer.Equalizer`) to its curve at the rate it runs in, flat for one
@@ -128,8 +133,8 @@ const recorder = @import("recorder.zig");
 
 pub const DEVICE_NAME = audio.AUDIONAME;
 const DEVICE_VERSION = 2;
-const DEVICE_REVISION = 16;
-const BUILD_DATE = "18.11.2026";
+const DEVICE_REVISION = 17;
+const BUILD_DATE = "24.11.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++
@@ -178,7 +183,8 @@ const Kept = extern struct {
     /// in force.
     has_volume: u8 = 0,
     bands: Bands = @splat(0),
-    pad: u8 = 0,
+    /// Whether its sound is off (AUDIOCMD_MUTE).
+    muted: u8 = 0,
 };
 
 /// One stream: what an open made, and what every request on it points at
@@ -250,8 +256,11 @@ const AudioBase = extern struct {
     /// output's that plays, from `kept`.
     master: u32 = audio.AUDIO_VOLUME_UNITY,
     /// What the mix gives of it: all of it, or what the output's own
-    /// volume leaves over.
+    /// volume leaves over; none while the output's sound is off.
     gain: u32 = audio.AUDIO_VOLUME_UNITY,
+    /// Whether the sound of the output played through is off
+    /// (AUDIOCMD_MUTE): from `kept`, as the master is.
+    muted: u32 = 0,
     /// What was set for each output - its volume, its equalizer - and the
     /// count of settings made.
     kept: [audio.AUDIO_MAX_VOLUMES]Kept = @splat(.{}),
@@ -364,6 +373,7 @@ fn attachSink(ab: *AudioBase, sink: *rta.AudioSink) bool {
     ab.rate = mode.rate;
     ab.sides = sidesOf(mode);
     if (volumeOf(ab, sink.id)) |volume| ab.master = volume;
+    ab.muted = @intFromBool(mutedOf(ab, sink.id));
     applyMaster(ab);
     ab.bands = bandsOf(ab, sink.id);
     ab.equalizer.tune(&ab.bands, ab.rate);
@@ -512,6 +522,15 @@ fn volumeOf(ab: *const AudioBase, id: u32) ?u32 {
     return null;
 }
 
+/// Whether the sound of the output of that number is off.
+fn mutedOf(ab: *const AudioBase, id: u32) bool {
+    if (id == 0) return false;
+    for (&ab.kept) |*kept| {
+        if (kept.id == id) return kept.muted != 0;
+    }
+    return false;
+}
+
 /// The equalizer set for the output of that number: flat for none.
 fn bandsOf(ab: *const AudioBase, id: u32) Bands {
     if (id != 0) {
@@ -550,12 +569,13 @@ fn keptFor(ab: *AudioBase, id: u32) *Kept {
     return &ab.kept[place];
 }
 
-/// The output of that number's volume kept.
+/// The output of that number's volume kept, and its sound on.
 fn keepVolume(ab: *AudioBase, id: u32, volume: u32) void {
     if (id == 0) return;
     const kept = keptFor(ab, id);
     kept.volume = volume;
     kept.has_volume = 1;
+    kept.muted = 0;
 }
 
 /// The output of that number's equalizer kept.
@@ -565,14 +585,32 @@ fn keepBands(ab: *AudioBase, id: u32, bands: *const Bands) void {
 }
 
 /// AUDIOCMD_MASTER: the volume of the output `output` names, or of the one
-/// played through for 0 - in force at once when it is that one.
+/// played through for 0 - in force at once when it is that one - and its
+/// sound on again where it was off.
 fn setMaster(ab: *AudioBase, output: u32, volume: u32) void {
     const playing: u32 = if (ab.sink) |sink| sink.id else 0;
     const id = if (output != 0) output else playing;
     keepVolume(ab, id, volume);
     if (id != playing) return;
     ab.master = volume;
+    ab.muted = 0;
     applyMaster(ab);
+}
+
+/// AUDIOCMD_MUTE: the sound of the output `output` names, or of the one
+/// played through for 0, off or on again - at once when it is that one;
+/// whether it was off before. Under the device's lock.
+fn setMuted(ab: *AudioBase, output: u32, off: bool) bool {
+    const playing: u32 = if (ab.sink) |sink| sink.id else 0;
+    const id = if (output != 0) output else playing;
+    if (id == 0) return false;
+    const kept = keptFor(ab, id);
+    const was = kept.muted != 0;
+    kept.muted = @intFromBool(off);
+    if (id != playing) return was;
+    ab.muted = @intFromBool(off);
+    applyMaster(ab);
+    return was;
 }
 
 /// AUDIOCMD_EQUALIZER: the bands of the output `output` names, or of the
@@ -597,12 +635,15 @@ fn bandsValid(bands: *const Bands) bool {
 
 /// The master in force handed to the output played through: set at its
 /// part when it has a volume of its own, the mix giving what is left;
-/// all of it a gain in the mix otherwise. Under the device's lock.
+/// all of it a gain in the mix otherwise. While its sound is off the part
+/// is set to 0 and the mix gives nothing, whatever the part's range
+/// reaches. Under the device's lock.
 fn applyMaster(ab: *AudioBase) void {
-    ab.gain = ab.master;
+    const level: u32 = if (ab.muted != 0) 0 else ab.master;
+    ab.gain = level;
     const sink = ab.sink orelse return;
-    const rest = ab.rta_base.SinkControl(sink, rta.sinks.AUDIOCTRL_VOLUME, @intCast(ab.master));
-    if (rest >= 0) ab.gain = @intCast(@min(rest, @as(isize, audio.AUDIO_VOLUME_MAX)));
+    const rest = ab.rta_base.SinkControl(sink, rta.sinks.AUDIOCTRL_VOLUME, @intCast(level));
+    if (rest >= 0 and ab.muted == 0) ab.gain = @intCast(@min(rest, @as(isize, audio.AUDIO_VOLUME_MAX)));
 }
 
 /// AUDIOCMD_PREFEROUTPUT, on the task: the output of that number
@@ -681,6 +722,7 @@ fn outputInfoOf(ab: *AudioBase, sink: *rta.AudioSink) audio.AudioOutputInfo {
     if (sink == ab.rta_base.NextSink(null)) info.flags |= audio.AUDIOOF_DEFAULT;
     if (sink == ab.sink) info.flags |= audio.AUDIOOF_CURRENT;
     if (sink.id == ab.preferred) info.flags |= audio.AUDIOOF_PREFERRED;
+    if (if (sink == ab.sink) ab.muted != 0 else mutedOf(ab, sink.id)) info.flags |= audio.AUDIOOF_MUTED;
     info.volume = if (sink == ab.sink) ab.master else volumeOf(ab, sink.id) orelse ab.master;
     info.equalizer = if (sink == ab.sink) ab.bands else bandsOf(ab, sink.id);
     var it = sink.modes.iterator();
@@ -1386,6 +1428,7 @@ fn infoOf(ab: *AudioBase) audio.AudioInfo {
     }
     const sink = ab.sink orelse return info;
     const mode = ab.rta_base.SinkMode(sink).?;
+    info.muted = ab.muted;
     info.rate = mode.rate;
     info.channels = mode.channels;
     info.bits = mode.bits;
@@ -1468,6 +1511,15 @@ fn beginIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) void {
             // the output played through.
             const output = if (io.message.length < @sizeOf(IOAudio)) 0 else ioa.output;
             if (ioa.volume <= audio.AUDIO_VOLUME_MAX) setMaster(ab, output, ioa.volume) else io.err = audio.AUDIOERR_BADFORMAT;
+        },
+        audio.AUDIOCMD_MUTE => {
+            // The output in `output`, which a request from before the
+            // output commands has not got.
+            if (io.message.length < @sizeOf(IOAudio) or ioa.std.length > 1) {
+                io.err = exec.IOERR_BADLENGTH;
+            } else {
+                ioa.std.actual = @intFromBool(setMuted(ab, ioa.output, ioa.std.length == 1));
+            }
         },
         audio.AUDIOCMD_EQUALIZER => {
             // The bands in `std.data`; the output in `output`, which a
@@ -2604,6 +2656,83 @@ test "each output keeps its own equalizer: the one played through is heard throu
     detachSink(ab);
     rb.DeleteSink(line_out);
     rb.DeleteSink(headphones);
+    try testDeviceGone(ab, &.{port});
+}
+
+test "an output's sound off and on again: its volume kept, its part and the mix given none; a volume set puts it on; each output its own" {
+    const ab = try testDevice();
+    defer kexec.deinit();
+    const sys = kexec.SysBase.iface();
+    const rb = ab.rta_base;
+    const port = sys.CreateMsgPort().?;
+    var io = requestFor(ab, port);
+    try testing.expectEqual(@as(i32, 0), openStream(ab, &io));
+    const own_tags = [_]sdk.utility.TagItem{
+        .{ .tag = rta.tags.RTAA_Name, .data = @intFromPtr("USB speaker") },
+        .{ .tag = rta.tags.RTAA_Priority, .data = @bitCast(@as(isize, -1)) },
+        .{ .tag = capture.own_volume, .data = 1 },
+        .{},
+    };
+    const usb_speaker = rb.CreateSinkTagList(capture.DRIVER_NAME, &own_tags).?;
+    const speaker = ab.sink.?;
+    const note = pcm16(&.{ 1000, 1000, 1000, 1000, 1000, 1000 });
+    var write = requestFor(ab, port);
+    sendWrite(&write, &io, &note, 0);
+
+    // The speaker, which has no volume of its own, at half: off is no
+    // gain at all, its volume kept and said.
+    var master = requestFor(ab, port);
+    master.volume = audio.AUDIO_VOLUME_UNITY / 2;
+    try testing.expectEqual(@as(i32, 0), command(&master, &io, audio.AUDIOCMD_MASTER));
+    var mute = requestFor(ab, port);
+    mute.std.length = 1;
+    try testing.expectEqual(@as(i32, 0), command(&mute, &io, audio.AUDIOCMD_MUTE));
+    try testing.expectEqual(@as(u64, 0), mute.std.actual);
+    try testing.expectEqual(@as(i16, 0), mix(ab, 1)[0]);
+    try testing.expectEqual(audio.AUDIO_VOLUME_UNITY / 2, ab.master);
+    const info = outputInfoOf(ab, speaker);
+    try testing.expect(info.flags & audio.AUDIOOF_MUTED != 0);
+    try testing.expectEqual(audio.AUDIO_VOLUME_UNITY / 2, info.volume);
+    var device_info: audio.AudioInfo = .{};
+    var query = requestFor(ab, port);
+    query.std.data = &device_info;
+    query.std.length = @sizeOf(audio.AudioInfo);
+    try testing.expectEqual(@as(i32, 0), command(&query, &io, audio.AUDIOCMD_QUERY));
+    try testing.expectEqual(@as(u32, 1), device_info.muted);
+    try testing.expectEqual(audio.AUDIO_VOLUME_UNITY / 2, device_info.master);
+    // On again: half; it was off.
+    mute.std.length = 0;
+    try testing.expectEqual(@as(i32, 0), command(&mute, &io, audio.AUDIOCMD_MUTE));
+    try testing.expectEqual(@as(u64, 1), mute.std.actual);
+    try testing.expectEqual(@as(i16, 500), mix(ab, 1)[0]);
+    try testing.expect(outputInfoOf(ab, speaker).flags & audio.AUDIOOF_MUTED == 0);
+    // Off, and a volume set puts it on at that volume.
+    mute.std.length = 1;
+    try testing.expectEqual(@as(i32, 0), command(&mute, &io, audio.AUDIOCMD_MUTE));
+    master.volume = audio.AUDIO_VOLUME_UNITY / 4;
+    try testing.expectEqual(@as(i32, 0), command(&master, &io, audio.AUDIOCMD_MASTER));
+    try testing.expectEqual(@as(i16, 250), mix(ab, 1)[0]);
+    // A length that is no answer.
+    mute.std.length = 2;
+    try testing.expectEqual(@as(i32, exec.IOERR_BADLENGTH), command(&mute, &io, audio.AUDIOCMD_MUTE));
+
+    // The USB speaker's sound off while it does not play: kept for it, and
+    // its part given a volume of 0 once it plays; the speaker's sound on.
+    mute.std.length = 1;
+    mute.output = usb_speaker.id;
+    try testing.expectEqual(@as(i32, 0), command(&mute, &io, audio.AUDIOCMD_MUTE));
+    try testing.expect(outputInfoOf(ab, usb_speaker).flags & audio.AUDIOOF_MUTED != 0);
+    try testing.expect(outputInfoOf(ab, speaker).flags & audio.AUDIOOF_MUTED == 0);
+    var ask = requestFor(ab, port);
+    try testing.expectEqual(@as(i8, 0), outputCommand(ab, &ask, &io, audio.AUDIOCMD_SETOUTPUT, usb_speaker.id, null));
+    try testing.expectEqual(@as(u32, 0), capture.instanceOf(usb_speaker).volume);
+    try testing.expectEqual(@as(i16, 0), mix(ab, 1)[0]);
+    // Back on the speaker: its sound on, at its quarter.
+    try testing.expectEqual(@as(i8, 0), outputCommand(ab, &ask, &io, audio.AUDIOCMD_SETOUTPUT, speaker.id, null));
+    try testing.expectEqual(@as(i16, 250), mix(ab, 1)[0]);
+
+    _ = close(&ab.dev, &io.std.req);
+    try testing.expect(replied(port) == &write.std.req.message);
     try testDeviceGone(ab, &.{port});
 }
 
