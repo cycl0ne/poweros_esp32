@@ -14,7 +14,8 @@
 //! library makes an LE link: a controller initiates to one device at a
 //! time, and one that scans may not initiate. `update` sets it after
 //! every packet and every tick, and after each block that waits is
-//! opened or closed.
+//! opened or closed. LE's advertising makes way for it where the
+//! controller cannot do both (advertising.zig).
 //!
 //! **Each advertiser is reported once** while it is on - the controller
 //! filters the duplicates - and again once it is turned on afresh, which
@@ -30,6 +31,7 @@ const bluetooth = sdk.bluetooth;
 const hci = bluetooth.hci;
 const _hci = @import("_hci.zig");
 const Hci = _hci.Hci;
+const advertising = @import("advertising.zig");
 const bonds = @import("bonds.zig");
 const connections = @import("connections.zig");
 const discovery = @import("discovery.zig");
@@ -71,7 +73,8 @@ pub fn update(layer: *Hci) void {
 }
 
 /// The controller asked to scan, passively, reporting each advertiser
-/// once - or, with no room for the commands, the scan tried later.
+/// once - its advertising stopped first where it cannot do both - or,
+/// with no room for the commands, the scan tried later.
 fn begin(layer: *Hci) void {
     const params = [_]u8{
         hci.LE_SCAN_PASSIVE,
@@ -82,8 +85,9 @@ fn begin(layer: *Hci) void {
         hci.LE_ADDR_PUBLIC, // its own address: a passive scan sends nothing
         0, // every advertiser, and what is directed at this one
     };
-    if (_hci.QUEUE - layer.queue_count < 2 or
-        !_hci.command(layer, hci.HCI_OP_LE_SET_SCAN_PARAMETERS, &params, _hci.COMMAND_TIMEOUT_MS) or
+    if (_hci.QUEUE - layer.queue_count < 3) return later(layer);
+    advertising.makeWay(layer, hci.LE_STATE_ADV_PASSIVE_SCAN);
+    if (!_hci.command(layer, hci.HCI_OP_LE_SET_SCAN_PARAMETERS, &params, _hci.COMMAND_TIMEOUT_MS) or
         !_hci.command(layer, hci.HCI_OP_LE_SET_SCAN_ENABLE, &.{ 1, 1 }, _hci.COMMAND_TIMEOUT_MS))
     {
         return later(layer);

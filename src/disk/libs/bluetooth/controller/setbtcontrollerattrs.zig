@@ -27,14 +27,16 @@ const _task = @import("../task/_task.zig");
 ///   - `BTCA_Name` ([*:0]const u8) - the name it shows others, UTF-8, cut
 ///     to 247 bytes (whole characters); an empty one, or null, gives it
 ///     the machine's again (`ENVARC:Sys/net/hostname`, or "PowerOS").
-///   - `BTCA_Visible` (u32) - found by others who look, for that many
-///     seconds; 0 for not at all, BT_VISIBLE_ALWAYS until told otherwise.
+///   - `BTCA_Visible` (u32) - found by others who look - inquiries
+///     answered, and advertising over LE - for that many seconds; 0 for
+///     not at all, BT_VISIBLE_ALWAYS until told otherwise.
 ///
 /// RESULT:
 /// 0 once it is done; BTERR_NOCONTROLLER for no such controller,
 /// BTERR_NOTUP for one that is not up (or, with BT_ALL_CONTROLLERS, when
-/// none is), BTERR_UNSUPPORTED for visible asked of a controller without
-/// BR/EDR, BTERR_NOMEM when its commands could not be queued. With
+/// none is), BTERR_UNSUPPORTED for visible asked of a controller that can
+/// neither answer inquiries nor advertise, BTERR_NOMEM when its commands
+/// could not be queued. With
 /// BT_ALL_CONTROLLERS, the first failure of any.
 ///
 /// BEHAVIOR:
@@ -43,11 +45,17 @@ const _task = @import("../task/_task.zig");
 /// Write Local Name and its extended inquiry response for the name. The
 /// call returns once the commands are queued, not when they are answered.
 ///
+/// Over LE it advertises while it is on and visible, so that a device may
+/// link to it: its name, and that it is a computer, every 100 to 150 ms
+/// from its public address. It makes way for a scan or a link it cannot
+/// advertise beside - LE Read Supported States says which - and goes on
+/// after, BTCF_ADVERTISING set while it advertises; a name changed is
+/// advertised at once.
+///
 /// On, visible until told otherwise and the name are kept for the
 /// controller's next start, by its address: in
 /// `ENVARC:Sys/bluetooth/<address>/` (`settings`, `name`). Visible for a
-/// time is not: it ends at its time, and a start ends it. Over LE the
-/// controller is not seen at all: it does not advertise.
+/// time is not: it ends at its time, and a start ends it.
 ///
 /// Whoever asked with AddBTNotify is told, and BTController's `flags`,
 /// `visible_left` and `name` say what it does now.
@@ -63,7 +71,8 @@ const _task = @import("../task/_task.zig");
 /// The tags and the name are the caller's: the name is copied.
 ///
 /// NOTES:
-/// A controller without settings of its own is on and not visible.
+/// A controller without settings of its own is on and not visible. Visible
+/// advertises over LE since 1.16.
 ///
 /// BUGS:
 /// None known.

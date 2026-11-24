@@ -87,6 +87,10 @@ pub const HCI_OP_READ_ENCRYPTION_KEY_SIZE: u16 = 0x1408;
 pub const HCI_OP_LE_SET_EVENT_MASK: u16 = 0x2001;
 pub const HCI_OP_LE_READ_BUFFER_SIZE: u16 = 0x2002;
 pub const HCI_OP_LE_READ_LOCAL_FEATURES: u16 = 0x2003;
+pub const HCI_OP_LE_SET_ADVERTISING_PARAMETERS: u16 = 0x2006;
+pub const HCI_OP_LE_SET_ADVERTISING_DATA: u16 = 0x2008;
+pub const HCI_OP_LE_SET_SCAN_RESPONSE_DATA: u16 = 0x2009;
+pub const HCI_OP_LE_SET_ADVERTISING_ENABLE: u16 = 0x200A;
 pub const HCI_OP_LE_SET_SCAN_PARAMETERS: u16 = 0x200B;
 pub const HCI_OP_LE_SET_SCAN_ENABLE: u16 = 0x200C;
 pub const HCI_OP_LE_CREATE_CONNECTION: u16 = 0x200D;
@@ -94,6 +98,7 @@ pub const HCI_OP_LE_CREATE_CONNECTION_CANCEL: u16 = 0x200E;
 pub const HCI_OP_LE_CONNECTION_UPDATE: u16 = 0x2013;
 pub const HCI_OP_LE_READ_REMOTE_FEATURES: u16 = 0x2016;
 pub const HCI_OP_LE_ENABLE_ENCRYPTION: u16 = 0x2019;
+pub const HCI_OP_LE_READ_SUPPORTED_STATES: u16 = 0x201C;
 pub const HCI_OP_LE_REMOTE_PARAMETERS_REPLY: u16 = 0x2020;
 pub const HCI_OP_LE_REMOTE_PARAMETERS_NEGATIVE_REPLY: u16 = 0x2021;
 
@@ -356,6 +361,10 @@ pub const CMDBIT_WRITE_LE_HOST_SUPPORTED: u16 = 198;
 pub const CMDBIT_LE_SET_EVENT_MASK: u16 = 200;
 pub const CMDBIT_LE_READ_BUFFER_SIZE: u16 = 201;
 pub const CMDBIT_LE_READ_LOCAL_FEATURES: u16 = 202;
+pub const CMDBIT_LE_SET_ADVERTISING_PARAMETERS: u16 = 205;
+pub const CMDBIT_LE_SET_ADVERTISING_DATA: u16 = 207;
+pub const CMDBIT_LE_SET_SCAN_RESPONSE_DATA: u16 = 208;
+pub const CMDBIT_LE_SET_ADVERTISING_ENABLE: u16 = 209;
 pub const CMDBIT_LE_SET_SCAN_PARAMETERS: u16 = 210;
 pub const CMDBIT_LE_SET_SCAN_ENABLE: u16 = 211;
 pub const CMDBIT_LE_CREATE_CONNECTION: u16 = 212;
@@ -363,6 +372,7 @@ pub const CMDBIT_LE_CREATE_CONNECTION_CANCEL: u16 = 213;
 pub const CMDBIT_LE_CONNECTION_UPDATE: u16 = 218;
 pub const CMDBIT_LE_READ_REMOTE_FEATURES: u16 = 221;
 pub const CMDBIT_LE_ENABLE_ENCRYPTION: u16 = 224;
+pub const CMDBIT_LE_READ_SUPPORTED_STATES: u16 = 227;
 pub const CMDBIT_LE_REMOTE_PARAMETERS_REPLY: u16 = 268;
 pub const CMDBIT_LE_REMOTE_PARAMETERS_NEGATIVE_REPLY: u16 = 269;
 pub const CMDBIT_WRITE_SECURE_CONNECTIONS_HOST_SUPPORT: u16 = 259;
@@ -410,6 +420,25 @@ pub const LE_ADDR_PUBLIC_IDENTITY: u8 = 0x02;
 pub const LE_ADDR_RANDOM_IDENTITY: u8 = 0x03;
 /// A report's RSSI when the controller has none.
 pub const LE_RSSI_NONE: i8 = 127;
+
+/// LE Set Advertising Parameters' type is a report's event type: LE_ADV_IND
+/// for advertising that may be connected to and scanned, undirected. Its
+/// channels: all three. The most an advertisement, and a scan response,
+/// carries.
+pub const LE_ADV_CHANNELS_ALL: u8 = 0x07;
+pub const LE_ADV_DATA_SIZE: usize = 31;
+
+/// The states LE Read Supported States answers, and those of them a
+/// controller takes on together, by their bit in its 8 bytes - bit `n % 8`
+/// of byte `n / 8`: advertising that may be connected to, and it beside a
+/// passive scan, an active scan, initiating, a link where the controller
+/// is the central, and a link where it is the peripheral.
+pub const LE_STATE_ADV: u8 = 2;
+pub const LE_STATE_ADV_PASSIVE_SCAN: u8 = 10;
+pub const LE_STATE_ADV_ACTIVE_SCAN: u8 = 14;
+pub const LE_STATE_ADV_INITIATING: u8 = 32;
+pub const LE_STATE_ADV_CENTRAL: u8 = 35;
+pub const LE_STATE_ADV_PERIPHERAL: u8 = 38;
 
 /// What an advertisement and an extended inquiry response carry: a run
 /// of structures, each its length (1 byte, its type and data), its type

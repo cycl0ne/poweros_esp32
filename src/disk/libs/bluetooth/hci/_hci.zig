@@ -3,7 +3,8 @@
 //! sends, within the controller's credits; the events it takes, each
 //! answer matched to the command it answers; a time-out for each command;
 //! what the controller said it is, which bringup.zig asks for; what it
-//! shows others and whether it is on (local.zig); the devices it found
+//! shows others and whether it is on (local.zig), and over LE its
+//! advertising while it is visible (advertising.zig); the devices it found
 //! (discovery.zig, devices.zig); its links to devices (connections.zig),
 //! and the scan that makes them to the devices GATT blocks wait for
 //! (scan.zig)
@@ -34,8 +35,8 @@
 //!
 //! **Its own times** - a discovery's phase, the end of being visible for
 //! a time, a link being made or ended, a pairing and its agent's answer,
-//! a channel's or a GATT request's answer, the background scan tried
-//! again - are deadlines like a command's:
+//! a channel's or a GATT request's answer, the background scan and the
+//! advertising tried again - are deadlines like a command's:
 //! `nextDeadline` answers the earliest of them all, and `tick` runs
 //! whichever has passed.
 
@@ -44,6 +45,7 @@ const bluetooth = sdk.bluetooth;
 const hci = bluetooth.hci;
 const hcidev = sdk.devices.hci;
 const acl = @import("acl.zig");
+const advertising = @import("advertising.zig");
 const bonds = @import("bonds.zig");
 const bringup = @import("bringup.zig");
 const connections = @import("connections.zig");
@@ -152,6 +154,11 @@ pub const Hci = struct {
     /// The highest feature page it has.
     max_page: u8 = 0,
     le_features: [8]u8 = @splat(0),
+    /// LE's states and those it takes on together (hci.LE_STATE_*), and
+    /// whether it said them: until it has, it is taken to do none of them
+    /// together.
+    le_states: [8]u8 = @splat(0),
+    have_states: bool = false,
     commands: [64]u8 = @splat(0),
     /// Whether it answered Read Local Supported Commands: until it has,
     /// every command is taken to be there.
@@ -180,8 +187,10 @@ pub const Hci = struct {
     /// Its discovery, and what it found.
     discovery: discovery.Discovery = .{},
     devices: [devices.DEVICES]devices.Device = @splat(.{}),
-    /// The scan for the devices GATT blocks wait for (scan.zig).
+    /// The scan for the devices GATT blocks wait for (scan.zig), and LE's
+    /// advertising (advertising.zig).
     scan: scan.Scan = .{},
+    advertising: advertising.Advertising = .{},
 
     /// Its links (connections.zig) and the calls waiting on them; the
     /// ACL data's (acl.zig): the frames waiting to be sent, how many, the
@@ -249,6 +258,12 @@ pub fn leFeature(layer: *const Hci, n: u8) bool {
     return layer.le_features[n / 8] & (@as(u8, 1) << @intCast(n % 8)) != 0;
 }
 
+/// Whether LE state or combination of states `n` (hci.LE_STATE_*) is one
+/// the controller said it takes on.
+pub fn leState(layer: *const Hci, n: u8) bool {
+    return layer.le_states[n / 8] & (@as(u8, 1) << @intCast(n % 8)) != 0;
+}
+
 /// Whether the controller takes the command at bit `n` of its mask (any,
 /// while it has not said).
 pub fn supports(layer: *const Hci, n: u16) bool {
@@ -279,6 +294,7 @@ pub fn start(layer: *Hci) void {
     layer.wants_settings = false;
     discovery.reset(layer);
     scan.reset(layer);
+    advertising.reset(layer);
     connections.reset(layer, hci.HCI_ERR_HARDWARE_FAILURE);
     bringup.next(layer);
 }
@@ -294,6 +310,7 @@ pub fn fail(layer: *Hci, failure: i32) void {
     layer.wants_settings = false;
     discovery.reset(layer);
     scan.reset(layer);
+    advertising.reset(layer);
     connections.reset(layer, failure);
 }
 
@@ -367,7 +384,7 @@ pub fn nextDeadline(layer: *const Hci) ?u64 {
         if (earliest == null or pending.deadline < earliest.?) earliest = pending.deadline;
     }
     if (layer.state != bluetooth.BTCS_UP) return earliest;
-    for ([_]?u64{ discovery.deadline(layer), scan.deadline(layer), local.deadline(layer), connections.deadline(layer), pairing.deadline(layer), channels.deadline(layer), sdp_client.deadline(layer), att_client.deadline(layer) }) |due| {
+    for ([_]?u64{ discovery.deadline(layer), scan.deadline(layer), advertising.deadline(layer), local.deadline(layer), connections.deadline(layer), pairing.deadline(layer), channels.deadline(layer), sdp_client.deadline(layer), att_client.deadline(layer) }) |due| {
         const time = due orelse continue;
         if (earliest == null or time < earliest.?) earliest = time;
     }
@@ -376,8 +393,8 @@ pub fn nextDeadline(layer: *const Hci) ?u64 {
 
 /// Whatever is due at `layer.now` done: the commands whose time has
 /// passed given up on, a discovery's phase ended, being visible ended, a
-/// link's making taken back or given up on - and the background scan set
-/// as it is wanted then.
+/// link's making taken back or given up on - and the background scan and
+/// the advertising set as they are wanted then.
 pub fn tick(layer: *Hci) void {
     for (&layer.pending) |*pending| {
         if (!pending.used or pending.deadline > layer.now) continue;
@@ -390,6 +407,7 @@ pub fn tick(layer: *Hci) void {
     if (layer.state == bluetooth.BTCS_UP) {
         discovery.tick(layer);
         scan.tick(layer);
+        advertising.tick(layer);
         local.tick(layer);
         connections.tick(layer);
         pairing.tick(layer);
@@ -398,6 +416,7 @@ pub fn tick(layer: *Hci) void {
         att_client.tick(layer);
     }
     scan.update(layer);
+    advertising.update(layer);
     pump(layer);
 }
 
@@ -407,6 +426,7 @@ fn timedOut(layer: *Hci, opcode: u16) void {
         bluetooth.BTCS_UP => {
             discovery.timedOut(layer, opcode);
             scan.answered(layer, opcode, &.{});
+            advertising.answered(layer, opcode, &.{});
             connections.answered(layer, opcode, &.{});
             pairing.answered(layer, opcode, &.{});
         },
@@ -415,7 +435,8 @@ fn timedOut(layer: *Hci, opcode: u16) void {
 }
 
 /// A packet the controller sent, from its header on: an event, or a
-/// link's data - and then the background scan set as it is wanted.
+/// link's data - and then the background scan and the advertising set as
+/// they are wanted.
 pub fn received(layer: *Hci, packet_type: u8, bytes: []const u8) void {
     switch (packet_type) {
         hcidev.HCI_EVENT_PKT => {
@@ -427,6 +448,7 @@ pub fn received(layer: *Hci, packet_type: u8, bytes: []const u8) void {
         else => {},
     }
     scan.update(layer);
+    advertising.update(layer);
 }
 
 fn event(layer: *Hci, code: u8, params: []const u8) void {
@@ -514,6 +536,7 @@ fn completed(layer: *Hci, opcode: u16, returned: []const u8) void {
         bluetooth.BTCS_UP => {
             discovery.answered(layer, opcode, returned);
             scan.answered(layer, opcode, returned);
+            advertising.answered(layer, opcode, returned);
             connections.answered(layer, opcode, returned);
             pairing.answered(layer, opcode, returned);
         },

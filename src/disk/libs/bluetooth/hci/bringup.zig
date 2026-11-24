@@ -6,7 +6,8 @@
 //!   (from HCI 1.2 on); Read Local Supported Features, and the extended
 //!   pages 1 and 2 where it has them; Read Buffer Size (BR/EDR);
 //!   Read BD_ADDR; - a pause for the controller's settings - LE Read
-//!   Buffer Size and LE Read Local Supported Features (LE); Set Event
+//!   Buffer Size, LE Read Local Supported Features and LE Read
+//!   Supported States (LE); Set Event
 //!   Mask; LE Set Event Mask; Write Simple Pairing Mode; Write Secure
 //!   Connections Host Support (BR/EDR's pairings with P-256, where the
 //!   controller has them); Write LE Host Supported; Write Class of
@@ -77,6 +78,7 @@ const steps = [_]Step{
     .{ .settings = true },
     .{ .opcode = hci.HCI_OP_LE_READ_BUFFER_SIZE, .bit = hci.CMDBIT_LE_READ_BUFFER_SIZE, .wanted = _hci.le, .took = tookLeBufferSize },
     .{ .opcode = hci.HCI_OP_LE_READ_LOCAL_FEATURES, .bit = hci.CMDBIT_LE_READ_LOCAL_FEATURES, .wanted = _hci.le, .took = tookLeFeatures },
+    .{ .opcode = hci.HCI_OP_LE_READ_SUPPORTED_STATES, .bit = hci.CMDBIT_LE_READ_SUPPORTED_STATES, .wanted = _hci.le, .took = tookStates },
     .{ .opcode = hci.HCI_OP_SET_EVENT_MASK, .bit = hci.CMDBIT_SET_EVENT_MASK, .wanted = hasEventMask, .params = eventMask },
     .{ .opcode = hci.HCI_OP_LE_SET_EVENT_MASK, .bit = hci.CMDBIT_LE_SET_EVENT_MASK, .wanted = _hci.le, .params = leEventMask },
     .{ .opcode = hci.HCI_OP_WRITE_SIMPLE_PAIRING_MODE, .bit = hci.CMDBIT_WRITE_SIMPLE_PAIRING_MODE, .wanted = hasSimplePairing, .params = switchedOn },
@@ -360,5 +362,14 @@ fn tookLeBufferSize(layer: *Hci, returned: []const u8) bool {
 fn tookLeFeatures(layer: *Hci, returned: []const u8) bool {
     if (returned.len < 1 + 8) return false;
     for (returned[1..9], 0..) |byte, index| layer.le_features[index] = byte;
+    return true;
+}
+
+/// LE's states, and those it takes on together: what it may advertise
+/// beside (advertising.zig).
+fn tookStates(layer: *Hci, returned: []const u8) bool {
+    if (returned.len < 1 + 8) return false;
+    for (returned[1..9], 0..) |byte, index| layer.le_states[index] = byte;
+    layer.have_states = true;
     return true;
 }

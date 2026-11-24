@@ -153,8 +153,9 @@ pub fn flagsOf(layer: *const _hci.Hci) u32 {
     var flags: u32 = 0;
     if (layer.powered) {
         flags |= bluetooth.BTCF_POWERED;
-        if (_hci.bredr(layer)) flags |= bluetooth.BTCF_CONNECTABLE;
+        if (_hci.bredr(layer) or layer.advertising.on) flags |= bluetooth.BTCF_CONNECTABLE;
         if (layer.visible) flags |= bluetooth.BTCF_VISIBLE;
+        if (layer.advertising.on) flags |= bluetooth.BTCF_ADVERTISING;
     }
     if (discovery.running(layer)) flags |= bluetooth.BTCF_DISCOVERING;
     return flags;
@@ -197,6 +198,7 @@ pub fn describe(controller: *const Controller, entry: *Entry, now: u64) void {
         .features = layer.features,
         .le_features = layer.le_features,
         .commands = layer.commands,
+        .le_states = layer.le_states,
     };
     public.node.name = @ptrCast(&entry.device_name);
 }

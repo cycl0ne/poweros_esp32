@@ -122,12 +122,16 @@ pub const BTCS_FAILED: u32 = 3;
 /// On: it answers others as its settings say, and may look for devices.
 /// Off, its radio is silent.
 pub const BTCF_POWERED: u32 = 1 << 0;
-/// Found by others who look (it answers inquiries).
+/// Found by others who look: it answers inquiries, and advertises over LE
+/// where it can (BTCF_ADVERTISING).
 pub const BTCF_VISIBLE: u32 = 1 << 1;
-/// Taking connections (it answers pages): on whenever it is.
+/// Taking links: it answers pages, on whenever it is, or advertises.
 pub const BTCF_CONNECTABLE: u32 = 1 << 2;
 /// Looking for devices (StartBTDiscovery).
 pub const BTCF_DISCOVERING: u32 = 1 << 3;
+/// Advertising over LE: visible, and not making way for a scan or a link
+/// it cannot advertise beside. Since 1.16.
+pub const BTCF_ADVERTISING: u32 = 1 << 4;
 
 /// BTCA_Visible's and BTController.visible_left's "until told otherwise".
 pub const BT_VISIBLE_ALWAYS: u32 = 0xFFFF_FFFF;
@@ -205,6 +209,10 @@ pub const BTController = extern struct {
     /// Commands: the command at `n` (hci.CMDBIT_*) is bit `n % 8` of byte
     /// `n / 8`.
     commands: [64]u8 = @splat(0),
+    /// LE's states and those it takes on together, as it answered LE Read
+    /// Supported States (hci.LE_STATE_*), bit `n % 8` of byte `n / 8`;
+    /// zeros where it has not. Since 1.16.
+    le_states: [8]u8 = @splat(0),
 };
 
 /// BTDevice.flags: how it was heard.

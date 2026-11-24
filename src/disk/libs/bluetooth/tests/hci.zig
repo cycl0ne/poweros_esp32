@@ -109,6 +109,9 @@ const Script = struct {
             hci.HCI_OP_READ_BD_ADDR => complete(layer, 1, sent.opcode, &.{ 0, 0x13, 0x71, 0xDA, 0x7D, 0x1A, 0x00 }),
             hci.HCI_OP_LE_READ_BUFFER_SIZE => complete(layer, 1, sent.opcode, &.{ 0, 251, 0, 15 }),
             hci.HCI_OP_LE_READ_LOCAL_FEATURES => complete(layer, 1, sent.opcode, &.{ 0, 0xFF, 0x59, 0, 0, 0, 0, 0, 0 }),
+            // Every state and combination but advertising beside an
+            // active scan (bit 14).
+            hci.HCI_OP_LE_READ_SUPPORTED_STATES => complete(layer, 1, sent.opcode, &.{ 0, 0xFF, 0xBF, 0xFF, 0xFF, 0xFF, 0x03, 0, 0 }),
             else => complete(layer, 1, sent.opcode, &.{0}),
         }
     }
@@ -155,6 +158,7 @@ const dual_mode = [_]u16{
     hci.HCI_OP_READ_BD_ADDR,
     hci.HCI_OP_LE_READ_BUFFER_SIZE,
     hci.HCI_OP_LE_READ_LOCAL_FEATURES,
+    hci.HCI_OP_LE_READ_SUPPORTED_STATES,
     hci.HCI_OP_SET_EVENT_MASK,
     hci.HCI_OP_LE_SET_EVENT_MASK,
     hci.HCI_OP_WRITE_SIMPLE_PAIRING_MODE,
@@ -203,6 +207,10 @@ test "a dual-mode controller is brought up command by command, and what it says 
     try testing.expect(_hci.feature(&layer, 2, hci.LMP_SECURE_CONNECTIONS));
     try testing.expect(_hci.feature(&layer, 1, hci.LMP_HOST_SIMPLE_PAIRING));
     try testing.expect(_hci.leFeature(&layer, hci.LE_FEATURE_DATA_LENGTH));
+    try testing.expect(layer.have_states);
+    try testing.expect(_hci.leState(&layer, hci.LE_STATE_ADV_PASSIVE_SCAN));
+    try testing.expect(!_hci.leState(&layer, hci.LE_STATE_ADV_ACTIVE_SCAN));
+    try testing.expect(_hci.leState(&layer, hci.LE_STATE_ADV_PERIPHERAL));
 
     // The events: everything this controller can send that the stack
     // takes, and LE's.
@@ -255,6 +263,10 @@ test "the bring-up waits for the settings once the address is known, and writes 
     try testing.expectEqualSlices(u8, &.{hci.SCAN_PAGE | hci.SCAN_INQUIRY}, scan.params[0..scan.length]);
     const name = sentWith(&script, hci.HCI_OP_WRITE_LOCAL_NAME).?;
     try testing.expectEqualSlices(u8, "Desk\x00", name.params[0..5]);
+    // Visible over LE too, once it is up: it advertises.
+    const enable = sentWith(&script, hci.HCI_OP_LE_SET_ADVERTISING_ENABLE).?;
+    try testing.expectEqualSlices(u8, &.{1}, enable.params[0..enable.length]);
+    try testing.expect(layer.advertising.on);
 
     // Brought up again after a hardware error, it has them: no pause.
     const before = script.count;

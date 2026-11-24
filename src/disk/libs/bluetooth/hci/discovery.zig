@@ -26,7 +26,9 @@
 //! (devices.zig); the next discovery begins without it.
 //!
 //! **The background scan** (scan.zig) is turned off before a discovery
-//! begins - its scan is the discovery's own - and on again once it ends.
+//! begins - its scan is the discovery's own - and on again once it ends;
+//! LE's advertising (advertising.zig) too where the controller cannot
+//! advertise beside an active scan, until LE's phase is over.
 //!
 //! **What is heard** goes into the table as it comes: an inquiry's
 //! results in all three forms, LE's advertising reports, and the names.
@@ -40,6 +42,7 @@ const bluetooth = sdk.bluetooth;
 const hci = bluetooth.hci;
 const _hci = @import("_hci.zig");
 const Hci = _hci.Hci;
+const advertising = @import("advertising.zig");
 const devices = @import("devices.zig");
 const eir = @import("eir.zig");
 const scan = @import("scan.zig");
@@ -101,9 +104,9 @@ pub fn start(layer: *Hci, ms: u32) i32 {
     const le_too = canScan(layer);
     const inquiry_too = canInquire(layer);
     if (!le_too and !inquiry_too) return bluetooth.BTERR_UNSUPPORTED;
-    // Room for the background scan's end and the first phase's
-    // commands, so that it surely begins.
-    if (_hci.QUEUE - layer.queue_count < 3) return bluetooth.BTERR_NOMEM;
+    // Room for the background scan's end, the advertising's and the
+    // first phase's commands, so that it surely begins.
+    if (_hci.QUEUE - layer.queue_count < 4) return bluetooth.BTERR_NOMEM;
     const total = if (ms == 0) DEFAULT_MS else @min(@max(ms, MIN_MS), MAX_MS);
     const le_ms: u32 = if (!le_too) 0 else if (!inquiry_too) total else total / 3;
     devices.forget(layer);
@@ -113,6 +116,7 @@ pub fn start(layer: *Hci, ms: u32) i32 {
     };
     layer.changed = true;
     scan.stop(layer);
+    if (le_too) advertising.makeWay(layer, hci.LE_STATE_ADV_ACTIVE_SCAN);
     if (le_too) beginLe(layer) else beginInquiry(layer);
     return 0;
 }

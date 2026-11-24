@@ -15,14 +15,18 @@
 //! leaves what the device said before: an advertisement and its scan
 //! response add up.
 //!
-//! **Made** (`response`): the machine's own extended inquiry response,
-//! its name - shortened to what fits.
+//! **Made**: the machine's own extended inquiry response - its name,
+//! shortened to what fits (`response`) - and over LE its advertisement
+//! and scan response (`advertisement`, `scanResponse`): its flags, that
+//! it is a computer, and its name - in the scan response as well where
+//! the advertisement has no room for all of it.
 //!
 //! Pure: the host tests run it on bytes alone.
 
 const sdk = @import("sdk");
 const bluetooth = sdk.bluetooth;
 const hci = bluetooth.hci;
+const att = bluetooth.att;
 const devices = @import("devices.zig");
 const Device = devices.Device;
 
@@ -127,9 +131,43 @@ fn sameUuid(kept: *const [16]u8, heard: *const [16]u8) bool {
 /// whole characters - shortened.
 pub fn response(into: *[hci.EIR_SIZE]u8, text: []const u8) void {
     @memset(into, 0);
+    _ = putName(into, text);
+}
+
+/// The advertisement's flags and appearance, before its name; the room
+/// left for the name's structure.
+const ADVERTISED_HEAD = 7;
+const ADVERTISED_NAME_ROOM = hci.LE_ADV_DATA_SIZE - ADVERTISED_HEAD;
+
+/// The machine's own advertisement into `into`: its flags (hci.AD_FLAG_*),
+/// that it is a computer, and the name `text` (up to its NUL) complete, or
+/// as much of it as fits - whole characters - shortened. Its length.
+pub fn advertisement(into: *[hci.LE_ADV_DATA_SIZE]u8, flags: u8, text: []const u8) usize {
+    const appearance = att.APPEARANCE_COMPUTER;
+    into[0..ADVERTISED_HEAD].* = .{ 2, hci.AD_FLAGS, flags, 3, hci.AD_APPEARANCE, @truncate(appearance), @truncate(appearance >> 8) };
+    return ADVERTISED_HEAD + putName(into[ADVERTISED_HEAD..], text);
+}
+
+/// Its scan response into `into`: the name `text` (up to its NUL) where
+/// the advertisement had no room for all of it - complete, or as much as
+/// fits shortened - and nothing where it had. Its length.
+pub fn scanResponse(into: *[hci.LE_ADV_DATA_SIZE]u8, text: []const u8) usize {
+    if (nameLength(text) + 2 <= ADVERTISED_NAME_ROOM) return 0;
+    return putName(into, text);
+}
+
+fn nameLength(text: []const u8) usize {
     var length: usize = 0;
     while (length < text.len and text[length] != 0) length += 1;
-    var kept = @min(length, hci.EIR_SIZE - 2);
+    return length;
+}
+
+/// The name `text` (up to its NUL) as a structure at the start of
+/// `into`: complete, or as much of it as fits - whole characters -
+/// shortened. Its length.
+fn putName(into: []u8, text: []const u8) usize {
+    const length = nameLength(text);
+    var kept = @min(length, into.len - 2);
     // Not inside a character: UTF-8's continuation bytes are 10xxxxxx.
     if (kept < length) {
         while (kept > 0 and text[kept] & 0xC0 == 0x80) kept -= 1;
@@ -137,4 +175,5 @@ pub fn response(into: *[hci.EIR_SIZE]u8, text: []const u8) void {
     into[0] = @intCast(kept + 1);
     into[1] = if (kept < length) hci.AD_NAME_SHORT else hci.AD_NAME_COMPLETE;
     @memcpy(into[2..][0..kept], text[0..kept]);
+    return kept + 2;
 }

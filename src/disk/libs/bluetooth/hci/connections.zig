@@ -17,7 +17,11 @@
 //! **Made by the device**: a page the controller hears (Connection
 //! Request) is taken on while the controller is on and the table has
 //! room, the controller staying the link's peripheral (Accept
-//! Connection Request); a synchronous link - sound - is refused.
+//! Connection Request); a synchronous link - sound - is refused. Over
+//! LE a device links to the controller while it advertises
+//! (advertising.zig), the controller the link's peripheral; that ends
+//! the advertising, which goes on beside the link where the controller
+//! can.
 //!
 //! **Waited for.** A call that waits for the controller - a link up, a
 //! link down - has a `Wait` here, which the task looks at after each
@@ -27,6 +31,8 @@
 //! device to advertise as long as it takes - is taken back after
 //! LE_CONNECT_TIMEOUT_MS (LE Create Connection Cancel), and a controller
 //! that answers nothing by then has the link given up on (BTERR_TIMEOUT).
+//! LE's advertising makes way for the initiating where the controller
+//! cannot do both.
 //!
 //! **Made once the device has answered on it.** Over BR/EDR that is
 //! Connection Complete. LE Connection Complete says only that the
@@ -79,6 +85,7 @@ const hci = bluetooth.hci;
 const _hci = @import("_hci.zig");
 const Hci = _hci.Hci;
 const acl = @import("acl.zig");
+const advertising = @import("advertising.zig");
 const devices = @import("devices.zig");
 const discovery = @import("discovery.zig");
 const pairing = @import("pairing.zig");
@@ -261,6 +268,24 @@ fn freeConnection(layer: *Hci) ?*Connection {
     return null;
 }
 
+/// Whether the table has no room for another link.
+pub fn full(layer: *const Hci) bool {
+    for (&layer.connections) |*connection| {
+        if (connection.state == .free) return false;
+    }
+    return true;
+}
+
+/// Whether an LE link is up, or being ended, with the controller its
+/// central - or, `central` false, its peripheral.
+pub fn leRole(layer: *const Hci, central: bool) bool {
+    for (&layer.connections) |*connection| {
+        if (connection.state != .up and connection.state != .disconnecting) continue;
+        if (connection.le and connection.central == central) return true;
+    }
+    return false;
+}
+
 /// Whether the library is making an LE link: initiating, which the
 /// background scan waits for.
 pub fn makingLe(layer: *Hci) bool {
@@ -336,11 +361,14 @@ pub fn make(layer: *Hci, address: bluetooth.BTAddress) i32 {
     if (if (le_link) !canInitiate(layer) else !canPage(layer)) return bluetooth.BTERR_UNSUPPORTED;
     if (making(layer, le_link) != null) return bluetooth.BTERR_BUSY;
     const connection = freeConnection(layer) orelse return bluetooth.BTERR_NOMEM;
-    // Room for the discovery's end, the background scan's and the link's
-    // command.
-    if (_hci.QUEUE - layer.queue_count < 4) return bluetooth.BTERR_NOMEM;
+    // Room for the discovery's end, the background scan's, the
+    // advertising's and the link's command.
+    if (_hci.QUEUE - layer.queue_count < 5) return bluetooth.BTERR_NOMEM;
     discovery.stop(layer);
-    if (le_link) scan.stop(layer);
+    if (le_link) {
+        scan.stop(layer);
+        advertising.makeWay(layer, hci.LE_STATE_ADV_INITIATING);
+    }
     const heard = devices.find(layer, address.bytes, address.kind);
     const sent = if (le_link) initiate(layer, address) else page(layer, address, heard);
     if (!sent) return bluetooth.BTERR_NOMEM;
@@ -707,8 +735,8 @@ pub fn complete(layer: *Hci, params: []const u8) void {
 }
 
 /// LE Connection Complete, past its subevent: the LE link up, or not
-/// made. A link the device made - to an advertiser, which the controller
-/// is not - is taken all the same while there is room.
+/// made. A link the device made - to the controller's advertising, which
+/// it ends - is taken while there is room.
 pub fn leComplete(layer: *Hci, params: []const u8) void {
     if (params.len < 18) return;
     const status = params[0];
@@ -723,6 +751,7 @@ pub fn leComplete(layer: *Hci, params: []const u8) void {
         const made = making(layer, true) orelse return;
         return failed(layer, made, failure(made, status));
     }
+    if (role == hci.ROLE_PERIPHERAL) advertising.linkMade(layer);
     var connection = if (role == hci.ROLE_CENTRAL) making(layer, true) else null;
     if (connection == null) {
         connection = freeConnection(layer) orelse return refuseLink(layer, handle);

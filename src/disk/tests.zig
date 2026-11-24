@@ -97,6 +97,7 @@ test {
     _ = @import("libs/usb/tests/usb.zig");
     _ = @import("libs/bluetooth/tests/hci.zig");
     _ = @import("libs/bluetooth/tests/discovery.zig");
+    _ = @import("libs/bluetooth/tests/advertising.zig");
     _ = @import("libs/bluetooth/tests/connections.zig");
     _ = @import("libs/bluetooth/tests/pairing.zig");
     _ = @import("libs/bluetooth/tests/smpcrypto.zig");

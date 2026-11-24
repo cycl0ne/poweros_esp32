@@ -7,11 +7,12 @@
 //!
 //! **What it answers** is Write Scan Enable's: pages while it is on - it
 //! can be connected to - and inquiries too while it is visible - it is
-//! found. Off, it answers nothing and looks for nothing: its discovery is
-//! stopped and its links are ended. Visible for a time ends at that time (`tick`); visible until
-//! told otherwise has no end; visible while off counts down all the
-//! same, and shows again once it is on. LE's side is not seen: the
-//! controller does not advertise.
+//! found. Over LE it is found by its advertising while it is visible
+//! (advertising.zig). Off, it answers nothing and looks for nothing: its
+//! discovery is stopped and its links are ended. Visible for a time ends
+//! at that time (`tick`); visible until told otherwise has no end;
+//! visible while off counts down all the same, and shows again once it
+//! is on.
 //!
 //! **Its name is 247 bytes at most**, one fewer than Write Local Name
 //! carries, so that a NUL always ends it there: a controller that reads
@@ -22,13 +23,16 @@
 //! The bring-up writes all of it once the controller's settings are in
 //! the layer (bringup.zig); each change writes again what it changes.
 //! A controller without BR/EDR has neither a name to write nor scans to
-//! set: its changes are kept, and say so.
+//! set: its changes are kept, and say so, and it is visible by its
+//! advertising alone - one that cannot advertise either is not made
+//! visible.
 
 const sdk = @import("sdk");
 const bluetooth = sdk.bluetooth;
 const hci = bluetooth.hci;
 const _hci = @import("_hci.zig");
 const Hci = _hci.Hci;
+const advertising = @import("advertising.zig");
 const connections = @import("connections.zig");
 const discovery = @import("discovery.zig");
 const eir = @import("eir.zig");
@@ -94,17 +98,21 @@ pub fn setPowered(layer: *Hci, on: bool) i32 {
         discovery.stop(layer);
         connections.dropAll(layer);
     }
-    return writeScan(layer);
+    const result = writeScan(layer);
+    advertising.update(layer);
+    return result;
 }
 
 /// Visible for `seconds`, not at all (0), or until told otherwise
 /// (BT_VISIBLE_ALWAYS): 0, or BTERR_*.
 pub fn setVisible(layer: *Hci, seconds: u32) i32 {
-    if (seconds != 0 and !_hci.bredr(layer)) return bluetooth.BTERR_UNSUPPORTED;
+    if (seconds != 0 and !_hci.bredr(layer) and !advertising.can(layer)) return bluetooth.BTERR_UNSUPPORTED;
     layer.visible = seconds != 0;
     layer.visible_until = if (seconds == 0 or seconds == bluetooth.BT_VISIBLE_ALWAYS) null else layer.now + @as(u64, seconds) * 1000;
     layer.changed = true;
-    return writeScan(layer);
+    const result = writeScan(layer);
+    advertising.update(layer);
+    return result;
 }
 
 /// The name `text` (up to its NUL) as the controller's, cut to NAME_MOST
@@ -117,7 +125,9 @@ pub fn setName(layer: *Hci, text: [*:0]const u8) i32 {
     for (0..length) |index| layer.name[index] = text[index];
     layer.name[length] = 0;
     layer.changed = true;
-    return writeName(layer);
+    const result = writeName(layer);
+    advertising.rename(layer);
+    return result;
 }
 
 fn writeScan(layer: *Hci) i32 {
@@ -153,6 +163,7 @@ pub fn tick(layer: *Hci) void {
     layer.visible_until = null;
     layer.changed = true;
     _ = writeScan(layer);
+    advertising.update(layer);
 }
 
 /// When visible for a time ends; null for no end.

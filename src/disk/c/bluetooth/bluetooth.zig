@@ -10,16 +10,18 @@
 //!
 //!   Bluetooth          each controller on a line: its number, its
 //!                      address, whether it is up - and then on or off,
-//!                      visible, looking - and its device
+//!                      visible, advertising, looking - and its device
 //!   Bluetooth INFO     and what it is: the device and unit, the chip and
 //!                      the firmware it was given, the versions of its
 //!                      HCI and link manager and who made it, its
-//!                      buffers, what it can do, its name and class
+//!                      buffers, what it can do, what it advertises
+//!                      beside, its name and class
 //!   POWER ON|OFF       the controller on, or off: off, it answers nobody
 //!   NAME <name>        the name it shows others; NAME "" the machine's
 //!   VISIBLE ON|OFF|<seconds>
-//!                      found by others who look: until told otherwise,
-//!                      not at all, or for that many seconds
+//!                      found by others who look - inquiries answered,
+//!                      advertising over LE: until told otherwise, not
+//!                      at all, or for that many seconds
 //!   SCAN [TIME <s>]    the devices around, each on a line as it is
 //!                      found - its address, how it was heard, its
 //!                      signal, its name, what it is - and again when its
@@ -104,7 +106,7 @@ const BluetoothBase = sdk.interface.bluetooth.BluetoothBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Bluetooth";
-const VERSION_STRING = "\x00$VER: Bluetooth 1.11 (23.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Bluetooth 1.12 (24.11.2026)\r\n";
 
 const template = "INFO/S,SCAN/S,TIME/K/N,POWER/K,NAME/K,VISIBLE/K,CONNECT/K,DISCONNECT/K,LIST/S,LE/S,RANDOM/S,BREDR/S,CONTROLLER/K/N," ++
     "PAIR/K,PIN/K,UNPAIR/K,BONDS/S,AGENT/S,SERVICES/K";
@@ -243,6 +245,7 @@ fn line(dl: *DosBase, controller: *const bluetooth.BTController) void {
                 _ = Printf(dl, ", visible for %u s", .{controller.visible_left});
             }
         }
+        if (flags & bluetooth.BTCF_ADVERTISING != 0) _ = dl.PutStr(", advertising");
         if (flags & bluetooth.BTCF_DISCOVERING != 0) _ = dl.PutStr(", looking");
     }
     _ = Printf(dl, "  %s unit %u\n", .{ controller.node.name orelse @as([*:0]const u8, "?"), controller.unit });
@@ -341,7 +344,8 @@ fn has(bits: []const u8, n: u32) bool {
     return bits[n / 8] & (@as(u8, 1) << @intCast(n % 8)) != 0;
 }
 
-/// The device and unit, chip, firmware, versions, buffers, features.
+/// The device and unit, chip, firmware, versions, buffers, features, what
+/// it advertises beside.
 fn info(dl: *DosBase, controller: *const bluetooth.BTController) void {
     if (controller.chip) |chip| _ = Printf(dl, "  chip        %s\n", .{chip});
     if (controller.firmware) |firmware| _ = Printf(dl, "  firmware    %s\n", .{firmware});
@@ -401,8 +405,38 @@ fn info(dl: *DosBase, controller: *const bluetooth.BTController) void {
     }
     if (shown == 0) _ = dl.PutStr(" none of note");
     _ = dl.PutStr("\n");
+    if (le) advertisingInfo(dl, &controller.le_states);
     if (controller.name[0] != 0) _ = Printf(dl, "  name        %s\n", .{controller.name});
     _ = Printf(dl, "  class       %06lx\n", .{@as(u64, controller.class_of_device)});
+}
+
+/// What an LE controller advertises beside, as its states say: nothing
+/// where it has not said them.
+fn advertisingInfo(dl: *DosBase, states: *const [8]u8) void {
+    var known = false;
+    for (states) |byte| known = known or byte != 0;
+    if (!known) return;
+    if (!has(states, hci.LE_STATE_ADV)) {
+        _ = dl.PutStr("  advertises  not so that a device may link to it\n");
+        return;
+    }
+    const beside = [_]struct { n: u32, label: [*:0]const u8 }{
+        .{ .n = hci.LE_STATE_ADV_PASSIVE_SCAN, .label = "a passive scan" },
+        .{ .n = hci.LE_STATE_ADV_ACTIVE_SCAN, .label = "an active scan" },
+        .{ .n = hci.LE_STATE_ADV_INITIATING, .label = "initiating" },
+        .{ .n = hci.LE_STATE_ADV_CENTRAL, .label = "a link as central" },
+        .{ .n = hci.LE_STATE_ADV_PERIPHERAL, .label = "a link as peripheral" },
+    };
+    _ = dl.PutStr("  advertises ");
+    var shown: u32 = 0;
+    for (beside) |state| {
+        if (!has(states, state.n)) continue;
+        _ = dl.PutStr(if (shown == 0) " beside" else if (shown % 3 == 0) ",\n             " else ",");
+        _ = Printf(dl, " %s", .{state.label});
+        shown += 1;
+    }
+    if (shown == 0) _ = dl.PutStr(" alone");
+    _ = dl.PutStr("\n");
 }
 
 // --- the settings ---------------------------------------------------------------

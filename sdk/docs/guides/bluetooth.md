@@ -167,7 +167,8 @@ A controller is brought up command by command:
 1. **Reset**, and what it is: its local version, the commands it takes,
    its features (pages 1 and 2 where it has them), its buffers for ACL
    and SCO data, its address; for LE, its LE buffers - or none of its
-   own, when LE's links share BR/EDR's - and its LE features. Once its address is
+   own, when LE's links share BR/EDR's - its LE features, and the states
+   it takes on together (LE Read Supported States). Once its address is
    known, the settings kept for it are read, and the rest waits for
    them.
 2. **What it is to tell**: the events the stack takes, BR/EDR's and LE's,
@@ -259,15 +260,37 @@ const result = bt.SetBTControllerAttrs(bluetooth.BT_ALL_CONTROLLERS, &tags);
   always ends it: a controller that reads its own to a NUL, as the
   CYW43455 does, tells others a wrong length for one of 248 - and an
   empty one is the machine's again.
-- **`BTCA_Visible`** - found by others who look - inquiries answered -
-  for that many seconds, until told otherwise (`BT_VISIBLE_ALWAYS`), or
-  not at all (0). Only BR/EDR is found: the controller does not
-  advertise on LE, and one without BR/EDR answers `BTERR_UNSUPPORTED`.
+- **`BTCA_Visible`** - found by others who look - inquiries answered,
+  and advertising over LE - for that many seconds, until told otherwise
+  (`BT_VISIBLE_ALWAYS`), or not at all (0). A controller that can
+  neither answer inquiries nor advertise answers `BTERR_UNSUPPORTED`; one
+  without BR/EDR is visible by its advertising alone.
+
+**Over LE, visible is advertising**: connectable and scannable,
+undirected, every 100 to 150 ms on all three channels, from the
+controller's public address - its flags (LE General Discoverable, and
+BR/EDR Not Supported for a controller without it), that it is a
+computer, and its name: complete where it fits in the advertisement's 31
+bytes, shortened there otherwise and then in the scan response as well,
+whole where it fits there. A name changed goes out at once. A device
+that scans finds the machine by its name and may link to it, the
+controller the link's peripheral. Hidden, nothing goes out over LE.
+
+The advertising makes way for what the controller cannot do beside it,
+as its supported states say: a discovery's active scan, the background
+scan of a GATT block that waits (below), initiating a link, and an LE
+link up as its central or its peripheral - and goes on after. A
+controller that did not say its states does none of them beside it. It
+pauses while the controller's eight links are taken, and a device's link
+ends it: it goes on beside the link where the controller can, otherwise
+once the link is down. Refused, it is tried again ten seconds later.
 
 A controller that is up says how it is now in its `flags` -
-`BTCF_POWERED`, `BTCF_CONNECTABLE` (pages answered), `BTCF_VISIBLE` with
-`visible_left` the seconds left or `BT_VISIBLE_ALWAYS`, and
-`BTCF_DISCOVERING` - and its name in `name`.
+`BTCF_POWERED`, `BTCF_CONNECTABLE` (pages answered, or advertising),
+`BTCF_VISIBLE` with `visible_left` the seconds left or
+`BT_VISIBLE_ALWAYS`, `BTCF_ADVERTISING` while it advertises, and
+`BTCF_DISCOVERING` - and its name in `name`; `le_states` holds the states
+it said it takes on together (`hci.LE_STATE_*`).
 
 **What is set is kept** for the controller's next start, by its address,
 in `ENVARC:Sys/bluetooth/<address>/` - the address's twelve hex digits,
@@ -387,8 +410,9 @@ discovery found it, else by the first that is up and on.
 
 **A link the device makes** - a page the controller hears - is taken on
 by itself while the controller is on, the controller staying the link's
-peripheral; a link for sound is refused. A controller keeps eight
-links.
+peripheral; a link for sound is refused. Over LE a device links to the
+controller while it advertises, the controller the link's peripheral. A
+controller keeps eight links.
 
 `DisconnectBTDevice` ends a link and waits until it is down; a link
 being made is taken back, and the call that makes it answered
@@ -845,7 +869,8 @@ client too: the machine's name (Device Name), that it is a computer
 the attributes never change, so it is never indicated. Its values are
 read, and the configuration alone is written; a request it does not
 take is answered as not supported. A device reaches it over the links
-this machine makes: the library does not advertise.
+this machine makes, and over those it makes to the machine while it is
+visible.
 
 ## Profile drivers
 
@@ -1290,13 +1315,14 @@ new rows only where one differs from what it shows.
 
 `Bluetooth` lists the controllers: number, address - dashes until the
 controller has said it - state, and once it is up whether it is on or
-off, visible - for how long more - and looking, and the device and unit
-each is. `INFO`
+off, visible - for how long more - advertising, and looking, and the
+device and unit each is. `INFO`
 adds what each is: the chip and firmware its device gave it, how it is
 reached - USB, or a UART and its rate - the versions of its HCI and link
 manager and who made it, its buffers, what it can do of note - `(on)`
-after Secure Simple Pairing when the stack has switched it on - its name
-and its class (`000104`: a desktop computer).
+after Secure Simple Pairing when the stack has switched it on - what it
+advertises beside, by the states it said, its name and its class
+(`000104`: a desktop computer).
 
 The Raspberry Pi 4 Model B's, the first time it is asked - its device
 still setting the controller up - and a moment later:
@@ -1326,7 +1352,7 @@ Set, and looking:
 
 ```
 1> Bluetooth NAME Desk VISIBLE 120
-0: 00:00:5E:EF:10:42  up, on, visible for 120 s  usb/bluetooth.device unit 0
+0: 00:00:5E:EF:10:42  up, on, visible for 120 s, advertising  usb/bluetooth.device unit 0
 1> Bluetooth SCAN INFO
 Looking for about 10 s, then for the names; CTRL-C stops
   F2:03:00:00:10:01  LE random   -32 dBm  Sensor

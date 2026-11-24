@@ -435,10 +435,11 @@ test "visible for a time ends at it; visible always does not" {
     try testing.expectEqualStrings("Workbench", std.mem.sliceTo(&layer.name, 0));
 }
 
-test "a controller without BR/EDR is not made visible" {
+test "a controller that can neither answer inquiries nor advertise is not made visible" {
     var recorder = Recorder{};
     var layer = upLayer(&recorder);
-    layer.features[0][4] |= 1 << 5; // BR/EDR not supported
+    // BR/EDR not supported; LE, but no buffers for its links.
+    layer.features[0][4] |= 1 << 5;
     try testing.expectEqual(bluetooth.BTERR_UNSUPPORTED, local.setVisible(&layer, 60));
     try testing.expectEqual(@as(i32, 0), local.setVisible(&layer, 0));
     try testing.expectEqual(@as(usize, 0), recorder.count);
