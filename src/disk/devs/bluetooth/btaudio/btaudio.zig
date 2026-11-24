@@ -88,10 +88,15 @@
 //! it first where it plays through it - the channels closed, the memory
 //! freed; the listeners and the records go with the last device. A
 //! channel opened from here is begun (StartBTChannel) and taken once its
-//! port says it is open, a channel closed is not waited for, and a packet
-//! never waits for room, so that a device slow to answer - one that holds
-//! a channel pending for a minute - or a radio busy holds up no other
-//! device's sound.
+//! port says it is open, a channel closed is not waited for, and nothing
+//! sent waits for room: a packet that finds none is let go of, and a
+//! command or an answer waits in its device's own outbox - sent first
+//! once the link takes again, a command given up on as one not answered
+//! where it waits too long. So a device slow to answer - one that holds
+//! a channel pending for a minute - one switched off or gone out of reach
+//! until its link is lost, or a radio busy, holds up no other device's
+//! sound. Buffers that found the ring full are said as the task looks
+//! again, a second apart at the most, the rest as the sink goes.
 //!
 //! The device's own units are none: bluetooth.library opens it on
 //! `BTPROFILE_UNIT_BIND` for its two calls. It stays once loaded.
@@ -127,7 +132,7 @@ const remote_control = a2dp.avrcp;
 pub const DEVICE_NAME = "btaudio.device";
 const DRIVER_NAME = "btaudio";
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 4;
+const DEVICE_REVISION = 5;
 const BUILD_DATE = "24.11.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
@@ -183,6 +188,17 @@ const control_answer_ms = 2000;
 /// Without sound this long a stream is suspended; with silence this long
 /// a device's own suspension is over.
 const idle_ms = 5000;
+/// The commands and answers kept while their channel has no room for
+/// them: four, of up to 64 bytes each - the longest frame the stream's
+/// signalling or the control channel sends - and how soon the task looks
+/// again while one waits.
+const outbox_slots = 4;
+const signal_most = 64;
+const retry_ms = 20;
+const Outbox = a2dp.Outbox(outbox_slots, signal_most);
+/// The least time between two of the log's lines on buffers that found
+/// the ring full.
+const overflow_said_ms = 1000;
 const hold_ms = 1000;
 /// How long a button pressed is held without its release: a device that
 /// holds one says so again sooner.
@@ -234,6 +250,10 @@ const Headphone = struct {
     /// AVDTP's channels while they are open.
     signalling_channel: ?*bluetooth.BTChannel,
     media_channel: ?*bluetooth.BTChannel,
+    /// The frames for the signalling and the control channel that found
+    /// no room, sent first as their link takes again.
+    signalling_out: Outbox,
+    control_out: Outbox,
     /// The channels opened from here while they open - AVDTP's signalling
     /// and media channels, AVCTP's control channel - each its counterpart
     /// once its port says it is open.
@@ -311,8 +331,11 @@ const Headphone = struct {
     absolute: u8,
     gain: u32,
     gain_count: u32,
-    /// Buffers that found the ring full.
+    /// Buffers that found the ring full - counted by audio.device's task -
+    /// those of them the log has said, and when it said so last.
     overflows: u32,
+    overflows_said: u32,
+    overflow_said_at: u64,
     clock: Clock,
     frames: [buffer_samples]i16,
     ring: a2dp.Ring(ring_slots, buffer_samples),
@@ -604,7 +627,7 @@ fn checkTimer(base: *Base) void {
 
 /// When the task is next to look: a channel to open, a command or a
 /// media channel given up on, a stream without sound to suspend, a key
-/// whose release is late.
+/// whose release is late, a frame waiting for room.
 fn nextWake(base: *Base) ?u64 {
     var driven: [max_devices]?*Headphone = undefined;
     snapshot(base, &driven);
@@ -612,7 +635,7 @@ fn nextWake(base: *Base) ?u64 {
     for (driven) |slot| {
         const device = slot orelse continue;
         const source = &device.source;
-        var times: [7]u64 = @splat(0);
+        var times: [8]u64 = @splat(0);
         if (device.signalling_channel == null) times[0] = device.open_at;
         if (source.waiting()) times[1] = device.answer_by;
         times[2] = device.media_by;
@@ -620,6 +643,7 @@ fn nextWake(base: *Base) ?u64 {
         if (device.control_channel == null) times[4] = device.control_at;
         if (device.remote.waiting()) times[5] = device.control_by;
         times[6] = device.key_by;
+        if (device.signalling_out.first() != null or device.control_out.first() != null) times[7] = now(base) +% ticksOf(base, retry_ms);
         for (times) |ticks| {
             if (ticks == 0) continue;
             earliest = if (earliest) |other| @min(other, ticks) else ticks;
@@ -682,6 +706,7 @@ fn opened(base: *Base, channel: *bluetooth.BTChannel) void {
     if (channel.psm == l2cap.PSM_AVCTP) return controlOpened(base, device, channel);
     if (device.signalling_channel == null) {
         device.signalling_channel = channel;
+        device.signalling_out.empty();
         device.open_at = 0;
         device.source.reset();
         return giveUp(base, &device.signalling_opening);
@@ -704,6 +729,7 @@ fn closed(base: *Base, channel: *bluetooth.BTChannel) void {
     if (findByChannel(base, channel)) |device| {
         if (channel == device.signalling_channel) {
             device.signalling_channel = null;
+            device.signalling_out.empty();
             streamEnded(base, device);
             device.source.reset();
             device.answer_by = 0;
@@ -712,6 +738,7 @@ fn closed(base: *Base, channel: *bluetooth.BTChannel) void {
             closeStream(base, device);
         } else if (channel == device.control_channel) {
             device.control_channel = null;
+            device.control_out.empty();
             controlEnded(base, device);
         }
     }
@@ -729,6 +756,7 @@ fn openedHere(base: *Base, device: *Headphone, which: Opening, channel: *bluetoo
             device.signalling_opening = null;
             if (device.signalling_channel != null) return bt.CloseBTChannel(channel);
             device.signalling_channel = channel;
+            device.signalling_out.empty();
             device.source.reset();
             send(base, device, device.source.begin(rate));
         },
@@ -772,14 +800,38 @@ fn giveUp(base: *Base, opening: *?*bluetooth.BTChannel) void {
     base.bt_base.?.CloseBTChannel(channel);
 }
 
-/// A frame sent on the signalling channel; a command's answer waited for
-/// from now on. One the channel does not take is let go of: the channel
-/// is closing, and says so.
+/// A frame sent on the signalling channel (`post`); a command's answer
+/// waited for from now on.
 fn send(base: *Base, device: *Headphone, bytes: []const u8) void {
     if (bytes.len == 0) return;
     const channel = device.signalling_channel orelse return;
     if (bytes[0] & 3 == avdtp.AVDTP_COMMAND) device.answer_by = now(base) +% ticksOf(base, answer_ms);
-    _ = base.bt_base.?.SendBTChannel(channel, bytes.ptr, @intCast(bytes.len));
+    post(base, device, channel, &device.signalling_out, bytes);
+}
+
+/// A frame for one of the device's channels, never waited for: sent at
+/// once where none waits before it and the link's share of the
+/// controller's queue has room, kept in the outbox behind those waiting
+/// otherwise. One the channel does not take is let go of - the channel is
+/// closing, and says so - and so is one that finds the outbox full, the
+/// device having taken nothing for a while: the log says so, and a
+/// command so lost is given up on as one not answered.
+fn post(base: *Base, device: *Headphone, channel: *bluetooth.BTChannel, outbox: *Outbox, bytes: []const u8) void {
+    flush(base, channel, outbox);
+    if (outbox.first() == null) {
+        if (base.bt_base.?.AttemptSendBTChannel(channel, bytes.ptr, @intCast(bytes.len)) != bluetooth.BTERR_BUSY) return;
+    }
+    if (!outbox.put(bytes)) say(base, "%s: %02x:%02x:%02x:%02x:%02x:%02x: a frame let go of: the device has taken none for a while\n", device.address, .{});
+}
+
+/// The frames waiting for a channel sent, oldest first, while its link's
+/// share of the controller's queue has room; those it does not take let
+/// go of.
+fn flush(base: *Base, channel: *bluetooth.BTChannel, outbox: *Outbox) void {
+    while (outbox.first()) |frame| {
+        if (base.bt_base.?.AttemptSendBTChannel(channel, frame.ptr, @intCast(frame.len)) == bluetooth.BTERR_BUSY) return;
+        outbox.sent();
+    }
 }
 
 /// The signalling channel's opening begun from here - the stream set up
@@ -856,6 +908,7 @@ fn controlOpened(base: *Base, device: *Headphone, channel: *bluetooth.BTChannel)
     if (device.control_channel != null) return base.bt_base.?.CloseBTChannel(channel);
     giveUp(base, &device.control_opening);
     device.control_channel = channel;
+    device.control_out.empty();
     device.control_at = 0;
     device.volume_known = false;
     sendControl(base, device, device.remote.begin());
@@ -871,13 +924,13 @@ fn controlEnded(base: *Base, device: *Headphone) void {
     if (@atomicRmw(u8, &device.absolute, .Xchg, 0, .acq_rel) != 0) handBack(base, device);
 }
 
-/// A frame sent on the control channel; an answer waited for from now on
-/// where it is a command.
+/// A frame sent on the control channel (`post`); an answer waited for
+/// from now on where it is a command.
 fn sendControl(base: *Base, device: *Headphone, bytes: []const u8) void {
     if (bytes.len == 0) return;
     const channel = device.control_channel orelse return;
     if (bytes[0] & avrcp.AVCTP_RESPONSE == 0) device.control_by = now(base) +% ticksOf(base, control_answer_ms);
-    _ = base.bt_base.?.SendBTChannel(channel, bytes.ptr, @intCast(bytes.len));
+    post(base, device, channel, &device.control_out, bytes);
 }
 
 /// What a frame of the control channel, or a command given up on, meant:
@@ -1146,9 +1199,12 @@ fn streamEnded(base: *Base, device: *Headphone) void {
     }
 }
 
-/// Each device looked at: a channel to open from here, a command or the
-/// device's media channel waited for too long, the volume, the sound.
+/// Each device looked at: the frames that waited for room, a channel to
+/// open from here, a command or the device's media channel waited for too
+/// long, the volume, the sound, the buffers that found the ring full.
 fn tend(base: *Base, device: *Headphone) void {
+    if (device.signalling_channel) |channel| flush(base, channel, &device.signalling_out);
+    if (device.control_channel) |channel| flush(base, channel, &device.control_out);
     if (device.signalling_channel == null) {
         if (device.open_at != 0 and now(base) >= device.open_at) openFromHere(base, device);
     } else {
@@ -1164,6 +1220,21 @@ fn tend(base: *Base, device: *Headphone) void {
     }
     tendControl(base, device);
     pump(base, device);
+    sayOverflows(base, device, false);
+}
+
+/// The buffers that found the ring full since the log said so last: said
+/// once the task looks again, `overflow_said_ms` apart at the most - all
+/// of them as the sink goes (`all`).
+fn sayOverflows(base: *Base, device: *Headphone, all: bool) void {
+    const overflows = @atomicLoad(u32, &device.overflows, .acquire);
+    const new = overflows -% device.overflows_said;
+    if (new == 0) return;
+    const time = now(base);
+    if (!all and device.overflow_said_at != 0 and time -% device.overflow_said_at < ticksOf(base, overflow_said_ms)) return;
+    device.overflows_said = overflows;
+    device.overflow_said_at = time;
+    say(base, "%s: %02x:%02x:%02x:%02x:%02x:%02x: %ld buffers found the ring full\n", device.address, .{@as(i64, new)});
 }
 
 /// The buffers the sink handed over: sent while the stream plays, the
@@ -1399,10 +1470,12 @@ fn letGo(base: *Base, device: *Headphone, flags: u32) void {
     giveUp(base, &device.control_opening);
     if (device.signalling_channel) |channel| {
         device.signalling_channel = null;
+        device.signalling_out.empty();
         bt.CloseBTChannel(channel);
     }
     if (device.control_channel) |channel| {
         device.control_channel = null;
+        device.control_out.empty();
         bt.CloseBTChannel(channel);
     }
     closeKeys(base, device);
@@ -1439,6 +1512,8 @@ fn makeSink(base: *Base, device: *Headphone) void {
     // Nothing writes the ring while there is no sink.
     device.ring.empty();
     device.overflows = 0;
+    device.overflows_said = 0;
+    device.overflow_said_at = 0;
     const tags = [_]TagItem{
         .{ .tag = rta.tags.RTAA_Name, .data = @intFromPtr(&device.name) },
         .{ .tag = rta.tags.RTAA_Priority, .data = @bitCast(@as(isize, priority)) },
@@ -1467,7 +1542,7 @@ fn dropSink(base: *Base, device: *Headphone) void {
     device.sink = null;
     @atomicStore(u8, &device.playing, 0, .release);
     @atomicStore(u8, &device.leaving, 0, .release);
-    if (device.overflows != 0) say(base, "%s: %02x:%02x:%02x:%02x:%02x:%02x: %ld buffers found no room\n", device.address, .{@as(i64, device.overflows)});
+    sayOverflows(base, device, true);
 }
 
 fn sinkHeadphone(sink: *rta.AudioSink) *Headphone {
@@ -1546,7 +1621,7 @@ fn playSink(sink: *rta.AudioSink, frames: [*]i16) callconv(.c) i32 {
         @memcpy(slot, frames[0..buffer_samples]);
         device.ring.wrote();
     } else {
-        device.overflows +%= 1;
+        @atomicStore(u32, &device.overflows, device.overflows +% 1, .release);
     }
     wakeTask(device);
     return err.RTAERR_OK;

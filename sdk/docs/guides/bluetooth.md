@@ -1088,11 +1088,15 @@ outputs: while a device's stream is open it is a sink of rta.library,
 which audio.device plays through as it does any other (the [sound
 guide](audio.md#bluetooth-headphones-and-speakers)). It drives four
 devices at most, a stream each, on a task of its own, which waits for
-no channel it opens (`StartBTChannel`) or closes, and for no room for a
-packet (`AttemptSendBTChannel`): a device slow to answer - one that
+no channel it opens (`StartBTChannel`) or closes, and for no room for
+anything it sends (`AttemptSendBTChannel`): a packet that finds none is
+let go of, and a command or an answer waits in its device's own outbox,
+sent first once the link takes again - a command that waits too long
+given up on as one not answered. So a device slow to answer - one that
 holds a channel pending while its user is asked - stops no other
-device's sound, nor does one switched off while it plays, whose packets
-wait in its own share of the controller's buffers.
+device's sound, nor does one switched off or gone out of reach while it
+plays, whose frames wait in its own share of the controller's buffers
+until its link is lost.
 
 **The stream** is set up by whichever side comes first. The driver
 serves PSM 25 - a listener for the channels of bonded devices, and a
@@ -1175,9 +1179,12 @@ sends its buttons, once it pairs again.
 
 The log says each stream's configuration -
 `SBC at 48000 Hz, joint stereo, bitpool 53, 8 frames a packet, 357 kbit/s` -
-and, at `C:Log LEVEL debug`, each delay the device reports, the buffers
-waiting as the stream starts, and at each pause the packets sent and
-not, how far apart two were at the most, and the buffers missed.
+and the buffers audio.device handed over that found the driver's ring
+full, as the driver catches up, a second apart at the most
+(`buffers found the ring full`); at `C:Log LEVEL debug`, each delay the
+device reports, the buffers waiting as the stream starts, and at each
+pause the packets sent and not, how far apart two were at the most, and
+the buffers missed.
 
 ```
 1> Bluetooth PAIR 00:00:5E:EF:10:52

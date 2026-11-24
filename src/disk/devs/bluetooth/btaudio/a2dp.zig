@@ -22,6 +22,11 @@
 //! so neither waits for the other, and a writer that finds every buffer
 //! waiting to be read lets its own go. `silent` says whether a buffer is
 //! silence, as the owner starts and suspends a stream by it.
+//!
+//! **A frame that finds no room** on a channel - the link's share of the
+//! controller's queue full, a device that takes nothing - waits in an
+//! `Outbox`, in its order, until the channel takes it: the owner sends
+//! nothing that waits, and so waits for no device.
 
 pub const sbc = @import("sbc.zig");
 pub const signalling = @import("signalling.zig");
@@ -192,6 +197,53 @@ pub fn Ring(comptime slots: u32, comptime samples: usize) type {
     };
 }
 
+/// Frames for a channel that had no room for them: `slots` of at most
+/// `most` bytes, kept in their order and taken from the front as the
+/// channel takes them again (`first`, then `sent`). A frame longer than
+/// `most`, or one that finds every slot taken, is not kept. All zeros is
+/// an empty outbox.
+pub fn Outbox(comptime slots: usize, comptime most: usize) type {
+    return struct {
+        const Self = @This();
+
+        frames: [slots][most]u8 = undefined,
+        lengths: [slots]u16 = @splat(0),
+        /// The oldest frame's slot, and how many wait.
+        head: usize = 0,
+        count: usize = 0,
+
+        /// The frame kept behind those waiting: false where it is too long
+        /// or every slot is taken.
+        pub fn put(box: *Self, frame: []const u8) bool {
+            if (frame.len > most or box.count == slots) return false;
+            const slot = (box.head + box.count) % slots;
+            @memcpy(box.frames[slot][0..frame.len], frame);
+            box.lengths[slot] = @intCast(frame.len);
+            box.count += 1;
+            return true;
+        }
+
+        /// The oldest frame waiting; null for none.
+        pub fn first(box: *const Self) ?[]const u8 {
+            if (box.count == 0) return null;
+            return box.frames[box.head][0..box.lengths[box.head]];
+        }
+
+        /// The oldest frame gone.
+        pub fn sent(box: *Self) void {
+            if (box.count == 0) return;
+            box.head = (box.head + 1) % slots;
+            box.count -= 1;
+        }
+
+        /// Every frame let go of.
+        pub fn empty(box: *Self) void {
+            box.head = 0;
+            box.count = 0;
+        }
+    };
+}
+
 // --- tests -------------------------------------------------------------------
 
 const std = @import("std");
@@ -280,6 +332,36 @@ test "silence: within the level each side of 0" {
     try testing.expect(!silent(&.{ 0, 17 }));
     try testing.expect(!silent(&.{ -17, 0 }));
     try testing.expect(silent(&.{}));
+}
+
+test "an outbox: frames kept in their order and taken from the front, round its end; a full one and a long one refused, all let go of" {
+    const Small = Outbox(3, 4);
+    var box = std.mem.zeroes(Small);
+    try testing.expect(box.first() == null);
+    try testing.expect(box.put("ab"));
+    try testing.expect(box.put("cde"));
+    try testing.expect(box.put("f"));
+    try testing.expect(!box.put("g"));
+    try testing.expectEqualSlices(u8, "ab", box.first().?);
+    box.sent();
+    // Round the end of its slots, in order.
+    try testing.expect(box.put("hijk"));
+    try testing.expect(!box.put("l"));
+    for ([_][]const u8{ "cde", "f", "hijk" }) |frame| {
+        try testing.expectEqualSlices(u8, frame, box.first().?);
+        box.sent();
+    }
+    try testing.expect(box.first() == null);
+    box.sent();
+    try testing.expect(box.first() == null);
+    // Longer than a slot: refused, the rest kept.
+    try testing.expect(box.put("mn"));
+    try testing.expect(!box.put("opqrs"));
+    try testing.expectEqualSlices(u8, "mn", box.first().?);
+    box.empty();
+    try testing.expect(box.first() == null);
+    try testing.expect(box.put("t"));
+    try testing.expectEqualSlices(u8, "t", box.first().?);
 }
 
 test "a ring: written and read in turn, full, emptied, its counts wrapping" {
