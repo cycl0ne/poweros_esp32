@@ -101,6 +101,7 @@ flowchart TB
     m_console_device --> m_layers_library
     m_display_drivers --> m_amdgpu_resource
     m_display_drivers --> m_dma_resource
+    m_display_drivers --> m_dos_library
     m_display_drivers --> m_expander_resource
     m_display_drivers --> m_gpio_resource
     m_display_drivers --> m_i2c_device

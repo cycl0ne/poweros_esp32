@@ -801,7 +801,23 @@ own, listed with the driver in `sdk/libs/rtg/tags.zig`. The AMD board's
 offers for the display controller's, the display's, the pipes' and the
 SoC's clocks and for the data fabric, and with the display clocks running
 now. Both send messages to the device, which `C:test/Gpu CLOCKS` does with
-the watchdog armed.
+the watchdog armed. `RTGCTRL_AMD_CONTROLLER` fills an `RtgAmdController`
+with the display controller's registers - the engine's own processor:
+whether it runs its firmware, its boot options, its rings, the windows it
+reaches memory through, its faults - and only reads (`C:test/Gpu DMCUB`).
+`RTGCTRL_AMD_START_CONTROLLER` starts it with its firmware from
+`DEVS:firmware/amdgpu/` (`dcn_3_1_4_dmcub.bin`, loaded by the device's
+security processor): the running controller stopped and held in reset,
+the memory it runs with given - a copy of the video BIOS, its command
+rings, its trace buffer and its state - its boot options set, and the
+controller let out of reset and asked what it can do; `stage` says how
+far that got. The memory stays the board's. `RTGCTRL_AMD_CRC` fills an
+`RtgAmdCrc` with the checksum the timing generator sums over each frame
+it sends, each colour's CRC over the whole picture - a test tool, the
+same before and after a step that should leave the picture alone; the
+first ask switches the sum on. `C:test/Gpu DMCUB START` and `CRC` do
+these with the watchdog armed, the start with the checksum before and
+after.
 
 The numbers say a lot about a picture that misbehaves. A part of the glass
 that is out of date while `refreshes` stands still was never handed on; one

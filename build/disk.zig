@@ -27,6 +27,7 @@ const FontPlace = build_fetched.FontPlace;
 const aic8800Dir = build_fetched.aic8800Dir;
 const aic8800_files = build_fetched.aic8800_files;
 const amdgpuDir = build_fetched.amdgpuDir;
+const amdgpu_firmware = build_fetched.amdgpu_firmware;
 const certsFile = build_fetched.certsFile;
 const cjk_file = build_fetched.cjk_file;
 const cyw43455Dir = build_fetched.cyw43455Dir;
@@ -1255,13 +1256,13 @@ pub fn addDiskImages(b: *std.Build, with: DiskImagesWith) MadeDiskImages {
         make_rv64_disk.addPrefixedFileArg("devs/firmware/wave511.licence=", .{ .cwd_relative = b.pathJoin(&.{ dir, "LICENSE.txt" }) });
     }
     // DEVS:firmware/amdgpu/ - what an AMD graphics device's video decoder
-    // runs and the table of contents its security processor is given
-    // first, which amdgpu.resource loads, as scripts/fetch-amdgpu.sh
+    // and display controller run and the table of contents its security
+    // processor is given first, which amdgpu.resource loads, as scripts/fetch-amdgpu.sh
     // fetched them - and AMD's licence for them beside them. On the x86-64
     // disk alone.
     if (amdgpuDir(b)) |dir| {
         make_x64_disk.addArgs(&.{ "devs/firmware", "devs/firmware/amdgpu" });
-        for ([_][]const u8{ "vcn_4_0_2.bin", "psp_13_0_4_toc.bin" }) |name| {
+        for (amdgpu_firmware) |name| {
             make_x64_disk.addPrefixedFileArg(b.fmt("devs/firmware/amdgpu/{s}=", .{name}), .{ .cwd_relative = b.pathJoin(&.{ dir, name }) });
         }
         make_x64_disk.addPrefixedFileArg("devs/firmware/amdgpu.licence=", .{ .cwd_relative = b.pathJoin(&.{ dir, "LICENSE.amdgpu" }) });

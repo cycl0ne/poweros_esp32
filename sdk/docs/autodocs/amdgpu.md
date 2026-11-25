@@ -529,10 +529,12 @@ fn LoadGPUFirmware(ab: *AMDGPUBase, kind: u32, image: [*]const u8,
 
 - `kind` - what it is: GPUFIRMWARE_VIDEO, the video decoder's
   firmware; GPUFIRMWARE_VIDEO_REGISTERS (since 1.3), the writes that
-  start the video decoder.
+  start the video decoder; GPUFIRMWARE_DISPLAY (since 1.7), the
+  display controller's firmware.
 - `image` - for firmware the file, whole, as it is on the disk
-  (DEVS:firmware/amdgpu/vcn_<version>.bin), its vendor's header
-  included; for the writes the list itself, pairs of 32-bit words -
+  (DEVS:firmware/amdgpu/vcn_<version>.bin,
+  dcn_<version>_dmcub.bin), its vendor's header included; for the
+  writes the list itself, pairs of 32-bit words -
   a register's offset as the block itself numbers it, then its value -
   at most 512 pairs.
 - `length` - its length in bytes.
@@ -542,9 +544,10 @@ fn LoadGPUFirmware(ab: *AMDGPUBase, kind: u32, image: [*]const u8,
 
 True with `address` holding where the firmware is in the protected
 region, as the device's blocks reach it - what the block's driver
-points the block at - or, for the writes, what the processor answered
-as an address, 0 where it named none. False where `kind` is not one
-there is; StartGPUSecurity has not made the processor ready; the
+points the block at - or, for the writes and the display controller's
+firmware, what the processor answered as an address, 0 where it named
+none: the processor points the display controller at its firmware
+itself. False where `kind` is not one there is; StartGPUSecurity has not made the processor ready; the
 file's header does not fit the file, or the list is empty, longer
 than 512 pairs or not of whole pairs; the processor does not answer
 within five seconds, or answers no address for firmware; the device's
@@ -554,7 +557,9 @@ without the device. `address` is then left alone.
 **BEHAVIOR**
 
 Under the security processor's lock: the part of the file its header
-names, or the list whole, is copied into a piece of its own, which the
+names - for the display controller's firmware the code its header's
+own field counts, signature and all - or the list whole, is copied
+into a piece of its own, which the
 processor reads - firmware it checks and puts into the region, writes
 it applies to the block in their order. The piece is given back once
 it answers. The status it answers is put on the

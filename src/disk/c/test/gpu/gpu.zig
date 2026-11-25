@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: MIT
 //! Gpu: an AMD graphics device tried a part at a time, each step said:
-//! its video BIOS read, the display's clocks asked for, its security
+//! its video BIOS read, the display's clocks asked for, the display
+//! controller read or started, the picture's checksum read, its security
 //! processor started and the video decoder's firmware loaded by it, the
 //! display's interrupt at each frame counted, or one flip of the picture
 //! the display reads. Built against the SDK only.
 //!
-//!   Gpu TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,PIPE/K/N,FETCHER/K/N,WATCHDOG/K/N
+//!   Gpu TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,PIPE/K/N,FETCHER/K/N,WATCHDOG/K/N
 //!
 //! BIOS prints the device's video BIOS image (GetGPUBios): where it is
 //! and how long, its tables' header's version, the version of each data
@@ -23,7 +24,24 @@
 //! messages change nothing, but they are written to the device: the
 //! watchdog is armed for them.
 //!
-//! Without BIOS, CLOCKS, FRAMES or FLIP the two files are read from
+//! DMCUB prints the display controller - the display engine's own
+//! processor - as its registers read (RTGCTRL_AMD_CONTROLLER): whether
+//! it is enabled, in reset, running its firmware (its clock read twice),
+//! its boot status and options, its rings, the windows it reaches memory
+//! through, its last faults. Read only, no watchdog wanted. With START
+//! the board starts it (RTGCTRL_AMD_START_CONTROLLER): the firmware
+//! dcn_<version>_dmcub.bin loaded by the security processor, the memory
+//! it runs with set up, the controller let out of reset and asked what
+//! it can do; printed are how far that got, the controller as it then
+//! reads, its answer and the start of its trace, and the picture's
+//! checksum before and after, which should be the same. The watchdog is
+//! armed for it.
+//!
+//! CRC prints the checksum the display's timing generator computes over
+//! the picture (RTGCTRL_AMD_CRC), switching it on the first time: the
+//! watchdog is armed for it.
+//!
+//! Without BIOS, CLOCKS, DMCUB, CRC, FRAMES or FLIP the two files are read from
 //! DEVS:firmware/amdgpu/, named for the blocks that use them as the
 //! device's table gives their versions - psp_13_0_4_toc.bin for the
 //! security processor 13.0.4, vcn_4_0_2.bin for the video decoder 4.0.2 -
@@ -77,19 +95,23 @@ const rtg = sdk.rtg;
 const RtgBase = sdk.interface.rtg.RtgBase;
 
 pub const COMMAND_NAME = "Gpu";
-const VERSION_STRING = "\x00$VER: Gpu 1.4 (25.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Gpu 1.5 (26.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,PIPE/K/N,FETCHER/K/N,WATCHDOG/K/N";
+const template = "TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,PIPE/K/N,FETCHER/K/N,WATCHDOG/K/N";
 const arg_toc = 0;
 const arg_firmware = 1;
 const arg_frames = 2;
 const arg_flip = 3;
 const arg_bios = 4;
 const arg_clocks = 5;
-const arg_pipe = 6;
-const arg_fetcher = 7;
-const arg_watchdog = 8;
+const arg_dmcub = 6;
+const arg_start = 7;
+const arg_crc = 8;
+const arg_pipe = 9;
+const arg_fetcher = 10;
+const arg_watchdog = 11;
+const arg_count = 12;
 
 /// Where the files are.
 const directory = "DEVS:firmware/amdgpu/";
@@ -296,6 +318,141 @@ fn clocks(sys: *ExecBase, dl: *DosBase, millis: u32) i32 {
     return dos.RETURN_OK;
 }
 
+/// The display's board, from rtg.library opened as `base`: null with why
+/// said.
+fn amdBoard(dl: *DosBase, rb: *RtgBase) ?*rtg.RtgBoard {
+    return rb.FindBoard(amd_board) orelse {
+        _ = Printf(dl, "No board %s: the display is not driven by rtg-amd\n", .{amd_board});
+        return null;
+    };
+}
+
+/// The watchdog armed for `millis`: its resource, or null with why said.
+fn arm(sys: *ExecBase, dl: *DosBase, millis: u32) ?*WatchdogBase {
+    const wb: *WatchdogBase = @ptrCast(sys.OpenResource(watchdog.WATCHDOGNAME) orelse {
+        _ = Printf(dl, "No %s\n", .{watchdog.WATCHDOGNAME});
+        return null;
+    });
+    if (!wb.ArmWatchdog(millis, watchdog.WATCHDOG_RESET_SYSTEM)) {
+        _ = Printf(dl, "The watchdog refuses %u ms\n", .{millis});
+        return null;
+    }
+    _ = Printf(dl, "Watchdog armed: %u ms\n", .{millis});
+    return wb;
+}
+
+/// The display controller read, or - with the watchdog's `millis` -
+/// started; printed either way.
+fn controller(sys: *ExecBase, dl: *DosBase, millis: ?u32) i32 {
+    const base = sys.OpenLibrary(rtg.RTGNAME, rtg.RTG_VERSION) orelse {
+        _ = Printf(dl, "No %s\n", .{rtg.RTGNAME});
+        return dos.RETURN_FAIL;
+    };
+    defer sys.CloseLibrary(base);
+    const rb: *RtgBase = @ptrCast(base);
+    const board = amdBoard(dl, rb) orelse return dos.RETURN_WARN;
+    var found: rtg.tags.RtgAmdController = .{};
+    const time = millis orelse {
+        const result = rb.BoardControl(board, rtg.tags.RTGCTRL_AMD_CONTROLLER, @bitCast(@intFromPtr(&found)));
+        if (result != rtg.errors.RTGERR_OK) {
+            _ = Printf(dl, "The controller was not read: error %ld\n", .{@as(i64, result)});
+            return dos.RETURN_ERROR;
+        }
+        printController(dl, &found);
+        return dos.RETURN_OK;
+    };
+    const wb = arm(sys, dl, time) orelse return dos.RETURN_FAIL;
+    var before: rtg.tags.RtgAmdCrc = .{};
+    const crc_before = rb.BoardControl(board, rtg.tags.RTGCTRL_AMD_CRC, @bitCast(@intFromPtr(&before)));
+    const result = rb.BoardControl(board, rtg.tags.RTGCTRL_AMD_START_CONTROLLER, @bitCast(@intFromPtr(&found)));
+    var after: rtg.tags.RtgAmdCrc = .{};
+    const crc_after = rb.BoardControl(board, rtg.tags.RTGCTRL_AMD_CRC, @bitCast(@intFromPtr(&after)));
+    wb.DisarmWatchdog();
+    const stages = [_][*:0]const u8{ "nothing done", "the files read", "the firmware loaded", "set up", "up", "answered" };
+    _ = Printf(dl, "Start: error %ld, %s\n", .{ @as(i64, result), stages[@min(found.stage, stages.len - 1)] });
+    printController(dl, &found);
+    if (found.stage >= rtg.tags.RTG_AMD_STAGE_UP) {
+        _ = Printf(dl, "Answer:", .{});
+        for (found.reply) |reply_word| _ = Printf(dl, " %08lx", .{@as(u64, reply_word)});
+        _ = Printf(dl, "\nTrace:", .{});
+        for (found.trace) |trace_word| _ = Printf(dl, " %08lx", .{@as(u64, trace_word)});
+        _ = Printf(dl, "\n", .{});
+    }
+    printCrc(dl, "Picture before", crc_before, &before);
+    printCrc(dl, "Picture after ", crc_after, &after);
+    if (crc_before == rtg.errors.RTGERR_OK and crc_after == rtg.errors.RTGERR_OK) {
+        const same = before.red == after.red and before.green == after.green and before.blue == after.blue;
+        _ = Printf(dl, "The picture is %s\n", .{@as([*:0]const u8, if (same) "unchanged" else "CHANGED")});
+    }
+    return if (result == rtg.errors.RTGERR_OK) dos.RETURN_OK else dos.RETURN_ERROR;
+}
+
+/// The controller as RtgAmdController holds it, a line a part.
+fn printController(dl: *DosBase, found: *const rtg.tags.RtgAmdController) void {
+    if (found.present == 0) {
+        _ = Printf(dl, "The display engine has no controller\n", .{});
+        return;
+    }
+    _ = Printf(dl, "Control %08lx: %s, %s; reset %08lx (%s); secure %08lx\n", .{
+        @as(u64, found.control),
+        @as([*:0]const u8, if (found.control & 1 << 16 != 0) "enabled" else "disabled"),
+        @as([*:0]const u8, if (found.control & 1 << 20 != 0) "waiting" else "not waiting"),
+        @as(u64, found.reset),
+        @as([*:0]const u8, if (found.reset & 1 != 0) "held" else "released"),
+        @as(u64, found.secure),
+    });
+    _ = Printf(dl, "Status %08lx: firmware %s, mailbox %s; options %08lx; clock %lu then %lu (%s)\n", .{
+        @as(u64, found.status),
+        @as([*:0]const u8, if (found.status & 1 != 0) "runs" else "does not run"),
+        @as([*:0]const u8, if (found.status & 2 != 0) "ready" else "not ready"),
+        @as(u64, found.options),
+        @as(u64, found.timer[0]),
+        @as(u64, found.timer[1]),
+        @as([*:0]const u8, if (found.timer[0] != found.timer[1]) "running" else "still"),
+    });
+    if (found.firmware != 0) {
+        _ = Printf(dl, "Firmware %u.%u.%u\n", .{ found.firmware >> 24, found.firmware >> 16 & 0xff, found.firmware >> 8 & 0xff });
+    }
+    _ = Printf(dl, "Inbox  base %08lx size %lu read %lu write %lu\n", .{ @as(u64, found.inbox[0]), @as(u64, found.inbox[1]), @as(u64, found.inbox[2]), @as(u64, found.inbox[3]) });
+    _ = Printf(dl, "Outbox base %08lx size %lu read %lu write %lu\n", .{ @as(u64, found.outbox[0]), @as(u64, found.outbox[1]), @as(u64, found.outbox[2]), @as(u64, found.outbox[3]) });
+    for (found.windows, 0..) |window, n| {
+        if (window[1] & 1 << 31 == 0) continue;
+        _ = Printf(dl, "Window %u: %08lx..%08lx onto %08lx%08lx\n", .{
+            @as(u32, @intCast(n)), @as(u64, window[0]), @as(u64, window[1] & 0x1fff_ffff), @as(u64, window[3]), @as(u64, window[2]),
+        });
+    }
+    _ = Printf(dl, "Faults: undefined %08lx, fetch %08lx, write %08lx\n", .{ @as(u64, found.faults[0]), @as(u64, found.faults[1]), @as(u64, found.faults[2]) });
+}
+
+/// A checksum as RtgAmdCrc holds it, or why there is none.
+fn printCrc(dl: *DosBase, name: [*:0]const u8, result: isize, found: *const rtg.tags.RtgAmdCrc) void {
+    if (result != rtg.errors.RTGERR_OK) {
+        _ = Printf(dl, "%s: no checksum, error %ld\n", .{ name, @as(i64, result) });
+        return;
+    }
+    _ = Printf(dl, "%s: pipe %u red %04x green %04x blue %04x%s\n", .{
+        name, found.pipe, found.red, found.green, found.blue,
+        @as([*:0]const u8, if (found.started != 0) " (summing switched on)" else ""),
+    });
+}
+
+/// The picture's checksum read with the watchdog armed, and printed.
+fn checksum(sys: *ExecBase, dl: *DosBase, millis: u32) i32 {
+    const base = sys.OpenLibrary(rtg.RTGNAME, rtg.RTG_VERSION) orelse {
+        _ = Printf(dl, "No %s\n", .{rtg.RTGNAME});
+        return dos.RETURN_FAIL;
+    };
+    defer sys.CloseLibrary(base);
+    const rb: *RtgBase = @ptrCast(base);
+    const board = amdBoard(dl, rb) orelse return dos.RETURN_WARN;
+    const wb = arm(sys, dl, millis) orelse return dos.RETURN_FAIL;
+    var found: rtg.tags.RtgAmdCrc = .{};
+    const result = rb.BoardControl(board, rtg.tags.RTGCTRL_AMD_CRC, @bitCast(@intFromPtr(&found)));
+    wb.DisarmWatchdog();
+    printCrc(dl, "Picture", result, &found);
+    return if (result == rtg.errors.RTGERR_OK) dos.RETURN_OK else dos.RETURN_ERROR;
+}
+
 /// A clock's levels on one line, in MHz.
 fn printLevels(dl: *DosBase, name: [*:0]const u8, levels: []const u32) void {
     _ = Printf(dl, "%-28s", .{name});
@@ -322,7 +479,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const lib = sys.OpenLibrary(dos.DOSNAME, 0) orelse return dos.RETURN_FAIL;
     defer sys.CloseLibrary(lib);
     const dl: *DosBase = @ptrCast(lib);
-    var argv: [9]usize = @splat(0);
+    var argv: [arg_count]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
         return dos.RETURN_ERROR;
@@ -338,12 +495,15 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         return dos.RETURN_WARN;
     }
     if (argv[arg_bios] != 0) return bios(dl, ab);
+    if (argv[arg_dmcub] != 0 and argv[arg_start] == 0) return controller(sys, dl, null);
     if (argv[arg_watchdog] == 0) {
         _ = Printf(dl, "%s: WATCHDOG is required for a step that writes to the device\n", .{COMMAND_NAME});
         return dos.RETURN_ERROR;
     }
     const millis: u32 = @intCast(@max(1, @as(*const i32, @ptrFromInt(argv[arg_watchdog])).*));
     if (argv[arg_clocks] != 0) return clocks(sys, dl, millis);
+    if (argv[arg_dmcub] != 0) return controller(sys, dl, millis);
+    if (argv[arg_crc] != 0) return checksum(sys, dl, millis);
     if (argv[arg_frames] != 0 or argv[arg_flip] != 0) {
         const pipe = number(argv[arg_pipe]);
         const fetcher = number(argv[arg_fetcher]);

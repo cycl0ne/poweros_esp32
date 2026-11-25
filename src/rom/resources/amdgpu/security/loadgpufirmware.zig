@@ -23,10 +23,12 @@ const _security = @import("_security.zig");
 /// INPUTS:
 /// - `kind` - what it is: GPUFIRMWARE_VIDEO, the video decoder's
 ///   firmware; GPUFIRMWARE_VIDEO_REGISTERS (since 1.3), the writes that
-///   start the video decoder.
+///   start the video decoder; GPUFIRMWARE_DISPLAY (since 1.7), the
+///   display controller's firmware.
 /// - `image` - for firmware the file, whole, as it is on the disk
-///   (DEVS:firmware/amdgpu/vcn_<version>.bin), its vendor's header
-///   included; for the writes the list itself, pairs of 32-bit words -
+///   (DEVS:firmware/amdgpu/vcn_<version>.bin,
+///   dcn_<version>_dmcub.bin), its vendor's header included; for the
+///   writes the list itself, pairs of 32-bit words -
 ///   a register's offset as the block itself numbers it, then its value -
 ///   at most 512 pairs.
 /// - `length` - its length in bytes.
@@ -35,9 +37,10 @@ const _security = @import("_security.zig");
 /// RESULT:
 /// True with `address` holding where the firmware is in the protected
 /// region, as the device's blocks reach it - what the block's driver
-/// points the block at - or, for the writes, what the processor answered
-/// as an address, 0 where it named none. False where `kind` is not one
-/// there is; StartGPUSecurity has not made the processor ready; the
+/// points the block at - or, for the writes and the display controller's
+/// firmware, what the processor answered as an address, 0 where it named
+/// none: the processor points the display controller at its firmware
+/// itself. False where `kind` is not one there is; StartGPUSecurity has not made the processor ready; the
 /// file's header does not fit the file, or the list is empty, longer
 /// than 512 pairs or not of whole pairs; the processor does not answer
 /// within five seconds, or answers no address for firmware; the device's
@@ -46,7 +49,9 @@ const _security = @import("_security.zig");
 ///
 /// BEHAVIOR:
 /// Under the security processor's lock: the part of the file its header
-/// names, or the list whole, is copied into a piece of its own, which the
+/// names - for the display controller's firmware the code its header's
+/// own field counts, signature and all - or the list whole, is copied
+/// into a piece of its own, which the
 /// processor reads - firmware it checks and puts into the region, writes
 /// it applies to the block in their order. The piece is given back once
 /// it answers. The status it answers is put on the
@@ -89,7 +94,8 @@ const _security = @import("_security.zig");
 /// ```
 pub fn LoadGPUFirmware(ab: *AMDGPUBase, kind: u32, image: [*]const u8, length: u32, address: *u64) bool {
     if (ab.device == null or !ab.security_known) return false;
-    if (kind != amdgpu.GPUFIRMWARE_VIDEO and kind != amdgpu.GPUFIRMWARE_VIDEO_REGISTERS) return false;
+    if (kind != amdgpu.GPUFIRMWARE_VIDEO and kind != amdgpu.GPUFIRMWARE_VIDEO_REGISTERS and
+        kind != amdgpu.GPUFIRMWARE_DISPLAY) return false;
     const sys = ab.sys_base;
     const owner = amdgpu.AMDGPUNAME;
     sys.ObtainSemaphore(&ab.security_lock);
@@ -99,6 +105,9 @@ pub fn LoadGPUFirmware(ab: *AMDGPUBase, kind: u32, image: [*]const u8, length: u
     const file = image[0..length];
     const part = if (kind == amdgpu.GPUFIRMWARE_VIDEO_REGISTERS) writesOf(file) orelse {
         exec.kprintf(sys, "%s: a list of register writes of %d bytes is not one of whole pairs, 1 to %d of them\n", .{ owner, length, most_writes });
+        return false;
+    } else if (kind == amdgpu.GPUFIRMWARE_DISPLAY) displayPartOf(file) orelse {
+        exec.kprintf(sys, "%s: the display controller's firmware header does not fit its file of %d bytes\n", .{ owner, length });
         return false;
     } else blk: {
         const payload = _security.payloadOf(file) orelse {
@@ -110,7 +119,7 @@ pub fn LoadGPUFirmware(ab: *AMDGPUBase, kind: u32, image: [*]const u8, length: u
     const response = _security.staged(ab, part, _security.COMMAND_LOAD_FIRMWARE, &.{
         .{ .at = _security.at_arguments + 12, .value = kind },
     }) orelse return false;
-    if (kind == amdgpu.GPUFIRMWARE_VIDEO_REGISTERS) {
+    if (kind != amdgpu.GPUFIRMWARE_VIDEO) {
         address.* = response.address;
         return true;
     }
@@ -120,6 +129,53 @@ pub fn LoadGPUFirmware(ab: *AMDGPUBase, kind: u32, image: [*]const u8, length: u
     }
     address.* = response.address;
     return true;
+}
+
+/// Where in the display controller's firmware file its header counts the
+/// code's bytes, and the header's least size with that field.
+const display_code_bytes_at = 0x20;
+const display_header_least = 0x28;
+
+/// The part of the display controller's firmware file the processor is
+/// given: from where the common header says the firmware starts, as many
+/// bytes as its own header's code count - the code with the signature
+/// before and after it, not the data that may follow. Null where the
+/// headers do not fit the file.
+fn displayPartOf(file: []const u8) ?[]const u8 {
+    const payload = _security.payloadOf(file) orelse return null;
+    const header = @as(u32, file[4]) | @as(u32, file[5]) << 8 | @as(u32, file[6]) << 16 | @as(u32, file[7]) << 24;
+    if (header < display_header_least) return null;
+    const at = display_code_bytes_at;
+    const code = @as(u32, file[at]) | @as(u32, file[at + 1]) << 8 | @as(u32, file[at + 2]) << 16 | @as(u32, file[at + 3]) << 24;
+    if (code == 0 or code > payload.bytes) return null;
+    return file[payload.at..][0..code];
+}
+
+test "the display controller's part is the code its header counts" {
+    const testing = @import("std").testing;
+    var file = [_]u8{0} ** 0x200;
+    const put = struct {
+        fn f(room: []u8, at: usize, value: u32) void {
+            room[at] = @truncate(value);
+            room[at + 1] = @truncate(value >> 8);
+            room[at + 2] = @truncate(value >> 16);
+            room[at + 3] = @truncate(value >> 24);
+        }
+    }.f;
+    put(&file, 0x00, file.len);
+    put(&file, 0x04, 0x28);
+    put(&file, 0x14, 0x100);
+    put(&file, 0x18, 0x100);
+    put(&file, 0x20, 0xc0);
+    const part = displayPartOf(&file) orelse return error.NotFound;
+    try testing.expectEqual(@as(usize, 0xc0), part.len);
+    try testing.expectEqual(@intFromPtr(&file) + 0x100, @intFromPtr(part.ptr));
+    // A count past the firmware's part, or a header without the field.
+    put(&file, 0x20, 0x101);
+    try testing.expect(displayPartOf(&file) == null);
+    put(&file, 0x20, 0xc0);
+    put(&file, 0x04, 0x20);
+    try testing.expect(displayPartOf(&file) == null);
 }
 
 /// The most register writes a list holds.

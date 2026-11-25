@@ -122,10 +122,12 @@ pub const GPUPOWER_VIDEO: u32 = 1;
 pub const GPUPOWER_JPEG: u32 = 2;
 
 /// LoadGPUFirmware's kinds, as the security processor numbers them: the
-/// video decoder's firmware, and the list of register writes that starts
-/// the video decoder, which the processor applies itself.
+/// video decoder's firmware, the list of register writes that starts
+/// the video decoder, which the processor applies itself, and the display
+/// controller's firmware.
 pub const GPUFIRMWARE_VIDEO: u32 = 13;
 pub const GPUFIRMWARE_VIDEO_REGISTERS: u32 = 49;
+pub const GPUFIRMWARE_DISPLAY: u32 = 51;
 
 /// AddGPUIntServer's clients - which of the device's blocks raised an
 /// interrupt - and their sources, as the interrupt block numbers them.

@@ -173,6 +173,87 @@ pub const RTGCTRL_AMD_FIRMWARE: u32 = RTGCTRL_DRIVER + 32;
 /// for the manager's table, RTGERR_IO where the manager refused a message.
 pub const RTGCTRL_AMD_CLOCKS: u32 = RTGCTRL_DRIVER + 33;
 
+/// `value` an `*RtgAmdController`, filled in from the display
+/// controller's registers - the processor in the display engine that
+/// runs the engine's command tables and its own firmware. Read only;
+/// RTGERR_OK.
+pub const RTGCTRL_AMD_CONTROLLER: u32 = RTGCTRL_DRIVER + 34;
+/// The display controller started with its firmware from
+/// DEVS:firmware/amdgpu/ (loaded by the device's security processor),
+/// and asked one question that changes nothing; `value` an
+/// `*RtgAmdController`, filled in as the controller then stands and with
+/// how far the start got (`stage`). RTGERR_OK once it answered;
+/// RTGERR_NO_FILE for a firmware file missing, RTGERR_NO_MEMORY for no
+/// room in the device's memory, RTGERR_IO where the security processor
+/// did not load the firmware, RTGERR_TIMEOUT where the controller did not
+/// come up or did not answer, RTGERR_NOT_SUPPORTED where the engine has
+/// no controller.
+pub const RTGCTRL_AMD_START_CONTROLLER: u32 = RTGCTRL_DRIVER + 35;
+/// `value` an `*RtgAmdCrc`: the checksum the board's timing generator
+/// computes over each frame it sends - each colour's 16-bit CRC over the
+/// whole picture. A test tool: the same checksum before and after a step
+/// says the step left the picture as it was. The first ask switches the
+/// sum on (`started` 1) and waits three frames; it stays on. RTGERR_OK,
+/// RTGERR_NO_DISPLAY where the board drives no picture.
+pub const RTGCTRL_AMD_CRC: u32 = RTGCTRL_DRIVER + 36;
+
+/// What RTGCTRL_AMD_CRC fills in: the pipe summed, each colour's CRC,
+/// and whether this ask switched the sum on.
+pub const RtgAmdCrc = extern struct {
+    pipe: u32 = 0,
+    red: u32 = 0,
+    green: u32 = 0,
+    blue: u32 = 0,
+    started: u32 = 0,
+};
+
+/// How far RTGCTRL_AMD_START_CONTROLLER got: nothing done, the files
+/// read, the firmware loaded, the memory it runs with set up and the
+/// controller reset, the controller released and up, its answer had.
+pub const RTG_AMD_STAGE_NONE: u32 = 0;
+pub const RTG_AMD_STAGE_FILES: u32 = 1;
+pub const RTG_AMD_STAGE_LOADED: u32 = 2;
+pub const RTG_AMD_STAGE_SET_UP: u32 = 3;
+pub const RTG_AMD_STAGE_UP: u32 = 4;
+pub const RTG_AMD_STAGE_ANSWERED: u32 = 5;
+
+/// How many of the controller's windows onto memory RtgAmdController
+/// holds.
+pub const RTG_AMD_WINDOWS = 8;
+
+/// What RTGCTRL_AMD_CONTROLLER and RTGCTRL_AMD_START_CONTROLLER fill in:
+/// the controller's registers as they read - `present` 1 where the
+/// engine has a controller at all, `control` its enable and trace port,
+/// `reset` its soft reset, `secure` its secure reset, `status` the boot
+/// status its firmware keeps (bit 0 its firmware runs, bit 1 its mailbox
+/// is ready), `options` the boot options it was started with, `timer`
+/// its clock read twice a millisecond apart (it runs where they
+/// differ), `inbox` and `outbox` its command ring's and its notification
+/// ring's base, size, read and write places, `windows` each window's
+/// base and top in the controller's own addresses and the memory it is
+/// onto (low and high word), `faults` the addresses of its last
+/// undefined access, instruction fetch and data write faults. After a
+/// start: `firmware` the version the firmware's file names, `reply` the
+/// 64 bytes of the question's slot as the controller left them, and
+/// `trace` the first words of its trace buffer.
+pub const RtgAmdController = extern struct {
+    stage: u32 = RTG_AMD_STAGE_NONE,
+    present: u32 = 0,
+    control: u32 = 0,
+    reset: u32 = 0,
+    secure: u32 = 0,
+    status: u32 = 0,
+    options: u32 = 0,
+    timer: [2]u32 = @splat(0),
+    inbox: [4]u32 = @splat(0),
+    outbox: [4]u32 = @splat(0),
+    windows: [RTG_AMD_WINDOWS][4]u32 = @splat(@splat(0)),
+    faults: [3]u32 = @splat(0),
+    firmware: u32 = 0,
+    reply: [16]u32 = @splat(0),
+    trace: [4]u32 = @splat(0),
+};
+
 /// The most levels RtgAmdClocks has room for of a clock, and of the data
 /// fabric's states.
 pub const RTG_AMD_LEVELS = 8;

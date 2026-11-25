@@ -47,6 +47,12 @@
 //! the display's own mailbox, and read from the engine (`smu.zig`) - on
 //! request only, through the board's controls (RTGCTRL_AMD_*).
 //!
+//! The display controller - the engine's own processor - is read, and
+//! started with its firmware, the same way and only on request
+//! (`dmub.zig`): the memory it runs with stays the board's once given.
+//! The picture's checksum, as the timing generator sums it, is a test
+//! tool asked for the same way (`crc.zig`).
+//!
 //! The buffers drawn in are the machine's RAM, taken by the library as
 //! each is allocated (RTGRF_SYSTEM_MEMORY, RTGRF_DMA_MEMORY).
 //!
@@ -70,12 +76,14 @@ const uefi = @import("uefi.zig");
 const dcn = @import("dcn.zig");
 const sound = @import("sound.zig");
 const smu = @import("smu.zig");
+const dmub = @import("dmub.zig");
+const crc = @import("crc.zig");
 
 const MODULE_NAME = "rtg-amd";
 const DRIVER_NAME = "amd";
 const VERSION = 1;
-const REVISION = 6;
-const BUILD_DATE = "25.11.2026";
+const REVISION = 7;
+const BUILD_DATE = "26.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ VERSION, REVISION }) ++
@@ -133,6 +141,10 @@ const Screen = struct {
     /// generator, and the lock that keeps one message at a time in it.
     smu: smu.Mailbox = .{},
     smu_lock: exec.SignalSemaphore = .{},
+    /// The display controller once started - the memory it runs with -
+    /// and the lock that keeps one asker at a time at it.
+    controller: dmub.Controller = .{},
+    controller_lock: exec.SignalSemaphore = .{},
 };
 
 /// Wait for `frames` frames, as the library waits (WaitVBlank): for the
@@ -398,6 +410,7 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, device_tags: ?[*]const
         .smu = smu.find(found),
     };
     sys.InitSemaphore(&screen.smu_lock);
+    sys.InitSemaphore(&screen.controller_lock);
     // The board's buffers start, and their rows are rounded, as its tags
     // say; whole cache lines where they say nothing.
     const asked_alignment: u32 = @truncate(rb.GetRtgTagData(tags.RTGA_Alignment, 0, tag_list));
@@ -496,7 +509,9 @@ fn stats(board: *rtg.RtgBoard, into: *rtg.RtgBoardStats) callconv(.c) void {
 }
 
 /// The board's own controls (RTGCTRL_AMD_*): the display's mailbox to the
-/// power manager asked, one asker at a time. Nothing else is taken.
+/// power manager asked, the display controller read or started, one
+/// asker at a time at each, and the picture's checksum read. Nothing else
+/// is taken.
 fn control(board: *rtg.RtgBoard, what: u32, value: isize) callconv(.c) isize {
     const screen = screenOf(board);
     switch (what) {
@@ -511,6 +526,24 @@ fn control(board: *rtg.RtgBoard, what: u32, value: isize) callconv(.c) isize {
             screen.sys.ObtainSemaphore(&screen.smu_lock);
             defer screen.sys.ReleaseSemaphore(&screen.smu_lock);
             return smu.clocks(screen.dcn, screen.smu, into);
+        },
+        rtg.tags.RTGCTRL_AMD_CONTROLLER, rtg.tags.RTGCTRL_AMD_START_CONTROLLER => {
+            if (value == 0) return err.RTGERR_BAD_ARG;
+            const into: *rtg.tags.RtgAmdController = @ptrFromInt(@as(usize, @bitCast(value)));
+            screen.sys.ObtainSemaphore(&screen.controller_lock);
+            defer screen.sys.ReleaseSemaphore(&screen.controller_lock);
+            if (what == rtg.tags.RTGCTRL_AMD_CONTROLLER) {
+                into.* = .{};
+                dmub.read(screen.dcn, into);
+                into.firmware = screen.controller.version;
+                return err.RTGERR_OK;
+            }
+            return dmub.start(screen.dcn, &screen.controller, into);
+        },
+        rtg.tags.RTGCTRL_AMD_CRC => {
+            if (value == 0) return err.RTGERR_BAD_ARG;
+            const into: *rtg.tags.RtgAmdCrc = @ptrFromInt(@as(usize, @bitCast(value)));
+            return crc.read(screen.dcn, into);
         },
         else => return err.RTGERR_NOT_SUPPORTED,
     }

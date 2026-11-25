@@ -326,15 +326,22 @@ pub fn vpuDir(b: *std.Build) ?[]const u8 {
     return path;
 }
 
+/// The AMD graphics device's firmware files scripts/fetch-amdgpu.sh
+/// fetches, which go onto the disk.
+pub const amdgpu_firmware = [_][]const u8{ "vcn_4_0_2.bin", "psp_13_0_4_toc.bin", "dcn_3_1_4_dmcub.bin" };
+
 /// Where scripts/fetch-amdgpu.sh put an AMD graphics device's firmware,
-/// or null without it.
+/// or null without it - or without a file it fetches now, from an older
+/// run of it.
 pub fn amdgpuDir(b: *std.Build) ?[]const u8 {
     const io = b.graph.io;
     const path = b.pathFromRoot("toolchain/amdgpu");
-    std.Io.Dir.cwd().access(io, b.pathJoin(&.{ path, "vcn_4_0_2.bin" }), .{}) catch {
-        std.log.info("no AMD graphics firmware (scripts/fetch-amdgpu.sh): the x86-64 disk has no DEVS:firmware/amdgpu/", .{});
-        return null;
-    };
+    for (amdgpu_firmware) |name| {
+        std.Io.Dir.cwd().access(io, b.pathJoin(&.{ path, name }), .{}) catch {
+            std.log.info("no AMD graphics firmware {s} (scripts/fetch-amdgpu.sh): the x86-64 disk has no DEVS:firmware/amdgpu/", .{name});
+            return null;
+        };
+    }
     return path;
 }
 

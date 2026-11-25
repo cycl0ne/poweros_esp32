@@ -282,7 +282,7 @@ Fetched once into `toolchain/`, pinned and checked, never committed:
 | `scripts/fetch-cyw43455.sh` | the radio firmware of the Compute Module 5 and the Raspberry Pi 4 Model B, which `DEVS:networks/cyw43455.device` loads into it (the two AArch64 disks), and its Bluetooth's patch, which `DEVS:bluetooth/cyw43455bt.device` does (the BCM2711 boards' disk) |
 | `scripts/fetch-mt7922.sh` | the firmware of a MediaTek MT7922 card: its Wi-Fi's, which `DEVS:networks/mt7922.device` loads into it, and its Bluetooth's, which `DEVS:usb/bluetooth.device` does (the 64-bit machines' disks) |
 | `scripts/fetch-vpu.sh` | the JH7110's video decoder firmware, which `videodec.resource` loads (the RISC-V 64 disk) |
-| `scripts/fetch-amdgpu.sh` | an AMD graphics device's video decoder firmware and its security processor's table of contents, which `amdgpu.resource` loads (the x86-64 disk) |
+| `scripts/fetch-amdgpu.sh` | an AMD graphics device's video decoder and display controller firmware and its security processor's table of contents, which `amdgpu.resource` loads (the x86-64 disk) |
 | `scripts/fetch-pciids.sh` | the PCI ID Repository's list, `DEVS:pci.ids` on the 64-bit machines' disks, which `C:PCIInfo` names vendors and devices from - the host's copy where it has one, the current list otherwise: not pinned |
 | `scripts/fetch-icons.sh` | the pictures of the disk's icons (Tango, public domain), drawn at the boards' sizes |
 | `scripts/fetch-svg-suite.sh` | resvg's test suite - some 1800 SVG files, each with resvg's picture of it, and the fonts their text is in - which `./zig build svg-suite` compares svg.datatype's drawing with; on no disk |
