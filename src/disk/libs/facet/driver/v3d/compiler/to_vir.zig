@@ -167,6 +167,10 @@ pub const Program = struct {
     /// 985-1003; since 1.190).
     flat_shade_flags: u32 = 0,
     noperspective_flags: u32 = 0,
+    /// A fragment program's first varying is the layer an input
+    /// attachment is read at, the input of VARYING_SLOT_LAYER, which the
+    /// vertex program writes (since 1.215).
+    reads_layer: bool = false,
 
     pub fn destroy(program: Program) void {
         program.c.destroy();
@@ -221,6 +225,8 @@ const Emit = struct {
     /// The program reads the payload's Z, FragCoord's z (c->reads_z,
     /// nir_to_vir.c:2991-2995), so it writes Z (:2099; since 1.214).
     reads_z: bool = false,
+    /// The program reads the layer, a varying of its own (since 1.215).
+    reads_layer: bool = false,
     /// info.fs.early_fragment_tests, as emit_frag_end leaves it.
     early_fragment_tests: bool = true,
     /// Where the last load_ubo of a constant offset left unifa: its
@@ -342,6 +348,7 @@ pub fn compileSteps(allocator: std.mem.Allocator, compiler: *const vir.Compiler,
             .single_seg = c.last_thrsw == null,
             .flat_shade_flags = e.flat_shade_flags,
             .noperspective_flags = e.noperspective_flags,
+            .reads_layer = e.reads_layer,
         };
     }
     return if (failed_register_allocation) Error.Registers else Error.Invalid;
@@ -452,10 +459,38 @@ fn setupFsInputs(e: *Emit) Error!void {
     // driver_location_compare, nir_to_vir.c:2505-2506, :2519-2520), and
     // reads no varying (since 1.214).
     if (readsFragCoord(e.work)) try emitFragcoordInput(e);
+    // VARYING_SLOT_LAYER, below the first generic varying's
+    // VARYING_SLOT_VAR0 (shader_enums.h), so the next (since 1.215).
+    if (readsSystem(e.work, .layer)) try emitLayerInput(e);
     var varying: u32 = 0;
     while (varying < e.work.varyings) : (varying += 1) {
         e.inputs[varying] = try emitFragmentVarying(e, varying);
     }
+}
+
+/// Whether the program reads the system value `which`, whose step
+/// nir_opt_dce left (since 1.215).
+fn readsSystem(work: *const compile.Work, which: compile.SystemValue) bool {
+    for (work.steps[0..work.step_count]) |each| {
+        if (each.tag == .system and each.at == @intFromEnum(which)) return true;
+    }
+    return false;
+}
+
+/// The layer an input attachment is read at, the flat int of
+/// VARYING_SLOT_LAYER that try_lower_intrinsic loads (v3dv_pipeline.c:
+/// 276-280): emit_fragment_input's emit_fragment_varying of it, an
+/// ldvary and its flat flag (nir_to_vir.c:1049-1121), as the first
+/// varying (since 1.215).
+fn emitLayerInput(e: *Emit) Error!void {
+    const c = e.c;
+    const ldvary = try c.addInst(.nop, c.undef, c.undef, c.undef);
+    ldvary.qpu.sig.ldvary = true;
+    const vary = try c.emitDef(ldvary);
+    e.flat_shade_flags |= @as(u32, 1) << @intCast(c.num_inputs);
+    c.num_inputs += 1;
+    e.reads_layer = true;
+    e.system[@intFromEnum(compile.SystemValue.layer)] = try emitFlatVarying(c, vary, vir.reg(.reg, 0));
 }
 
 /// Whether the program reads a float of FragCoord: a load_input of

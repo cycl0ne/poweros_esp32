@@ -7067,4 +7067,40 @@ pub const LIBRARY_VERSION = 1;
 /// FragCoord as divergent, each fail one of them. Read from the code and
 /// the host's tests: not yet on a board, the CM5 being off; FacetBoth's
 /// case for it comes with item 56's.
-pub const LIBRARY_REVISION = 214;
+///
+/// 215: **subpassLoad in the V3D's fragment programs (docs/
+/// facet-vulkan10.md item 56, step 2).** The SDK's SPIR-V knows
+/// SubpassData, OpImageRead, the InputAttachment capability and the
+/// InputAttachmentIndex decoration, and `look` takes Sampled 2 for a
+/// SubpassData image and nothing else. The V3D's profile takes them. An
+/// input attachment's image is a UniformConstant variable the compiler
+/// records as a sampler of its own kind, and its read is what
+/// try_lower_input_load makes of it (nir_lower_input_attachments.c:
+/// 57-156): a txf of the attachment at a place and a layer, plus the
+/// read's own two words, at level 0. v3dv asks for the place as an
+/// intrinsic and makes it FragCoord's x and y, f2i32, and the layer the
+/// flat int input of VARYING_SLOT_LAYER (try_lower_intrinsic,
+/// v3dv_pipeline.c:263-286), which is what is done here. The layer sorts
+/// after VARYING_SLOT_POS and before every generic varying, so it is the
+/// program's first ldvary, flat (emit_flat_varying), and the shader
+/// record counts it. The vertex program is keyed by it as v3dv keys
+/// used_outputs from the fragment program's input slots, and writes 0
+/// there, writing no gl_Layer (v3d_nir_emit_ff_vpm_outputs): its
+/// varyings move one row on. A vertex function run on the CPU lays no
+/// layer, so the cores draw such a pipeline. The fetch is the TMU's as a
+/// texelFetch's: T, I and B, then S at TMUSF, and P0 alone. As every TMU
+/// read here, its texels come back as 16-bit floats where v3dv asks for
+/// 32 for a variable not RelaxedPrecision (lower_tex_src,
+/// v3dv_pipeline.c:776-787). SubpassDataMS, an arrayed one and an image
+/// operand on the read are refused: the txf_ms's level goes to TMUB
+/// before its coordinate once v3d_nir_lower_txf_ms has run, an order
+/// emitTex does not have. The read's constant (0, 0) is a constant of
+/// each word, so (('iadd', a, 0), a) folds it as NIR does.
+///
+/// Nothing reaches it yet: the V3D still refuses an input attachment's
+/// descriptor and a subpass that reads one (step 3). Two references,
+/// glslc_subpass and glslc_subpass_varying. The V3D's tests are 402,
+/// four new. Put back, the layer's slot in the vertex program fails one
+/// of them and its flat flag two. Read from the code and the host's
+/// tests: not yet on a board, the CM5 being off.
+pub const LIBRARY_REVISION = 215;

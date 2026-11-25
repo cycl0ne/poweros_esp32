@@ -32291,3 +32291,171 @@ pub const glslc_frag_coord_ubo = [_]u32{
     0x0000001D, 0x0000001C, 0x0003003E, 0x00000009, 0x0000001D, 0x000100FD,
     0x00010038,
 };
+
+/// glslc -O -fshader-stage=frag: an input attachment read where the pixel
+/// is, halved: OpImageRead of an image of Dim SubpassData, a txf at
+/// FragCoord's x and y made integers and the layer, a flat varying (since
+/// 1.215).
+/// 127 words.
+///
+/// ```glsl
+/// #version 450
+/// // An input attachment read where the pixel is, halved: subpassLoad, which
+/// // nir_lower_input_attachments makes a txf at the pixel's place and layer
+/// // (try_lower_input_load, nir_lower_input_attachments.c; facet 1.215).
+/// layout(input_attachment_index = 0, set = 0, binding = 0) uniform subpassInput a;
+/// layout(location = 0) out vec4 o;
+/// void main() {
+///     o = subpassLoad(a) * 0.5;
+/// }
+/// ```
+///
+/// ```
+/// ; SPIR-V
+/// ; Version: 1.0
+/// ; Generator: Google Shaderc over Glslang; 11
+/// ; Bound: 21
+/// ; Schema: 0
+///                OpCapability Shader
+///                OpCapability InputAttachment
+///           %1 = OpExtInstImport "GLSL.std.450"
+///                OpMemoryModel Logical GLSL450
+///                OpEntryPoint Fragment %4 "main" %9
+///                OpExecutionMode %4 OriginUpperLeft
+///                OpDecorate %9 Location 0
+///                OpDecorate %12 Binding 0
+///                OpDecorate %12 DescriptorSet 0
+///                OpDecorate %12 InputAttachmentIndex 0
+///           %2 = OpTypeVoid
+///           %3 = OpTypeFunction %2
+///           %6 = OpTypeFloat 32
+///           %7 = OpTypeVector %6 4
+///           %8 = OpTypePointer Output %7
+///           %9 = OpVariable %8 Output
+///          %10 = OpTypeImage %6 SubpassData 0 0 0 2 Unknown
+///          %11 = OpTypePointer UniformConstant %10
+///          %12 = OpVariable %11 UniformConstant
+///          %14 = OpTypeInt 32 1
+///          %15 = OpConstant %14 0
+///          %16 = OpTypeVector %14 2
+///          %17 = OpConstantComposite %16 %15 %15
+///          %19 = OpConstant %6 0.5
+///           %4 = OpFunction %2 None %3
+///           %5 = OpLabel
+///          %13 = OpLoad %10 %12
+///          %18 = OpImageRead %7 %13 %17
+///          %20 = OpVectorTimesScalar %7 %18 %19
+///                OpStore %9 %20
+///                OpReturn
+///                OpFunctionEnd
+/// ```
+pub const glslc_subpass = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000015, 0x00000000, 0x00020011,
+    0x00000001, 0x00020011, 0x00000028, 0x0006000B, 0x00000001, 0x4C534C47,
+    0x6474732E, 0x3035342E, 0x00000000, 0x0003000E, 0x00000000, 0x00000001,
+    0x0006000F, 0x00000004, 0x00000004, 0x6E69616D, 0x00000000, 0x00000009,
+    0x00030010, 0x00000004, 0x00000007, 0x00040047, 0x00000009, 0x0000001E,
+    0x00000000, 0x00040047, 0x0000000C, 0x00000021, 0x00000000, 0x00040047,
+    0x0000000C, 0x00000022, 0x00000000, 0x00040047, 0x0000000C, 0x0000002B,
+    0x00000000, 0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002,
+    0x00030016, 0x00000006, 0x00000020, 0x00040017, 0x00000007, 0x00000006,
+    0x00000004, 0x00040020, 0x00000008, 0x00000003, 0x00000007, 0x0004003B,
+    0x00000008, 0x00000009, 0x00000003, 0x00090019, 0x0000000A, 0x00000006,
+    0x00000006, 0x00000000, 0x00000000, 0x00000000, 0x00000002, 0x00000000,
+    0x00040020, 0x0000000B, 0x00000000, 0x0000000A, 0x0004003B, 0x0000000B,
+    0x0000000C, 0x00000000, 0x00040015, 0x0000000E, 0x00000020, 0x00000001,
+    0x0004002B, 0x0000000E, 0x0000000F, 0x00000000, 0x00040017, 0x00000010,
+    0x0000000E, 0x00000002, 0x0005002C, 0x00000010, 0x00000011, 0x0000000F,
+    0x0000000F, 0x0004002B, 0x00000006, 0x00000013, 0x3F000000, 0x00050036,
+    0x00000002, 0x00000004, 0x00000000, 0x00000003, 0x000200F8, 0x00000005,
+    0x0004003D, 0x0000000A, 0x0000000D, 0x0000000C, 0x00050062, 0x00000007,
+    0x00000012, 0x0000000D, 0x00000011, 0x0005008E, 0x00000007, 0x00000014,
+    0x00000012, 0x00000013, 0x0003003E, 0x00000009, 0x00000014, 0x000100FD,
+    0x00010038,
+};
+
+/// glslc -O -fshader-stage=frag: an input attachment times a varying: the
+/// layer the read takes is the first varying, flat, and the vertex
+/// program's location 0 the second (since 1.215).
+/// 140 words.
+///
+/// ```glsl
+/// #version 450
+/// // An input attachment and a varying: the layer the fetch reads is a flat
+/// // varying of the lower location, read first (facet 1.215).
+/// layout(input_attachment_index = 0, set = 0, binding = 0) uniform subpassInput a;
+/// layout(location = 0) in vec4 v;
+/// layout(location = 0) out vec4 o;
+/// void main() {
+///     o = subpassLoad(a) * v;
+/// }
+/// ```
+///
+/// ```
+/// ; SPIR-V
+/// ; Version: 1.0
+/// ; Generator: Google Shaderc over Glslang; 11
+/// ; Bound: 23
+/// ; Schema: 0
+///                OpCapability Shader
+///                OpCapability InputAttachment
+///           %1 = OpExtInstImport "GLSL.std.450"
+///                OpMemoryModel Logical GLSL450
+///                OpEntryPoint Fragment %4 "main" %9 %20
+///                OpExecutionMode %4 OriginUpperLeft
+///                OpDecorate %9 Location 0
+///                OpDecorate %12 Binding 0
+///                OpDecorate %12 DescriptorSet 0
+///                OpDecorate %12 InputAttachmentIndex 0
+///                OpDecorate %20 Location 0
+///           %2 = OpTypeVoid
+///           %3 = OpTypeFunction %2
+///           %6 = OpTypeFloat 32
+///           %7 = OpTypeVector %6 4
+///           %8 = OpTypePointer Output %7
+///           %9 = OpVariable %8 Output
+///          %10 = OpTypeImage %6 SubpassData 0 0 0 2 Unknown
+///          %11 = OpTypePointer UniformConstant %10
+///          %12 = OpVariable %11 UniformConstant
+///          %14 = OpTypeInt 32 1
+///          %15 = OpConstant %14 0
+///          %16 = OpTypeVector %14 2
+///          %17 = OpConstantComposite %16 %15 %15
+///          %19 = OpTypePointer Input %7
+///          %20 = OpVariable %19 Input
+///           %4 = OpFunction %2 None %3
+///           %5 = OpLabel
+///          %13 = OpLoad %10 %12
+///          %18 = OpImageRead %7 %13 %17
+///          %21 = OpLoad %7 %20
+///          %22 = OpFMul %7 %18 %21
+///                OpStore %9 %22
+///                OpReturn
+///                OpFunctionEnd
+/// ```
+pub const glslc_subpass_varying = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000017, 0x00000000, 0x00020011,
+    0x00000001, 0x00020011, 0x00000028, 0x0006000B, 0x00000001, 0x4C534C47,
+    0x6474732E, 0x3035342E, 0x00000000, 0x0003000E, 0x00000000, 0x00000001,
+    0x0007000F, 0x00000004, 0x00000004, 0x6E69616D, 0x00000000, 0x00000009,
+    0x00000014, 0x00030010, 0x00000004, 0x00000007, 0x00040047, 0x00000009,
+    0x0000001E, 0x00000000, 0x00040047, 0x0000000C, 0x00000021, 0x00000000,
+    0x00040047, 0x0000000C, 0x00000022, 0x00000000, 0x00040047, 0x0000000C,
+    0x0000002B, 0x00000000, 0x00040047, 0x00000014, 0x0000001E, 0x00000000,
+    0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00030016,
+    0x00000006, 0x00000020, 0x00040017, 0x00000007, 0x00000006, 0x00000004,
+    0x00040020, 0x00000008, 0x00000003, 0x00000007, 0x0004003B, 0x00000008,
+    0x00000009, 0x00000003, 0x00090019, 0x0000000A, 0x00000006, 0x00000006,
+    0x00000000, 0x00000000, 0x00000000, 0x00000002, 0x00000000, 0x00040020,
+    0x0000000B, 0x00000000, 0x0000000A, 0x0004003B, 0x0000000B, 0x0000000C,
+    0x00000000, 0x00040015, 0x0000000E, 0x00000020, 0x00000001, 0x0004002B,
+    0x0000000E, 0x0000000F, 0x00000000, 0x00040017, 0x00000010, 0x0000000E,
+    0x00000002, 0x0005002C, 0x00000010, 0x00000011, 0x0000000F, 0x0000000F,
+    0x00040020, 0x00000013, 0x00000001, 0x00000007, 0x0004003B, 0x00000013,
+    0x00000014, 0x00000001, 0x00050036, 0x00000002, 0x00000004, 0x00000000,
+    0x00000003, 0x000200F8, 0x00000005, 0x0004003D, 0x0000000A, 0x0000000D,
+    0x0000000C, 0x00050062, 0x00000007, 0x00000012, 0x0000000D, 0x00000011,
+    0x0004003D, 0x00000007, 0x00000015, 0x00000014, 0x00050085, 0x00000007,
+    0x00000016, 0x00000012, 0x00000015, 0x0003003E, 0x00000009, 0x00000016,
+    0x000100FD, 0x00010038,
+};
