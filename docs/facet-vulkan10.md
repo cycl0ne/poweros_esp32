@@ -1773,7 +1773,7 @@ The store and the load were in place already. They took a Memory Format and a He
 - **The transfers.** A copy, a blit, a resolve and a copy to or from a buffer already went texel by texel through `_image.readTexel` and `writeTexel`, which find a device-laid texel where the device keeps it. CmdClearColorImage filled a level's span, and for such an image `_transfer.spanOf` gave the rows, which are not there. It gives the device's level now. The new host test found that.
 
 Still left out. Each is marked *facet-wide* or *V3D-only*, as above:
-- **An image sampled and read as an input attachment at once**, refused on the V3D, which reads no input attachment (item 56). The query answers `error_format_not_supported`: answering the 1 bit alone would break the rule that a sampled image's counts hold `sampledImageColorSampleCounts`. *V3D-only*.
+- **An image sampled and read as an input attachment at once**, refused on the V3D, which read no input attachment (item 56). The query answered `error_format_not_supported`: answering the 1 bit alone would break the rule that a sampled image's counts hold `sampledImageColorSampleCounts`. *V3D-only*. Made since 1.216, with both counts (item 56, step 3).
 - **A colour attachment that is sampled and written through as a storage image at once**, refused on both devices, as since 1.119 (`not_sampled` in `_image.shapeFor`). *Facet-wide*.
 - **CmdClearColorImage of such an image** is the CPU's fill of the level where the V3D keeps it, as every V3D clear has been since 1.142, not v3dv's clear through the TLB (v3dv_meta_clear.c:70-193). It gives the same texels. *V3D-only*.
 
@@ -2004,6 +2004,20 @@ Found independently by: features, semantics (both conformance-blocking).
 **Step 1 of 3 done in 1.214: gl_FragCoord in the V3D's fragment programs**, which a subpassLoad is made of (`try_lower_input_load`, nir_lower_input_attachments.c; v3dv lowers its coordinate to the input of VARYING_SLOT_POS, `try_lower_intrinsic`, v3dv_pipeline.c:263-286). FXCD, FYCD, the payload's Z and the reciprocal of its W, as emit_fragcoord_input reads them (nir_to_vir.c:1017-1023); a program that reads Z writes it (:2091-2099). Step 2 is the subpassLoad itself, a txf at the pixel's place through the input attachment's texture; step 3 the descriptor, the image laid out for the TMU, the pass storing what a later subpass reads, and `can.input_attachments`.
 
 **Step 2 of 3 done in 1.215: subpassLoad in the V3D's fragment programs.** SubpassData, OpImageRead and the InputAttachment capability in the SDK and the V3D's profile. The read is try_lower_input_load's txf (nir_lower_input_attachments.c:57-156) at FragCoord's x and y made integers and the layer, the flat input of VARYING_SLOT_LAYER that v3dv loads for it (v3dv_pipeline.c:263-286): the program's first ldvary, which the vertex program is keyed by and writes 0 to. Left out, V3D-only: SubpassDataMS (the txf_ms's level is written to TMUB before the coordinate once v3d_nir_lower_txf_ms has run, which `emitTex` has no order for); the 32-bit return v3dv picks for a variable not RelaxedPrecision (facet-wide on the V3D: every TMU read returns 16-bit floats); a vertex function on the CPU, whose record has no layer (the cores draw such a pipeline). Step 3 is the descriptor, the image laid out for the TMU, the pass storing what a later subpass reads, and `can.input_attachments`.
+
+**Step 3 of 3 done in 1.216: input attachments on the V3D.** `can.input_attachments` is true there, and maxPerStageDescriptorInputAttachments and maxDescriptorSetInputAttachments are 4, v3dv's MAX_INPUT_ATTACHMENTS (v3dv_limits.h:52; v3dv_device.c:1092, :1107), which closes the item's two rows of the limits. Nothing of it has run on the board yet: the host tests give it a device of the V3D's layout (QuadLayout), and the V3D's own tests hold the compiler. FacetBoth 1.75's "shipped input attachment" is the board's case: a first subpass draws into an image the pass does not keep, and a second reads it through glslc's subpassLoad, mixed with a varying. The parts:
+- **The image.** One made IMAGE_USAGE_INPUT_ATTACHMENT lies as a sampled one does, in the TMU's layout (`_image.shapeFor`, `deviceLaid`). v3dv reads an input attachment as a texture (try_lower_input_load's txf; the texture map, v3dv_pipeline.c:601-606) and keeps every optimal image in its own tiling (v3dv_image.c:481-483). So it is of a format the TMU reads, in optimal tiling, as v3dv asks by SAMPLED_IMAGE (v3dv_formats.c:163-172). One of four samples is kept in quads, as one sampled is, so the format query answers 1 and 4, the framebufferColorSampleCounts a colour attachment's count must hold; Vulkan 1.0 has no feature to refuse an input attachment of four under (K6b). That closes item 48's entry for an image sampled and read as an input attachment at once.
+- **The descriptor.** An input attachment's slot holds the view's texture, as a sampled image's does (`UpdateDescriptorSets`).
+- **The draw.** The TMU reads it through a sampler state of its own, the nearest texel, held to the edges: v3dv binds a default sampler state to a txf, which has none (v3dv_pipeline.c:833-841, :1877-1891; `_play.sampledBy`).
+- **The pass.** Nothing new. A subpass with attachments of its own already makes a frame of its own at CmdNextSubpass, which stores its colour where the next subpass reads it, and the engine invalidates the caches before each job.
+
+Still left out. Each is marked *facet-wide* or *V3D-only*:
+- **A subpass that reads an attachment it draws into**, `error_feature_not_present` at CreateRenderPass on a device without `can.tile_inputs`, which the V3D has not. v3dv reads such an attachment out of the tile buffer (subpass_setup_tlb_input_attachments, v3dv_pass.c:95-130; lower_tlb_input_attachment_instr's load_tile_image, v3dv_pipeline.c:301-356), a TLB read the compiler does not have. Vulkan 1.0 has no feature for this either. *V3D-only*.
+- **SubpassDataMS**, from step 2: an input attachment of four is made and stored, and a pipeline that reads it is refused. *V3D-only*.
+- **A stencil read as an input attachment**, refused as a sampled stencil is (`can.sampled_stencil`, item 58). *V3D-only*.
+- **The 32-bit return** for a variable not RelaxedPrecision, from step 2. *Facet-wide* on the V3D.
+
+The three *V3D-only* entries are the V3D port's own gaps, so the list for the Radeon's has nothing new from them.
 
 ### 57. V3D: storage images, in the layout the TMU reads **[critical path]**
 
@@ -3426,7 +3440,7 @@ Still left out. Each is marked *facet-wide* or *V3D-only*, as above:
 - **OpImageQuerySize and OpImageQuerySamples**, textureSize and textureSamples of an image of four. The profile takes neither, for any image. v3d answers textureSamples with a uniform (QUNIFORM_TEXTURE_SAMPLES, nir_to_vir.c:976-978), and textureSize through ntq_emit_txs (:980-982). *Facet-wide*.
 - **A ConstOffset on a fetch of four**, refused (Error.Operands). GLSL has no texelFetchOffset of a sampler2DMS, so glslc writes none. *Facet-wide*.
 - **An image of four that is sampled and a colour attachment**, refused as one of one is, until item 48's V3D half. The format query holds the 1 bit wherever it holds the 4, so the two go together. *V3D-only*. Made since 1.210.
-- **An input attachment of four**, refused until item 56. *V3D-only*.
+- **An input attachment of four**, refused until item 56. *V3D-only*. Made since 1.216; a pipeline that reads one through SubpassDataMS is still refused (item 56).
 
 The two *V3D-only* entries are the V3D port's own gaps, not the hardware's, so the list for the Radeon's has nothing new from them. The first *facet-wide* entry is on it.
 

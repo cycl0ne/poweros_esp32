@@ -178,8 +178,10 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // without them is its compute functions, run on the cores.
         .texel_buffers = true,
         // An input attachment is read by a fragment function of the
-        // program's, out of the image's rows (`shader.Attachment`).
+        // program's, out of the image's rows (`shader.Attachment`), and
+        // one the subpass draws into out of the tile.
         .input_attachments = true,
+        .tile_inputs = true,
         // A dynamic buffer descriptor is a pointer and a range, shifted
         // by what the bind gave: the function that reads it is the
         // program's, so every device takes one.

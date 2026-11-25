@@ -7103,4 +7103,43 @@ pub const LIBRARY_VERSION = 1;
 /// four new. Put back, the layer's slot in the vertex program fails one
 /// of them and its flat flag two. Read from the code and the host's
 /// tests: not yet on a board, the CM5 being off.
-pub const LIBRARY_REVISION = 215;
+///
+/// 216: **Input attachments on the V3D (docs/facet-vulkan10.md item 56,
+/// step 3).** `can.input_attachments` is true there, and the two limits of
+/// input attachments are v3dv's 4 (MAX_INPUT_ATTACHMENTS, v3dv_limits.h:52;
+/// v3dv_device.c:1092, 1107). On a device of a layout of its own an image
+/// made IMAGE_USAGE_INPUT_ATTACHMENT lies as a sampled one does
+/// (`_image.deviceLaid`): v3dv reads an input attachment as a texture (its
+/// texture map, v3dv_pipeline.c:601-606) and keeps every optimal image in
+/// its own tiling (v3dv_image.c:481-483). So it is of a format the TMU
+/// reads, and optimal, as v3dv's SAMPLED_IMAGE asks (v3dv_formats.c:
+/// 163-172). One of four samples lies in quads, as one sampled does, and
+/// the format query answers 1 and 4 for it: a colour attachment's counts
+/// have to hold framebufferColorSampleCounts, and Vulkan 1.0 has no
+/// feature to refuse an input attachment of four under. A pipeline that
+/// reads one through SubpassDataMS stays refused (1.215). An image sampled
+/// and read back at once, which the query refused rather than answer the
+/// 1 bit alone, is made too, with both counts.
+///
+/// An input attachment's descriptor holds the view's texture, as a sampled
+/// image's does, and the draw gives the TMU a sampler state of its own,
+/// the nearest texel, held to the edges, as v3dv binds a default one to a
+/// txf, which has none (v3dv_pipeline.c:833-841, 1877-1891). The pass
+/// needed nothing: a subpass of attachments of its own was already a frame
+/// of its own, which stores its colour where the later subpass reads it.
+/// A subpass that reads an attachment it draws into is
+/// `error_feature_not_present` on a device without the new
+/// `can.tile_inputs`, which the V3D has not and the cores have: v3dv reads
+/// such an attachment out of the tile buffer (subpass_setup_tlb_input_
+/// attachments, v3dv_pass.c:95-130; lower_tlb_input_attachment_instr,
+/// v3dv_pipeline.c:301-356), a read the compiler does not have.
+///
+/// One host test is new, on a device of the V3D's layout, and two say
+/// more: the query's counts for an input attachment, and the image of
+/// four made. Taken out, the input attachment in `deviceLaid`, the view's
+/// texture in the descriptor, the tile check and the refusal of a linear
+/// image each fail the new test; put back, the refusal of an input
+/// attachment of four fails the two that say more. FacetBoth 1.75's
+/// "shipped input attachment" draws it for the board. Read from the code
+/// and the host's tests: not yet on a board, the CM5 being off.
+pub const LIBRARY_REVISION = 216;

@@ -4136,8 +4136,8 @@ Some kinds want a device that has them, others answering
 buffer `texel_buffers`, a dynamic buffer `dynamic_descriptors` (and no
 more of them in one set than
 `PhysicalDeviceLimits.max_descriptor_set_dynamic_buffers`), and an
-input attachment `input_attachments` - the cores, not the V3D, whose
-fragment functions are of fixed forms and read none.
+input attachment `input_attachments` - the cores, and since 1.216 the
+V3D, whose fragment programs read one through the TMU.
 
 **CONTEXT**
 
@@ -4860,8 +4860,12 @@ images lie in a layout of its own (`Ops.texture_memory`, the V3D) the
 first is made since 1.210, as are a colour attachment's levels, in
 that device's layout, each layer a texture of its own that the pass
 stores into where the TMU reads it, as v3dv keeps every optimal image
-(src/broadcom/vulkan/v3dv_image.c:481-483); the second is refused
-there, that device reading no input attachment.
+(src/broadcom/vulkan/v3dv_image.c:481-483). So since 1.216 is any
+image there read as an input attachment, a depth one too, which that
+device's fragment programs read through the TMU where the pass stored
+it: in optimal tiling, and of a format the TMU reads. One of four
+samples is made as well, kept as a sampled one is, though no pipeline
+there reads it yet (SubpassDataMS).
 
 **An image may have four samples a pixel** on a device that draws them
 (`Capabilities.multisampling`, since 1.98): 2D, optimal, one level and
@@ -5777,8 +5781,10 @@ Vulkan allows such a pass - a feedback loop, whose reads it leaves
 undefined where nothing orders the write before them - and the tile's
 pixel is an answer it allows; until then the pass was refused, with
 `error_initialization_failed`. Only a device whose `input_attachments`
-is true reads any - the cores, not the V3D - others answering
-`error_feature_not_present`. The pass does not say
+is true reads any - the cores, and since 1.216 the V3D - others
+answering `error_feature_not_present`; and only one whose
+`tile_inputs` is true reads an attachment the subpass draws into, the
+cores and not the V3D. The pass does not say
 which descriptor a subpass reads one through: the set written with the
 `input_attachment` descriptor does (UpdateDescriptorSets), and the
 image wants IMAGE_USAGE_INPUT_ATTACHMENT (CreateImage).

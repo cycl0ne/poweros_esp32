@@ -150,8 +150,9 @@ pub const Capabilities = extern struct {
     /// two, eight or sixteen samples, nor four in a storage image; an
     /// input attachment of four is read a sample at a time since 1.111.
     /// The cores have it since 1.112, the V3D since 1.148
-    /// (docs/facet-vulkan10.md item 61, V5), which samples no image of
-    /// four yet and says so in its own masks.
+    /// (docs/facet-vulkan10.md item 61, V5), which fetches a sample of an
+    /// image of four since 1.209 (V7) and makes one an input attachment
+    /// since 1.216, though no pipeline of it reads one yet (item 56).
     multisampling: bool = false,
     /// `PipelineColorBlendStateCreateInfo.logic_op_enable`.
     logic_ops: bool = false,
@@ -193,9 +194,17 @@ pub const Capabilities = extern struct {
     /// pixel, out of the image's memory, which is how a deferred pass
     /// reads what the pass before it drew (`shader.Resources.input`).
     /// False where a set layout with the kind, and a subpass with input
-    /// attachments, are both refused. The cores have it since 1.37; on
-    /// the V3D no fragment program reads one.
+    /// attachments, are both refused. The cores have it since 1.37, the
+    /// V3D since 1.216, whose fragment programs read one through the TMU
+    /// where the pass stored it.
     input_attachments: bool = false,
+    /// An input attachment the same subpass draws into: the fragment's
+    /// own pixel, read out of the tile (`shader.Fragments.input`, since
+    /// 1.64). The cores have it; the V3D has not, v3dv reading such an
+    /// attachment out of the tile buffer (lower_tlb_input_attachment_instr,
+    /// v3dv_pipeline.c:301-356), which is not ported. False where
+    /// CreateRenderPass refuses such a subpass (since 1.216).
+    tile_inputs: bool = false,
     /// Whether a render pass may keep its stencil attachment: the stencil
     /// load and store ops, a plane of the image's rows beside the depth's
     /// (`s8_uint`, `d16_unorm_s8_uint`), so a stencil outlives its pass

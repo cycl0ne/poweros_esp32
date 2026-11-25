@@ -52,8 +52,8 @@ const Sampler = @import("../sampler/_sampler.zig").Sampler;
 /// buffer `texel_buffers`, a dynamic buffer `dynamic_descriptors` (and no
 /// more of them in one set than
 /// `PhysicalDeviceLimits.max_descriptor_set_dynamic_buffers`), and an
-/// input attachment `input_attachments` - the cores, not the V3D, whose
-/// fragment functions are of fixed forms and read none.
+/// input attachment `input_attachments` - the cores, and since 1.216 the
+/// V3D, whose fragment programs read one through the TMU.
 ///
 /// CONTEXT:
 /// - Waits: no.
