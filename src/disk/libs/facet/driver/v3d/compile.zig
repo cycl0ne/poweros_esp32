@@ -417,6 +417,13 @@ pub const Sampler = struct {
     /// 2D (v3d_nir_lower_txf_ms.c:46-59). `dim` is that one: flat, or
     /// layers for an array of them (since 1.209).
     multisampled: bool = false,
+    /// An input attachment, an image of Dim SubpassData: read only by a
+    /// subpassLoad, a fetch at the pixel's place and layer, which is why
+    /// `dim` is layers (`readSubpass`). The draw points the TMU at the
+    /// view the input attachment's descriptor holds, as v3dv's texture
+    /// map takes the kind (pipeline_get_descriptor_map, v3dv_pipeline.c:
+    /// 601-606; since 1.215).
+    input_attachment: bool = false,
 };
 
 /// What a sampled image's coordinate names, as a nir_tex_instr's
@@ -450,8 +457,10 @@ pub const SamplerDim = enum(u8) {
 /// and this list is what *this* device can run today. It grows a family
 /// at a time - discard and samplers first.
 pub const profile: spirv.Profile = .{
-    // ImageQuery, which an image's size and levels need (since 1.181).
-    .capabilities = &.{ .shader, .image_query },
+    // ImageQuery, which an image's size and levels need (since 1.181);
+    // InputAttachment, which an input attachment's SubpassData needs
+    // (since 1.215).
+    .capabilities = &.{ .shader, .image_query, .input_attachment },
     .opcodes = &.{
         .capability,                   .memory_model,                   .entry_point,                    .execution_mode,
         .decorate,                     .type_void,                      .type_float,                     .type_vector,
@@ -543,17 +552,21 @@ pub const profile: spirv.Profile = .{
         // image at a level, NIR's txf (since 1.182).
         .image,                        .image_fetch,                    .image_query_size_lod,           .image_query_levels,
         .image_sample_explicit_lod,    .image_sample_dref_explicit_lod,
+        // An input attachment read where the pixel is, a subpassLoad
+        // (since 1.215).
+        .image_read,
         // The bit operations, as nir_lower_alu and nir_opt_algebraic lower
         // them for a device of no BFE, BFM or BFI (since 1.202).
-        .bit_field_insert,               .bit_field_s_extract,
-        .bit_field_u_extract,          .bit_reverse,                    .bit_count,
+                            .bit_field_insert,
+        .bit_field_s_extract,          .bit_field_u_extract,            .bit_reverse,                    .bit_count,
         // A compute program's workgroup waiting for all its invocations
         // (since 1.203).
-                             .control_barrier,
+        .control_barrier,
     },
     // Workgroup: a compute program's shared memory (since 1.203).
     .storage_classes = &.{ .input, .output, .function, .uniform_constant, .push_constant, .uniform, .workgroup },
-    .image_dims = &.{ .dim_2d, .dim_3d, .cube },
+    // SubpassData: an input attachment (since 1.215).
+    .image_dims = &.{ .dim_2d, .dim_3d, .cube, .subpass_data },
     // A bias, a level and a constant texel offset, TMUB's and P2's
     // (handle_tex_src, v3d_tex.c:129-170; since 1.180); and a gradient,
     // which nir_lower_tex's lower_txd makes a level (vir.c:802; since
@@ -1171,6 +1184,12 @@ pub const Code = struct {
     /// since 1.190).
     flat_shade_flags: u32 = 0,
     noperspective_flags: u32 = 0,
+    /// The fragment program's first varying is the layer an input
+    /// attachment is read at, a flat one of VARYING_SLOT_LAYER, which is
+    /// first among them and is counted in `varyings`: the vertex program
+    /// writes 0 there, writing no gl_Layer (`VertexKey.layer`; since
+    /// 1.215).
+    reads_layer: bool = false,
     /// A vertex program's, for its shader record and its attribute
     /// records (`v3d_vs_prog_data`, v3d_vs_set_prog_data, vir.c:860-936;
     /// since 1.163): the floats of each attribute it reads by driver
@@ -1312,6 +1331,11 @@ pub const SystemValue = enum(u8) {
     frag_coord_y,
     frag_coord_z,
     frag_coord_w,
+    /// The layer an input attachment is read at: the input of
+    /// VARYING_SLOT_LAYER, flat, which v3dv reads for it
+    /// (try_lower_intrinsic, v3dv_pipeline.c:276-280) and the vertex
+    /// program writes 0 to, writing no gl_Layer (since 1.215).
+    layer,
 };
 
 /// How many there are.
@@ -1449,6 +1473,11 @@ pub const VertexKey = struct {
     /// fragment program of this device reads its locations from 0 up with
     /// no gap (`order`).
     reads: [most_varyings]u8 = @splat(0),
+    /// The fragment program reads the layer, VARYING_SLOT_LAYER, before
+    /// any of `reads`: the slot before theirs, which the vertex program
+    /// writes 0 to, as it writes no gl_Layer (`Code.reads_layer`; since
+    /// 1.215).
+    layer: bool = false,
     /// The vertex program's `SystemValues`, which the coordinate program
     /// reads rows for as well: v3dv compiles both of the one NIR, whose
     /// system_values_read pipeline_lower_nir gathers before either
@@ -1519,6 +1548,9 @@ pub const Work = struct {
     /// An image type of MS 1, and a sampled image type of one (since
     /// 1.209).
     multisampled: std.StaticBitSet(most_ids) = .initEmpty(),
+    /// An image type of Dim SubpassData, an input attachment's (since
+    /// 1.215).
+    subpass: std.StaticBitSet(most_ids) = .initEmpty(),
     /// Which step a value id answers.
     step_of: [most_ids]u16 = @splat(none),
     /// `member_pointer`: which float of the member it names, or `whole`
@@ -2013,7 +2045,7 @@ fn compileRead(work: *Work, allocator: std.mem.Allocator, compiler: *const vir.C
     };
     defer program.destroy();
     const c = program.c;
-    std.debug.assert(c.num_inputs == work.varyings);
+    std.debug.assert(c.num_inputs == work.varyings + @intFromBool(program.reads_layer));
 
     if (c.qpu_insts.len > most_words) return Error.TooLong;
     @memcpy(work.code[0..c.qpu_insts.len], c.qpu_insts);
@@ -2084,7 +2116,8 @@ fn compileRead(work: *Work, allocator: std.mem.Allocator, compiler: *const vir.C
 
     return .{
         .words = work.code[0..work.word_count],
-        .varyings = work.varyings,
+        // The layer's ldvary too (since 1.215).
+        .varyings = work.varyings + @intFromBool(program.reads_layer),
         .uniforms = work.stream[0..work.stream_count],
         .uniform_count = work.stream_count,
         .samplers = units.samplers,
@@ -2099,6 +2132,7 @@ fn compileRead(work: *Work, allocator: std.mem.Allocator, compiler: *const vir.C
         .spill_size = c.spill_size,
         .flat_shade_flags = program.flat_shade_flags,
         .noperspective_flags = program.noperspective_flags,
+        .reads_layer = program.reads_layer,
         .vertex = if (work.stage == .vertex) vertexProgram(work, program.single_seg) else .{},
         .compute = if (work.stage == .gl_compute) .{
             .local_size = .{ @intCast(work.local_size[0]), @intCast(work.local_size[1]), @intCast(work.local_size[2]) },
@@ -2477,6 +2511,17 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                         continue;
                     },
                     .location, .descriptor_set, .binding => {},
+                    // An input attachment's index in its subpass, which
+                    // v3dv reads only to read the attachment from the
+                    // tile buffer, where the subpass draws into it too
+                    // (lower_tlb_input_attachment_instr, v3dv_pipeline.c:
+                    // 301-356): the TMU's read goes by the set and the
+                    // binding, as a texture's does (lower_tex_src, :767-
+                    // 799; since 1.215).
+                    .input_attachment_index => {
+                        if (operands.len != 3) return Error.Body;
+                        continue;
+                    },
                     // How far an array's elements are apart in a block
                     // (since 1.161).
                     .array_stride => {},
@@ -2728,8 +2773,9 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
             .type_image => {
                 // Result, SampledType, Dim, Depth, Arrayed, MS, Sampled,
                 // ImageFormat. `look` has held the dimensionality to the
-                // profile's and Sampled to 1 already: a 2D image, a 3D
-                // one or a cube (since 1.179), each its `SamplerDim`. An
+                // profile's and Sampled to 1 already, or 2 for SubpassData:
+                // a 2D image, a 3D one or a cube (since 1.179), each its
+                // `SamplerDim`, or an input attachment (since 1.215). An
                 // arrayed 2D one has its layer in TMUI; a cube of an
                 // array needs SampledCubeArray, which `look` refuses, and
                 // a 3D one cannot be arrayed (SPIR-V's OpTypeImage). A
@@ -2753,6 +2799,19 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     .dim_2d => if (arrayed) .layers else .flat,
                     .dim_3d => if (arrayed) return Error.Refused else .volume,
                     .cube => if (arrayed) return Error.Refused else .cube,
+                    // An input attachment, which try_lower_input_load
+                    // reads with a txf of is_array, the layer its
+                    // coordinate's third word (nir_lower_input_attachments.c:
+                    // 102-106, :133-140; since 1.215). One of four samples,
+                    // SubpassDataMS, is refused above: its txf_ms has the
+                    // level of 0 that one of one has, which once
+                    // v3d_nir_lower_txf_ms has made it a txf is written to
+                    // TMUB before the coordinate (v3d_nir_lower_txf_ms.c:
+                    // 42-57), which `emitTex` has no order for.
+                    .subpass_data => if (arrayed) return Error.Refused else sub: {
+                        work.subpass.set(id);
+                        break :sub .layers;
+                    },
                     else => return Error.Refused,
                 };
                 work.thing[id] = .image;
@@ -2911,11 +2970,13 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     continue;
                 }
                 if (class == .uniform_constant) {
-                    // A combined image sampler and nothing else. There is
+                    // A combined image sampler, or an input attachment's
+                    // image (since 1.215), and nothing else. There is
                     // one TMU, it is configured from two words of the
                     // uniform stream, and where those words come from is
                     // the set and the binding the draw looks up.
-                    if (work.thing[pointee] != .sampled_image) return Error.Storage;
+                    const subpass = work.thing[pointee] == .image and work.subpass.isSet(pointee);
+                    if (work.thing[pointee] != .sampled_image and !subpass) return Error.Storage;
                     // This is the table's bound, not the device's: what
                     // the device can run is one *sample*, and a module
                     // may declare many samplers and sample one of them.
@@ -2927,7 +2988,7 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     work.thing[id] = .variable;
                     work.class[id] = @intCast(@intFromEnum(class));
                     work.sampler_of[id] = @intCast(work.sampler_count);
-                    work.samplers[work.sampler_count] = .{ .set = work.set[id], .binding = work.binding[id], .dim = work.sampler_dim[pointee], .multisampled = work.multisampled.isSet(pointee) };
+                    work.samplers[work.sampler_count] = .{ .set = work.set[id], .binding = work.binding[id], .dim = work.sampler_dim[pointee], .multisampled = work.multisampled.isSet(pointee), .input_attachment = subpass };
                     work.sampler_count += 1;
                     continue;
                 }
@@ -3457,7 +3518,7 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                         // nir_opt_cse before nir_opt_peephole_select
                         // (nir_to_vir.c:2265, :2269-2279), which finds
                         // the arm without it (since 1.185).
-                        .image_sample_implicit_lod, .image_sample_dref_implicit_lod, .image_sample_explicit_lod, .image_sample_dref_explicit_lod, .image_fetch, .image_query_size_lod, .image_query_levels => texture = true,
+                        .image_sample_implicit_lod, .image_sample_dref_implicit_lod, .image_sample_explicit_lod, .image_sample_dref_explicit_lod, .image_fetch, .image_read, .image_query_size_lod, .image_query_levels => texture = true,
                         // An atomic or a barrier is neither either: it
                         // would run where the arm is not taken (since
                         // 1.169).
@@ -3574,7 +3635,7 @@ fn finishCompute(work: *Work) Error!void {
 /// v3dv_pipeline.c:1422-1429).
 fn slotOf(key: *const VertexKey, location: u32, component: u32) ?u32 {
     if (key.coordinate or location >= most_varyings or component >= key.reads[location]) return null;
-    var before: u32 = 0;
+    var before: u32 = @intFromBool(key.layer);
     for (key.reads[0..location]) |each| before += each;
     return before + component;
 }
@@ -3582,7 +3643,7 @@ fn slotOf(key: *const VertexKey, location: u32, component: u32) ?u32 {
 /// The floats the fragment program reads of how many of them there are.
 fn usedOutputs(key: *const VertexKey) u32 {
     if (key.coordinate) return 0;
-    var count: u32 = 0;
+    var count: u32 = @intFromBool(key.layer);
     for (key.reads) |each| count += each;
     return count;
 }
@@ -8531,6 +8592,7 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
             work.step_of[id] = try glslCall(work, operands[3], kind, operands[4..]);
         },
         .image_sample_implicit_lod, .image_sample_explicit_lod, .image_sample_dref_implicit_lod, .image_sample_dref_explicit_lod, .image_fetch => try readSample(work, instruction.op, operands),
+        .image_read => try readSubpass(work, operands),
         .image => {
             // ResultType, Result, SampledImage: the image of a sampled
             // image, which vtn reads as the same texture deref
@@ -9027,7 +9089,7 @@ fn lanes(work: *Work) void {
         // FragCoord's floats are a fragment program's load_input, which
         // differs from lane to lane (:472-480; since 1.214).
         if (each.tag == .system) switch (@as(SystemValue, @enumFromInt(each.at))) {
-            .vertex_id, .instance_id, .cs_payload0, .cs_payload1, .frag_coord_x, .frag_coord_y, .frag_coord_z, .frag_coord_w => work.divergent[at] = true,
+            .vertex_id, .instance_id, .cs_payload0, .cs_payload1, .frag_coord_x, .frag_coord_y, .frag_coord_z, .frag_coord_w, .layer => work.divergent[at] = true,
             .base_instance, .first_vertex, .work_group_base_x, .work_group_base_y, .work_group_base_z, .num_work_groups_x, .num_work_groups_y, .num_work_groups_z => {},
         };
         for (readsOf(each)) |field| if (field) |of| {
@@ -11042,6 +11104,58 @@ fn readSample(work: *Work, op: spirv.Op, operands: []const u32) Error!void {
     work.sample_count += 1;
 }
 
+/// An OpImageRead of an input attachment, vtn's image_deref_load of a
+/// GLSL_SAMPLER_DIM_SUBPASS, which nir_lower_input_attachments makes a
+/// txf of the attachment where the pixel is (try_lower_input_load,
+/// nir_lower_input_attachments.c:57-156): its coordinate the read's own
+/// two words, a third of 0, added to the input attachment's place, and
+/// a level of 0 (:133-142). v3dv asks for the place as an intrinsic
+/// (`use_ia_coord_intrin`, v3dv_pipeline.c:385-389) and makes it
+/// FragCoord's x and y, made integers, and the layer, a flat varying
+/// (try_lower_intrinsic, :263-286). The image is read through no sampler,
+/// as a fetch is (since 1.215). The read's result is four floats: a
+/// format of whole numbers is no input attachment this device takes.
+fn readSubpass(work: *Work, operands: []const u32) Error!void {
+    // ResultType, Result, Image, Coordinate: no image operand, as a
+    // Sample is an image of four's, which is refused.
+    if (operands.len < 4) return Error.Body;
+    if (operands.len > 4) return Error.Operands;
+    const type_id = try idOf(operands[0]);
+    const id = try idOf(operands[1]);
+    if (try kindOf(work, type_id) != .f32x4) return Error.Type;
+    const which = work.sampler_of[try idOf(operands[2])];
+    if (which == none or !work.samplers[which].input_attachment) return Error.Body;
+    // The read's two words, each a constant of its own where it is one,
+    // as nir_opt_constant_folding leaves a channel of a load_const, so
+    // (('iadd', a, 0), a) takes them (nir_opt_algebraic.py:239).
+    const offset = try operand(work, operands[3], .f32x2);
+    var moved: [2]u16 = undefined;
+    for (&moved, 0..) |*each, k| {
+        const part = partOf(work, offset, @intCast(k));
+        each.* = if (floatBits(work, part)) |bits| try wordConstant(work, bits) else try floatOf(work, part);
+    }
+    const zero = try wordConstant(work, 0);
+    const x = try integerOf(work, .f2i32, try systemStep(work, .frag_coord_x), null);
+    const y = try integerOf(work, .f2i32, try systemStep(work, .frag_coord_y), null);
+    const layer = try systemStep(work, .layer);
+    var place: Step = .{ .tag = .construct, .kind = .f32x3 };
+    place.from[0] = try integerOf(work, .iadd, x, moved[0]);
+    place.from[1] = try integerOf(work, .iadd, y, moved[1]);
+    place.from[2] = try integerOf(work, .iadd, layer, zero);
+    place.part = .{ 0, 0, 0, 0 };
+    const at = try put(work, .{
+        .tag = .sample,
+        .kind = .f32x4,
+        .a = try put(work, place),
+        .at = which,
+        .lookup = .fetch,
+        .from = .{ zero, 0, 0, 0 },
+    });
+    work.step_of[id] = at;
+    if (work.sampled == none) work.sampled = at;
+    work.sample_count += 1;
+}
+
 /// lower_gradient (nir_lower_tex.c:855-912): the level a gradient's
 /// sample is taken at, which replace_gradient_with_lod makes the txl's
 /// lod (:690-704). The size of level 0, a txs at the integer 0
@@ -12101,6 +12215,33 @@ fn withOperand(comptime words: []const u32, comptime op: spirv.Op, comptime at: 
                     copy[k + 5] = mask;
                     copy[k + 6] = words[k + 6];
                     @memcpy(copy[k + 7 ..], words[k + 6 ..]);
+                    return copy;
+                }
+                seen += 1;
+            }
+            k += count;
+        }
+        @compileError("no such instruction to widen");
+    }
+}
+
+/// `words` with the `at`th instruction `op` widened by the words
+/// `extra` after its own, as a module that gives it more operands than
+/// glslc wrote would carry it.
+fn widened(comptime words: []const u32, comptime op: spirv.Op, comptime at: u32, comptime extra: []const u32) [words.len + extra.len]u32 {
+    comptime {
+        var seen: u32 = 0;
+        var k: usize = 5;
+        while (k < words.len) {
+            const count = words[k] >> 16;
+            if (count == 0) @compileError("a word count of zero");
+            if (words[k] & 0xFFFF == @intFromEnum(op)) {
+                if (seen == at) {
+                    var copy: [words.len + extra.len]u32 = undefined;
+                    @memcpy(copy[0 .. k + count], words[0 .. k + count]);
+                    copy[k] = ((count + extra.len) << 16) | @intFromEnum(op);
+                    @memcpy(copy[k + count ..][0..extra.len], extra);
+                    @memcpy(copy[k + count + extra.len ..], words[k + count ..]);
                     return copy;
                 }
                 seen += 1;
@@ -22363,4 +22504,110 @@ test "through Mesa's back end, a uniform buffer read at an index gl_FragCoord gi
     try testing.expectEqual(@as(usize, 0), countOf(code, "ldunifa"));
     try testing.expectEqual(@as(usize, 4), countOf(code, "ldtmu"));
     try testing.expectEqual(@as(usize, 1), countOf(code, "fxcd"));
+}
+
+test "through Mesa's back end, a subpassLoad is a fetch where the pixel is: FragCoord's x and y made integers, and the layer, a flat varying read first" {
+    // try_lower_input_load's txf (nir_lower_input_attachments.c:57-156):
+    // the place v3dv makes of FragCoord's x and y, f2i32, and the flat
+    // int of VARYING_SLOT_LAYER (try_lower_intrinsic, v3dv_pipeline.c:
+    // 263-286), plus the read's (0, 0), which nir_opt_algebraic takes
+    // away. T, I and the level of 0 at B, which the scheduler may reorder,
+    // and S last at TMUSF (handle_tex_src, v3d_tex.c:99-150;
+    // can_reorder_tmu_write, qpu_schedule.c:243-246). The layer's ldvary
+    // is the program's one varying, and flat: C's MOV (emit_flat_varying,
+    // nir_to_vir.c:1049-1121). No sampler: P0 alone (since 1.215).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_subpass);
+    try expectText(code, &.{
+        text("fycd rf5", "nop", "ldvary.rf6; wrtmuc"),
+        text("fxcd rf4", "nop", ""),
+        text("ftoiz rf9, rf5", "mov rf7, rf0", ""),
+        text("ftoiz rf8, rf4", "mov tmub, 0", ""),
+        text("nop", "mov tmut, rf9", "thrsw"),
+        text("nop", "mov tmui, rf7", "thrsw"),
+        text("nop", "mov tmusf, rf8", ""),
+        text("nop", "nop", "ldtmu.rf10"),
+        text("nop", "nop", "ldtmu.rf11"),
+        text("nop", "fmul rf12, rf10.l, 0x3f000000", ""),
+        text("nop", "fmul rf13, rf10.h, 0x3f000000", ""),
+        text("vfpack tlb, rf12, rf13", "fmul rf14, rf11.l, 0x3f000000", ""),
+        text("nop", "fmul rf15, rf11.h, 0x3f000000", ""),
+        text("vfpack tlb, rf14, rf15", "nop", "thrsw"),
+        text("nop", "nop", ""),
+        text("nop", "nop", ""),
+    });
+    try testing.expectEqual(@as(u32, 1), code.varyings);
+    try testing.expect(code.reads_layer);
+    try testing.expectEqual(@as(u32, 1), code.flat_shade_flags);
+    try testing.expectEqual(@as(u32, 0), code.noperspective_flags);
+    try testing.expectEqualSlices(Word, &.{.{ .texture = 0 }}, code.stream());
+    // Only FragCoord's x and y: no Z read, so none written, and no W.
+    try testing.expect(!code.writes_z);
+    try testing.expect(!code.center_w);
+    try testing.expectEqual(@as(u32, 1), code.sampler_count);
+}
+
+test "through Mesa's back end, the layer a subpassLoad reads comes before the program's own varyings, and is the one of them that is flat" {
+    // VARYING_SLOT_LAYER is 22 and VARYING_SLOT_VAR0 32 (shader_enums.h),
+    // and nir_assign_io_var_locations numbers the inputs in that order
+    // (lower_fs_io, v3dv_pipeline.c:1036): the layer is input 0 and the
+    // vec4 at location 0 inputs 1 to 4, each smooth, read times W
+    // (since 1.215).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_subpass_varying);
+    try testing.expectEqual(@as(u32, 5), code.varyings);
+    try testing.expectEqual(@as(usize, 5), countOf(code, "ldvary"));
+    try testing.expectEqual(@as(u32, 1), code.flat_shade_flags);
+    try testing.expect(code.center_w);
+    // The layer's flat MOV of C is the first instruction after the first
+    // ldvary that reads rf0 alone.
+    try testing.expectEqual(@as(usize, 1), countOf(code, "mov rf7, rf0"));
+    try testing.expectEqual(@as(usize, 4), countOf(code, "fadd"));
+}
+
+test "a vertex program writes 0 to the layer a fragment program's subpassLoad reads, the slot before the varyings it reads" {
+    // v3d_nir_emit_ff_vpm_outputs' 0 for each used output nothing stored
+    // (v3d_nir_lower_io.c:576-585): no gl_Layer is written, so the
+    // fragment program's input 0 is 0 and the colour moves one row on
+    // (since 1.215).
+    var work: Work = .{};
+    var key = VertexKey{};
+    key.reads[0] = 4;
+    key.layer = true;
+    const code = try vertexThroughMesa(&work, &reference.glslc_vertex_as_it_is, key);
+    // The colour at rows 5 to 8 where it was at 4 to 7, the place at 0
+    // and 1, Zs at 2 and 1/Wc at 3, and the layer's 0 at row 4.
+    var rows: u32 = 0;
+    for (work.steps[0..work.step_count]) |each| {
+        if (each.tag != .output) continue;
+        rows |= @as(u32, 1) << @intCast(each.at);
+        try testing.expectEqual(each.at == 4, isZero(&work, each.a));
+    }
+    try testing.expectEqual(@as(u32, 0x1ff), rows);
+    // The colour's rows are the uniforms its loads read, and the 0's row
+    // the one word more.
+    try testing.expectEqualSlices(Word, &.{
+        vpmIndex(0),               vpmIndex(1), vpmIndex(2),               vpmIndex(3),
+        vpmIndex(8),               vpmIndex(9), vpmIndex(4),               vpmIndex(5),
+        vpmIndex(6),               vpmIndex(7), .{ .viewport = .x_scale }, vpmIndex(0),
+        .{ .viewport = .y_scale }, vpmIndex(1), .{ .viewport = .z_scale }, .{ .viewport = .z_offset },
+        vpmIndex(2),               vpmIndex(3), vpmIndex(4),
+    }, code.stream());
+    try testing.expectEqual(@as(usize, 9), countOf(code, "stvpmv"));
+}
+
+test "a subpassLoad of an image of four samples, of an array of input attachments' images, or with an image operand, and an input attachment of Sampled 1, are refused" {
+    var work: Work = .{};
+    // MS 1: SubpassDataMS, whose txf_ms is not taken.
+    try testing.expectError(Error.Refused, compile(&work, &comptime patched(&reference.glslc_subpass, .type_image, 0, 5, 1)));
+    // Arrayed 1, which SPIR-V does not allow SubpassData.
+    work = .{};
+    try testing.expectError(Error.Refused, compile(&work, &comptime patched(&reference.glslc_subpass, .type_image, 0, 4, 1)));
+    // A Sample operand, of %15, the int 0, which only SubpassDataMS's
+    // read takes.
+    work = .{};
+    try testing.expectError(Error.Operands, compile(&work, &comptime widened(&reference.glslc_subpass, .image_read, 0, &.{ @intFromEnum(spirv.ImageOperands.sample), 15 })));
+    // Sampled 1: an input attachment is Sampled 2, and only one is.
+    try testing.expect(spirv.look(&comptime patched(&reference.glslc_subpass, .type_image, 0, 6, 1), profile) == .fault);
+    try testing.expect(spirv.look(&reference.glslc_subpass, profile) == .seen);
 }

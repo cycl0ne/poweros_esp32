@@ -115,6 +115,10 @@ pub const Op = enum(u16) {
     // A texel of an image of a sampled image at a level: NIR's txf
     // (vtn_handle_texture, spirv_to_nir.c; since 1.182).
     image_fetch = 95,
+    // A subpassLoad, an input attachment read where the pixel is: Dim
+    // SubpassData, as vtn's image_deref_load of it
+    // (nir_lower_input_attachments; since facet 1.215).
+    image_read = 98,
     image_write = 99,
     // An image of a sampled image, and its size and levels: NIR's txs and
     // query_levels (vtn_handle_texture, spirv_to_nir.c; since 1.181).
@@ -220,13 +224,13 @@ pub const Op = enum(u16) {
     _,
 };
 
-pub const Capability = enum(u32) { shader = 1, geometry = 2, tessellation = 3, float16 = 9, float64 = 10, int64 = 11, int16 = 22, int8 = 39, image_query = 50, derivative_control = 51, variable_pointers = 4442, _ };
+pub const Capability = enum(u32) { shader = 1, geometry = 2, tessellation = 3, float16 = 9, float64 = 10, int64 = 11, int16 = 22, int8 = 39, input_attachment = 40, image_query = 50, derivative_control = 51, variable_pointers = 4442, _ };
 pub const AddressingModel = enum(u32) { logical = 0, _ };
 pub const MemoryModel = enum(u32) { simple = 0, glsl450 = 1, _ };
 pub const ExecutionModel = enum(u32) { vertex = 0, tessellation_control = 1, tessellation_evaluation = 2, geometry = 3, fragment = 4, gl_compute = 5, _ };
 pub const ExecutionMode = enum(u32) { origin_upper_left = 7, origin_lower_left = 8, early_fragment_tests = 9, depth_replacing = 12, local_size = 17, _ };
 pub const StorageClass = enum(u32) { uniform_constant = 0, input = 1, uniform = 2, output = 3, workgroup = 4, cross_workgroup = 5, private = 6, function = 7, push_constant = 9, _ };
-pub const Decoration = enum(u32) { block = 2, buffer_block = 3, row_major = 4, col_major = 5, array_stride = 6, matrix_stride = 7, built_in = 11, no_perspective = 13, flat = 14, non_writable = 24, location = 30, binding = 33, descriptor_set = 34, offset = 35, _ };
+pub const Decoration = enum(u32) { block = 2, buffer_block = 3, row_major = 4, col_major = 5, array_stride = 6, matrix_stride = 7, built_in = 11, no_perspective = 13, flat = 14, non_writable = 24, location = 30, input_attachment_index = 43, binding = 33, descriptor_set = 34, offset = 35, _ };
 pub const BuiltIn = enum(u32) { position = 0, point_size = 1, clip_distance = 3, cull_distance = 4, frag_coord = 15, frag_depth = 22, num_workgroups = 24, workgroup_size = 25, workgroup_id = 26, local_invocation_id = 27, global_invocation_id = 28, local_invocation_index = 29, vertex_index = 42, instance_index = 43, _ };
 /// The instructions of the extended set GLSL.std.450, by the numbers its
 /// specification gives them (GLSL.std.450.h), which an OpExtInst names.
@@ -320,7 +324,7 @@ pub const Glsl = enum(u32) {
 /// The name a module imports GLSL.std.450 by.
 pub const glsl_set = "GLSL.std.450";
 
-pub const Dim = enum(u32) { dim_1d = 0, dim_2d = 1, dim_3d = 2, cube = 3, _ };
+pub const Dim = enum(u32) { dim_1d = 0, dim_2d = 1, dim_3d = 2, cube = 3, subpass_data = 6, _ };
 pub const ImageFormat = enum(u32) { unknown = 0, _ };
 pub const FunctionControl = enum(u32) { none = 0, _ };
 pub const SelectionControl = enum(u32) { none = 0, _ };
@@ -961,8 +965,11 @@ pub fn look(words: []const u32, profile: Profile) Outcome {
                 const dim: Dim = @enumFromInt(operands[2]);
                 if (!profile.takesDim(dim)) return .{ .fault = .image_refused };
                 // Sampled must be 1 or 2 under Vulkan, and only 1 is a
-                // texture a shader reads through a sampler.
-                if (operands[6] != 1) return .{ .fault = .image_refused };
+                // texture a shader reads through a sampler. An input
+                // attachment, Dim SubpassData, is 2, as Vulkan has it
+                // (since facet 1.215).
+                const sampled: u32 = if (dim == .subpass_data) 2 else 1;
+                if (operands[6] != sampled) return .{ .fault = .image_refused };
                 if (@as(ImageFormat, @enumFromInt(operands[7])) != .unknown) return .{ .fault = .image_refused };
             },
             .type_float => {

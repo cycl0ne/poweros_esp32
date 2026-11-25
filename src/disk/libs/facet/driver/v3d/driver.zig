@@ -860,8 +860,11 @@ fn compiled(pipeline: *Pipeline) facet.Result {
     // The vertex function writes the varyings the fragment program reads.
     // CreateGraphicsPipelines already holds the two entries to the one
     // count, so this is the words disagreeing with the entry that shipped
-    // them rather than a pipeline that was put together wrongly.
-    if (code.varyings != pipeline.varyings) return .error_feature_not_present;
+    // them rather than a pipeline that was put together wrongly. The
+    // layer a subpassLoad reads is one more, which the vertex program
+    // writes and no entry counts (`compile.Code.reads_layer`; since
+    // 1.215).
+    if (code.varyings - @intFromBool(code.reads_layer) != pipeline.varyings) return .error_feature_not_present;
     // A program that writes memory in a subpass drawn a part for each
     // colour attachment would write once for each part: its stores again,
     // its atomics counted again (docs/facet-vulkan10.md item 87). v3dv
@@ -874,7 +877,7 @@ fn compiled(pipeline: *Pipeline) facet.Result {
     // program's input_slots: pipeline_populate_v3d_vs_key,
     // v3dv_pipeline.c:1461-1473), before `work` is compiled through
     // again.
-    var reads = compile.VertexKey{};
+    var reads = compile.VertexKey{ .layer = code.reads_layer };
     for (work.inputs[0..work.input_count]) |each| reads.reads[each.location] = @intCast(each.kind.parts());
     const kept = _objects.create(sys, Shader) orelse return .error_out_of_host_memory;
     const hardware = holdAgain(base);
@@ -914,6 +917,15 @@ fn compiled(pipeline: *Pipeline) facet.Result {
     @memcpy(kept.uniforms[0..code.uniform_count], code.uniforms);
     kept.vertex = @as(VertexStage, undefined);
     if (!vertexStage(pipeline, work, hardware, reads, &kept.vertex.?)) kept.vertex = null;
+    // A vertex function run on the CPU lays down the entry's varyings
+    // alone (`_play.zig`'s `writeRecord`), not the layer before them: the
+    // cores draw such a pipeline (since 1.215).
+    if (code.reads_layer and kept.vertex == null) {
+        freeShader(base, hardware, kept);
+        letGo(base, hardware);
+        _objects.destroy(sys, kept);
+        return .error_feature_not_present;
+    }
     if (!checkSpillSize(base, hardware, kept, code.spill_size)) {
         freeShader(base, hardware, kept);
         letGo(base, hardware);
