@@ -1656,6 +1656,11 @@ fn textureUniforms(queue: *Queue, fixed: shader.Fixed) ?u32 {
 /// cores' fast path, and so painted that colour for every sampler but one
 /// filter, one wrap of two and every level as it is.
 fn sampledBy(queue: *Queue, which: compile.Sampler) ?Configuration {
+    // An input attachment has no sampler, and its fetch reads no sampler
+    // state: the TMU is pointed at the view with a default one, as v3dv
+    // binds one for a txf with none (v3dv_pipeline.c:1877-1891, :833-841;
+    // since 1.216).
+    if (which.input_attachment) return tmuConfiguration(queue, which.set, which.binding, tiling.samplerOf(&input_sampler, false).?, false);
     const player = playerOf(queue);
     const sampler = player.resources.samplerOf(which.set, which.binding, 0) orelse return null;
     // A program that compares writes the reference to TMUDREF, and the
@@ -1663,6 +1668,10 @@ fn sampledBy(queue: *Queue, which: compile.Sampler) ?Configuration {
     const how = tiling.samplerOf(sampler, which.compared) orelse return null;
     return tmuConfiguration(queue, which.set, which.binding, how, which.compared);
 }
+
+/// The sampler state an input attachment's view is given: nearest, at
+/// the edge, which its fetch never reads (since 1.216).
+const input_sampler: facet.texture.Sampler = .{ .mag_filter = .nearest, .min_filter = .nearest, .wrap = @splat(.clamp_to_edge) };
 
 /// A stencil operation as the hardware numbers them: keep and zero the other
 /// way round.

@@ -11395,9 +11395,17 @@ test "a device of a layout of its own keeps an image's four samples together, ea
     try testing.expect(drawn_image.quads and _image.deviceLaid(drawn_image));
     try testing.expectEqual(_image.Kind.rows, drawn_image.kind);
     try testing.expectEqual(sampled_image.bytes, drawn_image.bytes);
-    var refused: ?*facet.Image = null;
-    // Read as an input attachment, which such a device reads none of: no.
-    try testing.expect(fb.CreateImage(bench.device, &.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 20, .height = 9, .depth = 1 }, .samples = 4, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_INPUT_ATTACHMENT }, &refused) != .success);
+    // And one read as an input attachment (since 1.216, item 56): in the
+    // same quads, the query saying both counts, which a colour
+    // attachment's have to hold. A pipeline that reads it through
+    // SubpassDataMS is what the device refuses.
+    const read_four = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_INPUT_ATTACHMENT;
+    try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(bench.physical, .b8g8r8a8_unorm, .@"2d", .optimal, read_four, 0, &said));
+    try testing.expectEqual(facet.SAMPLE_COUNT_1 | facet.SAMPLE_COUNT_4, said.sample_counts);
+    const read_in, _ = try bench.image(.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 20, .height = 9, .depth = 1 }, .samples = 4, .usage = read_four }, false);
+    const read_image = _objects.of(Image, read_in);
+    try testing.expect(read_image.quads and _image.deviceLaid(read_image));
+    try testing.expectEqual(sampled_image.bytes, read_image.bytes);
 }
 
 test "an image drawn into and sampled, and a colour attachment of levels: the format query gives the whole chain of levels an optimal image has, on the cores and on a device of the V3D's layout alike (item 48)" {
@@ -11453,8 +11461,9 @@ test "an image drawn into and sampled, and a colour attachment of levels: the fo
         // and both counts, as on the cores, and a colour attachment
         // alone of the whole chain too, both laid out as the device lays
         // a texture; until then neither was made, and the attachment
-        // alone said one level. Not read back and sampled: such a device
-        // reads no input attachment (item 56).
+        // alone said one level. Read back and sampled since 1.216, the
+        // TMU reading an input attachment too (item 56), with both counts
+        // as well.
         var bench = try Bench.on(&QuadLayout.ops);
         defer bench.down();
         const fb = bench.rig.fb;
@@ -11463,7 +11472,9 @@ test "an image drawn into and sampled, and a colour attachment of levels: the fo
         try testing.expectEqual(@as(u32, 14), said.max_mip_levels);
         try testing.expectEqual(@as(u32, 256), said.max_array_layers);
         try testing.expectEqual(facet.SAMPLE_COUNT_1 | facet.SAMPLE_COUNT_4, said.sample_counts);
-        try testing.expectEqual(facet.Result.error_format_not_supported, fb.GetPhysicalDeviceImageFormatProperties(physical, .b8g8r8a8_unorm, .@"2d", .optimal, read_back, 0, &said));
+        try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(physical, .b8g8r8a8_unorm, .@"2d", .optimal, read_back, 0, &said));
+        try testing.expectEqual(@as(u32, 14), said.max_mip_levels);
+        try testing.expectEqual(facet.SAMPLE_COUNT_1 | facet.SAMPLE_COUNT_4, said.sample_counts);
         for ([3]facet.Format{ .b8g8r8a8_unorm, .r8g8b8a8_unorm, .r5g6b5_unorm_pack16 }) |format| {
             try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(physical, format, .@"2d", .optimal, facet.IMAGE_USAGE_COLOR_ATTACHMENT, 0, &said));
             try testing.expectEqual(@as(u32, 14), said.max_mip_levels);
@@ -11477,12 +11488,85 @@ test "an image drawn into and sampled, and a colour attachment of levels: the fo
         try testing.expectEqual(facet.Result.error_format_not_supported, fb.GetPhysicalDeviceImageFormatProperties(physical, .b8g8r8a8_unorm, .@"3d", .optimal, both, 0, &said));
         var none: ?*facet.Image = null;
         try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImage(bench.device, &.{ .format = .b8g8r8a8_unorm, .extent = extent, .mip_levels = 7, .usage = both }, &none));
-        try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImage(bench.device, &.{ .format = .b8g8r8a8_unorm, .extent = extent, .usage = read_back }, &none));
         try testing.expect(none == null);
         var six: ?*facet.Image = null;
         try testing.expectEqual(facet.Result.success, fb.CreateImage(bench.device, &.{ .format = .b8g8r8a8_unorm, .extent = extent, .mip_levels = 6, .usage = both }, &six));
         fb.DestroyImage(bench.device, six);
     }
+}
+
+test "a device of the V3D's layout lays an attachment a later subpass reads out as a texture, holds the view's texture in its descriptor, and refuses one its subpass draws into (item 56, step 3)" {
+    var bench = try Bench.on(&QuadLayout.ops);
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    const _image = @import("../image/_image.zig");
+    const Image = _image.Image;
+    const tiling = QuadLayout.tiling;
+    const read = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_INPUT_ATTACHMENT;
+    const extent = facet.Extent3D{ .width = 20, .height = 9, .depth = 1 };
+    // Drawn into and read back: rows by its kind, which a framebuffer
+    // takes, laid out as the device lays a texture, where the pass stores
+    // it and the TMU fetches it (try_lower_input_load's txf, v3dv's
+    // texture map).
+    const made, const view = try bench.image(.{ .format = .b8g8r8a8_unorm, .extent = extent, .usage = read }, false);
+    const image = _objects.of(Image, made);
+    try testing.expectEqual(_image.Kind.rows, image.kind);
+    try testing.expect(_image.deviceLaid(image));
+    const layout = tiling.layoutOf(4, 20, 9, 1, 1, false);
+    try testing.expectEqual(std.mem.alignForward(u64, layout.bytes, tiling.alignment), image.layer_bytes);
+    try testing.expectEqual(@as(u64, tiling.alignment), image.alignment);
+    // A depth read back as well, as a sampled one lies.
+    const depth = try bench.bareImage(.{ .format = .d16_unorm, .extent = extent, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_INPUT_ATTACHMENT }, false);
+    try testing.expectEqual(_image.Kind.depth, _objects.of(Image, depth).kind);
+    try testing.expect(_image.deviceLaid(_objects.of(Image, depth)));
+    // Linear, which the TMU reads only of a 1D image (v3dv_formats.c:
+    // 163-172): no.
+    var none: ?*facet.Image = null;
+    try testing.expect(fb.CreateImage(device, &.{ .format = .b8g8r8a8_unorm, .extent = extent, .tiling = .linear, .usage = read }, &none) != .success);
+    try testing.expect(none == null);
+
+    // The descriptor holds the view's texture, which the draw finds the
+    // view by, as it does a sampled image's.
+    const binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .input_attachment, .stage_flags = facet.SHADER_STAGE_FRAGMENT };
+    var set_layout: ?*facet.DescriptorSetLayout = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&binding) }, &set_layout));
+    defer fb.DestroyDescriptorSetLayout(device, set_layout);
+    var pool: ?*facet.DescriptorPool = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorPool(device, &.{ .max_sets = 1 }, &pool));
+    defer fb.DestroyDescriptorPool(device, pool);
+    var sets: [1]?*facet.DescriptorSet = undefined;
+    try testing.expectEqual(facet.Result.success, fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&set_layout) }, &sets));
+    const info = facet.DescriptorImageInfo{ .image_view = view, .image_layout = .shader_read_only_optimal };
+    const write = facet.WriteDescriptorSet{ .dst_set = sets[0].?, .dst_binding = 0, .descriptor_type = .input_attachment, .image_info = @ptrCast(&info) };
+    fb.UpdateDescriptorSets(device, 1, @ptrCast(&write), 0, null);
+    const slot = _objects.of(_descriptor.Set, sets[0].?).view.slots[0];
+    const ImageView = _image.ImageView;
+    try testing.expectEqual(@as(?*const anyopaque, @ptrCast(&_objects.of(ImageView, view).texels)), @as(?*const anyopaque, slot.pointer));
+
+    // Read by a later subpass: made. Read by the subpass that draws into
+    // it, which the device reads out of no tile: refused.
+    const attachments = [2]facet.AttachmentDescription{
+        .{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .dont_care, .final_layout = .color_attachment_optimal },
+        .{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .color_attachment_optimal },
+    };
+    const first = [1]facet.AttachmentReference{.{ .attachment = 0, .layout = .color_attachment_optimal }};
+    const second = [1]facet.AttachmentReference{.{ .attachment = 1, .layout = .color_attachment_optimal }};
+    const read_first = [1]facet.AttachmentReference{.{ .attachment = 0, .layout = .shader_read_only_optimal }};
+    const later = [2]facet.SubpassDescription{
+        .{ .color_attachment_count = 1, .color_attachments = &first },
+        .{ .input_attachment_count = 1, .input_attachments = &read_first, .color_attachment_count = 1, .color_attachments = &second },
+    };
+    const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
+    physical.can.tile_inputs = false;
+    defer physical.can.tile_inputs = true;
+    var pass: ?*facet.RenderPass = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &attachments, .subpass_count = 2, .subpasses = &later }, &pass));
+    fb.DestroyRenderPass(device, pass);
+    pass = null;
+    const itself = [1]facet.SubpassDescription{.{ .input_attachment_count = 1, .input_attachments = &first, .color_attachment_count = 1, .color_attachments = &first }};
+    try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateRenderPass(device, &.{ .attachment_count = 1, .attachments = &attachments, .subpass_count = 1, .subpasses = &itself }, &pass));
+    try testing.expect(pass == null);
 }
 
 test "a device of the V3D's layout keeps an image drawn into and sampled as it keeps a texture, each layer one of its own and each level in its tiling, where a copy, a clear and a resolve reach it (item 48's V3D half)" {

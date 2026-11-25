@@ -26,7 +26,11 @@
 //! first picture, in the pass or by CmdResolveImage after it. The cases of
 //! an image drawn into and sampled (since 1.74) draw into it, or resolve
 //! into it, in one pass and sample it in the next, nothing copied
-//! between. The cases of
+//! between. The shipped input attachment (since 1.75) is glslc's
+//! subpassLoad of an image a first subpass drew into and the pass does
+//! not keep, read by a second subpass at each pixel's own place: the V3D
+//! fetches it through the TMU where the first subpass's frame stored it.
+//! The cases of
 //! no colour (since 1.18) draw a depth alone, then look at it in a pass of
 //! colour: a shadow map sampled, or a subpass after it tested against it;
 //! and the cases of no attachment at all count what they draw with an
@@ -153,7 +157,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.74 (11.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.75 (25.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -1724,6 +1728,35 @@ fn fourFetchedFragment(fragments: *const shader.Fragments) callconv(.c) void {
     }
 }
 
+/// What `shipped_subpass` computes, for the cores: the pixel of the input
+/// attachment bound at set 0, binding 0 at the fragment's own place, its
+/// red and blue the other way round, three quarters of it and a quarter of
+/// the colour as it is interpolated - a subpassLoad, which reads what an
+/// earlier subpass drew there (`shader.Fragments.input`; since 1.75).
+fn subpassFragment(fragments: *const shader.Fragments) callconv(.c) void {
+    const from = fragments.input(0, 0, 0) orelse return shader.fill(fragments, shader.missing);
+    @setRuntimeSafety(false);
+    var rows = shader.Rows(5).of(fragments);
+    for (fragments.quads[0..fragments.count], fragments.colors[0..fragments.count]) |quad, *out| {
+        const planes = rows.at(quad);
+        const over = @as(shader.Pixels, @splat(1)) / planes[0];
+        var made: [4]shader.Pixels = undefined;
+        inline for (&made, 0..) |*each, c| each.* = planes[1 + c] * over * @as(shader.Pixels, @splat(0.25));
+        inline for (0..4) |i| {
+            const x = fragments.x + @as(u32, quad.x) + @as(u32, i & 1);
+            const y = fragments.y + @as(u32, quad.y) + @as(u32, i >> 1);
+            const texel = from.colorAt(x, y);
+            // Its blue, green, red and alpha, 0xAARRGGBB's bytes from the
+            // lowest.
+            const read = [4]u32{ texel & 0xFF, texel >> 8 & 0xFF, texel >> 16 & 0xFF, texel >> 24 };
+            inline for (&made, read) |*each, part| each.*[i] += @as(f32, @floatFromInt(part)) / 255.0 * 0.75;
+        }
+        var bytes: [4]@Vector(4, u32) = undefined;
+        inline for (&bytes, 0..) |*channel, c| channel.* = channelOf(made[c]);
+        out.* = bytes[3] << @splat(24) | bytes[0] << @splat(16) | bytes[1] << @splat(8) | bytes[2];
+    }
+}
+
 /// What `shipped_fetch_dependent` computes, for the cores: the texture
 /// bound at set 0, binding 0 sampled through the sampler beside it at the
 /// centre of the texel of level 0 the two floats of varying 0 times 64
@@ -2864,6 +2897,8 @@ const shipped_entries = [_]shader.Entry{
     Shipped.CollapsedKept.entry("shipped collapsed kept"),
     // A sample of an image of four, fetched (since 1.73).
     shader.fragment("shipped fetch four", &fourFetchedFragment, 2),
+    // An input attachment, read by a later subpass (since 1.75).
+    shader.fragment("shipped subpass", &subpassFragment, 4),
 };
 const shipped_words = [_]shader.Spirv{
     .{},                                            .{},                                        .{},                                           .{},
@@ -2893,7 +2928,7 @@ const shipped_words = [_]shader.Spirv{
     shader.Spirv.of(&shipped_packing_bytes),        shader.Spirv.of(&shipped_packing_halves),   shader.Spirv.of(&shipped_packing_half),        shader.Spirv.of(&shipped_matrix_inverse),
     shader.Spirv.of(&shipped_determinant4),         shader.Spirv.of(&shipped_bits),             shader.Spirv.of(&shipped_vertex_branch),       shader.Spirv.of(&shipped_branches),
     shader.Spirv.of(&shipped_outputs),              shader.Spirv.of(&shipped_vertex_outputs),   Shipped.NestedKept.spirv,                      Shipped.SelectsKept.spirv,
-    Shipped.CollapsedKept.spirv,                    shader.Spirv.of(&shipped_fetch_four),
+    Shipped.CollapsedKept.spirv,                    shader.Spirv.of(&shipped_fetch_four),       shader.Spirv.of(&shipped_subpass),
 };
 
 /// glslc's own output, at -O, for a sample of an image of four at the
@@ -2953,6 +2988,59 @@ const shipped_fetch_four = [_]u32{
     0x00000021, 0x00000022, 0x00040064, 0x0000000A, 0x00000024, 0x0000000E,
     0x0007005F, 0x00000007, 0x00000025, 0x00000024, 0x00000019, 0x00000040,
     0x00000023, 0x0003003E, 0x00000009, 0x00000025, 0x000100FD, 0x00010038,
+};
+
+/// glslc's own output, at -O, for an input attachment read at the
+/// pixel's own place, its red and blue the other way round, mixed with
+/// the colour: OpImageRead of a SubpassData image, which spirv_to_nir
+/// makes image_deref_load and nir_lower_input_attachments a txf at
+/// FragCoord's x and y and the layer (nir_lower_input_attachments.c:
+/// 57-156; v3dv_pipeline.c:263-286), and the V3D fetches through the TMU
+/// (since 1.75).
+///
+/// ```glsl
+/// #version 450
+/// layout(input_attachment_index = 0, set = 0, binding = 0) uniform subpassInput drawn;
+/// layout(location = 0) in vec4 color;
+/// layout(location = 0) out vec4 outColor;
+/// void main() {
+///     outColor = subpassLoad(drawn).bgra * 0.75 + color * 0.25;
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=frag subpass.frag -o subpass.spv   # 167 words
+/// spirv-val --target-env vulkan1.0 subpass.spv                # no output, and 0
+/// ```
+const shipped_subpass = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x0000001C, 0x00000000, 0x00020011,
+    0x00000001, 0x00020011, 0x00000028, 0x0006000B, 0x00000001, 0x4C534C47,
+    0x6474732E, 0x3035342E, 0x00000000, 0x0003000E, 0x00000000, 0x00000001,
+    0x0007000F, 0x00000004, 0x00000004, 0x6E69616D, 0x00000000, 0x00000009,
+    0x00000017, 0x00030010, 0x00000004, 0x00000007, 0x00040047, 0x00000009,
+    0x0000001E, 0x00000000, 0x00040047, 0x0000000C, 0x00000021, 0x00000000,
+    0x00040047, 0x0000000C, 0x00000022, 0x00000000, 0x00040047, 0x0000000C,
+    0x0000002B, 0x00000000, 0x00040047, 0x00000017, 0x0000001E, 0x00000000,
+    0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00030016,
+    0x00000006, 0x00000020, 0x00040017, 0x00000007, 0x00000006, 0x00000004,
+    0x00040020, 0x00000008, 0x00000003, 0x00000007, 0x0004003B, 0x00000008,
+    0x00000009, 0x00000003, 0x00090019, 0x0000000A, 0x00000006, 0x00000006,
+    0x00000000, 0x00000000, 0x00000000, 0x00000002, 0x00000000, 0x00040020,
+    0x0000000B, 0x00000000, 0x0000000A, 0x0004003B, 0x0000000B, 0x0000000C,
+    0x00000000, 0x00040015, 0x0000000E, 0x00000020, 0x00000001, 0x0004002B,
+    0x0000000E, 0x0000000F, 0x00000000, 0x00040017, 0x00000010, 0x0000000E,
+    0x00000002, 0x0005002C, 0x00000010, 0x00000011, 0x0000000F, 0x0000000F,
+    0x0004002B, 0x00000006, 0x00000014, 0x3F400000, 0x00040020, 0x00000016,
+    0x00000001, 0x00000007, 0x0004003B, 0x00000016, 0x00000017, 0x00000001,
+    0x0004002B, 0x00000006, 0x00000019, 0x3E800000, 0x00050036, 0x00000002,
+    0x00000004, 0x00000000, 0x00000003, 0x000200F8, 0x00000005, 0x0004003D,
+    0x0000000A, 0x0000000D, 0x0000000C, 0x00050062, 0x00000007, 0x00000012,
+    0x0000000D, 0x00000011, 0x0009004F, 0x00000007, 0x00000013, 0x00000012,
+    0x00000012, 0x00000002, 0x00000001, 0x00000000, 0x00000003, 0x0005008E,
+    0x00000007, 0x00000015, 0x00000013, 0x00000014, 0x0004003D, 0x00000007,
+    0x00000018, 0x00000017, 0x0005008E, 0x00000007, 0x0000001A, 0x00000018,
+    0x00000019, 0x00050081, 0x00000007, 0x0000001B, 0x00000015, 0x0000001A,
+    0x0003003E, 0x00000009, 0x0000001B, 0x000100FD, 0x00010038,
 };
 
 /// glslc's own output, at -O, for a discard in an `if` of no `else` all
@@ -9848,6 +9936,17 @@ const Side = struct {
     four_drawn_pass: ?*facet.RenderPass = null,
     four_drawn_frame: ?*facet.Framebuffer = null,
     four_drawn_set: ?*facet.DescriptorSet = null,
+    /// An image a first subpass draws into and a second reads as an input
+    /// attachment, its view, the pass of the two over it and the first
+    /// picture, its framebuffer, and the set and layouts the second
+    /// subpass's pipeline reads it through (since 1.75).
+    input: ?*facet.Image = null,
+    input_view: ?*facet.ImageView = null,
+    input_pass: ?*facet.RenderPass = null,
+    input_frame: ?*facet.Framebuffer = null,
+    input_set_layout: ?*facet.DescriptorSetLayout = null,
+    input_layout: ?*facet.PipelineLayout = null,
+    input_set: ?*facet.DescriptorSet = null,
     drawn_resolving: ?*facet.RenderPass = null,
     drawn_resolving_frame: ?*facet.Framebuffer = null,
     /// What a shipped shader that reads the push constants is made with:
@@ -9979,7 +10078,7 @@ const Side = struct {
 
         const binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .sampled_image, .stage_flags = facet.SHADER_STAGE_FRAGMENT };
         try expect(fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&binding) }, &side.set_layout), error.Refused);
-        try expect(fb.CreateDescriptorPool(device, &.{ .max_sets = formats.len + 10 + layered_count + throughs.len + shadow_ops.len + formats.len * 2 + 1 }, &side.descriptor_pool), error.Refused);
+        try expect(fb.CreateDescriptorPool(device, &.{ .max_sets = formats.len + 10 + layered_count + throughs.len + shadow_ops.len + formats.len * 2 + 2 }, &side.descriptor_pool), error.Refused);
         const layouts: [formats.len]?*facet.DescriptorSetLayout = @splat(side.set_layout);
         try expect(fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = side.descriptor_pool.?, .descriptor_set_count = formats.len, .set_layouts = @ptrCast(&layouts) }, &side.sets), error.Refused);
         for (side.sets, side.texture_views) |set, texture_view| {
@@ -10063,6 +10162,7 @@ const Side = struct {
         try side.upShadow();
         try side.upFour();
         try side.upDrawn();
+        try side.upInput();
     }
 
     /// The image of four samples, its depth, and the two passes over them:
@@ -10160,6 +10260,52 @@ const Side = struct {
         try expect(fb.CreateRenderPass(device, &.{ .attachment_count = 3, .attachments = &attachments, .subpass_count = 1, .subpasses = @ptrCast(&subpass) }, &side.drawn_resolving), error.Refused);
         const views = [3]*facet.ImageView{ side.four_view.?, side.drawn_views[0][0].?, side.four_depth_view.? };
         try expect(fb.CreateFramebuffer(device, &.{ .render_pass = side.drawn_resolving.?, .attachment_count = 3, .attachments = &views, .width = side.width, .height = side.height }, &side.drawn_resolving_frame), error.Refused);
+    }
+
+    /// The image a later subpass reads as an input attachment and all
+    /// that reads it (`input`; since 1.75). The first subpass draws into
+    /// it and the pass does not keep it: the second reads it at each
+    /// pixel's own place and draws into the first picture.
+    fn upInput(side: *Side) Failure!void {
+        const fb = side.fb;
+        const device = side.device.?;
+        const extent = facet.Extent3D{ .width = side.width, .height = side.height };
+        try side.image(.{ .format = formats[0], .extent = extent, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_INPUT_ATTACHMENT }, 0, &side.input);
+        side.input_view = try side.view(side.input.?, formats[0], facet.IMAGE_ASPECT_COLOR, 1);
+        const attachments = [2]facet.AttachmentDescription{
+            .{ .format = formats[0], .load_op = .clear, .store_op = .dont_care, .final_layout = .shader_read_only_optimal },
+            .{ .format = formats[0], .load_op = .clear, .store_op = .store, .final_layout = .general },
+        };
+        const drawn = facet.AttachmentReference{ .attachment = 0, .layout = .color_attachment_optimal };
+        const read = facet.AttachmentReference{ .attachment = 0, .layout = .shader_read_only_optimal };
+        const picture = facet.AttachmentReference{ .attachment = 1, .layout = .color_attachment_optimal };
+        const subpasses = [2]facet.SubpassDescription{
+            .{ .color_attachment_count = 1, .color_attachments = @ptrCast(&drawn) },
+            .{ .input_attachment_count = 1, .input_attachments = @ptrCast(&read), .color_attachment_count = 1, .color_attachments = @ptrCast(&picture) },
+        };
+        // The read waits for the colour the first subpass wrote at the
+        // same pixel, as Vulkan asks.
+        const written = facet.SubpassDependency{
+            .src_subpass = 0,
+            .dst_subpass = 1,
+            .src_stage_mask = facet.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT,
+            .dst_stage_mask = facet.PIPELINE_STAGE_FRAGMENT_SHADER,
+            .src_access_mask = facet.ACCESS_COLOR_ATTACHMENT_WRITE,
+            .dst_access_mask = facet.ACCESS_INPUT_ATTACHMENT_READ,
+            .dependency_flags = facet.DEPENDENCY_BY_REGION,
+        };
+        try expect(fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &attachments, .subpass_count = 2, .subpasses = &subpasses, .dependency_count = 1, .dependencies = @ptrCast(&written) }, &side.input_pass), error.Refused);
+        const views = [2]*facet.ImageView{ side.input_view.?, side.picture_views[0].? };
+        try expect(fb.CreateFramebuffer(device, &.{ .render_pass = side.input_pass.?, .attachment_count = 2, .attachments = &views, .width = side.width, .height = side.height }, &side.input_frame), error.Refused);
+        const binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .input_attachment, .stage_flags = facet.SHADER_STAGE_FRAGMENT };
+        try expect(fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&binding) }, &side.input_set_layout), error.Refused);
+        try expect(fb.CreatePipelineLayout(device, &.{ .set_layout_count = 1, .set_layouts = @ptrCast(&side.input_set_layout) }, &side.input_layout), error.Refused);
+        var sets: [1]?*facet.DescriptorSet = undefined;
+        try expect(fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = side.descriptor_pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&side.input_set_layout) }, &sets), error.Refused);
+        side.input_set = sets[0].?;
+        const info = facet.DescriptorImageInfo{ .image_view = side.input_view.?, .image_layout = .shader_read_only_optimal };
+        const write = facet.WriteDescriptorSet{ .dst_set = side.input_set.?, .dst_binding = 0, .descriptor_type = .input_attachment, .image_info = @ptrCast(&info) };
+        fb.UpdateDescriptorSets(device, 1, @ptrCast(&write), 0, null);
     }
 
     /// A set of `sampler_set_layout` that samples `view` through
@@ -10617,6 +10763,12 @@ const Side = struct {
         fb.DestroyBuffer(device, side.computed);
         fb.DestroyBuffer(device, side.numbers);
         fb.DestroyFence(device, side.fence);
+        fb.DestroyFramebuffer(device, side.input_frame);
+        fb.DestroyRenderPass(device, side.input_pass);
+        fb.DestroyPipelineLayout(device, side.input_layout);
+        fb.DestroyDescriptorSetLayout(device, side.input_set_layout);
+        fb.DestroyImageView(device, side.input_view);
+        fb.DestroyImage(device, side.input);
         fb.DestroyFramebuffer(device, side.drawn_resolving_frame);
         fb.DestroyRenderPass(device, side.drawn_resolving);
         fb.DestroyFramebuffer(device, side.four_drawn_frame);
@@ -12252,6 +12404,29 @@ const Cases = struct {
             }
         }.run;
     }
+    /// The clockwise quad and the glass over it drawn into `input` in the
+    /// first subpass, and the rectangle in the second, through glslc's
+    /// subpassLoad of it at each pixel's own place, into the first
+    /// picture: the V3D's first subpass is a frame of its own, which
+    /// stores the image where its TMU fetches it though the pass does not
+    /// keep it, and the second fetches it at FragCoord and the layer
+    /// (docs/facet-vulkan10.md item 56; since 1.75).
+    fn inputRead(side: *Side) Failure!void {
+        const fb = side.fb;
+        const commands = side.commands.?;
+        const clears = [2]facet.ClearValue{ .{ .color = .{ .float32 = .{ 0.3, 0.12, 0.05, 1 } } }, .{ .color = .{ .float32 = .{ 0.05, 0.1, 0.3, 1 } } } };
+        fb.CmdBeginRenderPass(commands, &.{ .render_pass = side.input_pass.?, .framebuffer = side.input_frame.?, .render_area = side.areaOf(null), .clear_value_count = 2, .clear_values = &clears }, .@"inline");
+        side.state();
+        try side.use(.{ .pass = side.input_pass.? });
+        side.draw(clockwise_at, 6);
+        try side.use(.{ .pass = side.input_pass.?, .blend = true });
+        side.draw(glass_at, 3);
+        fb.CmdNextSubpass(commands, .@"inline");
+        fb.CmdBindDescriptorSets(commands, .graphics, side.input_layout.?, 0, 1, @ptrCast(&side.input_set), 0, null);
+        try side.use(.{ .pass = side.input_pass.?, .subpass = 1, .vertex = "shipped as it is", .fragment = "shipped subpass", .layout = side.input_layout.? });
+        side.draw(quad_at, 6);
+        side.end();
+    }
     fn onTarget(comptime target: Target) *const fn (side: *Side) Failure!void {
         return &struct {
             fn run(side: *Side) Failure!void {
@@ -12544,6 +12719,9 @@ const cases = [_]Case{
     .{ .name = "four samples resolved into an image sampled", .run = Cases.resolvedThenSampled(null) },
     .{ .name = "four samples resolved over a part into an image sampled", .run = Cases.resolvedThenSampled(.{ 0.1, 0.15, 0.7, 0.8 }) },
     .{ .name = "four samples, covered by alpha", .run = &Cases.covered, .slack = 52 },
+    // 1.75: an image a subpass drew into, read by a later one as an input
+    // attachment, which the V3D does since facet 1.216 (item 56).
+    .{ .name = "shipped input attachment", .run = &Cases.inputRead },
     // No colour (since 1.18), which the V3D draws since facet 1.150: a
     // shadow map drawn in a pass of it alone, and a depth drawn in a
     // subpass of its own before the colour is, as a pre-pass is.

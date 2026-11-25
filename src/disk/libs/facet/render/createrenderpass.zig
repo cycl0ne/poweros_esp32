@@ -245,8 +245,10 @@ const _surface = @import("../surface/_surface.zig");
 /// undefined where nothing orders the write before them - and the tile's
 /// pixel is an answer it allows; until then the pass was refused, with
 /// `error_initialization_failed`. Only a device whose `input_attachments`
-/// is true reads any - the cores, not the V3D - others answering
-/// `error_feature_not_present`. The pass does not say
+/// is true reads any - the cores, and since 1.216 the V3D - others
+/// answering `error_feature_not_present`; and only one whose
+/// `tile_inputs` is true reads an attachment the subpass draws into, the
+/// cores and not the V3D. The pass does not say
 /// which descriptor a subpass reads one through: the set written with the
 /// `input_attachment` descriptor does (UpdateDescriptorSets), and the
 /// image wants IMAGE_USAGE_INPUT_ATTACHMENT (CreateImage).
@@ -384,9 +386,8 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
                     // format of both planes neither COLOR_ATTACHMENT nor
                     // DEPTH_STENCIL_ATTACHMENT
                     // (VUID-VkSubpassDescription-pInputAttachments-02647;
-                    // `error_feature_not_present` until 1.135). No device
-                    // reaches here today: the V3D reads no input
-                    // attachment.
+                    // `error_feature_not_present` until 1.135). The V3D
+                    // reaches here since 1.216, with `d16_unorm_s8_uint`.
                     if (_image.hasDepth(read.format) and _image.hasStencil(read.format) and !owner.physical.can.stored_both) return .error_validation_failed;
                 };
                 // Drawn and read in the same subpass: the pixels being
@@ -404,7 +405,7 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
                         // A colour attachment of a depth format, which no
                         // device draws into (VUID-VkSubpassDescription-pColorAttachments-02648).
                         if (depth_read) return .error_validation_failed;
-                        if (!owner.physical.can.input_attachments) return .error_feature_not_present;
+                        if (!owner.physical.can.tile_inputs) return .error_feature_not_present;
                         reads_own[reference.attachment] = true;
                         reads_any = true;
                     }

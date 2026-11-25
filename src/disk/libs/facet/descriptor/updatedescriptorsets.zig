@@ -111,6 +111,17 @@ pub fn UpdateDescriptorSets(base: *FacetBase, device: *facet.Device, write_count
                     // than handed over to be read as pixels it has not
                     // got.
                     if (view.image.kind == .texture or view.image.usage & facet.IMAGE_USAGE_INPUT_ATTACHMENT == 0) break :attachment .{};
+                    // On a device whose images lie in a layout of its own
+                    // the attachment is read through its texture unit,
+                    // where the pass stored it, as a sampled image is: the
+                    // slot holds the view's texture, which the draw finds
+                    // the view by, as v3dv's texture map holds an input
+                    // attachment's view (v3dv_pipeline.c:601-606; since
+                    // 1.216, docs/facet-vulkan10.md item 56).
+                    if (_image.deviceLaid(view.image)) {
+                        if (view.image.data == null) break :attachment .{};
+                        break :attachment .{ .pointer = &view.texels };
+                    }
                     if (view.rows.format == .none or view.rows.bytes == null) break :attachment .{};
                     break :attachment .{ .pointer = &view.rows, .range = @intCast(@min(view.image.bytes, 0xFFFF_FFFF)) };
                 },

@@ -113,8 +113,12 @@ const _image = @import("_image.zig");
 /// first is made since 1.210, as are a colour attachment's levels, in
 /// that device's layout, each layer a texture of its own that the pass
 /// stores into where the TMU reads it, as v3dv keeps every optimal image
-/// (src/broadcom/vulkan/v3dv_image.c:481-483); the second is refused
-/// there, that device reading no input attachment.
+/// (src/broadcom/vulkan/v3dv_image.c:481-483). So since 1.216 is any
+/// image there read as an input attachment, a depth one too, which that
+/// device's fragment programs read through the TMU where the pass stored
+/// it: in optimal tiling, and of a format the TMU reads. One of four
+/// samples is made as well, kept as a sampled one is, though no pipeline
+/// there reads it yet (SubpassDataMS).
 ///
 /// **An image may have four samples a pixel** on a device that draws them
 /// (`Capabilities.multisampling`, since 1.98): 2D, optimal, one level and

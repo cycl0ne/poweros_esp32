@@ -153,17 +153,19 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
             said.mipmap_precision_bits = 8;
             // A texture a unit: as many as the samplers (since 1.173).
             said.max_per_stage_descriptor_sampled_images = compile.most_samplers;
-            // No storage image and no input attachment here
-            // (`can.storage_images`, `can.input_attachments`).
+            // No storage image here (`can.storage_images`). Input
+            // attachments as v3dv has them, MAX_INPUT_ATTACHMENTS a stage
+            // and a set (v3dv_limits.h:52; v3dv_device.c:1092, :1107;
+            // since 1.216): each a unit of the TMU's, as a texture is.
             said.max_per_stage_descriptor_storage_images = 0;
             said.max_descriptor_set_storage_images = 0;
-            said.max_per_stage_descriptor_input_attachments = 0;
+            said.max_per_stage_descriptor_input_attachments = 4;
             // A QPU fragment program writes one colour: the forms that
             // write several are refused here and drawn on the cores
             // (`can.several_outputs`). docs/facet-vulkan10.md item 55.
             said.max_fragment_output_attachments = 1;
             said.max_fragment_combined_output_resources = 1;
-            said.max_descriptor_set_input_attachments = 0;
+            said.max_descriptor_set_input_attachments = 4;
             // What this device will sample from, by what the image holds: a
             // colour, and a depth since 1.142 (`can.sampled_depth`), each
             // of one sample or four: one of four it draws into since 1.148,
@@ -358,10 +360,13 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // reads it is a function of the program's, which on a device
         // without them is its compute functions, run on the cores.
         .texel_buffers = true,
-        // No fragment program of the QPUs reads an attachment's pixels,
-        // so a set layout with the kind is refused here, as is a subpass
-        // with input attachments.
-        .input_attachments = false,
+        // A fragment program reads an input attachment through the TMU,
+        // where the pass stored it (`compile.readSubpass`; since 1.216,
+        // docs/facet-vulkan10.md item 56). Not one the same subpass draws
+        // into, which v3dv reads out of the tile buffer
+        // (lower_tlb_input_attachment_instr, v3dv_pipeline.c:301-356).
+        .input_attachments = true,
+        .tile_inputs = false,
         // A dynamic buffer descriptor is a pointer and a range, shifted
         // by what the bind gave: the function that reads it is the
         // program's, so every device takes one.

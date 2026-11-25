@@ -458,12 +458,16 @@ point at, so deferred shading, a pass over what was drawn, and reading
 one's own G-buffer are all there. All eleven of Vulkan's descriptor kinds
 exist now. What is left out:
 
-- **The cores alone read them** (`PhysicalDeviceFeatures.input_attachments`):
-  on the V3D no fragment program of the library's is run at all, only the
-  fixed forms, and none of those reads an attachment. This one waits on a
-  shader compiler for the QPUs, not on a packet: an input attachment is
-  read by a fragment function (`shader.Resources.input`), which is the
-  program's own code.
+- **The V3D reads them since 1.216** (`input_attachments`;
+  docs/facet-vulkan10.md item 56), as v3dv does: through its TMU, a
+  fragment program's subpassLoad a fetch at FragCoord's place and the
+  layer. Its image does not keep rows: one made IMAGE_USAGE_INPUT_ATTACHMENT
+  lies as a sampled one does, so it is optimal and of a format the TMU
+  reads, and the descriptor holds the view's texture. What it does not
+  read: an attachment the subpass draws into (`tile_inputs`, the cores'
+  alone; v3dv reads it out of the tile buffer), one of four samples
+  through SubpassDataMS, which is made but no pipeline reads, and a
+  stencil (`sampled_stencil`).
 - **An attachment another subpass drew is read out of the image's
   memory**, so it is read where the image stands: what that subpass drew
   and stored.
@@ -665,11 +669,11 @@ Vulkan allows them, and facet does not do them.
 | A colour reference of `ATTACHMENT_UNUSED` in a subpass whose colours go together (`SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER`), until docs/facet-vulkan10.md item 80; drawn apart it is taken since 1.118. Of colours drawn together, one but the first read as an input attachment, until item 80 too (`error_initialization_failed` until 1.134) | `render/createrenderpass.zig` |
 | A pipeline of no fragment stage that draws, on a device with a processor of its own: the V3D, until docs/facet-vulkan10.md item 85's V3D half (the cores' since 1.115; one that draws nothing, the V3D's since 1.134) | `driver/v3d/driver.zig` |
 | A depth bias on a device that takes none: every device takes one since 1.47 (`depth_bias`) | `pipeline/creategraphicspipelines.zig` |
-| An input attachment on a device that reads none: the V3D (`input_attachments`) | `render/createrenderpass.zig` |
+| An input attachment on a device that reads none (`input_attachments`): none since 1.216, the V3D until then. One the subpass draws into, on a device that reads none out of the tile: the V3D (`tile_inputs`) | `render/createrenderpass.zig` |
 | A subpass that reads its own depth attachment as an input attachment, until docs/facet-vulkan10.md item 92 (`error_initialization_failed` until 1.134) | `render/createrenderpass.zig` |
 | A 3D image deeper than it is wide and high, of more levels than its width and height halve to, until docs/facet-vulkan10.md item 93 (`error_format_not_supported` until 1.135) | `image/createimage.zig` |
 | A depth or stencil op on a device that keeps neither (`stored_depth`, `stored_stencil`): every device keeps both since 1.47. On a device without `stored_stencil` an `s8_uint` attachment has no DEPTH_STENCIL_ATTACHMENT (`_format.describe`), so one whose stencil is kept breaks VUID-VkSubpassDescription-pDepthStencilAttachment-02650 as well and may be answered either way (`Result.error_validation_failed`), and one left in the tiles is drawn all the same. One for a plane the format has not keeps nothing since 1.106 | `render/createrenderpass.zig` |
-| An `input_attachment` layout on a device that reads none: the V3D (`input_attachments`) | `descriptor/createdescriptorsetlayout.zig` |
+| An `input_attachment` layout on a device that reads none (`input_attachments`): none since 1.216, the V3D until then | `descriptor/createdescriptorsetlayout.zig` |
 | More dynamic buffer descriptors in one set than `max_descriptor_set_dynamic_buffers` | `descriptor/createdescriptorsetlayout.zig` |
 | A `storage_image` layout on the V3D: its TMU keeps a texture its own way | `descriptor/createdescriptorsetlayout.zig` |
 | A fixed fragment form that drops pixels, on the V3D: the QPUs have no program that discards | `driver/v3d/driver.zig` |
@@ -689,7 +693,7 @@ is past its answer (-mipLevels-02255, -arrayLayers-02256).
 
 | What | Where it is refused |
 |---|---|
-| An image both INPUT_ATTACHMENT and TRANSIENT_ATTACHMENT; one both INPUT_ATTACHMENT and STORAGE but as a colour attachment written through is (above); one sampled as well as drawn into or read as an input attachment on a device whose images lie in a layout of its own: the V3D, until docs/facet-vulkan10.md item 48's V3D half (the cores' since 1.119) | `image/createimage.zig` |
+| An image both INPUT_ATTACHMENT and TRANSIENT_ATTACHMENT; one both INPUT_ATTACHMENT and STORAGE but as a colour attachment written through is (above); on a device whose images lie in a layout of its own, the V3D, one sampled as well as drawn into until 1.210 (docs/facet-vulkan10.md item 48's V3D half) and one read as an input attachment until 1.216 (item 56), the cores' since 1.119. On the V3D an input attachment that is linear or 3D, or of a format its TMU does not read | `image/createimage.zig` |
 | A sampled depth image on a device that samples none (`sampled_depth`; the V3D until 1.142), or of a format that holds a stencil on one that samples no stencil, the V3D (`sampled_stencil`, since 1.142); a transient one, or one written through as a storage image; one of more levels than halving its longer side gives, which VkImageCreateInfo forbids whatever the query says (-mipLevels-00958); or of type `3d`. Any of the three depth formats is taken since 1.58 and levels of its own since 1.63, and a view of it names one plane, or both at once since 1.94 for a framebuffer, sampling the depth (`image/createimageview.zig`) | `image/createimage.zig` |
 | Shapes Vulkan has the query take, until docs/facet-vulkan10.md item 94: an image of the transfers alone in a format that is kept for a function; a depth or stencil format without DEPTH_STENCIL_ATTACHMENT - sampled, or for the transfers or TRANSIENT_ATTACHMENT alone; a 3D image deeper than a slice for the transfers alone or as a colour or input attachment, CreateImage making such an image a slice deep, which the query declines; and an optimal colour attachment written through of more than one level or layer, past the one of each the query answers | `image/createimage.zig` |
 

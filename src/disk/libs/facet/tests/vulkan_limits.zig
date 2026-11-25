@@ -337,6 +337,9 @@ const Rig = @import("facet.zig").Rig;
 /// (item 61's V7). The four rows of samplers and sampled
 /// images, a stage's and a set's, it meets since 1.173: it said one a
 /// stage, which this note did not name, and a set's held to the sets.
+/// The two rows of input attachments, a stage's and a set's, it meets
+/// since 1.216 with v3dv's 4: it said 0, which this note did not name
+/// either (item 56).
 /// The three framebuffer masks hold the 4
 /// bit since 1.148, when it drew four (V5), and the no-attachments mask
 /// since 1.150, when it made a subpass of no attachment (item 43's V3D

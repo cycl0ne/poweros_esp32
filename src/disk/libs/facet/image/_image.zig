@@ -761,8 +761,9 @@ fn laidOut(physical: *_instance.PhysicalDevice, info: *const facet.ImageCreateIn
             if (info.usage & facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT != 0) return null;
         }
         // A stencil sampled where the device samples one (since 1.142):
-        // the V3D samples a depth of its own alone.
-        if (sampled and hasStencil(info.format) and !physical.can.sampled_stencil) return null;
+        // the V3D samples a depth of its own alone, and reads an input
+        // attachment through the same texture unit (since 1.216).
+        if ((sampled or read_back and physical.ops.texture_memory != null) and hasStencil(info.format) and !physical.can.sampled_stencil) return null;
         var allowed = depth_usage;
         if (sampled) allowed |= facet.IMAGE_USAGE_SAMPLED;
         if (read_back) allowed |= facet.IMAGE_USAGE_INPUT_ATTACHMENT;
@@ -788,8 +789,10 @@ fn laidOut(physical: *_instance.PhysicalDevice, info: *const facet.ImageCreateIn
         // A sampled one on a device of a layout of its own lies as that
         // device's textures do, each layer a texture of its own, so the
         // pass stores it where the TMU reads it, as v3dv keeps every image
-        // (since 1.142, `deviceLaid`).
-        if (sampled) if (physical.ops.texture_memory) |own| {
+        // (since 1.142, `deviceLaid`). And one read as an input
+        // attachment, which that device reads through its TMU as well
+        // (since 1.216).
+        if (sampled or read_back) if (physical.ops.texture_memory) |own| {
             const memory = own(info.format, extent.width, extent.height, 1, info.mip_levels, 1);
             image.layer_bytes = std.mem.alignForward(u64, memory.bytes, memory.alignment);
             image.bytes = image.layer_bytes * layers;
@@ -852,10 +855,6 @@ fn laidOut(physical: *_instance.PhysicalDevice, info: *const facet.ImageCreateIn
     const attachment = info.usage & (facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_INPUT_ATTACHMENT) != 0;
     const sampled_rows = info.usage & facet.IMAGE_USAGE_SAMPLED != 0 and (info.samples != 1 or attachment);
     if (sampled_rows) {
-        // Read as an input attachment as well, not there: that device
-        // reads none (`Capabilities.input_attachments`, item 56), and the
-        // format query keeps the 4 bit wherever it says sampled.
-        if (physical.ops.texture_memory != null and info.usage & facet.IMAGE_USAGE_INPUT_ATTACHMENT != 0) return null;
         if (sampledRowFormat(info.format) == null) return null;
         const not_sampled = facet.IMAGE_USAGE_STORAGE | facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT;
         if (info.tiling != .optimal or volume or info.usage & not_sampled != 0) return null;
@@ -867,6 +866,17 @@ fn laidOut(physical: *_instance.PhysicalDevice, info: *const facet.ImageCreateIn
     if (info.usage & facet.IMAGE_USAGE_INPUT_ATTACHMENT != 0) {
         if (info.usage & facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT != 0) return null;
         if (info.usage & facet.IMAGE_USAGE_STORAGE != 0 and !rows_written) return null;
+        // On a device whose images lie in a layout of its own (the V3D)
+        // it is read through the texture unit, where the pass stored it,
+        // as v3dv reads one (try_lower_input_load's txf, nir_lower_input_
+        // attachments.c:57-156; v3dv_pipeline.c:601-606): laid out as a
+        // texture, below, and so of a format the TMU reads, in optimal
+        // tiling, which v3dv asks for by the format's SAMPLED_IMAGE
+        // (v3dv_formats.c:163-172, :512-516; since 1.216, docs/facet-
+        // vulkan10.md item 56).
+        if (physical.ops.texture_memory != null) {
+            if (sampledRowFormat(info.format) == null or info.tiling != .optimal or volume) return null;
+        }
     }
     // Sampled, written through as a storage image, or both: all one kind,
     // kept in the layout a sample reads. And one kept in its blocks,
@@ -934,8 +944,11 @@ fn laidOut(physical: *_instance.PhysicalDevice, info: *const facet.ImageCreateIn
     // own: as that device keeps a texture, each layer one of its own, so
     // that the pass stores the level its view names in the level's own
     // tiling and the TMU reads it where it lies (since 1.210,
-    // `deviceLaid`), as a sampled depth attachment is (since 1.142).
-    if (sampled_rows or info.mip_levels > 1) if (physical.ops.texture_memory) |own| {
+    // `deviceLaid`), as a sampled depth attachment is (since 1.142). And
+    // read as an input attachment, which the TMU reads there too (since
+    // 1.216).
+    const read_input = info.usage & facet.IMAGE_USAGE_INPUT_ATTACHMENT != 0;
+    if (sampled_rows or read_input or info.mip_levels > 1) if (physical.ops.texture_memory) |own| {
         const memory = own(info.format, extent.width, extent.height, 1, info.mip_levels, 1);
         image.layer_bytes = std.mem.alignForward(u64, memory.bytes, memory.alignment);
         image.bytes = image.layer_bytes * layers;
@@ -973,9 +986,12 @@ fn multisampled(physical: *const _instance.PhysicalDevice, info: *const facet.Im
     // A device of a layout of its own keeps the four samples together
     // (`Image.quads`, since 1.146), and since 1.209 fetches one through
     // its quad as v3dv's compiler does (v3d_nir_lower_txf_ms.c:46-51;
-    // docs/facet-vulkan10.md item 61, step V7). It reads no input
-    // attachment (`Capabilities.input_attachments`).
-    if (physical.ops.texture_memory != null and info.usage & facet.IMAGE_USAGE_INPUT_ATTACHMENT != 0) return false;
+    // docs/facet-vulkan10.md item 61, step V7). One read as an input
+    // attachment too since 1.216, as v3dv makes one: the format query of
+    // a colour attachment has to hold framebufferColorSampleCounts, and
+    // Vulkan 1.0 has no feature to refuse an input attachment of four
+    // under. Its compiler takes no SubpassDataMS, so what it refuses is
+    // the pipeline that reads one (item 56).
     if (info.image_type != .@"2d" or info.tiling != .optimal or info.mip_levels != 1) return false;
     if (info.flags & facet.IMAGE_CREATE_CUBE_COMPATIBLE != 0) return false;
     const taken = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT |
@@ -1531,14 +1547,16 @@ pub fn deviceLaid(image: *const Image) bool {
     if (image.device.physical.ops.texture_offset == null) return false;
     // And an image of four samples there (since 1.146).
     if (image.quads) return true;
+    // Read as an input attachment too, through the TMU (since 1.216).
+    const read = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_INPUT_ATTACHMENT;
     return switch (image.kind) {
         .texture => true,
-        .depth => image.usage & facet.IMAGE_USAGE_SAMPLED != 0,
+        .depth => image.usage & read != 0,
         // A colour attachment sampled as well, or one of more than one
         // level (since 1.210, `shapeFor`): v3dv keeps every optimal image
         // in its own tiling (v3dv_image.c:481-483), and so it is drawn
         // into and sampled where it lies.
-        .rows => image.usage & facet.IMAGE_USAGE_SAMPLED != 0 or image.levels > 1,
+        .rows => image.usage & read != 0 or image.levels > 1,
     };
 }
 
