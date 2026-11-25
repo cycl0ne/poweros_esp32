@@ -438,6 +438,6 @@ type object is in [`datatypesclass.zig`](../libs/datatypes/datatypesclass.zig).
 ## Examples
 
 The smallest of each kind, to start one of your own from:
-`LIBS:hello.library` (`src/disk/libs/hello/`) and
+`paintfx.library` (`src/disk/libs/paintfx/`, in Paint's drawer) and
 `SYS:classes/gadgets/hello.gadget` (`src/disk/classes/gadgets/hello/`);
 [Writing programs](guides/programs.md) has the programs.

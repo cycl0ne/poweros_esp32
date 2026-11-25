@@ -708,8 +708,8 @@ description, for a library that is not in a tag. Every library's table
 starts with Open, Close, Expunge and ExtFunc; a device's has BeginIO and
 AbortIO after them. The rules exec keeps around those vectors are in
 [A library's or a device's own calls](programs.md#a-librarys-or-a-devices-own-calls),
-and `LIBS:hello.library` (`src/disk/libs/hello/`) is the smallest one to
-start from.
+and `paintfx.library` (`src/disk/libs/paintfx/`) is a small one to
+start from: its base, its init, its jump table and a file for each call.
 
 A device's BeginIO works the quick-I/O protocol from the other side:
 

@@ -291,7 +291,7 @@ pub fn addCatalog(b: *std.Build, dep: *std.Build.Dependency, descriptor: std.Bui
 /// What `addProgram` builds.
 pub const Program = struct {
     /// The name of the compile artifact, and of the load file (`<name>.seg`).
-    /// A name with a dot or a dash in it - `hello.library` - is kept for
+    /// A name with a dot or a dash in it - `hid.library` - is kept for
     /// the load file; the artifact gets underscores instead.
     name: []const u8,
     /// Its root source file.

@@ -19,7 +19,8 @@
 //! Beside them, each round: a library opened and closed - its open count
 //! has to come back to where it was, which it does only if no two Opens
 //! or Closes of it ever overlapped, and only if nothing outside the test
-//! opens it either, so it is one nothing else uses; a block from one
+//! opens it either, so it is one the program makes for the run and takes
+//! away at its end; a block from one
 //! pool every worker shares, filled and checked; and a message put on
 //! one port every worker shares and taken back off it with RemoveMsg,
 //! which has to find it every time however the others' puts and takes
@@ -45,7 +46,7 @@ const Task = exec.Task;
 const Printf = dos.stdio.Printf;
 
 const NAME = "Cores";
-const VERSION_STRING = "\x00$VER: Cores 1.5 (18.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Cores 1.6 (25.11.2026)\r\n";
 const TEMPLATE = "SECONDS/N,TASKS/N,PIN/S,FREE/S";
 
 /// The library every worker opens and closes. It has to be one that
@@ -53,9 +54,75 @@ const TEMPLATE = "SECONDS/N,TASKS/N,PIN/S,FREE/S";
 /// that its open count has come back to where it started: a library the
 /// rest of the system uses - utility.library was this - has its count
 /// moved by whatever else is running, and the test then reports a fault
-/// that is none. This one is opened by nothing but `C:test/testlib`,
-/// and the test holds it open throughout so that it stays loaded.
-const test_library = "hello.library";
+/// that is none. So the program makes one of its own for the run, under
+/// a name nothing else asks for (`makeLibrary`), and takes it away at the
+/// end (`removeLibrary`).
+const test_library = "cores-test.library";
+
+/// The library's base: exec's header, and what its Expunge needs.
+const TestLibrary = extern struct {
+    lib: exec.Library,
+    sys: *ExecBase,
+    /// Set by the program once every worker is gone: until then the
+    /// library stays, whoever asks it to go.
+    done: bool,
+};
+
+/// Its jump table: the standard Open, Close and ExtFunc, and an Expunge
+/// of its own - all of it this program's code, which goes when the
+/// program ends, so the library has to be gone by then.
+const library_vectors = [_]*const anyopaque{ &exec.libOpen, &exec.libClose, &expungeLibrary, &exec.libExtFunc };
+
+fn initLibrary(lib: *exec.Library, seg_list: ?*anyopaque, sys: *ExecBase) callconv(.c) ?*exec.Library {
+    _ = seg_list;
+    const base: *TestLibrary = @fieldParentPtr("lib", lib);
+    base.sys = sys;
+    base.done = false;
+    return lib;
+}
+
+/// The library goes only once the program is done with it and nobody has
+/// it open: a low-memory flush during the run leaves it where it is.
+fn expungeLibrary(lib: *exec.Library) callconv(.c) ?*anyopaque {
+    const base: *TestLibrary = @fieldParentPtr("lib", lib);
+    if (!base.done or lib.open_cnt != 0) return null;
+    base.sys.DetachLibrary(lib);
+    const start: *anyopaque = @ptrFromInt(@intFromPtr(lib) - lib.neg_size);
+    base.sys.FreeMem(start, @as(usize, lib.neg_size) + lib.pos_size);
+    return null;
+}
+
+/// The library made, and opened by the program, which holds it for the
+/// run; null where it cannot be made.
+fn makeLibrary(sys: *ExecBase) ?*exec.Library {
+    const made = sys.CreateLibrary(&.{
+        .name = test_library,
+        .data_size = @sizeOf(TestLibrary),
+        .vectors = &library_vectors,
+        .init = &initLibrary,
+    }) orelse return null;
+    return sys.OpenLibrary(test_library, 0) orelse {
+        const base: *TestLibrary = @fieldParentPtr("lib", made);
+        base.done = true;
+        _ = sys.RemLibrary(made);
+        return null;
+    };
+}
+
+/// The library taken away once every worker is gone: its count put to
+/// the program's hold alone - already so where no Open or Close was lost,
+/// which the check has said - and that hold let go of with the library
+/// marked to go, so that it goes inside that Close, with no moment
+/// between in which anything else could find it unheld.
+fn removeLibrary(sys: *ExecBase, lib: *exec.Library) void {
+    const base: *TestLibrary = @fieldParentPtr("lib", lib);
+    sys.ObtainSemaphore(&lib.lock);
+    base.done = true;
+    lib.open_cnt = 1;
+    lib.flags |= exec.LIBF_DELEXP;
+    sys.ReleaseSemaphore(&lib.lock);
+    sys.CloseLibrary(lib);
+}
 
 const default_seconds = 5;
 const default_tasks = 4;
@@ -271,10 +338,10 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     var shared_port: exec.MsgPort = .{ .flags = exec.PA_IGNORE };
     shared_port.msg_list.init(.message);
     run.port = &shared_port;
-    // The library opened and closed: held open here, so it stays, and its
-    // count noted.
-    const library = sys.OpenLibrary(test_library, 0) orelse return dos.RETURN_FAIL;
-    defer sys.CloseLibrary(library);
+    // The library made and opened: held open here for the run, its count
+    // noted, and taken away once every worker is gone.
+    const library = makeLibrary(sys) orelse return dos.RETURN_FAIL;
+    defer removeLibrary(sys, library);
     const opened_before = library.open_cnt;
 
     // The cores running: those ReadCoreTimes answers for.

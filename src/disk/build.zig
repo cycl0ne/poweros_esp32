@@ -257,22 +257,22 @@ const commands = [_][]const u8{
     "bluetooth",
 };
 const tests = [_][]const u8{
-    "hello",       "echoargs",    "testlib",     "gfx",       "anim",
-    "intuition",   "console",     "keyboard",    "touch",     "input",
-    "lines",       "nyan",        "plasma",      "audiotest", "fonts",
-    "screens",     "layout",      "classes",     "gadgets",   "listview",
-    "diskfont",    "colorwheel",  "tapedeck",    "pointer",   "crypto",
-    "bsdsocktest", "asl",         "settings",    "iff",       "datatypes",
-    "shapes",      "styles",      "motion",      "widgets",   "modbusserver",
-    "cores",       "scroll",      "listbrowser", "notify",    "icon",
-    "launch",      "drag",        "tap",         "app",       "open",
-    "engine",      "jpeg",        "keysource",   "usbdevice", "scsi",
-    "sound",       "memowner",    "records",     "exall",     "disktest",
-    "filetest",    "speed2d",     "windraw",     "semtest",   "membench",
-    "glyphs",      "ribbon",      "taskbench",   "videodec",  "audiodec",
-    "film",        "commodities", "filmdt",      "watchdog",  "gpu",
-    "dttime",      "names",       "axes",        "bands",     "vchiq",
-    "expunge",     "dtwrite",     "btecho",      "btgatt",    "bthiddevice",
+    "hello",       "echoargs",    "gfx",       "anim",         "intuition",
+    "console",     "keyboard",    "touch",     "input",        "lines",
+    "nyan",        "plasma",      "audiotest", "fonts",        "screens",
+    "layout",      "classes",     "gadgets",   "listview",     "diskfont",
+    "colorwheel",  "tapedeck",    "pointer",   "crypto",       "bsdsocktest",
+    "asl",         "settings",    "iff",       "datatypes",    "shapes",
+    "styles",      "motion",      "widgets",   "modbusserver", "cores",
+    "scroll",      "listbrowser", "notify",    "icon",         "launch",
+    "drag",        "tap",         "app",       "open",         "engine",
+    "jpeg",        "keysource",   "usbdevice", "scsi",         "sound",
+    "memowner",    "records",     "exall",     "disktest",     "filetest",
+    "speed2d",     "windraw",     "semtest",   "membench",     "glyphs",
+    "ribbon",      "taskbench",   "videodec",  "audiodec",     "film",
+    "commodities", "filmdt",      "watchdog",  "gpu",          "dttime",
+    "names",       "axes",        "bands",     "vchiq",        "expunge",
+    "dtwrite",     "btecho",      "btgatt",    "bthiddevice",
 };
 /// C:dbg: the tools that look into the running system - its tasks, where
 /// one stands, and the end of one that is stuck.
@@ -355,7 +355,6 @@ const inner_tests = [_]Program{
 /// for - LIBS:, DEVS:, HANDLERS: - and a class library in classes/, which
 /// the startup-sequence adds to LIBS:.
 const modules = [_]Program{
-    .{ .disk = "libs/hello.library", .source = "libs/hello/hello.zig", .name = "hello.library", .set = .tests },
     .{ .disk = "libs/bsdsocket.library", .source = "libs/bsdsocket/bsdsocket.zig", .name = "bsdsocket.library", .set = .net },
     .{ .disk = "libs/crypto.library", .source = "libs/crypto/crypto.zig", .name = "crypto.library", .set = .net },
     .{ .disk = "libs/compression.library", .source = "libs/compression/compression.zig", .name = "compression.library" },
