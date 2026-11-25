@@ -562,6 +562,12 @@ pub const PARTKIND_FIRMWARE: u32 = 30;
 /// PART_StationAddress its address where the board's firmware gives it
 /// one (six bytes, the least significant first, all 0 for none).
 pub const PARTKIND_BLUETOOTH: u32 = 31;
+/// The video BIOS images the machine's firmware keeps for its display
+/// devices, which a device's driver reads its tables out of: PART_Chip
+/// the form they are kept in, PART_Address where (BUS_MEMORY). The
+/// memory they are in is the firmware's and stays as long as the
+/// machine runs.
+pub const PARTKIND_VIDEO_BIOS: u32 = 32;
 
 // Which chip. CHIP_NONE is a part that is no chip of its own: a bus, a
 // slot, a pad.
@@ -781,6 +787,11 @@ pub const CHIP_MC146818: u32 = 51;
 /// block, and PART_Irq the line it all comes in on. The firmware's tables
 /// are where these are written down, and the kernel puts them here.
 pub const CHIP_ACPI_PM: u32 = 52;
+/// The firmware's table of video BIOS images (PARTKIND_VIDEO_BIOS),
+/// signature VFCT: after the table's header, a header of its own whose
+/// first image is at the offset it names, and each image behind a header
+/// that says which PCI function it is for and how long it is.
+pub const CHIP_ACPI_VFCT: u32 = 61;
 /// Broadcom's BCM54213PE, a 10/100/1000 Mbit/s Ethernet PHY (PARTKIND_NET
 /// on BUS_RGMII), the Compute Module 4's, on the BCM2711's GENET:
 /// PART_Address its address on the MAC's management bus, PART_RxDelay and

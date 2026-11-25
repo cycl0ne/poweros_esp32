@@ -46,4 +46,10 @@ bool LoadGPUFirmware(u32 kind, [*]const u8 image, u32 length, *u64 address)
 bool AddGPUIntServer(u32 client, u32 source, *exec.Interrupt server)
 /// A server AddGPUIntServer added taken off again.
 void RemGPUIntServer(*exec.Interrupt server)
+/// The device's video BIOS image, as the machine's firmware kept it, into
+/// `bios`; false where there is no device, or no image is the device's.
+bool GetGPUBios(*amdgpu.GPUBios bios)
+/// The device's connector `index` (from 0), as its video BIOS lists it,
+/// into `connector`; false past the last one, or where there is no list.
+bool GetGPUConnector(u32 index, *amdgpu.GPUConnector connector)
 ##end

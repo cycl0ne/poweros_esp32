@@ -1,12 +1,20 @@
 // SPDX-License-Identifier: MIT
 //! Gpu: an AMD graphics device tried a part at a time, each step said:
-//! its security processor started and the video decoder's firmware loaded
-//! by it, the display's interrupt at each frame counted, or one flip of
-//! the picture the display reads. Built against the SDK only.
+//! its video BIOS read, its security processor started and the video
+//! decoder's firmware loaded by it, the display's interrupt at each frame
+//! counted, or one flip of the picture the display reads. Built against
+//! the SDK only.
 //!
-//!   Gpu TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,PIPE/K/N,FETCHER/K/N,WATCHDOG/A/K/N
+//!   Gpu TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,PIPE/K/N,FETCHER/K/N,WATCHDOG/K/N
 //!
-//! Without FRAMES or FLIP the two files are read from
+//! BIOS prints the device's video BIOS image (GetGPUBios): where it is
+//! and how long, its tables' header's version, the version of each data
+//! table it lists, and the display's connectors as amdgpu.resource read
+//! them from it (GetGPUConnector) - each one's kind, the PHY that drives
+//! it, its DDC line and its hot-plug pin. Nothing is written to the
+//! device, and no watchdog is wanted.
+//!
+//! Without BIOS, FRAMES or FLIP the two files are read from
 //! DEVS:firmware/amdgpu/, named for the blocks that use them as the
 //! device's table gives their versions - psp_13_0_4_toc.bin for the
 //! security processor 13.0.4, vcn_4_0_2.bin for the video decoder 4.0.2 -
@@ -35,8 +43,9 @@
 //!
 //! WATCHDOG is the watchdog's time in milliseconds, armed before the
 //! first write to the device, fed after each step and disarmed at the
-//! end: a block that stops the machine has it reset. It is required,
-//! since nothing else brings a machine back that stopped there.
+//! end: a block that stops the machine has it reset. Every step but BIOS
+//! requires it, since nothing else brings a machine back that stopped
+//! there.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -57,20 +66,43 @@ const reg = sdk.hardware.mmio.reg;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Gpu";
-const VERSION_STRING = "\x00$VER: Gpu 1.2 (09.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Gpu 1.3 (25.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,PIPE/K/N,FETCHER/K/N,WATCHDOG/A/K/N";
+const template = "TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,PIPE/K/N,FETCHER/K/N,WATCHDOG/K/N";
 const arg_toc = 0;
 const arg_firmware = 1;
 const arg_frames = 2;
 const arg_flip = 3;
-const arg_pipe = 4;
-const arg_fetcher = 5;
-const arg_watchdog = 6;
+const arg_bios = 4;
+const arg_pipe = 5;
+const arg_fetcher = 6;
+const arg_watchdog = 7;
 
 /// Where the files are.
 const directory = "DEVS:firmware/amdgpu/";
+
+/// The image's marks: where its tables' header's offset is, the header's
+/// mark four bytes into it, and where the header names the list of
+/// command tables and the list of data tables.
+const atom_header_offset_at = 0x48;
+const atom_mark_at = 4;
+const atom_commands_at = 0x1E;
+const atom_data_tables_at = 0x20;
+
+/// The data tables the display driver reads, by their place in the list.
+const data_table_names = [_]struct { index: u32, name: [*:0]const u8 }{
+    .{ .index = 4, .name = "firmware info" },
+    .{ .index = 8, .name = "power manager info" },
+    .{ .index = 11, .name = "memory the firmware uses" },
+    .{ .index = 12, .name = "GPIO pins" },
+    .{ .index = 14, .name = "graphics info" },
+    .{ .index = 15, .name = "power play" },
+    .{ .index = 22, .name = "display objects" },
+    .{ .index = 27, .name = "display engine info" },
+    .{ .index = 30, .name = "integrated system info" },
+    .{ .index = 32, .name = "voltage objects" },
+};
 
 /// A file's name, put together from its parts.
 const Name = struct {
@@ -137,20 +169,91 @@ fn readFile(sys: *ExecBase, dl: *DosBase, name: [*:0]const u8) ?[]u8 {
     return bytes[0..length];
 }
 
+/// The 16-bit number at `at` in `image`, or null past its end.
+fn half(image: []const u8, at: usize) ?u16 {
+    if (at + 2 > image.len) return null;
+    return @as(u16, image[at]) | @as(u16, image[at + 1]) << 8;
+}
+
+/// What a table at `at` says its version and its size are: its first
+/// four bytes.
+fn tableHeader(image: []const u8, at: usize) ?struct { bytes: u16, format: u8, content: u8 } {
+    const bytes = half(image, at) orelse return null;
+    if (at + 4 > image.len) return null;
+    return .{ .bytes = bytes, .format = image[at + 2], .content = image[at + 3] };
+}
+
+/// The video BIOS image and the connectors read from it, printed.
+fn bios(dl: *DosBase, ab: *AMDGPUBase) i32 {
+    var found: amdgpu.GPUBios = .{};
+    if (!ab.GetGPUBios(&found)) {
+        _ = Printf(dl, "The firmware kept no video BIOS image for the device: see C:Log\n", .{});
+        return dos.RETURN_WARN;
+    }
+    const image = found.image.?[0..found.bytes];
+    _ = Printf(dl, "Video BIOS: %u bytes at 0x%lx\n", .{ found.bytes, @as(u64, @intFromPtr(found.image.?)) });
+    if (half(image, atom_header_offset_at)) |header| {
+        if (tableHeader(image, header)) |atom| {
+            _ = Printf(dl, "Tables' header at 0x%04x, version %u.%u\n", .{ @as(u32, header), @as(u32, atom.format), @as(u32, atom.content) });
+        }
+        const commands = half(image, @as(usize, header) + atom_commands_at) orelse 0;
+        if (tableHeader(image, commands)) |list| {
+            _ = Printf(dl, "Command tables: list at 0x%04x, %u entries\n", .{ @as(u32, commands), @as(u32, list.bytes -| 4) / 2 });
+        }
+        const data = half(image, @as(usize, header) + atom_data_tables_at) orelse 0;
+        if (tableHeader(image, data)) |list| {
+            _ = Printf(dl, "Data tables: list at 0x%04x, %u entries\n", .{ @as(u32, data), @as(u32, list.bytes -| 4) / 2 });
+            for (data_table_names) |named| {
+                const at = half(image, data + 4 + named.index * 2) orelse continue;
+                if (at == 0) {
+                    _ = Printf(dl, "  %2u %-26s none\n", .{ named.index, named.name });
+                    continue;
+                }
+                const table = tableHeader(image, at) orelse continue;
+                _ = Printf(dl, "  %2u %-26s at 0x%04x, version %u.%u, %u bytes\n", .{
+                    named.index,            named.name,              @as(u32, at),
+                    @as(u32, table.format), @as(u32, table.content), @as(u32, table.bytes),
+                });
+            }
+        }
+    }
+    var connector: amdgpu.GPUConnector = .{};
+    var index: u32 = 0;
+    while (ab.GetGPUConnector(index, &connector)) : (index += 1) {
+        const phy: u32 = if (connector.phy == amdgpu.GPULINE_NONE) '?' else 'A' + connector.phy;
+        _ = Printf(dl, "Connector %u: %s %u on PHY %c, DDC line 0x%02x, hot plug 0x%02x (object 0x%04x, encoder 0x%04x)\n", .{
+            index,         kindName(connector.kind), connector.number, phy,
+            connector.ddc, connector.hpd,            connector.object, connector.encoder,
+        });
+    }
+    if (index == 0) _ = Printf(dl, "The video BIOS lists no connectors this reads\n", .{});
+    return dos.RETURN_OK;
+}
+
+/// What a connector's kind is called.
+fn kindName(kind: u32) [*:0]const u8 {
+    return switch (kind) {
+        amdgpu.GPUCONNECTOR_DVI => "DVI",
+        amdgpu.GPUCONNECTOR_HDMI => "HDMI",
+        amdgpu.GPUCONNECTOR_DISPLAYPORT => "DP",
+        amdgpu.GPUCONNECTOR_EDP => "eDP",
+        amdgpu.GPUCONNECTOR_USBC => "USB-C",
+        else => "other",
+    };
+}
+
 export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {
     _ = args;
     _ = len;
     const lib = sys.OpenLibrary(dos.DOSNAME, 0) orelse return dos.RETURN_FAIL;
     defer sys.CloseLibrary(lib);
     const dl: *DosBase = @ptrCast(lib);
-    var argv: [7]usize = @splat(0);
+    var argv: [8]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
         return dos.RETURN_ERROR;
     };
     defer dl.FreeArgs(rda);
-    const millis: u32 = @intCast(@max(1, @as(*const i32, @ptrFromInt(argv[arg_watchdog])).*));
-
     const ab: *AMDGPUBase = @ptrCast(sys.OpenResource(amdgpu.AMDGPUNAME) orelse {
         _ = Printf(dl, "No %s\n", .{amdgpu.AMDGPUNAME});
         return dos.RETURN_FAIL;
@@ -160,6 +263,12 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         _ = Printf(dl, "No AMD graphics device\n", .{});
         return dos.RETURN_WARN;
     }
+    if (argv[arg_bios] != 0) return bios(dl, ab);
+    if (argv[arg_watchdog] == 0) {
+        _ = Printf(dl, "%s: WATCHDOG is required for a step that writes to the device\n", .{COMMAND_NAME});
+        return dos.RETURN_ERROR;
+    }
+    const millis: u32 = @intCast(@max(1, @as(*const i32, @ptrFromInt(argv[arg_watchdog])).*));
     if (argv[arg_frames] != 0 or argv[arg_flip] != 0) {
         const pipe = number(argv[arg_pipe]);
         const fetcher = number(argv[arg_fetcher]);

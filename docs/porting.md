@@ -307,8 +307,10 @@ const part = eb.FindBoardPart(null, st.PARTKIND_CRYPTO, st.CHIP_JH7110_CRYPTO) o
 - **A machine that describes itself** has the kernel build the same kind
   of list at run time from its firmware's tables and add it, which
   `src/main_x64uefi.zig` does for its framebuffer (`CHIP_UEFI_FB`), its
-  clock (`CHIP_MC146818`), its power management (`CHIP_ACPI_PM`) and its
-  PCI host (`CHIP_PCI_ECAM`). The module above cannot tell the
+  clock (`CHIP_MC146818`), its power management (`CHIP_ACPI_PM`), its
+  PCI host (`CHIP_PCI_ECAM`) and the table of its display devices' video
+  BIOS images (`CHIP_ACPI_VFCT`), which `amdgpu.resource` finds its
+  device's image in. The module above cannot tell the
   difference, and that is the point.
 - **A part nobody lists does not exist.** Every driver of a part answers
   null and goes away quietly, so a new machine starts with none of them

@@ -131,6 +131,13 @@ pub const Facts = struct {
     /// tables name none and the year's two digits are all there is.
     rtc_century: u8 = 0,
 
+    /// Where the table of video BIOS images is (VFCT): the firmware's
+    /// copy of each display device's own BIOS, which the device's driver
+    /// reads its tables and its command tables out of. 0 where the
+    /// firmware left none. Nothing here reads it: the kernel hands it on
+    /// as a part (PARTKIND_VIDEO_BIOS).
+    vfct: u64 = 0,
+
     /// The cores' controller ids into `into`, as many of them as it
     /// holds, by the walk that counted them: how many were written. The
     /// description is in the firmware's own memory, which the kernel
@@ -263,6 +270,7 @@ pub fn read(rsdp: usize) Facts {
         if (named(table, "FACP")) takeFixed(&facts, table, length);
         if (named(table, "MCFG")) takeConfigSpace(&facts, table, length);
         if (named(table, "HPET")) takeHpet(&facts, table, length);
+        if (named(table, "VFCT")) facts.vfct = table;
     }
     return facts;
 }

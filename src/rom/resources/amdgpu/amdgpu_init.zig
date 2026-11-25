@@ -25,6 +25,8 @@ const ExecBase = sdk.interface.exec.ExecBase;
 const amdgpu_lvo = @import("amdgpu_lvo.zig");
 const AMDGPUBase = @import("amdgpu_base.zig").AMDGPUBase;
 const _device = @import("device/_device.zig");
+const _bios = @import("device/_bios.zig");
+const _connectors = @import("device/_connectors.zig");
 const _table = @import("table/_table.zig");
 const _memory = @import("memory/_memory.zig");
 const _security = @import("security/_security.zig");
@@ -34,8 +36,8 @@ const _interrupt = @import("interrupt/_interrupt.zig");
 /// The name it is opened by. The SDK's.
 pub const RESOURCE_NAME = amdgpu.AMDGPUNAME;
 pub const RESOURCE_VERSION = 1;
-pub const RESOURCE_REVISION = 4;
-const BUILD_DATE = "08.11.2026";
+pub const RESOURCE_REVISION = 5;
+const BUILD_DATE = "25.11.2026";
 const RESOURCE_VERSION_STRING =
     "\x00$VER: " ++ RESOURCE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ RESOURCE_VERSION, RESOURCE_REVISION }) ++
@@ -61,6 +63,9 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     ab.pci_lib = null;
     ab.pci = null;
     ab.info = .{};
+    ab.bios = .{};
+    ab.connectors = @splat(.{});
+    ab.connector_count = 0;
     ab.table = 0;
     ab.table_room = null;
     ab.power = .{};
@@ -100,6 +105,8 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
         if (gpu.FindGPUBlock(amdgpu.GPUBLOCK_SECURITY, 0, &block)) _security.take(ab, block);
         if (gpu.FindGPUBlock(amdgpu.GPUBLOCK_INTERRUPTS, 0, &block)) _interrupt.take(ab, block);
         tell(ab);
+        _bios.take(ab);
+        _connectors.take(ab);
     }
     return lib;
 }

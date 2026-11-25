@@ -16,6 +16,13 @@
 //! StartGPUSecurity and LoadGPUFirmware have the security processor put
 //! a block's firmware into the protected region it runs from.
 //!
+//! The device's video BIOS image - the copy the machine's firmware keeps
+//! in its tables (`device/_bios.zig`) - is the resource's to find too,
+//! since every block's driver reads its tables out of it: GetGPUBios
+//! hands it out, and the display's connectors, read from its display
+//! object table (`device/_connectors.zig`), are answered by
+//! GetGPUConnector.
+//!
 //! The device is found and read as the resource starts
 //! (`device/_device.zig`), and what it says of itself goes on the boot's
 //! lines. Each call is a file of its own, under the folder of its area. The jump table
@@ -65,6 +72,10 @@ test {
     _ = @import("memory/freegpumemory.zig");
     _ = @import("security/startgpusecurity.zig");
     _ = @import("security/loadgpufirmware.zig");
+    _ = @import("device/_bios.zig");
+    _ = @import("device/getgpubios.zig");
+    _ = @import("device/_connectors.zig");
+    _ = @import("device/getgpuconnector.zig");
 }
 
 fn setUp() !*AMDGPUBase {
@@ -107,6 +118,12 @@ test "a machine without the device has the resource, and it answers false" {
     try testing.expectEqual(@as(u64, 7), address);
     var server: exec.Interrupt = .{};
     try testing.expect(!call(ab).AddGPUIntServer(amdgpu.GPUINT_CLIENT_DISPLAY, amdgpu.GPUINT_DISPLAY_UPDATE, &server));
+    var bios: amdgpu.GPUBios = .{ .bytes = 7 };
+    try testing.expect(!call(ab).GetGPUBios(&bios));
+    try testing.expectEqual(@as(u32, 7), bios.bytes);
+    var connector: amdgpu.GPUConnector = .{ .number = 7 };
+    try testing.expect(!call(ab).GetGPUConnector(0, &connector));
+    try testing.expectEqual(@as(u32, 7), connector.number);
     call(ab).RemGPUIntServer(&server);
     try testing.expect(!ab.ih_running);
     try tearDown(ab);

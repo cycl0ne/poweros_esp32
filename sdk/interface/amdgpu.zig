@@ -28,6 +28,8 @@ pub const LVO = struct {
     pub const LoadGPUFirmware = libraries.lvo(6);
     pub const AddGPUIntServer = libraries.lvo(7);
     pub const RemGPUIntServer = libraries.lvo(8);
+    pub const GetGPUBios = libraries.lvo(9);
+    pub const GetGPUConnector = libraries.lvo(10);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -42,6 +44,8 @@ pub const Fn = struct {
     pub const LoadGPUFirmware = *const fn (*AMDGPUBase, u32, [*]const u8, u32, *u64) callconv(.c) bool;
     pub const AddGPUIntServer = *const fn (*AMDGPUBase, u32, u32, *exec.Interrupt) callconv(.c) bool;
     pub const RemGPUIntServer = *const fn (*AMDGPUBase, *exec.Interrupt) callconv(.c) void;
+    pub const GetGPUBios = *const fn (*AMDGPUBase, *amdgpu.GPUBios) callconv(.c) bool;
+    pub const GetGPUConnector = *const fn (*AMDGPUBase, u32, *amdgpu.GPUConnector) callconv(.c) bool;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -111,5 +115,17 @@ pub const AMDGPUBase = opaque {
     /// A server AddGPUIntServer added taken off again.
     pub fn RemGPUIntServer(self: *AMDGPUBase, server: *exec.Interrupt) void {
         return libraries.call(self, LVO.RemGPUIntServer, Fn.RemGPUIntServer, .{server});
+    }
+
+    /// The device's video BIOS image, as the machine's firmware kept it, into
+    /// `bios`; false where there is no device, or no image is the device's.
+    pub fn GetGPUBios(self: *AMDGPUBase, bios: *amdgpu.GPUBios) bool {
+        return libraries.call(self, LVO.GetGPUBios, Fn.GetGPUBios, .{bios});
+    }
+
+    /// The device's connector `index` (from 0), as its video BIOS lists it,
+    /// into `connector`; false past the last one, or where there is no list.
+    pub fn GetGPUConnector(self: *AMDGPUBase, index: u32, connector: *amdgpu.GPUConnector) bool {
+        return libraries.call(self, LVO.GetGPUConnector, Fn.GetGPUConnector, .{ index, connector });
     }
 };

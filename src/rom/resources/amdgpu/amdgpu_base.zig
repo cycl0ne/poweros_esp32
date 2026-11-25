@@ -26,6 +26,12 @@ pub const AMDGPUBase = extern struct {
     /// What GetGPUInfo answers; its `registers` 0 while there is no
     /// device.
     info: amdgpu.GPUInfo = .{},
+    /// The device's video BIOS image, where the firmware kept one; its
+    /// `image` null where not.
+    bios: amdgpu.GPUBios = .{},
+    /// The connectors the image lists, as GetGPUConnector answers them.
+    connectors: [amdgpu.GPUCONNECTORS_MAX]amdgpu.GPUConnector = @splat(.{}),
+    connector_count: u32 = 0,
     /// Where the table of blocks can be read: the copy in `table_room`
     /// where it was read out of the device's memory, or where it lies;
     /// 0 when there is none.

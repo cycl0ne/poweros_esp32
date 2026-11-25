@@ -145,4 +145,41 @@ pub const GPUMemory = extern struct {
     bytes: u32 = 0,
 };
 
+/// What GetGPUBios says: where the device's video BIOS image is, as the
+/// machine's firmware kept it, and how many bytes it is. Read only.
+pub const GPUBios = extern struct {
+    image: ?[*]const u8 = null,
+    bytes: u32 = 0,
+};
+
+/// GetGPUConnector's kinds of connector.
+pub const GPUCONNECTOR_OTHER: u32 = 0;
+pub const GPUCONNECTOR_DVI: u32 = 1;
+pub const GPUCONNECTOR_HDMI: u32 = 2;
+pub const GPUCONNECTOR_DISPLAYPORT: u32 = 3;
+pub const GPUCONNECTOR_EDP: u32 = 4;
+pub const GPUCONNECTOR_USBC: u32 = 5;
+
+/// A PHY or a line a connector's entry names none of.
+pub const GPULINE_NONE: u32 = 0xFF;
+
+/// The most connectors GetGPUConnector answers for.
+pub const GPUCONNECTORS_MAX = 8;
+
+/// What GetGPUConnector says of a connector, as the device's video BIOS
+/// lists it: its kind and its number among those of its kind, the PHY
+/// that drives it (0 for the first, A), the I2C line its monitor's DDC
+/// is on and the pin its hot-plug line comes in on, as the BIOS numbers
+/// them - each GPULINE_NONE where the BIOS names none - and the
+/// connector's and its encoder's object ids as the BIOS gives them.
+pub const GPUConnector = extern struct {
+    kind: u32 = GPUCONNECTOR_OTHER,
+    number: u32 = 0,
+    phy: u32 = GPULINE_NONE,
+    ddc: u32 = GPULINE_NONE,
+    hpd: u32 = GPULINE_NONE,
+    object: u32 = 0,
+    encoder: u32 = 0,
+};
+
 pub const AMDGPUBase = @import("../interface/amdgpu.zig").AMDGPUBase;

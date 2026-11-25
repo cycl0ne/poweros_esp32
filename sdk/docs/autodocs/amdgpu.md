@@ -16,6 +16,8 @@ Generated from the source by `./zig build autodoc`.
 - [AllocGPUMemory](#allocgpumemory) - A piece of the device's own memory, for its blocks to read and write.
 - [FindGPUBlock](#findgpublock) - One of the device's blocks: its version and where its registers are.
 - [FreeGPUMemory](#freegpumemory) - A piece of the device's memory given back.
+- [GetGPUBios](#getgpubios) - The device's video BIOS image.
+- [GetGPUConnector](#getgpuconnector) - One of the display's connectors.
 - [GetGPUInfo](#getgpuinfo) - What the device is and where the machine reaches it.
 - [LoadGPUFirmware](#loadgpufirmware) - A block's firmware loaded by the security processor into its protected region, or a list of a block's register writes applied by it.
 - [RemGPUIntServer](#remgpuintserver) - A server AddGPUIntServer added taken off again.
@@ -303,6 +305,145 @@ None known.
 
 ```zig
 ab.FreeGPUMemory(&ring);
+```
+
+## GetGPUBios
+
+The device's video BIOS image.
+
+**SYNOPSIS**
+
+```zig
+fn GetGPUBios(ab: *AMDGPUBase, bios: *GPUBios) bool
+```
+
+**SINCE**
+
+1.5. LVO -40.
+
+**INPUTS**
+
+- `bios` - filled in.
+
+**RESULT**
+
+True with `bios` naming the image - where it is and how many bytes it
+is. False where there is no device, or the firmware kept no image that
+is the device's, with `bios` left alone.
+
+**BEHAVIOR**
+
+The image was found once, as the resource started: in the table of
+images the machine's firmware keeps (VFCT), which the kernel names as
+a board part. It is the one whose PCI vendor and device ids, slot and
+function are the device's, and whose first bytes are a PCI ROM
+image's marks with the ATOM tables' header inside: the tables a
+driver reads - the display's connectors and how each is wired, the
+clocks - and the command tables the device's controllers run.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: it may be called from one.
+- Locks: none.
+- Process: any.
+
+**OWNERSHIP**
+
+The image is the firmware's, in memory the kernel keeps for as long as
+the machine runs: read it, never write it. A controller that wants it
+in memory of its own is given a copy.
+
+**NOTES**
+
+The ATOM tables' header is at the 16-bit offset the image holds at
+0x48; the tables are found through the offsets that header lists.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`GetGPUInfo`, `GetGPUConnector`
+
+**EXAMPLES**
+
+```zig
+var bios: amdgpu.GPUBios = .{};
+if (!ab.GetGPUBios(&bios)) return; // no image: no tables to read
+const image = bios.image.?[0..bios.bytes];
+```
+
+## GetGPUConnector
+
+One of the display's connectors.
+
+**SYNOPSIS**
+
+```zig
+fn GetGPUConnector(ab: *AMDGPUBase, index: u32, connector: *GPUConnector) bool
+```
+
+**SINCE**
+
+1.5. LVO -44.
+
+**INPUTS**
+
+- `index` - which connector, from 0.
+- `connector` - filled in.
+
+**RESULT**
+
+True with `connector` filled in: its kind (GPUCONNECTOR_HDMI,
+GPUCONNECTOR_DISPLAYPORT, ...) and its number among those of its kind,
+the PHY that drives it, the I2C line of its monitor's DDC and the pin
+of its hot-plug line, and its and its encoder's object ids. False for
+an `index` past the last connector, or where the device's video BIOS
+lists none, with `connector` left alone.
+
+**BEHAVIOR**
+
+The list was read once, as the resource started, from the display
+object table of the device's video BIOS image (GetGPUBios): a path per
+connector the board wires, in the order the table gives them, those
+without an encoder left out. A table of a version the resource does
+not read lists nothing. At most GPUCONNECTORS_MAX are kept.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: it may be called from one.
+- Locks: none.
+- Process: any.
+
+**OWNERSHIP**
+
+`connector` is the caller's.
+
+**NOTES**
+
+A PHY, a DDC line or a hot-plug pin the table names none of is
+GPULINE_NONE. The lines are numbered as the BIOS numbers them: the
+DDC line as the BIOS's I2C id, the hot-plug pin as its GPIO pin id.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`GetGPUBios`
+
+**EXAMPLES**
+
+```zig
+var connector: amdgpu.GPUConnector = .{};
+var index: u32 = 0;
+while (ab.GetGPUConnector(index, &connector)) : (index += 1) {
+    if (connector.kind == amdgpu.GPUCONNECTOR_HDMI) ... // its PHY drives an HDMI socket
+}
 ```
 
 ## GetGPUInfo

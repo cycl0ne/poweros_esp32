@@ -108,6 +108,9 @@ var pci_part: [12]Tag = @splat(.done);
 /// registers are: power.resource turns the machine off through it and
 /// hears its power button on it.
 var power_part: [15]Tag = @splat(.done);
+/// The video BIOS images' part, where the firmware's tables have a table
+/// of them: the display device's driver reads its own out of it.
+var video_bios_part: [6]Tag = @splat(.done);
 /// Whether that part was written, and whether the screen's memory takes
 /// gathered writes: both go in the boot's lines.
 var screen_declared = false;
@@ -185,6 +188,23 @@ fn takeClock() void {
     _ = boards.system.addPart(&clock_part);
 }
 
+/// The firmware's table of video BIOS images, written into the board's
+/// description as its part: amdgpu.resource finds its device's image in
+/// it. The table is in the firmware's tables' memory, which the kernel
+/// keeps.
+fn takeVideoBios() void {
+    if (tables.vfct == 0) return;
+    video_bios_part = .{
+        .value(st.PART_Kind, st.PARTKIND_VIDEO_BIOS),
+        .value(st.PART_Chip, st.CHIP_ACPI_VFCT),
+        .pointer(st.PART_ChipName, "vfct"),
+        .value(st.PART_Bus, st.BUS_MEMORY),
+        .value(st.PART_Address, @intCast(tables.vfct)),
+        .done,
+    };
+    _ = boards.system.addPart(&video_bios_part);
+}
+
 /// The framebuffer the firmware lit, written into the board's description
 /// as a panel part. Nothing is written where the firmware lit none, or
 /// where its pixels are in an order the display driver does not draw in -
@@ -249,6 +269,7 @@ fn takeBoard(machine: *const handover.Handover) void {
     takeClock();
     takePci();
     takePower();
+    takeVideoBios();
     // The firmware's own restart and its way to turn the machine off,
     // which only it can do: its runtime half is still where it left it.
     firmware.take(system_table);
@@ -447,6 +468,7 @@ export fn kmain(at: usize) callconv(.c) noreturn {
             tables.override_count,
         });
     } else note("the firmware's tables could not be read: the board's figures stand alone", .{});
+    if (tables.vfct != 0) note("video BIOS images at 0x%lx", .{@as(u64, tables.vfct)});
     note("map: %s pages above the first gibibyte, up to 0x%lx", .{
         @as([*:0]const u8, if (mmu.large_pages) "1 GiB" else "2 MiB"),
         @as(u64, mmu.mapped_end),
