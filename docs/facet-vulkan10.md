@@ -2001,6 +2001,8 @@ input_attachments is false on the V3D, so both a set layout with the kind and a 
 
 Found independently by: features, semantics (both conformance-blocking).
 
+**Step 1 of 3 done in 1.214: gl_FragCoord in the V3D's fragment programs**, which a subpassLoad is made of (`try_lower_input_load`, nir_lower_input_attachments.c; v3dv lowers its coordinate to the input of VARYING_SLOT_POS, `try_lower_intrinsic`, v3dv_pipeline.c:263-286). FXCD, FYCD, the payload's Z and the reciprocal of its W, as emit_fragcoord_input reads them (nir_to_vir.c:1017-1023); a program that reads Z writes it (:2091-2099). Step 2 is the subpassLoad itself, a txf at the pixel's place through the input attachment's texture; step 3 the descriptor, the image laid out for the TMU, the pass storing what a later subpass reads, and `can.input_attachments`.
+
 ### 57. V3D: storage images, in the layout the TMU reads **[critical path]**
 
 *V3D* &mdash; conformance-blocking, large

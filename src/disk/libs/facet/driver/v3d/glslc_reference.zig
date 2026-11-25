@@ -32040,3 +32040,254 @@ pub const glslc_fetch_sample_layers = [_]u32{
     0x0000002F, 0x0000002E, 0x0000002C, 0x00000040, 0x0000001F, 0x0003003E,
     0x00000021, 0x0000002F, 0x000100FD, 0x00010038,
 };
+
+/// glslc -O -fshader-stage=frag: gl_FragCoord's x, y and z as the colour,
+/// FXCD's, FYCD's and the payload's Z, which the program then writes
+/// through as it reads it (since 1.214).
+/// 140 words.
+///
+/// ```glsl
+/// #version 450
+/// // The pixel's place and depth as its colour: gl_FragCoord's x, y and z,
+/// // which the V3D reads as FXCD, FYCD and the payload's Z
+/// // (emit_fragcoord_input, nir_to_vir.c:1017-1023; facet 1.214).
+/// layout(location = 0) out vec4 o;
+/// void main() {
+///     o = vec4(gl_FragCoord.xy * (1.0 / 256.0), gl_FragCoord.z, 1.0);
+/// }
+/// ```
+///
+/// ```
+/// ; SPIR-V
+/// ; Version: 1.0
+/// ; Generator: Google Shaderc over Glslang; 11
+/// ; Bound: 26
+/// ; Schema: 0
+///                OpCapability Shader
+///           %1 = OpExtInstImport "GLSL.std.450"
+///                OpMemoryModel Logical GLSL450
+///                OpEntryPoint Fragment %4 "main" %9 %11
+///                OpExecutionMode %4 OriginUpperLeft
+///                OpDecorate %9 Location 0
+///                OpDecorate %11 BuiltIn FragCoord
+///           %2 = OpTypeVoid
+///           %3 = OpTypeFunction %2
+///           %6 = OpTypeFloat 32
+///           %7 = OpTypeVector %6 4
+///           %8 = OpTypePointer Output %7
+///           %9 = OpVariable %8 Output
+///          %10 = OpTypePointer Input %7
+///          %11 = OpVariable %10 Input
+///          %12 = OpTypeVector %6 2
+///          %15 = OpConstant %6 0.00390625
+///          %17 = OpTypeInt 32 0
+///          %18 = OpConstant %17 2
+///          %19 = OpTypePointer Input %6
+///          %22 = OpConstant %6 1
+///           %4 = OpFunction %2 None %3
+///           %5 = OpLabel
+///          %13 = OpLoad %7 %11
+///          %14 = OpVectorShuffle %12 %13 %13 0 1
+///          %16 = OpVectorTimesScalar %12 %14 %15
+///          %20 = OpAccessChain %19 %11 %18
+///          %21 = OpLoad %6 %20
+///          %23 = OpCompositeExtract %6 %16 0
+///          %24 = OpCompositeExtract %6 %16 1
+///          %25 = OpCompositeConstruct %7 %23 %24 %21 %22
+///                OpStore %9 %25
+///                OpReturn
+///                OpFunctionEnd
+/// ```
+pub const glslc_frag_coord = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x0000001A, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00000009, 0x0000000B, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x00000009, 0x0000001E, 0x00000000,
+    0x00040047, 0x0000000B, 0x0000000B, 0x0000000F, 0x00020013, 0x00000002,
+    0x00030021, 0x00000003, 0x00000002, 0x00030016, 0x00000006, 0x00000020,
+    0x00040017, 0x00000007, 0x00000006, 0x00000004, 0x00040020, 0x00000008,
+    0x00000003, 0x00000007, 0x0004003B, 0x00000008, 0x00000009, 0x00000003,
+    0x00040020, 0x0000000A, 0x00000001, 0x00000007, 0x0004003B, 0x0000000A,
+    0x0000000B, 0x00000001, 0x00040017, 0x0000000C, 0x00000006, 0x00000002,
+    0x0004002B, 0x00000006, 0x0000000F, 0x3B800000, 0x00040015, 0x00000011,
+    0x00000020, 0x00000000, 0x0004002B, 0x00000011, 0x00000012, 0x00000002,
+    0x00040020, 0x00000013, 0x00000001, 0x00000006, 0x0004002B, 0x00000006,
+    0x00000016, 0x3F800000, 0x00050036, 0x00000002, 0x00000004, 0x00000000,
+    0x00000003, 0x000200F8, 0x00000005, 0x0004003D, 0x00000007, 0x0000000D,
+    0x0000000B, 0x0007004F, 0x0000000C, 0x0000000E, 0x0000000D, 0x0000000D,
+    0x00000000, 0x00000001, 0x0005008E, 0x0000000C, 0x00000010, 0x0000000E,
+    0x0000000F, 0x00050041, 0x00000013, 0x00000014, 0x0000000B, 0x00000012,
+    0x0004003D, 0x00000006, 0x00000015, 0x00000014, 0x00050051, 0x00000006,
+    0x00000017, 0x00000010, 0x00000000, 0x00050051, 0x00000006, 0x00000018,
+    0x00000010, 0x00000001, 0x00070050, 0x00000007, 0x00000019, 0x00000017,
+    0x00000018, 0x00000015, 0x00000016, 0x0003003E, 0x00000009, 0x00000019,
+    0x000100FD, 0x00010038,
+};
+
+/// glslc -O -fshader-stage=frag: gl_FragCoord's w as the colour, the
+/// reciprocal of the payload's W, which the shader record is told it reads
+/// (since 1.214).
+/// 102 words.
+///
+/// ```glsl
+/// #version 450
+/// // gl_FragCoord's w, the reciprocal of the payload's W
+/// // (emit_fragcoord_input, nir_to_vir.c:1023; facet 1.214).
+/// layout(location = 0) out vec4 o;
+/// void main() {
+///     o = vec4(gl_FragCoord.w);
+/// }
+/// ```
+///
+/// ```
+/// ; SPIR-V
+/// ; Version: 1.0
+/// ; Generator: Google Shaderc over Glslang; 11
+/// ; Bound: 18
+/// ; Schema: 0
+///                OpCapability Shader
+///           %1 = OpExtInstImport "GLSL.std.450"
+///                OpMemoryModel Logical GLSL450
+///                OpEntryPoint Fragment %4 "main" %9 %11
+///                OpExecutionMode %4 OriginUpperLeft
+///                OpDecorate %9 Location 0
+///                OpDecorate %11 BuiltIn FragCoord
+///           %2 = OpTypeVoid
+///           %3 = OpTypeFunction %2
+///           %6 = OpTypeFloat 32
+///           %7 = OpTypeVector %6 4
+///           %8 = OpTypePointer Output %7
+///           %9 = OpVariable %8 Output
+///          %10 = OpTypePointer Input %7
+///          %11 = OpVariable %10 Input
+///          %12 = OpTypeInt 32 0
+///          %13 = OpConstant %12 3
+///          %14 = OpTypePointer Input %6
+///           %4 = OpFunction %2 None %3
+///           %5 = OpLabel
+///          %15 = OpAccessChain %14 %11 %13
+///          %16 = OpLoad %6 %15
+///          %17 = OpCompositeConstruct %7 %16 %16 %16 %16
+///                OpStore %9 %17
+///                OpReturn
+///                OpFunctionEnd
+/// ```
+pub const glslc_frag_coord_w = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000012, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00000009, 0x0000000B, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x00000009, 0x0000001E, 0x00000000,
+    0x00040047, 0x0000000B, 0x0000000B, 0x0000000F, 0x00020013, 0x00000002,
+    0x00030021, 0x00000003, 0x00000002, 0x00030016, 0x00000006, 0x00000020,
+    0x00040017, 0x00000007, 0x00000006, 0x00000004, 0x00040020, 0x00000008,
+    0x00000003, 0x00000007, 0x0004003B, 0x00000008, 0x00000009, 0x00000003,
+    0x00040020, 0x0000000A, 0x00000001, 0x00000007, 0x0004003B, 0x0000000A,
+    0x0000000B, 0x00000001, 0x00040015, 0x0000000C, 0x00000020, 0x00000000,
+    0x0004002B, 0x0000000C, 0x0000000D, 0x00000003, 0x00040020, 0x0000000E,
+    0x00000001, 0x00000006, 0x00050036, 0x00000002, 0x00000004, 0x00000000,
+    0x00000003, 0x000200F8, 0x00000005, 0x00050041, 0x0000000E, 0x0000000F,
+    0x0000000B, 0x0000000D, 0x0004003D, 0x00000006, 0x00000010, 0x0000000F,
+    0x00070050, 0x00000007, 0x00000011, 0x00000010, 0x00000010, 0x00000010,
+    0x00000010, 0x0003003E, 0x00000009, 0x00000011, 0x000100FD, 0x00010038,
+};
+
+/// glslc -O -fshader-stage=frag: a uniform buffer's vector at an index
+/// gl_FragCoord's x gives, which differs from lane to lane, so it is read
+/// through the TMU (since 1.214).
+/// 169 words.
+///
+/// ```glsl
+/// #version 450
+/// // A uniform buffer read at an index gl_FragCoord gives: the index differs
+/// // from lane to lane (load_input, nir_divergence_analysis.c:472-480), so
+/// // the read goes through the TMU, not unifa (facet 1.214).
+/// layout(location = 0) out vec4 o;
+/// layout(set = 0, binding = 0) uniform B { vec4 v[4]; } b;
+/// void main() {
+///     o = b.v[int(gl_FragCoord.x) & 3];
+/// }
+/// ```
+///
+/// ```
+/// ; SPIR-V
+/// ; Version: 1.0
+/// ; Generator: Google Shaderc over Glslang; 11
+/// ; Bound: 30
+/// ; Schema: 0
+///                OpCapability Shader
+///           %1 = OpExtInstImport "GLSL.std.450"
+///                OpMemoryModel Logical GLSL450
+///                OpEntryPoint Fragment %4 "main" %9 %19
+///                OpExecutionMode %4 OriginUpperLeft
+///                OpDecorate %9 Location 0
+///                OpDecorate %12 ArrayStride 16
+///                OpDecorate %13 Block
+///                OpMemberDecorate %13 0 Offset 0
+///                OpDecorate %15 Binding 0
+///                OpDecorate %15 DescriptorSet 0
+///                OpDecorate %19 BuiltIn FragCoord
+///           %2 = OpTypeVoid
+///           %3 = OpTypeFunction %2
+///           %6 = OpTypeFloat 32
+///           %7 = OpTypeVector %6 4
+///           %8 = OpTypePointer Output %7
+///           %9 = OpVariable %8 Output
+///          %10 = OpTypeInt 32 0
+///          %11 = OpConstant %10 4
+///          %12 = OpTypeArray %7 %11
+///          %13 = OpTypeStruct %12
+///          %14 = OpTypePointer Uniform %13
+///          %15 = OpVariable %14 Uniform
+///          %16 = OpTypeInt 32 1
+///          %17 = OpConstant %16 0
+///          %18 = OpTypePointer Input %7
+///          %19 = OpVariable %18 Input
+///          %20 = OpConstant %10 0
+///          %21 = OpTypePointer Input %6
+///          %25 = OpConstant %16 3
+///          %27 = OpTypePointer Uniform %7
+///           %4 = OpFunction %2 None %3
+///           %5 = OpLabel
+///          %22 = OpAccessChain %21 %19 %20
+///          %23 = OpLoad %6 %22
+///          %24 = OpConvertFToS %16 %23
+///          %26 = OpBitwiseAnd %16 %24 %25
+///          %28 = OpAccessChain %27 %15 %17 %26
+///          %29 = OpLoad %7 %28
+///                OpStore %9 %29
+///                OpReturn
+///                OpFunctionEnd
+/// ```
+pub const glslc_frag_coord_ubo = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x0000001E, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00000009, 0x00000013, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x00000009, 0x0000001E, 0x00000000,
+    0x00040047, 0x0000000C, 0x00000006, 0x00000010, 0x00030047, 0x0000000D,
+    0x00000002, 0x00050048, 0x0000000D, 0x00000000, 0x00000023, 0x00000000,
+    0x00040047, 0x0000000F, 0x00000021, 0x00000000, 0x00040047, 0x0000000F,
+    0x00000022, 0x00000000, 0x00040047, 0x00000013, 0x0000000B, 0x0000000F,
+    0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00030016,
+    0x00000006, 0x00000020, 0x00040017, 0x00000007, 0x00000006, 0x00000004,
+    0x00040020, 0x00000008, 0x00000003, 0x00000007, 0x0004003B, 0x00000008,
+    0x00000009, 0x00000003, 0x00040015, 0x0000000A, 0x00000020, 0x00000000,
+    0x0004002B, 0x0000000A, 0x0000000B, 0x00000004, 0x0004001C, 0x0000000C,
+    0x00000007, 0x0000000B, 0x0003001E, 0x0000000D, 0x0000000C, 0x00040020,
+    0x0000000E, 0x00000002, 0x0000000D, 0x0004003B, 0x0000000E, 0x0000000F,
+    0x00000002, 0x00040015, 0x00000010, 0x00000020, 0x00000001, 0x0004002B,
+    0x00000010, 0x00000011, 0x00000000, 0x00040020, 0x00000012, 0x00000001,
+    0x00000007, 0x0004003B, 0x00000012, 0x00000013, 0x00000001, 0x0004002B,
+    0x0000000A, 0x00000014, 0x00000000, 0x00040020, 0x00000015, 0x00000001,
+    0x00000006, 0x0004002B, 0x00000010, 0x00000019, 0x00000003, 0x00040020,
+    0x0000001B, 0x00000002, 0x00000007, 0x00050036, 0x00000002, 0x00000004,
+    0x00000000, 0x00000003, 0x000200F8, 0x00000005, 0x00050041, 0x00000015,
+    0x00000016, 0x00000013, 0x00000014, 0x0004003D, 0x00000006, 0x00000017,
+    0x00000016, 0x0004006E, 0x00000010, 0x00000018, 0x00000017, 0x000500C7,
+    0x00000010, 0x0000001A, 0x00000018, 0x00000019, 0x00060041, 0x0000001B,
+    0x0000001C, 0x0000000F, 0x00000011, 0x0000001A, 0x0004003D, 0x00000007,
+    0x0000001D, 0x0000001C, 0x0003003E, 0x00000009, 0x0000001D, 0x000100FD,
+    0x00010038,
+};

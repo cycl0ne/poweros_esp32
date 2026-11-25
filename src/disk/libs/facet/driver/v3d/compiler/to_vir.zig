@@ -197,8 +197,10 @@ const Emit = struct {
     words_defined: [compile.most_steps]bool = @splat(false),
     inputs: [compile.most_varyings]Reg = undefined,
     /// A vertex program's loads of the VPM's instance id, base instance
-    /// and vertex id (c->iid, c->biid, c->vid; since 1.192).
-    system: [6]Reg = undefined,
+    /// and vertex id (c->iid, c->biid, c->vid; since 1.192); a compute
+    /// program's payload (since 1.194); a fragment program's FragCoord
+    /// (c->inputs of VARYING_SLOT_POS; since 1.214).
+    system: [@typeInfo(compile.SystemValue).@"enum".fields.len]Reg = undefined,
     start_msf: Reg = .{},
     payload_w: Reg = .{},
     payload_w_centroid: Reg = .{},
@@ -216,6 +218,9 @@ const Emit = struct {
     /// info.fs.uses_discard says of the NIR here.
     uses_discard: bool = false,
     writes_z: bool = false,
+    /// The program reads the payload's Z, FragCoord's z (c->reads_z,
+    /// nir_to_vir.c:2991-2995), so it writes Z (:2099; since 1.214).
+    reads_z: bool = false,
     /// info.fs.early_fragment_tests, as emit_frag_end leaves it.
     early_fragment_tests: bool = true,
     /// Where the last load_ubo of a constant offset left unifa: its
@@ -442,10 +447,41 @@ fn setupScratch(e: *Emit) Error!void {
 /// its location, a float at a time (emit_fragment_input,
 /// nir_to_vir.c:1123). compile.zig has numbered the floats so already.
 fn setupFsInputs(e: *Emit) Error!void {
+    // FragCoord is VARYING_SLOT_POS, the lowest location, so it is first
+    // (nir_assign_io_var_locations in lower_fs_io, v3dv_pipeline.c:1036;
+    // driver_location_compare, nir_to_vir.c:2505-2506, :2519-2520), and
+    // reads no varying (since 1.214).
+    if (readsFragCoord(e.work)) try emitFragcoordInput(e);
     var varying: u32 = 0;
     while (varying < e.work.varyings) : (varying += 1) {
         e.inputs[varying] = try emitFragmentVarying(e, varying);
     }
+}
+
+/// Whether the program reads a float of FragCoord: a load_input of
+/// VARYING_SLOT_POS that nir_opt_dce left, which keeps the variable
+/// (since 1.214).
+fn readsFragCoord(work: *const compile.Work) bool {
+    for (work.steps[0..work.step_count]) |each| {
+        if (each.tag != .system) continue;
+        switch (@as(compile.SystemValue, @enumFromInt(each.at))) {
+            .frag_coord_x, .frag_coord_y, .frag_coord_z, .frag_coord_w => return true,
+            else => {},
+        }
+    }
+    return false;
+}
+
+/// emit_fragcoord_input (nir_to_vir.c:1017-1023): x and y as the add
+/// side's FXCD and FYCD make them, z the payload's, and w the reciprocal
+/// of the payload's W. What the program does not read is dead code
+/// (since 1.214).
+fn emitFragcoordInput(e: *Emit) Error!void {
+    const c = e.c;
+    e.system[@intFromEnum(compile.SystemValue.frag_coord_x)] = try c.add(.fxcd, .{});
+    e.system[@intFromEnum(compile.SystemValue.frag_coord_y)] = try c.add(.fycd, .{});
+    e.system[@intFromEnum(compile.SystemValue.frag_coord_z)] = e.payload_z;
+    e.system[@intFromEnum(compile.SystemValue.frag_coord_w)] = try c.add(.recip, .{e.payload_w});
 }
 
 /// emit_fragment_varying (nir_to_vir.c:1049-1121): the ldvary, and the C
@@ -562,6 +598,9 @@ fn emitStep(e: *Emit, each: Step, at: u16) Error!void {
             .num_work_groups_z => try storeDef(e, at, 0, try c.uniform(.num_work_groups, 2)),
             else => |which| {
                 const loaded = e.system[@intFromEnum(which)];
+                // A load_input of the payload's Z (nir_to_vir.c:2991-2995;
+                // since 1.214).
+                if (which == .frag_coord_z) e.reads_z = true;
                 if (e.web_of[at][0] != no_web)
                     try storeDef(e, at, 0, try c.mul(.mov, .{loaded}))
                 else
@@ -2220,7 +2259,11 @@ fn emitFragEnd(e: *Emit) Error!void {
     // nothing after reads here. It has no gl_FragDepth, so that Z is the
     // one the rasterizer made, written through as it is.
     e.early_fragment_tests = has_any_tlb_color_write and !e.work.uses_ssbo and !e.uses_discard and !e.key.sample_alpha_to_coverage;
-    if (!e.early_fragment_tests) {
+    // A program that reads Z writes it, the V3D 4.2 spec's "If a shader
+    // performs a Z read the 'Fragment shader does Z writes' bit in the
+    // shader record must be enabled" (nir_to_vir.c:2091-2099; since
+    // 1.214).
+    if (!e.early_fragment_tests or e.reads_z) {
         e.writes_z = true;
         const inst = try c.mulDest(.mov, vir.magicReg(.tlbu), .{vir.nopReg()});
         // The spec says PER_PIXEL is ignored for invariant writes, but
