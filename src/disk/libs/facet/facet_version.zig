@@ -7035,4 +7035,36 @@ pub const LIBRARY_VERSION = 1;
 /// 213: the V3D's driver finds the VideoCore firmware's mailbox as the
 /// board's firmware part (CHIP_RPI_FIRMWARE), not as its RTC's address;
 /// nothing it draws changes.
-pub const LIBRARY_REVISION = 213;
+///
+/// 214: **gl_FragCoord in the V3D's fragment programs (docs/
+/// facet-vulkan10.md item 56, step 1).** The V3D's compiler took no
+/// built-in in a fragment program, so a Vulkan fragment shader that reads
+/// where its pixel is was refused there, and so is every subpassLoad,
+/// which Mesa makes a fetch at the pixel's place (item 56's step 2).
+/// vtn makes FragCoord SYSTEM_VALUE_FRAG_COORD (vtn_variables.c:997-1000)
+/// and v3dv makes that the input of VARYING_SLOT_POS
+/// (nir_lower_sysvals_to_varyings's frag_coord, v3dv_pipeline.c:367-373),
+/// which nir_lower_io_to_scalar loads a float at a time (vir.c:1339).
+/// Being the lowest location it is the first input (lower_fs_io,
+/// v3dv_pipeline.c:1036; nir_to_vir.c:2505-2506), and
+/// emit_fragcoord_input reads it at the program's start: x and y the add
+/// side's FXCD and FYCD, z the payload's rf2, and w the reciprocal of the
+/// payload's W (nir_to_vir.c:1017-1023), which reads no varying. What the
+/// program does not read is dead code. A program that reads z writes Z,
+/// as the V3D 4.2 spec wants of one that reads it (c->reads_z,
+/// nir_to_vir.c:2091-2099, :2991-2995): the rasterizer's, as a program
+/// that drops pixels writes it, with early Z left on. One that reads w
+/// reads W for something other than a varying, which the shader record
+/// is told (vir_check_payload_w, :5117-5131). FragCoord differs from lane
+/// to lane, as a fragment program's load_input does
+/// (nir_divergence_analysis.c:472-480), so a uniform buffer read at an
+/// index made of it goes through the TMU. Another built-in on a fragment
+/// program's input, FragDepth or VertexIndex, is refused.
+///
+/// Three references: glslc_frag_coord (x and y through a multiply, and
+/// z), glslc_frag_coord_w and glslc_frag_coord_ubo. The V3D's tests are
+/// 398, four new. Put back, the Z write for a program that reads z, and
+/// FragCoord as divergent, each fail one of them. Read from the code and
+/// the host's tests: not yet on a board, the CM5 being off; FacetBoth's
+/// case for it comes with item 56's.
+pub const LIBRARY_REVISION = 214;

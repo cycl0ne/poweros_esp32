@@ -1292,7 +1292,9 @@ pub const Viewport = enum(u8) { x_scale, y_scale, z_offset, z_scale };
 /// A compute program's: the two words of its payload, which the
 /// program's start moves out of rf3 and rf2 (nir_to_vir.c:4953-4954), and
 /// the dispatch's first workgroup and count of them, a uniform each of x,
-/// y and z (:3877-3910; since 1.194).
+/// y and z (:3877-3910; since 1.194). A fragment program's gl_FragCoord,
+/// a float each of x, y, z and w, which the program's start reads as
+/// emit_fragcoord_input reads them (nir_to_vir.c:1017-1023; since 1.214).
 pub const SystemValue = enum(u8) {
     instance_id,
     base_instance,
@@ -1306,15 +1308,19 @@ pub const SystemValue = enum(u8) {
     num_work_groups_x,
     num_work_groups_y,
     num_work_groups_z,
+    frag_coord_x,
+    frag_coord_y,
+    frag_coord_z,
+    frag_coord_w,
 };
 
 /// How many there are.
 const system_value_count = @typeInfo(SystemValue).@"enum".fields.len;
 
 /// The built-in variables a program may read, where `Work.system_ids`
-/// holds each: a vertex program's two (since 1.192) and a compute
-/// program's five (since 1.194).
-const Builtin = enum(u8) { vertex_index, instance_index, num_workgroups, workgroup_id, local_invocation_id, global_invocation_id, local_invocation_index };
+/// holds each: a vertex program's two (since 1.192), a compute program's
+/// five (since 1.194) and a fragment program's FragCoord (since 1.214).
+const Builtin = enum(u8) { vertex_index, instance_index, num_workgroups, workgroup_id, local_invocation_id, global_invocation_id, local_invocation_index, frag_coord };
 const builtin_count = @typeInfo(Builtin).@"enum".fields.len;
 
 /// What v3d_cs_set_prog_data says of a compute program (vir.c:1024-1034;
@@ -2454,6 +2460,16 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                                 },
                                 else => return Error.Refused,
                             },
+                            // A fragment program's FragCoord, vtn's
+                            // SYSTEM_VALUE_FRAG_COORD (vtn_variables.c:
+                            // 997-1000), which v3dv makes the input of
+                            // VARYING_SLOT_POS (nir_lower_sysvals_to_varyings's
+                            // frag_coord, v3dv_pipeline.c:367-368; since
+                            // 1.214).
+                            .fragment => switch (operands[2]) {
+                                @intFromEnum(spirv.BuiltIn.frag_coord) => .frag_coord,
+                                else => return Error.Refused,
+                            },
                             else => return Error.Refused,
                         };
                         if (work.system_ids[@intFromEnum(which)] != none) return Error.Refused;
@@ -3069,12 +3085,15 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     // VertexIndex or InstanceIndex: a 32-bit integer, as
                     // Vulkan has them, of no location (since 1.192). A
                     // compute program's three of each and its index
-                    // (since 1.194).
-                    const wanted: Kind = switch (@as(Builtin, @enumFromInt(systemOf(work, id).?))) {
+                    // (since 1.194). A fragment program's FragCoord, four
+                    // floats (since 1.214).
+                    const which: Builtin = @enumFromInt(systemOf(work, id).?);
+                    const wanted: Kind = switch (which) {
                         .vertex_index, .instance_index, .local_invocation_index => .f32x1,
+                        .frag_coord => .f32x4,
                         else => .f32x3,
                     };
-                    if (!isIntegerType(work, pointee) or try kindOf(work, pointee) != wanted) return Error.Type;
+                    if (isIntegerType(work, pointee) == (which == .frag_coord) or try kindOf(work, pointee) != wanted) return Error.Type;
                     if (operands.len != 3) return Error.Body;
                     work.thing[id] = .variable;
                     work.class[id] = @intCast(@intFromEnum(class));
@@ -3486,6 +3505,7 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
     if (work.stage == .gl_compute) return finishCompute(work);
     if (work.output_count == 0) return Error.Outputs;
     if (work.stored == none) return Error.NoColor;
+    try builtinVariables(work);
     try algebraic(work);
     try order(work);
 }
@@ -7680,7 +7700,8 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
             }
             if (work.thing[base] == .variable and work.class[base] == @intFromEnum(spirv.StorageClass.input) and systemOf(work, base) != null) {
                 // One word of a compute program's built-in, as glslc
-                // writes `gl_GlobalInvocationID.x` (since 1.194).
+                // writes `gl_GlobalInvocationID.x` (since 1.194), or one
+                // float of FragCoord, `gl_FragCoord.x` (since 1.214).
                 if (operands.len != 4) return Error.Body;
                 const which = try indexOf(work, operands[3]);
                 if (work.wide[base] == 1 or which >= work.wide[base]) return Error.Body;
@@ -9003,8 +9024,10 @@ fn lanes(work: *Work) void {
         // (:611-615). The base instance, the first vertex, and the
         // dispatch's count and base of workgroups are the same in every
         // lane (:240-250, :342).
+        // FragCoord's floats are a fragment program's load_input, which
+        // differs from lane to lane (:472-480; since 1.214).
         if (each.tag == .system) switch (@as(SystemValue, @enumFromInt(each.at))) {
-            .vertex_id, .instance_id, .cs_payload0, .cs_payload1 => work.divergent[at] = true,
+            .vertex_id, .instance_id, .cs_payload0, .cs_payload1, .frag_coord_x, .frag_coord_y, .frag_coord_z, .frag_coord_w => work.divergent[at] = true,
             .base_instance, .first_vertex, .work_group_base_x, .work_group_base_y, .work_group_base_z, .num_work_groups_x, .num_work_groups_y, .num_work_groups_z => {},
         };
         for (readsOf(each)) |field| if (field) |of| {
@@ -10738,6 +10761,17 @@ fn computeValueOf(work: *Work, which: Builtin) Error!u16 {
         // the program start says (:4959-4965).
         .local_invocation_index => invocationIndexOf(work),
         .local_invocation_id => wordVector(work, try localIdOf(work)),
+        // load_input of VARYING_SLOT_POS, which nir_lower_io_to_scalar
+        // makes a load of each float (vir.c:1339): a float each, which
+        // the program's start reads (since 1.214).
+        .frag_coord => frag: {
+            var made = Step{ .tag = .construct, .kind = .f32x4 };
+            for ([_]SystemValue{ .frag_coord_x, .frag_coord_y, .frag_coord_z, .frag_coord_w }, 0..) |each, k| {
+                made.from[k] = try systemStep(work, each);
+                made.part[k] = 0;
+            }
+            break :frag put(work, made);
+        },
         // nir_lower_compute_system_values, where the device has no global
         // id and has a base workgroup id (v3dv_pipeline.c:3313-3316):
         // (group id + base) * size + local id
@@ -22263,4 +22297,70 @@ test "a vertex program's varying declared and never stored takes none of the eig
     var rows: [16]u32 = undefined;
     try testing.expectEqualSlices(u32, &.{ 4, 5, 6, 7, 8, 9, 10, 11, 0, 1, 2, 3 }, outputRows(&work, &rows));
     try testing.expectEqual(@as(usize, 12), countOf(code, "stvpmv"));
+}
+
+test "through Mesa's back end, gl_FragCoord's x and y are FXCD and FYCD, and its z the payload's, which a program that reads it writes as Z" {
+    // emit_fragcoord_input (nir_to_vir.c:1017-1023): FXCD and FYCD on
+    // the add side, Z the payload's rf2 as it comes, whose MOV copy
+    // propagation takes out; and w, the reciprocal of W, dead code here.
+    // A program that reads Z writes it (c->reads_z, :2991-2995, :2099):
+    // the rasterizer's, through TLBU, early Z left on (since 1.214).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_frag_coord);
+    try expectText(code, &.{
+        text("fxcd rf4", "nop", ""),
+        text("fycd rf5", "fmul rf6, rf4, 0x3b800000", ""),
+        text("nop", "nop", "thrsw"),
+        text("nop", "nop", "thrsw"),
+        text("nop", "fmul rf7, rf5, 0x3b800000", ""),
+        text("nop", "mov tlbu, rf5", ""),
+        text("vfpack tlb, rf6, rf7", "nop", ""),
+        text("vfpack tlb, rf2, 0x3f800000", "nop", ""),
+        text("nop", "nop", "thrsw"),
+        text("nop", "nop", ""),
+        text("nop", "nop", ""),
+    });
+    try testing.expectEqual(@as(u32, 0), code.varyings);
+    try testing.expect(code.writes_z);
+    try testing.expect(!code.disable_ez);
+    try testing.expect(!code.center_w);
+}
+
+test "through Mesa's back end, gl_FragCoord's w is the reciprocal of the payload's W, which the shader record is told is read" {
+    // RECIP of rf3, W on 7.1 (nir_to_vir.c:4917, :1023): W read for
+    // something other than a varying, so uses_center_w
+    // (vir_check_payload_w, :5117-5131). No Z is read, and none written
+    // (since 1.214).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_frag_coord_w);
+    try expectText(code, &.{
+        text("recip rf4, rf3", "nop", "thrsw"),
+        text("nop", "nop", "thrsw"),
+        text("nop", "nop", ""),
+        text("vfpack tlb, rf4, rf4", "nop", "thrsw"),
+        text("vfpack tlb, rf4, rf4", "nop", ""),
+        text("nop", "nop", ""),
+    });
+    try testing.expect(code.center_w);
+    try testing.expect(!code.writes_z);
+    try testing.expectEqual(@as(usize, 0), countOf(code, "fxcd"));
+}
+
+test "FragCoord is the one built-in a fragment program reads: FragDepth and VertexIndex on its input are refused" {
+    var work: Work = .{};
+    // FragDepth and VertexIndex where FragCoord was, on the input.
+    try testing.expectError(Error.Refused, compile(&work, &comptime patched(&reference.glslc_frag_coord, .decorate, 1, 2, @intFromEnum(spirv.BuiltIn.frag_depth))));
+    try testing.expectError(Error.Refused, compile(&work, &comptime patched(&reference.glslc_frag_coord, .decorate, 1, 2, @intFromEnum(spirv.BuiltIn.vertex_index))));
+}
+
+test "through Mesa's back end, a uniform buffer read at an index gl_FragCoord gives goes through the TMU: FragCoord differs from lane to lane" {
+    // FragCoord is a fragment program's load_input
+    // (nir_divergence_analysis.c:472-480), so the load_ubo of an index
+    // made of it is divergent and ntq_emit_load_ubo_unifa takes the TMU's
+    // way (nir_to_vir.c:3315-3317; since 1.214).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_frag_coord_ubo);
+    try testing.expectEqual(@as(usize, 0), countOf(code, "ldunifa"));
+    try testing.expectEqual(@as(usize, 4), countOf(code, "ldtmu"));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "fxcd"));
 }
