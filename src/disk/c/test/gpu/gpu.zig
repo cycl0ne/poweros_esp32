@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
 //! Gpu: an AMD graphics device tried a part at a time, each step said:
-//! its video BIOS read, its security processor started and the video
-//! decoder's firmware loaded by it, the display's interrupt at each frame
-//! counted, or one flip of the picture the display reads. Built against
-//! the SDK only.
+//! its video BIOS read, the display's clocks asked for, its security
+//! processor started and the video decoder's firmware loaded by it, the
+//! display's interrupt at each frame counted, or one flip of the picture
+//! the display reads. Built against the SDK only.
 //!
-//!   Gpu TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,PIPE/K/N,FETCHER/K/N,WATCHDOG/K/N
+//!   Gpu TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,PIPE/K/N,FETCHER/K/N,WATCHDOG/K/N
 //!
 //! BIOS prints the device's video BIOS image (GetGPUBios): where it is
 //! and how long, its tables' header's version, the version of each data
@@ -14,7 +14,16 @@
 //! it, its DDC line and its hot-plug pin. Nothing is written to the
 //! device, and no watchdog is wanted.
 //!
-//! Without BIOS, FRAMES or FLIP the two files are read from
+//! CLOCKS has the display's board ("amd.0") ask the device's power
+//! manager, through the display's own mailbox, for its firmware's
+//! version and its table of clock levels, and read the clocks running
+//! now (RTGCTRL_AMD_CLOCKS): the levels of each of the display's clocks,
+//! the SoC's and the data fabric's states, then the PLL the display's
+//! clocks are divided from, the display clock and the pipes' clock. The
+//! messages change nothing, but they are written to the device: the
+//! watchdog is armed for them.
+//!
+//! Without BIOS, CLOCKS, FRAMES or FLIP the two files are read from
 //! DEVS:firmware/amdgpu/, named for the blocks that use them as the
 //! device's table gives their versions - psp_13_0_4_toc.bin for the
 //! security processor 13.0.4, vcn_4_0_2.bin for the video decoder 4.0.2 -
@@ -64,20 +73,23 @@ const TimerBase = sdk.interface.timer.TimerBase;
 const dcn = sdk.hardware.amd_dcn;
 const reg = sdk.hardware.mmio.reg;
 const Printf = dos.stdio.Printf;
+const rtg = sdk.rtg;
+const RtgBase = sdk.interface.rtg.RtgBase;
 
 pub const COMMAND_NAME = "Gpu";
-const VERSION_STRING = "\x00$VER: Gpu 1.3 (25.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Gpu 1.4 (25.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,PIPE/K/N,FETCHER/K/N,WATCHDOG/K/N";
+const template = "TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,PIPE/K/N,FETCHER/K/N,WATCHDOG/K/N";
 const arg_toc = 0;
 const arg_firmware = 1;
 const arg_frames = 2;
 const arg_flip = 3;
 const arg_bios = 4;
-const arg_pipe = 5;
-const arg_fetcher = 6;
-const arg_watchdog = 7;
+const arg_clocks = 5;
+const arg_pipe = 6;
+const arg_fetcher = 7;
+const arg_watchdog = 8;
 
 /// Where the files are.
 const directory = "DEVS:firmware/amdgpu/";
@@ -230,6 +242,68 @@ fn bios(dl: *DosBase, ab: *AMDGPUBase) i32 {
     return dos.RETURN_OK;
 }
 
+/// The display's board, by the name its driver gives it.
+const amd_board = "amd.0";
+
+/// The display's clocks, asked of its board with the watchdog armed, and
+/// printed.
+fn clocks(sys: *ExecBase, dl: *DosBase, millis: u32) i32 {
+    const base = sys.OpenLibrary(rtg.RTGNAME, rtg.RTG_VERSION) orelse {
+        _ = Printf(dl, "No %s\n", .{rtg.RTGNAME});
+        return dos.RETURN_FAIL;
+    };
+    defer sys.CloseLibrary(base);
+    const rb: *RtgBase = @ptrCast(base);
+    const board = rb.FindBoard(amd_board) orelse {
+        _ = Printf(dl, "No board %s: the display is not driven by rtg-amd\n", .{amd_board});
+        return dos.RETURN_WARN;
+    };
+    const wb: *WatchdogBase = @ptrCast(sys.OpenResource(watchdog.WATCHDOGNAME) orelse {
+        _ = Printf(dl, "No %s\n", .{watchdog.WATCHDOGNAME});
+        return dos.RETURN_FAIL;
+    });
+    if (!wb.ArmWatchdog(millis, watchdog.WATCHDOG_RESET_SYSTEM)) {
+        _ = Printf(dl, "The watchdog refuses %u ms\n", .{millis});
+        return dos.RETURN_FAIL;
+    }
+    _ = Printf(dl, "Watchdog armed: %u ms\n", .{millis});
+    var found: rtg.tags.RtgAmdClocks = .{};
+    const result = rb.BoardControl(board, rtg.tags.RTGCTRL_AMD_CLOCKS, @bitCast(@intFromPtr(&found)));
+    wb.DisarmWatchdog();
+    if (found.pll_khz != 0) {
+        _ = Printf(dl, "Running: PLL %u kHz, display clock %u kHz, pipes' clock %u kHz\n", .{ found.pll_khz, found.disp_khz, found.dpp_khz });
+    } else _ = Printf(dl, "Running: the clock generator is not known\n", .{});
+    if (found.firmware != 0) {
+        _ = Printf(dl, "Power manager's firmware %u.%u.%u\n", .{ found.firmware >> 16 & 0xff, found.firmware >> 8 & 0xff, found.firmware & 0xff });
+    }
+    if (result != rtg.errors.RTGERR_OK) {
+        _ = Printf(dl, "The clocks were not had: error %ld, message 0x%x answered 0x%x\n", .{ @as(i64, result), found.message, found.answer });
+        return dos.RETURN_ERROR;
+    }
+    printLevels(dl, "Display controller (DCFCLK)", found.dcf_mhz[0..found.dcf_count]);
+    printLevels(dl, "Display (DISPCLK)", found.disp_mhz[0..found.disp_count]);
+    printLevels(dl, "Pipes (DPPCLK)", found.dpp_mhz[0..found.disp_count]);
+    printLevels(dl, "SoC (SOCCLK)", found.soc_mhz[0..found.soc_count]);
+    for (0..found.fabric_count) |index| {
+        _ = Printf(dl, "Fabric state %u: fabric %u MHz, memory %u MHz, %u.%02u mV\n", .{
+            @as(u32, @intCast(index)),
+            found.fabric_mhz[index],
+            found.memory_mhz[index],
+            found.fabric_voltage[index] / 4,
+            found.fabric_voltage[index] % 4 * 25,
+        });
+    }
+    return dos.RETURN_OK;
+}
+
+/// A clock's levels on one line, in MHz.
+fn printLevels(dl: *DosBase, name: [*:0]const u8, levels: []const u32) void {
+    _ = Printf(dl, "%-28s", .{name});
+    if (levels.len == 0) _ = Printf(dl, " none", .{});
+    for (levels) |level| _ = Printf(dl, " %u", .{level});
+    _ = Printf(dl, " MHz\n", .{});
+}
+
 /// What a connector's kind is called.
 fn kindName(kind: u32) [*:0]const u8 {
     return switch (kind) {
@@ -248,7 +322,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const lib = sys.OpenLibrary(dos.DOSNAME, 0) orelse return dos.RETURN_FAIL;
     defer sys.CloseLibrary(lib);
     const dl: *DosBase = @ptrCast(lib);
-    var argv: [8]usize = @splat(0);
+    var argv: [9]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
         return dos.RETURN_ERROR;
@@ -269,6 +343,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         return dos.RETURN_ERROR;
     }
     const millis: u32 = @intCast(@max(1, @as(*const i32, @ptrFromInt(argv[arg_watchdog])).*));
+    if (argv[arg_clocks] != 0) return clocks(sys, dl, millis);
     if (argv[arg_frames] != 0 or argv[arg_flip] != 0) {
         const pipe = number(argv[arg_pipe]);
         const fetcher = number(argv[arg_fetcher]);

@@ -36,7 +36,7 @@ const _interrupt = @import("interrupt/_interrupt.zig");
 /// The name it is opened by. The SDK's.
 pub const RESOURCE_NAME = amdgpu.AMDGPUNAME;
 pub const RESOURCE_VERSION = 1;
-pub const RESOURCE_REVISION = 5;
+pub const RESOURCE_REVISION = 6;
 const BUILD_DATE = "25.11.2026";
 const RESOURCE_VERSION_STRING =
     "\x00$VER: " ++ RESOURCE_NAME ++ " " ++
@@ -118,6 +118,7 @@ const named = [_]struct { id: u32, name: [*:0]const u8 }{
     .{ .id = amdgpu.GPUBLOCK_VIDEO, .name = "video" },
     .{ .id = amdgpu.GPUBLOCK_SECURITY, .name = "security processor" },
     .{ .id = amdgpu.GPUBLOCK_POWER, .name = "power manager" },
+    .{ .id = amdgpu.GPUBLOCK_CLOCKS, .name = "clock generator" },
     .{ .id = amdgpu.GPUBLOCK_MEMORY_HUB, .name = "memory hub" },
     .{ .id = amdgpu.GPUBLOCK_BUS, .name = "bus" },
     .{ .id = amdgpu.GPUBLOCK_INTERRUPTS, .name = "interrupts" },

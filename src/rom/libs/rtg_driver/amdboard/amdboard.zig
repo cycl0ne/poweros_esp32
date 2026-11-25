@@ -43,6 +43,10 @@
 //! and asks the codec what is at the far end of a link when a sink is
 //! started.
 //!
+//! The display's clocks are asked of the device's power manager through
+//! the display's own mailbox, and read from the engine (`smu.zig`) - on
+//! request only, through the board's controls (RTGCTRL_AMD_*).
+//!
 //! The buffers drawn in are the machine's RAM, taken by the library as
 //! each is allocated (RTGRF_SYSTEM_MEMORY, RTGRF_DMA_MEMORY).
 //!
@@ -65,12 +69,13 @@ const tags = rtg.tags;
 const uefi = @import("uefi.zig");
 const dcn = @import("dcn.zig");
 const sound = @import("sound.zig");
+const smu = @import("smu.zig");
 
 const MODULE_NAME = "rtg-amd";
 const DRIVER_NAME = "amd";
 const VERSION = 1;
-const REVISION = 5;
-const BUILD_DATE = "17.11.2026";
+const REVISION = 6;
+const BUILD_DATE = "25.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ VERSION, REVISION }) ++
@@ -124,6 +129,10 @@ const Screen = struct {
     /// and whether that is on.
     frame_int: exec.Interrupt = .{},
     frame_hooked: bool = false,
+    /// The display's mailbox to the power manager and the clock
+    /// generator, and the lock that keeps one message at a time in it.
+    smu: smu.Mailbox = .{},
+    smu_lock: exec.SignalSemaphore = .{},
 };
 
 /// Wait for `frames` frames, as the library waits (WaitVBlank): for the
@@ -386,7 +395,9 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, device_tags: ?[*]const
         .format = format,
         .bytes = bytes,
         .board = board,
+        .smu = smu.find(found),
     };
+    sys.InitSemaphore(&screen.smu_lock);
     // The board's buffers start, and their rows are rounded, as its tags
     // say; whole cache lines where they say nothing.
     const asked_alignment: u32 = @truncate(rb.GetRtgTagData(tags.RTGA_Alignment, 0, tag_list));
@@ -484,6 +495,27 @@ fn stats(board: *rtg.RtgBoard, into: *rtg.RtgBoardStats) callconv(.c) void {
     into.frames = screenOf(board).updates;
 }
 
+/// The board's own controls (RTGCTRL_AMD_*): the display's mailbox to the
+/// power manager asked, one asker at a time. Nothing else is taken.
+fn control(board: *rtg.RtgBoard, what: u32, value: isize) callconv(.c) isize {
+    const screen = screenOf(board);
+    switch (what) {
+        rtg.tags.RTGCTRL_AMD_FIRMWARE => {
+            screen.sys.ObtainSemaphore(&screen.smu_lock);
+            defer screen.sys.ReleaseSemaphore(&screen.smu_lock);
+            return smu.version(screen.sys, screen.smu);
+        },
+        rtg.tags.RTGCTRL_AMD_CLOCKS => {
+            if (value == 0) return err.RTGERR_BAD_ARG;
+            const into: *rtg.tags.RtgAmdClocks = @ptrFromInt(@as(usize, @bitCast(value)));
+            screen.sys.ObtainSemaphore(&screen.smu_lock);
+            defer screen.sys.ReleaseSemaphore(&screen.smu_lock);
+            return smu.clocks(screen.dcn, screen.smu, into);
+        },
+        else => return err.RTGERR_NOT_SUPPORTED,
+    }
+}
+
 /// Flipped, between frames of its own, which are written and never
 /// written back: no `refresh`. The bands, the overlay and the pointer are
 /// the library's.
@@ -493,6 +525,7 @@ const ops = rtg.boards.RtgBoardOps{
     .flip = &flipOp,
     .frames = &framesOp,
     .stats = &stats,
+    .control = &control,
 };
 
 const driver_ops = rtg.RtgDriverOps{ .attach = &attach, .detach = &detach };

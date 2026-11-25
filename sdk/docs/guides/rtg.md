@@ -794,7 +794,14 @@ failed sends and underruns on a bus. `BoardControl(board,
 RTGCTRL_RESET_STATS, 0)` starts them again, on every board - one whose
 driver has no control of its own included, where it clears the library's
 count of buffers shown; numbers from `RTGCTRL_DRIVER` up are a driver's
-own.
+own, listed with the driver in `sdk/libs/rtg/tags.zig`. The AMD board's
+(`amd.0`) ask the device's power manager about the display's clocks:
+`RTGCTRL_AMD_FIRMWARE` answers the manager's firmware version, and
+`RTGCTRL_AMD_CLOCKS` fills an `RtgAmdClocks` with the levels the manager
+offers for the display controller's, the display's, the pipes' and the
+SoC's clocks and for the data fabric, and with the display clocks running
+now. Both send messages to the device, which `C:test/Gpu CLOCKS` does with
+the watchdog armed.
 
 The numbers say a lot about a picture that misbehaves. A part of the glass
 that is out of date while `refreshes` stands still was never handed on; one

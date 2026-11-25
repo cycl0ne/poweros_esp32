@@ -55,6 +55,7 @@ test {
     _ = @import("libs/rtg_driver/dsiboard/chain.zig");
     _ = @import("libs/rtg_driver/jh7110board/phy.zig");
     _ = @import("libs/rtg_driver/bcm2712board/bcm2712.zig");
+    _ = @import("libs/rtg_driver/amdboard/smu.zig");
     _ = @import("libs/rtg_driver/bcm2712board/ddc.zig");
     _ = @import("libs/rtg_driver/bcm2712board/sound.zig");
     _ = @import("libs/rtg_driver/bcm2712board/list.zig");

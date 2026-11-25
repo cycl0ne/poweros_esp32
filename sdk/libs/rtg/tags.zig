@@ -160,6 +160,56 @@ pub const RTGCTRL_DCS_ROW_ASKED: u32 = RTGCTRL_DRIVER + 16;
 /// Forget which rows have been asked for.
 pub const RTGCTRL_DCS_FORGET_ROWS: u32 = RTGCTRL_DRIVER + 17;
 
+/// The AMD board's BoardControl codes.
+///
+/// The display's mailbox to the device's power manager asked for the
+/// manager's firmware version: the answer - major, minor and revision in
+/// bits 23-16, 15-8 and 7-0 - or RTGERR_TIMEOUT where the mailbox does
+/// not answer, RTGERR_IO where the manager refuses.
+pub const RTGCTRL_AMD_FIRMWARE: u32 = RTGCTRL_DRIVER + 32;
+/// `value` an `*RtgAmdClocks`, filled in: the display's clocks, what the
+/// power manager offers and what runs now. RTGERR_OK, or a negative
+/// RTGERR_* where the mailbox does not answer or no memory could be had
+/// for the manager's table, RTGERR_IO where the manager refused a message.
+pub const RTGCTRL_AMD_CLOCKS: u32 = RTGCTRL_DRIVER + 33;
+
+/// The most levels RtgAmdClocks has room for of a clock, and of the data
+/// fabric's states.
+pub const RTG_AMD_LEVELS = 8;
+pub const RTG_AMD_FABRIC_STATES = 4;
+
+/// What RTGCTRL_AMD_CLOCKS fills in. The levels are the power manager's
+/// table of them, in MHz, each list's first `*_count` in use: the display
+/// controller's clock (DCFCLK), the display clock (DISPCLK) and the
+/// pipes' clock (DPPCLK) - which share one count - the SoC's clock, and
+/// per state of the data fabric its clock, the memory's and the voltage
+/// (in quarters of a millivolt). The clocks running now are read from the
+/// engine, in kHz: the PLL the display's clocks are divided from, and
+/// the display clock and the pipes' clock divided from it - 0 where the
+/// generator could not be read. `message` is the last message sent for
+/// the table and `answer` what the manager answered to it: 1 done, 0xFF
+/// failed, 0xFE a message it does not know, 0xFD one refused before
+/// something else is done, 0xFC one refused while it is busy.
+pub const RtgAmdClocks = extern struct {
+    firmware: u32 = 0,
+    message: u32 = 0,
+    answer: u32 = 0,
+    dcf_mhz: [RTG_AMD_LEVELS]u32 = @splat(0),
+    disp_mhz: [RTG_AMD_LEVELS]u32 = @splat(0),
+    dpp_mhz: [RTG_AMD_LEVELS]u32 = @splat(0),
+    soc_mhz: [RTG_AMD_LEVELS]u32 = @splat(0),
+    fabric_mhz: [RTG_AMD_FABRIC_STATES]u32 = @splat(0),
+    memory_mhz: [RTG_AMD_FABRIC_STATES]u32 = @splat(0),
+    fabric_voltage: [RTG_AMD_FABRIC_STATES]u32 = @splat(0),
+    dcf_count: u32 = 0,
+    disp_count: u32 = 0,
+    soc_count: u32 = 0,
+    fabric_count: u32 = 0,
+    pll_khz: u32 = 0,
+    disp_khz: u32 = 0,
+    dpp_khz: u32 = 0,
+};
+
 // RTGA_DriverBase + 64, 64 wide, is not used.
 
 // --- the QSPI transport driver: RTGA_DriverBase + 128, 64 wide -----------

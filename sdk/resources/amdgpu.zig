@@ -66,6 +66,9 @@ pub const AMDGPUNAME = "amdgpu.resource";
 /// each kind.
 /// The power manager: powers the other blocks up and runs their clocks.
 pub const GPUBLOCK_POWER: u32 = 1;
+/// The clock generator: the PLLs the display's clocks, among others, are
+/// divided from.
+pub const GPUBLOCK_CLOCKS: u32 = 6;
 /// The video decoder and encoder, and the JPEG decoder beside them.
 pub const GPUBLOCK_VIDEO: u32 = 12;
 /// The hub the memory traffic of the video, display and security blocks
