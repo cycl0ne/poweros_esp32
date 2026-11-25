@@ -13,6 +13,7 @@ test {
     _ = @import("resources/jpeg/jpeg.zig");
     _ = @import("resources/videodec/videodec.zig");
     _ = @import("resources/battery/battery.zig");
+    _ = @import("resources/battery/tests.zig");
     _ = @import("resources/battclock/battclock.zig");
     _ = @import("resources/battmem/battmem.zig");
     _ = @import("resources/thermal/thermal.zig");

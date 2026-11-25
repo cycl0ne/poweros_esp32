@@ -176,7 +176,7 @@ first time something opens it.
 | exec.library | ROM | tasks, signals, messages, memory, lists, libraries and devices | [md](autodocs/exec.md) · [doc](autodocs/exec.doc) |
 | utility.library | ROM | tag lists, hooks, dates, strings, patterns | [md](autodocs/utility.md) · [doc](autodocs/utility.doc) |
 | dos.library | ROM | processes, files, locks, handlers, assigns, `ReadArgs` | [md](autodocs/dos.md) · [doc](autodocs/dos.doc) |
-| ramlib.library | ROM, after dos | libraries and devices loaded from `LIBS:` and `DEVS:` when they are opened, and unloaded when they go - its one call is exec's | [md](autodocs/ramlib.md) · [doc](autodocs/ramlib.doc) |
+| ramlib.library | ROM, after dos | libraries, devices and resources loaded from `LIBS:` and `DEVS:` when they are opened, the libraries and devices unloaded when they go - its one call is exec's | [md](autodocs/ramlib.md) · [doc](autodocs/ramlib.doc) |
 | expansion.library | ROM | the board: which parts it has and how they are wired; the devices by what they speak, with their units on this board; the disks' partitions until dos takes them in | [md](autodocs/expansion.md) · [doc](autodocs/expansion.doc) |
 | rtg.library | ROM | displays and their boards | [md](autodocs/rtg.md) · [doc](autodocs/rtg.doc); what a driver calls: [md](autodocs/rtgdriver.md) · [doc](autodocs/rtgdriver.doc) |
 | rta.library | ROM, on a board with sound and in QEMU | sound outputs and the drivers behind them | [md](autodocs/rta.md) · [doc](autodocs/rta.doc), [`rta.zig`](../libs/rta/rta.zig) |
@@ -263,7 +263,9 @@ the disk is loaded from `DEVS:` the first time something opens it.
 ## Resources
 
 Opened with `OpenResource`; calls only, no requests, and no open count.
-All are in the ROM.
+All are in the ROM, but battery.resource: on the flash boards it is
+`DEVS:battery.resource`, which ramlib loads the first time something
+asks for it. A resource of your own is a file in `DEVS:` the same way.
 
 | Resource | What | Reference |
 |---|---|---|

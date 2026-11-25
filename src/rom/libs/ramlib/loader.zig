@@ -21,6 +21,13 @@
 //! one, and last, from a process, as given, from its current directory.
 //! `LIBS:` may be a multi-assign - `SYS:libs` and `SYS:classes` - and dos
 //! walks its directories until the file is found.
+//!
+//! A resource's file is looked for under `DEVS:` alone, or where a `:`
+//! says. A resource is a part of the machine, not something a program
+//! brings along beside it, and null is an ordinary answer for one that
+//! only some boards have: a look in the asker's current directory - which
+//! may be a share across a network - would be paid at every such ask, for
+//! nothing.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -93,14 +100,18 @@ pub fn load(rlb: *RamLibBase, name: [*:0]const u8, kind: u32, version: u32, own_
     return made;
 }
 
-/// Whether the module is there: a library on exec's list, a device on
-/// exec's list or one that was loaded. A device that is listed and refused
-/// the open - its hardware missing, its unit taken - is not made again:
-/// its ROM tag or its file would make a second one beside it. Under the
-/// lists' lock.
+/// Whether the module is there: a library on exec's list, a device or a
+/// resource on exec's list or one that was loaded. A device that is listed
+/// and refused the open - its hardware missing, its unit taken - is not
+/// made again: its ROM tag or its file would make a second one beside it.
+/// Nor is a resource that was loaded and has been taken off the list
+/// since, whose code may still run. Under the lists' lock.
 fn isThere(rlb: *RamLibBase, tail: [*:0]const u8, kind: u32) bool {
-    if (kind == ramlib.KIND_LIBRARY) return libraryListed(rlb, tail);
-    return deviceListed(rlb, tail) or alreadyLoaded(rlb, tail);
+    return switch (kind) {
+        ramlib.KIND_LIBRARY => libraryListed(rlb, tail),
+        ramlib.KIND_DEVICE => deviceListed(rlb, tail) or alreadyLoaded(rlb, tail),
+        else => resourceListed(rlb, tail) or alreadyLoaded(rlb, tail),
+    };
 }
 
 /// The record of a module of that name being loaded now, if one is.
@@ -173,7 +184,12 @@ fn make(rlb: *RamLibBase, name: [*:0]const u8, tail: [*:0]const u8, kind: u32, v
 /// its kind: a device's file opened as a library would make a second
 /// device beside the one running.
 fn wantedKind(tag: *const exec.Resident, kind: u32) bool {
-    return if (kind == ramlib.KIND_DEVICE) tag.type == .device else tag.type == .library;
+    const wanted: exec.NodeType = switch (kind) {
+        ramlib.KIND_DEVICE => .device,
+        ramlib.KIND_RESOURCE => .resource,
+        else => .library,
+    };
+    return tag.type == wanted;
 }
 
 /// What a module is called: the part of `name` after its last `/` or `:`.
@@ -186,27 +202,29 @@ pub fn tailName(name: [*:0]const u8) [*:0]const u8 {
     return tail;
 }
 
-/// The file: where its kind lives, then the name as given from the
-/// asking process's current directory. A name with a `:` says where it
-/// is, and is tried there alone.
+/// The file: where its kind lives, then - a library's or a device's -
+/// the name as given from the asking process's current directory. A name
+/// with a `:` says where it is, and is tried there alone.
 fn find(rlb: *RamLibBase, name: [*:0]const u8, kind: u32, own_process: bool) ?*dos.SegList {
     const dl = rlb.dos_base;
     var path: [max_path]u8 = undefined;
     const load_name = loadName(&path, name, kind) orelse return null;
     if (dl.LoadSeg(load_name)) |seg_list| return seg_list;
-    // ramlib's own process has no current directory of the asker's.
-    if (load_name == name or !own_process) return null;
+    // ramlib's own process has no current directory of the asker's, and
+    // a resource is not looked for in one (the file's header).
+    if (load_name == name or !own_process or kind == ramlib.KIND_RESOURCE) return null;
     return dl.LoadSeg(name);
 }
 
 /// The name the file is loaded by: `name` itself when it has a `:`,
-/// otherwise `LIBS:` or `DEVS:` and the whole of it, in `into`.
+/// otherwise `LIBS:` for a library, `DEVS:` for a device or a resource,
+/// and the whole of it, in `into`.
 fn loadName(into: []u8, name: [*:0]const u8, kind: u32) ?[*:0]const u8 {
     var i: usize = 0;
     while (name[i] != 0) : (i += 1) {
         if (name[i] == ':') return name;
     }
-    const where: []const u8 = if (kind == ramlib.KIND_DEVICE) "DEVS:" else "LIBS:";
+    const where: []const u8 = if (kind == ramlib.KIND_LIBRARY) "LIBS:" else "DEVS:";
     return join(into, where, name);
 }
 
@@ -298,11 +316,20 @@ fn deviceListed(rlb: *RamLibBase, name: [*:0]const u8) bool {
     return sys.FindName(list, name) != null;
 }
 
+/// Whether exec has a resource of that name: exec's own OpenResource,
+/// which counts nothing and so owes nothing back.
+fn resourceListed(rlb: *RamLibBase, name: [*:0]const u8) bool {
+    const open: *const fn (*ExecBase, [*:0]const u8) callconv(.c) ?*anyopaque =
+        @ptrCast(@alignCast(rlb.old_open_resource.?));
+    return open(rlb.sys_base, name) != null;
+}
+
 /// A library that was loaded and has gone since with nobody to say so -
 /// exec hands what goes at a close or a flush to UnLoadModule, `RemLibrary`
 /// to its caller: its base is gone and its code is used by nothing, so the
-/// segments go with the note. A device's note stays: its name asked for as
-/// a library says nothing about it - its code may be running.
+/// segments go with the note. A device's or a resource's note stays: its
+/// name asked for as a library says nothing about it - its code may be
+/// running.
 fn forget(rlb: *RamLibBase, name: [*:0]const u8) void {
     const sys = rlb.sys_base;
     sys.AcquireLock(&rlb.notes_lock);
@@ -376,6 +403,56 @@ test "a tag is the module asked for by its name, its version and its kind" {
     try testing.expect(!askedFor(&tag, "other.library", 0, library));
     // Nor is a library what an OpenDevice asked for.
     try testing.expect(!askedFor(&tag, "hello.library", 0, ramlib.KIND_DEVICE));
+}
+
+test "a resource's tag answers OpenResource alone, and its file is looked for under DEVS:" {
+    const tag: exec.Resident = .{ .match_tag = undefined, .version = 1, .type = .resource, .name = "battery.resource" };
+    try testing.expect(askedFor(&tag, "battery.resource", 1, ramlib.KIND_RESOURCE));
+    try testing.expect(!askedFor(&tag, "battery.resource", 0, ramlib.KIND_DEVICE));
+    try testing.expect(!askedFor(&tag, "battery.resource", 0, ramlib.KIND_LIBRARY));
+    // Nor is a device's tag a resource.
+    const device: exec.Resident = .{ .match_tag = undefined, .version = 1, .type = .device, .name = "x.device" };
+    try testing.expect(!askedFor(&device, "x.device", 0, ramlib.KIND_RESOURCE));
+
+    var path: [max_path]u8 = undefined;
+    try testing.expectEqualStrings("DEVS:battery.resource", std.mem.span(loadName(&path, "battery.resource", ramlib.KIND_RESOURCE).?));
+    try testing.expectEqualStrings("DEVS:x.device", std.mem.span(loadName(&path, "x.device", ramlib.KIND_DEVICE).?));
+    try testing.expectEqualStrings("LIBS:gadgets/x.gadget", std.mem.span(loadName(&path, "gadgets/x.gadget", ramlib.KIND_LIBRARY).?));
+    // A name with a `:` says where it is.
+    try testing.expectEqualStrings("RAM:x.resource", std.mem.span(loadName(&path, "RAM:x.resource", ramlib.KIND_RESOURCE).?));
+}
+
+test "a resource is there when exec lists it, or when it was loaded and has left the list since" {
+    const kexec = @import("../exec/exec.zig");
+    try kexec.setUp();
+    defer kexec.deinit();
+    const sys = kexec.SysBase.iface();
+    // exec's own OpenResource behind the vector; no dos: nothing here
+    // loads or unloads.
+    var rlb: RamLibBase = .{ .lib = .{}, .sys_base = sys, .dos_base = undefined };
+    sys.NewList(&rlb.loaded);
+    sys.InitLock(&rlb.notes_lock, "ramlib notes", exec.LOCKORDER_DRIVER, 0);
+    const exec_lib: *exec.Library = @ptrCast(@alignCast(sys));
+    rlb.old_open_resource = exec_lib.vector(*const anyopaque, sdk.interface.exec.LVO.OpenResource);
+
+    var listed: exec.Library = .{ .node = .{ .name = "listed.resource" } };
+    sys.AddResource(&listed);
+    try testing.expect(isThere(&rlb, "listed.resource", ramlib.KIND_RESOURCE));
+    try testing.expect(!isThere(&rlb, "other.resource", ramlib.KIND_RESOURCE));
+
+    // Loaded, and off the list since: not made a second time.
+    var segments = dos.SegList{};
+    keep(&rlb, "gone.resource", &segments, ramlib.KIND_RESOURCE);
+    try testing.expect(isThere(&rlb, "gone.resource", ramlib.KIND_RESOURCE));
+    // Its name asked for as a library leaves its segments alone.
+    const note = noteOf(&rlb, "gone.resource") orelse return error.NoMemory;
+    forget(&rlb, "gone.resource");
+    try testing.expect(noteOf(&rlb, "gone.resource") == note);
+
+    sys.RemResource(&listed);
+    sys.Remove(&note.node);
+    sys.FreeVec(note);
+    try kexec.expectNoLeaks();
 }
 
 test "a module is called by the tail of its name" {

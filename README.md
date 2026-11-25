@@ -474,11 +474,12 @@ The 64-bit machines' display drivers are files on their disks as well,
 in `DEVS:gfxdrv/`, each built for the chips that have its display:
 rtg.library loads the one for a display its ROM has no driver for.
 
-Two modules of the 64-bit machines' ROM are files on the flash boards'
-disks instead, in `base`: `HANDLERS:pipe-handler`, which dos loads when
-`|` in a shell first opens `PIPE:`, and `LIBS:motion.library`, loaded
-when something first animates. battery.resource is in the ROM of the
-boards that have a battery to measure.
+Three ROM modules are files on the flash boards' disks instead, in
+`base`: `HANDLERS:pipe-handler`, which dos loads when `|` in a shell
+first opens `PIPE:`, and `LIBS:motion.library`, loaded when something
+first animates - both in the 64-bit machines' ROM - and
+`DEVS:battery.resource`, loaded when something first asks for the
+battery: `C:Battery`, the desktop or its docklet.
 
 The sets are not closed over what their programs open. When something on
 a disk opens a library the sets leave off, the build says so after the

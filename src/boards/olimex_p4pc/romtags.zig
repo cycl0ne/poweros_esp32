@@ -4,9 +4,9 @@
 
 const rom = @import("../../rom/modules.zig");
 
-// What every image has, what draws, the ESP32s' own, the battery,
-// and the drivers of this board's parts.
-pub const modules = rom.core ++ rom.screen ++ rom.esp32 ++ rom.battery ++ .{
+// What every image has, what draws, the ESP32s' own, and the drivers
+// of this board's parts. battery.resource is on the disk.
+pub const modules = rom.core ++ rom.screen ++ rom.esp32 ++ .{
     // The chip's JPEG codec.
     @import("../../rom/resources/jpeg/jpeg.zig"),
     // The display on the MIPI-DSI connector.

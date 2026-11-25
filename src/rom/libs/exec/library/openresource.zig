@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 //! OpenResource: a resource by name. Nothing is counted and nothing is
 //! owed back - there is no CloseResource.
+//!
+//! This searches the resource list and nothing else. What loads a
+//! resource from DEVS: is ramlib.library, which replaces the slot in front
+//! of it.
 
 const ExecBase = @import("../exec.zig").ExecBase;
 
@@ -26,11 +30,21 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// counted and there is no close**. The pointer is good for as long as the
 /// machine is running.
 ///
+/// A resource in the ROM is there from the start. With ramlib.library in
+/// front of this call, one that is not there is looked for as
+/// `DEVS:<res_name>` - or where a `:` in the name says - and made from its
+/// file, which stays loaded; the asker's current directory is not looked
+/// in. Every ask for a resource that is not there looks on the disk again.
+///
 /// CONTEXT:
-/// - Waits: for exec's library list, while another task holds it.
+/// - Waits: for exec's library list, while another task holds it; and
+///   with ramlib.library in front of it, the replacement loads a resource
+///   that is not there from DEVS:, which reaches a handler.
 /// - Interrupts: no. It takes exec's library list, a semaphore.
 /// - Locks: takes exec's library list, a semaphore; no spinlock may be held.
-/// - Process: a Task will do.
+/// - Process: a Task will do for exec's own. ramlib's replacement needs a
+///   Process to load from a disk, and sends the work to its own when a bare
+///   Task calls it.
 ///
 /// OWNERSHIP:
 /// Nothing is allocated and nothing is owed.
@@ -41,11 +55,15 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// that is not the chip's own. What is soldered on the board comes from
 /// expansion.library.
 ///
+/// exec's own search is the resource list and nothing else. What loads a
+/// resource from DEVS: is ramlib.library, which replaces this slot with
+/// `SetFunction`.
+///
 /// BUGS:
 /// None known.
 ///
 /// SEE ALSO:
-/// `AddResource`, `OpenLibrary`
+/// `AddResource`, `OpenLibrary`, `OpenDevice`
 ///
 /// EXAMPLES:
 /// ```zig

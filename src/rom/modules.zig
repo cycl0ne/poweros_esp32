@@ -7,8 +7,8 @@
 //! not by their place here.
 //!
 //! A module is in one group. One that a board leaves out of its ROM and
-//! has on its disk instead - `pipe`, `motion` - is on the build's list of
-//! those too (`rom_on_disk` in build/disk.zig).
+//! has on its disk instead - `pipe`, `motion`, `battery` - is on the
+//! build's list of those too (`rom_on_disk` in build/disk.zig).
 
 /// What every image has: the devices and libraries dos stands on, dos
 /// and its handlers, the shell, and what tells a program which system
@@ -69,7 +69,9 @@ pub const motion = .{
     @import("libs/motion/motion.zig"),
 };
 
-/// The battery's voltage and charge, for a board that measures them.
+/// The battery's voltage and charge, for a board that measures them:
+/// `DEVS:battery.resource` on the flash boards' disks, here for a ROM
+/// that wants it.
 pub const battery = .{
     @import("resources/battery/battery.zig"),
 };

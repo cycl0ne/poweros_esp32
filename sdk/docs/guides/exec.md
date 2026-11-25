@@ -72,7 +72,12 @@ A **device** is opened with an I/O request rather than for a base; see
 
 A **resource** is found with `OpenResource(name)`. Nothing is counted and
 there is no close: the pointer is good for as long as the machine runs,
-and null is an ordinary answer for a resource only some boards have.
+and null is an ordinary answer for a resource only some boards have. A
+resource in the ROM is there from the start; one on the disk is loaded
+from `DEVS:` the first time something asks for it, and stays. Only
+`DEVS:` is looked in, never the asker's current directory, and each ask
+for a resource that is not there looks again - an open of
+`DEVS:<name>` that fails.
 
 ```zig
 const platform = sdk.resources.platform;
@@ -706,7 +711,10 @@ an init routine - from which exec builds the jump table and the base
 `AddDevice`, `AddResource`); `CreateLibrary` does the same from one
 description, for a library that is not in a tag. Every library's table
 starts with Open, Close, Expunge and ExtFunc; a device's has BeginIO and
-AbortIO after them. The rules exec keeps around those vectors are in
+AbortIO after them; a resource's has its own calls alone, from the first
+slot, since nothing opens, closes or expunges one. On the disk a library
+is a file in `LIBS:`, a device or a resource one in `DEVS:`, its tag
+named as the module is. The rules exec keeps around those vectors are in
 [A library's or a device's own calls](programs.md#a-librarys-or-a-devices-own-calls),
 and `paintfx.library` (`src/disk/libs/paintfx/`) is a small one to
 start from: its base, its init, its jump table and a file for each call.

@@ -67,15 +67,20 @@ const games_drawer_icon: DiskIcon = .{ .path = games_drawer ++ ".info", .picture
 /// load file, and its place on the disk. Its file is both - a ROM tag
 /// where a kernel's list names it, a load file with that tag in it
 /// here - and dos or ramlib finds it on the disk when something first
-/// asks for it. The 64-bit machines' kernels keep these in their ROM.
+/// asks for it. The 64-bit machines' kernels keep the pipe and the clock
+/// in their ROM; none of them has a battery to measure.
 const RomOnDisk = struct { root: []const u8, name: []const u8, disk: []const u8 };
 
 /// What a flash board's ROM leaves to its disk: the pipe between two
-/// commands, which `|` in a shell opens, and the clock of things that
-/// move, which the first gadget that animates opens.
+/// commands, which `|` in a shell opens, the clock of things that move,
+/// which the first gadget that animates opens, and the battery, which
+/// C:Battery, the desktop and its docklet open. On a board with no
+/// battery part the resource is made all the same, and says it has
+/// nothing to measure.
 const rom_on_disk = [_]RomOnDisk{
     .{ .root = "src/rom/handler/pipe/pipe.zig", .name = "pipe-handler", .disk = "devs/handlers/pipe-handler" },
     .{ .root = "src/rom/libs/motion/motion.zig", .name = "motion.library", .disk = "libs/motion.library" },
+    .{ .root = "src/rom/resources/battery/battery.zig", .name = "battery.resource", .disk = "devs/battery.resource" },
 };
 
 /// A display driver as a file of `DEVS:gfxdrv/`: its root, the name it

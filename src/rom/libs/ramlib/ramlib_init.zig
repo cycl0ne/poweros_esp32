@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! ramlib.library's ROM tag, and the init routine it names: dos opened,
 //! the loading process started, and the module put in front of exec's
-//! two open calls.
+//! three open calls.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -14,11 +14,12 @@ const RamLibBase = @import("ramlib_base.zig").RamLibBase;
 const server = ramlib.server;
 const openLibrary = ramlib.openLibrary;
 const openDevice = ramlib.openDevice;
+const openResource = ramlib.openResource;
 
 pub const LIBRARY_NAME = "ramlib.library";
 pub const LIBRARY_VERSION = 1;
-pub const LIBRARY_REVISION = 5;
-const BUILD_DATE = "13.11.2026";
+pub const LIBRARY_REVISION = 6;
+const BUILD_DATE = "25.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++
@@ -77,12 +78,12 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     }
 
     patch(rlb);
-    sdk.exec.kprintf(sys_base, "ramlib.library: in front of OpenLibrary and OpenDevice\n", .{});
+    sdk.exec.kprintf(sys_base, "ramlib.library: in front of OpenLibrary, OpenDevice and OpenResource\n", .{});
     return lib;
 }
 
-/// In front of exec's two open calls, once the process is there to do the
-/// loading. Nothing else is touched: closing is exec's own business, and
+/// In front of exec's three open calls, once the process is there to do
+/// the loading. Nothing else is touched: closing is exec's own business, and
 /// exec hands the segments of a module that went to UnLoadModule, through
 /// the same base. A replaced vector is called with exec's arguments on
 /// whatever task is opening something, so the base it needs is kept where
@@ -97,6 +98,8 @@ fn patch(rlb: *RamLibBase) void {
     _ = sys.SetFunction(base, sdk.interface.exec.LVO.OpenLibrary, @ptrCast(&openLibrary));
     rlb.old_open_device = base.vector(*const anyopaque, sdk.interface.exec.LVO.OpenDevice);
     _ = sys.SetFunction(base, sdk.interface.exec.LVO.OpenDevice, @ptrCast(&openDevice));
+    rlb.old_open_resource = base.vector(*const anyopaque, sdk.interface.exec.LVO.OpenResource);
+    _ = sys.SetFunction(base, sdk.interface.exec.LVO.OpenResource, @ptrCast(&openResource));
 }
 
 const init_table = exec.InitTable{

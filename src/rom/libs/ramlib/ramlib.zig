@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: MPL-2.0
-//! ramlib.library: libraries and devices that are not in the ROM, loaded
-//! from the disk when something asks for them.
+//! ramlib.library: libraries, devices and resources that are not in the
+//! ROM, loaded from the disk when something asks for them.
 //!
-//! `OpenLibrary` and `OpenDevice` look on exec's lists and answer null for
-//! a name that is not there. This module puts itself in front of both: it
-//! replaces the two vectors in exec's own jump table (`SetFunction`), calls
-//! what it replaced first, and only when that comes back empty does it go
-//! looking - `LIBS:` for a library, `DEVS:` for a device - loads the file
-//! with `LoadSeg`, finds the ROM tag in it and lets `InitResident` make the
-//! thing. The second attempt then finds it on the list like any other.
+//! `OpenLibrary`, `OpenDevice` and `OpenResource` look on exec's lists
+//! and answer null for a name that is not there. This module puts itself
+//! in front of all three: it replaces their vectors in exec's own jump
+//! table (`SetFunction`), calls what it replaced first, and only when
+//! that comes back empty does it go looking - `LIBS:` for a library,
+//! `DEVS:` for a device or a resource - loads the file with `LoadSeg`,
+//! finds the ROM tag in it and lets `InitResident` make the thing. The
+//! second attempt then finds it on the list like any other.
 //!
 //! A name may carry a path (`gadgets/checkbox.gadget`); exec is asked for
 //! the part after its last `/` or `:`, which is what the module is called,
@@ -22,7 +23,8 @@
 //!
 //! What was loaded is unloaded when it goes: exec hands the segments an
 //! Expunge gave back to UnLoadModule (unloadmodule.zig, SINCE 1.4), the
-//! module's one call of its own.
+//! module's one call of its own. A resource does not go - nothing
+//! expunges one - and what it was loaded in stays with it.
 //!
 //! The base is ramlib_base.zig, the ROM tag and init ramlib_init.zig, the
 //! table - the four standard vectors and UnLoadModule - ramlib_lvo.zig;
@@ -64,6 +66,7 @@ pub const LIBRARY_NAME = ramlib_init.LIBRARY_NAME;
 /// What is being asked for.
 pub const KIND_LIBRARY: u32 = 0;
 pub const KIND_DEVICE: u32 = 1;
+pub const KIND_RESOURCE: u32 = 2;
 
 /// A module that came off the disk, and the segments it is in.
 pub const Loaded = struct {
@@ -71,7 +74,7 @@ pub const Loaded = struct {
     seg_list: ?*dos.SegList = null,
     /// What it was made as. Both go when exec says the module went
     /// (UnLoadModule); a library's also when it is asked for again after
-    /// it went unnoticed, a device's not then.
+    /// it went unnoticed, a device's not then, a resource's never.
     kind: u32 = KIND_LIBRARY,
     name_buf: [64]u8 = .{0} ** 64,
 };
@@ -118,6 +121,20 @@ pub fn openDevice(sys: *ExecBase, name: [*:0]const u8, unit: u32, io: *exec.IORe
     if (answer == 0) return answer;
     if (!fetch(rlb, name, KIND_DEVICE, 0)) return answer;
     return old(sys, tail, unit, io, flags);
+}
+
+/// The same for resources, which answer with a pointer and count no
+/// opener. Null is an ordinary answer for a resource only some boards
+/// have, and each such ask looks on the disk again: an open of
+/// `DEVS:<name>` that fails.
+pub fn openResource(sys: *ExecBase, name: [*:0]const u8) callconv(.c) ?*anyopaque {
+    const rlb = ourBase(sys) orelse return null;
+    const old: *const fn (*ExecBase, [*:0]const u8) callconv(.c) ?*anyopaque =
+        @ptrCast(@alignCast(rlb.old_open_resource.?));
+    const tail = loader.tailName(name);
+    if (old(sys, tail)) |found| return found;
+    if (!fetch(rlb, name, KIND_RESOURCE, 0)) return null;
+    return old(sys, tail);
 }
 
 /// Get it from the disk, whoever is asking. A process does it itself; a
@@ -219,6 +236,28 @@ test "a name with a path opens the module of its tail, and loads nothing" {
 
     sys.Remove(&made.node);
     kexec.freeLibraryMemory(kexec.SysBase, made);
+    try kexec.expectNoLeaks();
+}
+
+test "a resource asked for by a name with a path is the one of its tail, and nothing is loaded" {
+    try kexec.setUp();
+    defer kexec.deinit();
+    const sys = kexec.SysBase.iface();
+    var resource: exec.Library = .{ .node = .{ .name = "x.resource" } };
+    sys.AddResource(&resource);
+
+    // exec's own OpenResource behind the replaced vector; no dos, as
+    // above.
+    var rlb: RamLibBase = .{ .lib = .{}, .sys_base = sys, .dos_base = undefined };
+    const exec_lib: *exec.Library = @ptrCast(@alignCast(sys));
+    rlb.old_open_resource = exec_lib.vector(*const anyopaque, sdk.interface.exec.LVO.OpenResource);
+    sys.SetRamLib(@ptrCast(&rlb));
+    defer sys.SetRamLib(null);
+
+    for ([_][*:0]const u8{ "x.resource", "DEVS:x.resource", "SYS:devs/x.resource" }) |name| {
+        try testing.expectEqual(@as(?*anyopaque, &resource), openResource(sys, name));
+    }
+    sys.RemResource(&resource);
     try kexec.expectNoLeaks();
 }
 

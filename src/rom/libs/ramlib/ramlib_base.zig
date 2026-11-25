@@ -25,10 +25,12 @@ pub const RamLibBase = extern struct {
     /// The vectors that were replaced, called first on every open.
     old_open_library: ?*const anyopaque = null,
     old_open_device: ?*const anyopaque = null,
+    old_open_resource: ?*const anyopaque = null,
     /// What has been loaded: a `Loaded` per module, by its tail name. Its
     /// segments are unloaded when exec says the module went
     /// (UnLoadModule); a library's too when it is asked for again after it
     /// went with nobody to say so - `RemLibrary` hands them to its caller.
+    /// A resource's stay: a resource does not go.
     loaded: exec.List = .{},
     /// What is being loaded now: a `Loading` per module (loader.zig), each
     /// with a lock its loader holds until it is done, which a second task

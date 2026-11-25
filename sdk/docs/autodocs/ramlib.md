@@ -47,7 +47,8 @@ exec calls it whenever an Expunge it ran hands segments back and the
 module has gone: at the last close of a library or device marked to go
 (`LIBF_DELEXP`), at the close of an opener's own base whose Close let
 its library go, and in exec's low-memory flush. `RemLibrary` and
-`RemDevice` hand them to their caller, as before.
+`RemDevice` hand them to their caller, as before. A resource ramlib
+loaded never comes here: nothing expunges one, and its segments stay.
 
 **CONTEXT**
 
