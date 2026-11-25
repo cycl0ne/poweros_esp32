@@ -258,29 +258,32 @@ fn renderOverBorder(ib: *IntuitionBase, w: *Window, o: *Object, gi: *classusr.Ga
 }
 
 /// A gadget drawn over itself without ever showing half of it: drawn
-/// into a picture kept aside, and its box of that put on the window in one
-/// copy. The picture reaches from the window's corner to the box's far
-/// corner, so the gadget draws at its own coordinates exactly as on the
-/// window; only the box is filled, drawn and copied, and a clip holds the
-/// drawing to it. The box starts as what the gadget is drawn over in
-/// place: the window's ground - or its requester's fill - painted as its
-/// layer paints it. A layer that paints no ground leaves the gadget to
-/// draw on what is there, and nothing but the place itself has that: such
-/// a gadget is drawn in place. A gadget in the border is drawn by
+/// into a picture of its box kept aside, and that put on the window in one
+/// copy. The gadget draws through a RastPort in the window's coordinates
+/// that sends what falls in the box to the picture, as a size draws an
+/// area (`paintAside`), so the picture is the box's size wherever the box
+/// is, and a box as large as the window's room is drawn aside as well as
+/// a small one; a clip holds the drawing to the box. Only the part of the
+/// box that is in the room and inside the gadget's clip is drawn and
+/// copied: a gadget a scrolled group shows half of has a picture of that
+/// half. The box starts as what the gadget is drawn over in place: the
+/// window's ground - or its requester's fill - painted as its layer
+/// paints it. A layer that paints no ground leaves the gadget to draw on
+/// what is there, and nothing but the place itself has that: such a
+/// gadget is drawn in place. A gadget in the border is drawn by
 /// `renderOverBorder` instead.
-/// False, and nothing drawn, when the picture cannot be had, would be
-/// larger than `aside_most` or the layer paints no ground: the caller
-/// draws in place.
+/// False, and nothing drawn, when none of the box shows, the picture
+/// cannot be had or the layer paints no ground: the caller draws in place.
 fn renderAside(ib: *IntuitionBase, o: *Object, gi: *classusr.GadgetInfo, rp: *graphics.RastPort, msg: *gc.GpRender) bool {
     const gb = ib.graphics_base;
+    const w: *Window = @ptrCast(@alignCast(gi.window));
     const place = boxIn(gadgetOf(ib, o), gi.domain_width, gi.domain_height);
-    if (place.width <= 0 or place.height <= 0 or place.left < 0 or place.top < 0) return false;
-    const right = place.left + place.width;
-    const bottom = place.top + place.height;
-    if (@as(u64, @intCast(right)) * @as(u64, @intCast(bottom)) * 4 > aside_most) return false;
+    const room = graphics.Rect{ .max_x = gi.domain_width, .max_y = gi.domain_height };
+    const whole = graphics.Rect{ .min_x = place.left, .min_y = place.top, .max_x = place.left + place.width, .max_y = place.top + place.height };
+    const area = graphics.Rect.intersect(graphics.Rect.intersect(whole, room), gi.clip);
+    if (area.isEmpty()) return false;
 
-    // The window's ground, font and pens; the clip holds the drawing to
-    // the box.
+    // The window's ground, font and pens.
     var ground: usize = 0;
     var font: usize = 0;
     var front: usize = 0;
@@ -296,20 +299,26 @@ fn renderAside(ib: *IntuitionBase, o: *Object, gi: *classusr.GadgetInfo, rp: *gr
     });
     if (ground == graphics.BACKFILL_NONE) return false;
 
-    const area = graphics.Rect{ .min_x = place.left, .min_y = place.top, .max_x = right, .max_y = bottom };
     const surface = gb.AllocBitMapTagList(&[_]TagItem{
-        .{ .tag = graphics.BMTAG_Width, .data = @intCast(right) },
-        .{ .tag = graphics.BMTAG_Height, .data = @intCast(bottom) },
+        .{ .tag = graphics.BMTAG_Width, .data = @intCast(area.width()) },
+        .{ .tag = graphics.BMTAG_Height, .data = @intCast(area.height()) },
         .{ .tag = graphics.BMTAG_Friend, .data = @intFromPtr(rp) },
         .{},
     }) orelse return false;
     defer gb.FreeBitMap(surface);
-    const aside = gb.CreateRastPortTagList(&[_]TagItem{ .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(surface) }, .{} }) orelse return false;
+    // Its own surface is the display's, as a window's RastPort's is: what
+    // bounds its clip and says its format. Every write goes to the target.
+    var target = graphics.ClipTarget{ .rect = area, .surface = surface, .dx = -area.min_x, .dy = -area.min_y };
+    const aside = gb.CreateRastPortTagList(&[_]TagItem{
+        .{ .tag = graphics.RPTAG_Surface, .data = w.screen.surface },
+        .{ .tag = graphics.RPTAG_ClipRect, .data = @intFromPtr(&area) },
+        .{ .tag = graphics.RPTAG_ClipTargets, .data = @intFromPtr(&target) },
+        .{ .tag = graphics.RPTAG_BackFill, .data = ground },
+        .{},
+    }) orelse return false;
     defer gb.FreeRastPort(aside);
-    gb.SetRPAttrs(aside, &[_]TagItem{ .{ .tag = graphics.RPTAG_BackFill, .data = ground }, .{} });
     gb.EraseRect(aside, &area);
     gb.SetRPAttrs(aside, &[_]TagItem{
-        .{ .tag = graphics.RPTAG_ClipRect, .data = @intFromPtr(&area) },
         .{ .tag = graphics.RPTAG_Font, .data = font },
         .{ .tag = graphics.RPTAG_APen, .data = front },
         .{ .tag = graphics.RPTAG_BPen, .data = back },
@@ -322,13 +331,13 @@ fn renderAside(ib: *IntuitionBase, o: *Object, gi: *classusr.GadgetInfo, rp: *gr
 
     msg.rast_port = aside;
     _ = ib.iface().SendMessage(o, @ptrCast(msg));
-    gb.BltRastPort(aside, rp, &area, place.left, place.top);
+    gb.BltBitMapRastPort(surface, 0, 0, rp, area.min_x, area.min_y, area.width(), area.height());
     return true;
 }
 
-/// The largest picture `renderAside` takes, in bytes at four a pixel: a
-/// gadget far down a large window is drawn in place rather than through a
-/// picture the size of the window.
+/// The largest picture `paintArea` takes for a band, in bytes at four a
+/// pixel: an area as large as a large window is drawn a band of rows at a
+/// time rather than through one picture of the whole of it.
 const aside_most: u64 = 1 << 20;
 
 /// The `n`th gadget along from `first`, or null past the end.

@@ -294,8 +294,11 @@ pub const LIBRARY_VERSION = 1;
 /// 107, version 1: a sizing with the size gadget ends with an
 /// IDCMP_NEWSIZE without the button in its qualifier, also when its last
 /// step changed nothing.
-pub const LIBRARY_REVISION = 107;
-const BUILD_DATE = "20.11.2026";
+/// 108: a gadget drawn for a change is drawn aside into a picture of its
+/// box alone, whatever the box's size or place; a large one was drawn in
+/// place, cleared and drawn over where it shows.
+pub const LIBRARY_REVISION = 108;
+const BUILD_DATE = "25.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++

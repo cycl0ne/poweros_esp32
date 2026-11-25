@@ -4898,7 +4898,9 @@ fn toldClass(ib: *IntuitionBase) *Class {
 
 /// A gadget that fills its box with one colour, so that what covers what
 /// can be read off the display.
-const Paint = extern struct { pen: u32 };
+/// A box in one pen; with `half`, its left half alone. `drawn_on` is the
+/// RastPort it was drawn through last.
+const Paint = extern struct { pen: u32, half: u32, drawn_on: usize };
 
 fn paintDispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
     const cl: *Class = @ptrCast(hook);
@@ -4914,9 +4916,12 @@ fn paintDispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque)
             const g = gadgetclass.gadgetOf(ib, o.?);
             const b = _gadget.boxIn(g, gi.domain_width, gi.domain_height);
             const gb = ib.graphics_base;
-            const pen = [_]TagItem{ .{ .tag = graphics.RPTAG_APen, .data = intuition.instData(Paint, cl, o.?).pen }, .{} };
+            const own = intuition.instData(Paint, cl, o.?);
+            own.drawn_on = @intFromPtr(r.rast_port);
+            const pen = [_]TagItem{ .{ .tag = graphics.RPTAG_APen, .data = own.pen }, .{} };
             gb.SetRPAttrs(r.rast_port, &pen);
-            const rect = graphics.Rect{ .min_x = b.left, .min_y = b.top, .max_x = b.left + b.width, .max_y = b.top + b.height };
+            const width = if (own.half != 0) @divTrunc(b.width, 2) else b.width;
+            const rect = graphics.Rect{ .min_x = b.left, .min_y = b.top, .max_x = b.left + width, .max_y = b.top + b.height };
             gb.RectFill(r.rast_port, &rect);
             return 0;
         },
@@ -5657,6 +5662,71 @@ test "GA_ClipRect: a gadget draws only inside its clip, which a group hands on t
     it.CloseWindow(w);
     try testing.expect(it.CloseScreen(screen));
     it.DisposeObject(group);
+    try testing.expect(it.FreeClass(paint));
+    display.down(ib);
+    try tearDown(ib);
+}
+
+test "a gadget drawn for a change: aside, a picture of what of its box shows, on the window's ground" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const gc = intuition.gadgetclass;
+    const it = ib.iface();
+    const display = try Display.up(ib);
+    const paint = paintClass(ib);
+    const red: u16 = 0xF800;
+
+    const g = it.NewObjectTagList(paint, null, &[_]TagItem{
+        .{ .tag = gc.GA_Left, .data = 10 },
+        .{ .tag = gc.GA_Top, .data = 14 },
+        .{ .tag = gc.GA_Width, .data = 12 },
+        .{ .tag = gc.GA_Height, .data = 8 },
+        .{},
+    }).?;
+    const own = intuition.instData(Paint, paint, g);
+    own.pen = graphics.penRGB(255, 0, 0);
+    const w = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Left, .data = 0 },
+        .{ .tag = wn.WA_Top, .data = 0 },
+        .{ .tag = wn.WA_Width, .data = 64 },
+        .{ .tag = wn.WA_Height, .data = 40 },
+        .{ .tag = wn.WA_Gadgets, .data = @intFromPtr(g) },
+        .{},
+    }).?;
+    const win: *_window.Window = @ptrCast(@alignCast(w));
+    const background = display.pixel(30, 30);
+
+    // Drawn through a picture, not the window's RastPort.
+    _gadget.render(ib, win, g, gc.GREDRAW_UPDATE);
+    try testing.expect(own.drawn_on != @intFromPtr(win.gi_rp.?));
+    try testing.expectEqual(red, display.pixel(10, 14));
+    try testing.expectEqual(red, display.pixel(21, 21));
+    // The picture starts as the ground: what the gadget no longer draws
+    // is gone.
+    own.half = 1;
+    _gadget.render(ib, win, g, gc.GREDRAW_UPDATE);
+    try testing.expectEqual(red, display.pixel(15, 18));
+    try testing.expectEqual(background, display.pixel(16, 18));
+    try testing.expectEqual(background, display.pixel(21, 21));
+
+    // A box that starts above and left of the room - a member of a group
+    // scrolled down - drawn the same way, the part of it that shows.
+    own.half = 0;
+    _ = it.SetAttrsTagList(g, &[_]TagItem{
+        .{ .tag = gc.GA_Left, .data = @bitCast(@as(isize, -6)) },
+        .{ .tag = gc.GA_Top, .data = @bitCast(@as(isize, -4)) },
+        .{},
+    });
+    _gadget.render(ib, win, g, gc.GREDRAW_UPDATE);
+    try testing.expect(own.drawn_on != @intFromPtr(win.gi_rp.?));
+    try testing.expectEqual(red, display.pixel(0, 0));
+    try testing.expectEqual(red, display.pixel(5, 3));
+
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
+    it.CloseWindow(w);
+    try testing.expect(it.CloseScreen(screen));
+    it.DisposeObject(g);
     try testing.expect(it.FreeClass(paint));
     display.down(ib);
     try tearDown(ib);

@@ -999,8 +999,8 @@ on how it asked.
 - `SetGadgetAttrsTagList` hands the class the window. intuition's own
   buttons draw the change there and then. The classes on the disk ask
   intuition, which draws them soon on its own task: aside into a picture
-  first and then onto the window in one copy, so a gadget is never seen
-  half drawn, and several changes that come before it gets there are
+  of the gadget's box first, however large the box, and then onto the
+  window in one copy, so a gadget is never seen half drawn, and several changes that come before it gets there are
   drawn once, in the newest state. A gadget in the border is drawn over
   the border painted afresh under it, so what it no longer draws - an
   arrow let go - goes, in a window of any size. The new value is the gadget's at once -
