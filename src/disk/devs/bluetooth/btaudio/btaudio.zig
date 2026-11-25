@@ -132,8 +132,8 @@ const remote_control = a2dp.avrcp;
 pub const DEVICE_NAME = "btaudio.device";
 const DRIVER_NAME = "btaudio";
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 5;
-const BUILD_DATE = "24.11.2026";
+const DEVICE_REVISION = 6;
+const BUILD_DATE = "25.11.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++
@@ -1641,7 +1641,8 @@ fn controlSink(sink: *rta.AudioSink, what: u32, value: isize) callconv(.c) isize
     _ = @atomicRmw(u32, &device.gain_count, .Add, 1, .acq_rel);
     wakeTask(device);
     if (@atomicLoad(u8, &device.absolute, .acquire) == 0) return err.RTAERR_NOT_SUPPORTED;
-    return @max(gain, rta.sinks.AUDIOGAIN_UNITY);
+    // At most four times unity, which an isize holds on every chip.
+    return @intCast(@max(gain, rta.sinks.AUDIOGAIN_UNITY));
 }
 
 const ops = rta.AudioSinkOps{
