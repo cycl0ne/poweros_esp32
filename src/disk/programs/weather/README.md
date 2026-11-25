@@ -13,7 +13,9 @@ Weather [PLACE <words>]
 ```
 
 - `PLACE` is a place to look up as the window opens: an address, a town,
-  a postcode. Without it the window opens on the place shown last.
+  a postcode. Without it the window opens on the place shown last, its
+  weather drawn at once from the last answer while it is asked for
+  again.
 
 It needs the network: an interface that is up, with a name server.
 
@@ -35,6 +37,14 @@ street and the town, or the town and its region.
 The places kept, the place shown last and the units are written to
 `ENV:Weather.json` and `ENVARC:Weather.json`, so they are there the next
 time.
+
+The last answer is kept too, with when it came, in `ENV:Weather.last` and
+`ENVARC:Weather.last`. The window opens on it: the whole picture as it was
+then, its time at the top, and on the right that the weather is being
+asked for; the new answer takes its place when it comes. It is shown for
+the place shown last, in the units picked, for a day after it came - its
+hours are the next 24 from then. Otherwise the window shows the sky alone
+until the answer is there.
 
 ## What the window shows
 

@@ -103,7 +103,9 @@ pub fn save(jb: *JSONBase, settings: *const Settings) bool {
     return written;
 }
 
-fn placeOf(jb: *JSONBase, value: ?*const json.Value, into: *Place) bool {
+/// A place read from its object; false when it lacks a name or a
+/// position on the globe.
+pub fn placeOf(jb: *JSONBase, value: ?*const json.Value, into: *Place) bool {
     var length: u32 = 0;
     const name = jb.GetJSONString(jb.FindJSONMember(value, "name"), &length) orelse return false;
     var latitude: f64 = 0;
@@ -122,7 +124,8 @@ fn placeOf(jb: *JSONBase, value: ?*const json.Value, into: *Place) bool {
     return kept > 0;
 }
 
-fn valueOf(jb: *JSONBase, document: *json.Document, place: *const Place) ?*json.Value {
+/// A place made an object of its name and position.
+pub fn valueOf(jb: *JSONBase, document: *json.Document, place: *const Place) ?*json.Value {
     const object = jb.CreateJSONValue(document, json.JSON_OBJECT) orelse return null;
     var length: u32 = 0;
     while (place.name[length] != 0) length += 1;

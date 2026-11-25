@@ -2,7 +2,8 @@
 //! Host tests of Weather's reading of the services' answers: json.library
 //! made from its ROM tag on the ROM's exec, and the answers of Open-Meteo's
 //! forecast, Nominatim and Open-Meteo's search read into places and
-//! forecasts as the window gets them - and nothing left behind.
+//! forecasts as the window gets them, and the last answer kept and read
+//! back - and nothing left behind.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -12,6 +13,7 @@ const host = @import("host_rom");
 const kexec = host.exec;
 const json_init = @import("../../../libs/json/json_init.zig");
 const forecast = @import("../forecast.zig");
+const last = @import("../last.zig");
 
 const testing = std.testing;
 const JSONBase = sdk.interface.json.JSONBase;
@@ -172,6 +174,63 @@ test "a place from Open-Meteo's search" {
         defer rig.jb.DisposeJSONDocument(document);
         var place = forecast.Place{};
         try testing.expect(!forecast.readOpenMeteoPlace(rig.jb, document.root, &place));
+    }
+    try rig.deinit();
+}
+
+test "the last answer kept, and read back for its place, its units and a day only" {
+    var rig = Rig{};
+    try rig.init();
+    {
+        var seen = forecast.Forecast{};
+        {
+            const document = try rig.parse(forecast_answer);
+            defer rig.jb.DisposeJSONDocument(document);
+            try testing.expect(forecast.readForecast(rig.jb, document.root, &seen));
+        }
+        var place = forecast.Place{ .latitude = 52.52, .longitude = 13.42 };
+        @memcpy(place.name[0..6], "Berlin");
+        const kept_at: i64 = 1_543_917_900;
+
+        // Written as the file holds it, and read from its text.
+        var text: [16384]u8 = undefined;
+        var length: usize = 0;
+        {
+            const made = rig.jb.CreateJSONDocument() orelse return error.NoDocument;
+            defer rig.jb.DisposeJSONDocument(made);
+            const root = last.valueOf(rig.jb, made, kept_at, &place, &seen) orelse return error.NotMade;
+            length = rig.jb.FormatJSON(root, &text, text.len, 0);
+        }
+        try testing.expect(length > 0 and length < text.len);
+        const kept = try rig.parse(text[0..length]);
+        defer rig.jb.DisposeJSONDocument(kept);
+
+        // Whole, an hour later.
+        var back = forecast.Forecast{};
+        try testing.expect(last.read(rig.jb, kept.root, kept_at + 3600, &place, false, &back));
+        try testing.expectEqualDeep(seen, back);
+
+        // Not for another place, in other units, more than a day later or
+        // by a clock set back since.
+        var elsewhere = place;
+        elsewhere.latitude += 1;
+        var untouched = forecast.Forecast{};
+        try testing.expect(!last.read(rig.jb, kept.root, kept_at + 3600, &elsewhere, false, &untouched));
+        try testing.expect(!last.read(rig.jb, kept.root, kept_at + 3600, &place, true, &untouched));
+        try testing.expect(!last.read(rig.jb, kept.root, kept_at + last.shown_for + 1, &place, false, &untouched));
+        try testing.expect(!last.read(rig.jb, kept.root, kept_at - 60, &place, false, &untouched));
+
+        // A member of the forecast missing, or of another kind: not read.
+        const now = rig.jb.FindJSONMember(rig.jb.FindJSONMember(kept.root, "forecast"), "now");
+        rig.jb.RemoveJSONValue(rig.jb.FindJSONMember(now, "humidity").?);
+        try testing.expect(!last.read(rig.jb, kept.root, kept_at, &place, false, &untouched));
+        try testing.expect(rig.jb.SetJSONMember(now.?, "humidity", rig.jb.CreateJSONBool(kept, true).?));
+        try testing.expect(!last.read(rig.jb, kept.root, kept_at, &place, false, &untouched));
+        try testing.expect(rig.jb.SetJSONMember(now.?, "humidity", rig.jb.CreateJSONInteger(kept, 300).?));
+        try testing.expect(!last.read(rig.jb, kept.root, kept_at, &place, false, &untouched));
+        try testing.expectEqualDeep(forecast.Forecast{}, untouched);
+        try testing.expect(rig.jb.SetJSONMember(now.?, "humidity", rig.jb.CreateJSONInteger(kept, 73).?));
+        try testing.expect(last.read(rig.jb, kept.root, kept_at, &place, false, &untouched));
     }
     try rig.deinit();
 }

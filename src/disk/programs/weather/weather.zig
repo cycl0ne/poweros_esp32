@@ -15,6 +15,12 @@
 //! (`places.zig`), so the window opens on the last place shown. PLACE
 //! looks a place up as the window opens.
 //!
+//! **The last answer** is kept as well, with when it came (`last.zig`):
+//! the window opens on the place's picture from it at once, the question
+//! asked again going on at the top right, rather than on an empty sky
+//! until the answer is there - for the place shown last, in the units
+//! asked for, a day at the most after it came.
+//!
 //! **The picture** (`view.zig`) is drawn anew when an answer comes, when
 //! a sizing of the window ends and when a question is asked; while the
 //! size gadget is held, the last picture is shown stretched. The weather
@@ -67,6 +73,7 @@ const Text = locale.Strings(strings);
 const forecast = @import("forecast.zig");
 const fetch = @import("fetch.zig");
 const places = @import("places.zig");
+const last = @import("last.zig");
 const view_area = @import("view.zig");
 const Fetcher = fetch.Fetcher;
 const Place = forecast.Place;
@@ -75,8 +82,8 @@ const Settings = places.Settings;
 const View = view_area.View;
 
 pub const COMMAND_NAME = "Weather";
-const VERSION = "1.0";
-const DATE = "20.11.2026";
+const VERSION = "1.1";
+const DATE = "25.11.2026";
 const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (" ++ DATE ++ ")\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 const SCREEN_TITLE = COMMAND_NAME ++ " " ++ VERSION;
@@ -218,6 +225,17 @@ const App = struct {
         if (app.have) app.ask(&app.seen_place) else if (app.settings.shown.named()) app.ask(&app.settings.shown);
     }
 
+    /// The answer kept from the last time, when it is the weather at the
+    /// place shown last in the units asked for: what the window shows
+    /// until the new one comes.
+    fn showLast(app: *App) void {
+        const jb = app.jb orelse return;
+        if (!last.load(jb, app.dl, &app.settings.shown, app.settings.fahrenheit, &app.seen)) return;
+        app.seen_place = app.settings.shown;
+        app.have = true;
+        app.showKept();
+    }
+
     /// The status set to a text of one value, and shown.
     fn say(app: *App, comptime id: Id, value: [*:0]const u8) void {
         _ = app.text.format(&app.status, id, .{value});
@@ -245,6 +263,7 @@ const App = struct {
                 app.seen = news.forecast;
                 app.seen_place = news.place;
                 app.have = true;
+                if (app.jb) |jb| _ = last.save(jb, app.dl, &news.place, &news.forecast);
                 var time: [8:0]u8 = @splat(0);
                 clockText(&time, news.forecast.now.at);
                 _ = app.text.format(&app.status, .MSG_UPDATED, .{@as([*:0]const u8, &time)});
@@ -662,13 +681,15 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         return dos.RETURN_FAIL;
     }
 
-    // What is shown first: the place asked for, the one shown last, or the
-    // words that say what to do.
+    // What is shown first: the place asked for, the one shown last - its
+    // last answer while it is asked for again - or the words that say what
+    // to do.
     if (rdargs.string(argv[arg_place])) |words| {
         var place_words: [fetch.words_max + 1:0]u8 = @splat(0);
         app.set(app.field, &.{ .{ .tag = gc.STRINGA_TextVal, .data = @intFromPtr(unquoted(words, &place_words)) }, .{} });
         app.search();
     } else if (app.settings.shown.named()) {
+        app.showLast();
         app.ask(&app.settings.shown);
     } else {
         app.sayPlain(.MSG_WELCOME);
