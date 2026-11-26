@@ -4998,6 +4998,33 @@ do, mends all three: about 8 lines, with tests/draw.zig:3262-3274 turned
 round and the host's device without `stored_both` asked the D16S8 depth
 attachment.
 
+**Done in 1.221, but for the depth attachment.** `_image.shapeFor` holds
+SAMPLED, STORAGE, COLOR_ATTACHMENT and INPUT_ATTACHMENT to the format's
+features in the image's tiling (`viewable`, as lvp_formats.c:394-435 and
+v3dv_formats.c:512-551 hold them), before it lays the image out, so the
+query says the same. A storage image of a BC, ETC2, EAC, B4G4R4A4 or
+A1R5G5B5 format is refused on either device, and of a float format on the
+V3D, which says no STORAGE_IMAGE of one since 1.220. An input attachment of
+a float or BC format is refused on the cores. The test of the compressed
+storage image is turned round, with the input attachments and a device
+that unpacks floats beside it. Three mutations each fail it: the check
+gone, and STORAGE or INPUT_ATTACHMENT left out of it. On the CM5,
+FacetBoth's 316 cases are each as they were at 1.219, and FacetProbe is
+923 of 923.
+
+Still left out. Each is marked *facet-wide* or *V3D-only*:
+- **DEPTH_STENCIL_ATTACHMENT is not held.** Held, it would refuse the
+  V3D's D16_UNORM_S8_UINT, its one format of a depth and a stencil, which
+  eighteen of FacetBoth's stencil cases draw in the tiles alone. v3dv's is
+  D24_UNORM_S8_UINT, stored in one word with both planes, which facet has
+  not got (item 35). Once that is there, the D16S8 bullet above is one
+  more bit in `shapeFor`'s held usage. *V3D-only*.
+- **The transfers are not held.** Both drivers hold TRANSFER_SRC and
+  TRANSFER_DST to their features (lvp_formats.c:418-428). Vulkan 1.0 has
+  no feature for either, which VK_KHR_maintenance1 brings, and held here
+  they would refuse every format the cores blit out of but never read
+  back (tests/draw.zig's BLIT_SRC test). *Facet-wide*.
+
 > instance/getphysicaldeviceimageformatproperties.zig; image/_image.zig
 > `laidOut`; the spec's VkImageFormatProperties, the query's body and
 > Required Format Support; 08.11.2026.

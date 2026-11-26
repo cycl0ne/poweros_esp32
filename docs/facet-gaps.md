@@ -323,9 +323,10 @@ is left out:
   writes 16 bits of a channel through `setParts` and reads its own 16
   bits back, and since 1.70 the whole numbers (`whole_textures`), written
   by `setWholes` and read by `wholesAt`. **A compressed image asked for
-  as a storage image is still unpacked to 8888**: nothing writes one texel of a
-  BC block, which is the format and not the library, and such an image
-  wants SAMPLED beside it.
+  as a storage image is refused** since 1.221, its format's features
+  holding no STORAGE_IMAGE: nothing writes one texel of a BC block, which
+  is the format and not the library. Until then one with SAMPLED beside it
+  was made, unpacked to 8888 (docs/facet-vulkan10.md item 94).
 - A function names the level and the layer it writes since 1.55
   (`texture.Texture.setColor` and `colorAt` take both, level 0 of layer 0
   being the view's first of each), and a level, a layer or a place the

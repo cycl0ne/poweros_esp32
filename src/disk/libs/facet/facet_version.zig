@@ -7289,4 +7289,27 @@ pub const LIBRARY_VERSION = 1;
 ///
 /// One host test grew: a device that unpacks floats says no
 /// STORAGE_IMAGE of the five, and one that keeps them says it of each.
-pub const LIBRARY_REVISION = 220;
+/// 221: **CreateImage and the format query hold an image's usage to its
+/// format's features (docs/facet-vulkan10.md item 94).** SAMPLED wants
+/// SAMPLED_IMAGE, STORAGE wants STORAGE_IMAGE, COLOR_ATTACHMENT its
+/// feature, and INPUT_ATTACHMENT that or DEPTH_STENCIL_ATTACHMENT, in the
+/// image's tiling, as both Mesa drivers hold them
+/// (`lvp_get_image_format_properties`, lvp_formats.c:394-435;
+/// `get_image_format_properties`, v3dv_formats.c:512-551): `_image.shapeFor`
+/// asks `viewable` of the image's own format before it lays the image out.
+/// A storage image of a BC, ETC2, EAC, B4G4R4A4 or A1R5G5B5 format, which
+/// was made unpacked into 8888 where SAMPLED came beside STORAGE, is
+/// refused on either device, and of a float format on the V3D, where 1.220
+/// took STORAGE_IMAGE off them. An input attachment of a float or BC
+/// format, which the cores kept in rows or in its blocks, is refused.
+/// DEPTH_STENCIL_ATTACHMENT is not held yet: it would refuse the V3D's
+/// D16_UNORM_S8_UINT, its one format of a depth and a stencil, which it
+/// draws in the tiles alone, until it has v3dv's D24_UNORM_S8_UINT (item
+/// 35). Nor are the transfers, which Vulkan 1.0 has no feature for.
+///
+/// One host test is turned round: the compressed storage image is refused
+/// with SAMPLED beside it, and with it an input attachment of each kind
+/// and a float storage image on a device that unpacks floats, the query
+/// saying the same. Three mutations each fail it. On the CM5, FacetBoth's
+/// 316 cases are each as they were at 1.219 and FacetProbe is 923 of 923.
+pub const LIBRARY_REVISION = 221;
