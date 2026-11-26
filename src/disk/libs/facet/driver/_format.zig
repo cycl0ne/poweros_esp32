@@ -390,19 +390,25 @@ const depth_alone = _instance.Capabilities{
     .stored_both = false,
 };
 
-test "a depth of 24 bits is an attachment only where the device draws one (since 1.223)" {
+test "a depth of 24 bits is an attachment only where the device draws one (since 1.223), and D16_UNORM_S8_UINT only where it keeps both planes" {
     const attachment = facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT;
+    // The V3D since 1.224: a depth of 24 bits in its tiles, stored a
+    // word a pixel, and still no D16_UNORM_S8_UINT kept.
+    var drawing = depth_alone;
+    drawing.depth24 = true;
     for ([_]facet.Format{ .x8_d24_unorm_pack32, .d24_unorm_s8_uint }) |format| {
-        // The cores keep one in their tiles at 32 bits a pixel.
+        // The cores keep one in their tiles at 32 bits a pixel, and the
+        // V3D in its own.
         try testing.expectEqual(attachment, describe(&keeping, format).optimal_tiling_features & attachment);
-        // The V3D's frames are set up for 16 bits of depth: neither, as
-        // it has had neither since 1.222, while the transfers stand.
+        try testing.expectEqual(attachment, describe(&drawing, format).optimal_tiling_features & attachment);
+        // A device that draws none: neither, while the transfers stand.
         for ([_]*const _instance.Capabilities{ &unpacking, &depth_alone }) |can| {
             const features = describe(can, format).optimal_tiling_features;
             try testing.expectEqual(@as(u32, 0), features & attachment);
             try testing.expect(features & facet.FORMAT_FEATURE_TRANSFER_DST != 0);
         }
     }
+    try testing.expectEqual(@as(u32, 0), describe(&drawing, .d16_unorm_s8_uint).optimal_tiling_features & attachment);
 }
 
 test "a depth format says it is sampled only where the device samples one" {

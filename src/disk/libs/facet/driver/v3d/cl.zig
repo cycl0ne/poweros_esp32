@@ -56,12 +56,40 @@ pub const OUTPUT_BGR565: u64 = 7;
 /// the tiles' own (since 1.47).
 pub const OUTPUT_D16: u64 = 42;
 pub const OUTPUT_S8: u64 = 44;
+/// A depth of 24 bits and a stencil beside it, one word a pixel, the
+/// stencil in the low byte: how v3dv stores and loads X8_D24_UNORM_PACK32
+/// and D24_UNORM_S8_UINT, a store of either plane alone or of both
+/// (v3dvx_formats.c:206, 209; v3d_packet.xml's "d24s8"; since 1.224).
+pub const OUTPUT_D24S8: u64 = 43;
 pub const STORE_NONE: u64 = 8;
 pub const STORE_RENDER_TARGET_0: u64 = 0;
 /// The tiles' depth and their stencil, which are stored and loaded as the
 /// render target is.
 pub const STORE_Z: u64 = 9;
 pub const STORE_STENCIL: u64 = 10;
+/// Both at once, of a format that holds both: v3dv's ZSTENCIL, which it
+/// loads and stores where both planes are (`v3dv_zs_buffer`,
+/// v3dvx_cmd_buffer.c:213-223; since 1.224).
+pub const STORE_ZSTENCIL: u64 = 11;
+
+/// The tiles' buffer of these planes: Z, STENCIL, both, or NONE, as
+/// v3dv picks one for a load and one for a store (`v3dv_zs_buffer`,
+/// v3dvx_cmd_buffer.c:213-223; since 1.224).
+pub fn planes(depth: bool, stencil: bool) u64 {
+    if (depth and stencil) return STORE_ZSTENCIL;
+    if (depth) return STORE_Z;
+    if (stencil) return STORE_STENCIL;
+    return STORE_NONE;
+}
+
+/// Whether a buffer of `planes` holds the depth, and the stencil.
+pub fn holdsDepth(buffer: u64) bool {
+    return buffer == STORE_Z or buffer == STORE_ZSTENCIL;
+}
+
+pub fn holdsStencil(buffer: u64) bool {
+    return buffer == STORE_STENCIL or buffer == STORE_ZSTENCIL;
+}
 pub const LIST_TRIANGLES: u8 = 2;
 /// The first block of each tile's list and the next ones, as 128 and 64
 /// bytes: what the binner is told and the renderer too.
@@ -88,7 +116,11 @@ pub fn log2Tile(pixels: u32) u32 {
 }
 
 /// The common part: first of the rendering mode's packets. A depth buffer
-/// of 16 bits, in the tiles alone, or none. The coarse early test stays off:
+/// of 16 bits, or since 1.224 of 24 where `depth24` says, or none: v3dv
+/// sets the tiles' depth from its attachment's format
+/// (`get_internal_depth_type`, v3dvx_formats.c:555-570, at
+/// v3dvx_cmd_buffer.c:997; v3d_packet.xml's "Internal Depth Type",
+/// depth_24 1 and depth_16 2). The coarse early test stays off:
 /// each pixel is still tested before its program runs. That is also what
 /// GFXH-1918 asks of a frame that loads a depth of 16 bits at four
 /// samples, whose early test may read wrong depths (v3dvx_cmd_buffer.c:
@@ -97,14 +129,14 @@ pub fn log2Tile(pixels: u32) u32 {
 /// tiling (v3dvx_cmd_buffer.c:977): the tiles then hold four samples a
 /// pixel, which is also why they are smaller (`v3d_choose_tile_size`,
 /// v3d_util.c:170-171).
-pub fn renderingCommon(list: *List, width: u32, height: u32, tile: Tile, depth: bool, four: bool) void {
+pub fn renderingCommon(list: *List, width: u32, height: u32, tile: Tile, depth: bool, depth24: bool, four: bool) void {
     const log2_width = @as(u64, log2Tile(tile.width));
     const log2_height = @as(u64, log2Tile(tile.height));
     const multisample: u64 = @as(u64, @intFromBool(four)) << 42;
     const no_depth_buffer: u64 = @as(u64, @intFromBool(!depth)) << 44;
-    const depth_16: u64 = 2 << 47;
+    const depth_type: u64 = @as(u64, if (depth24) 1 else 2) << 47;
     list.byte(TILE_RENDERING_MODE_CFG);
-    list.double(@as(u64, width) << 8 | @as(u64, height) << 24 | multisample | no_depth_buffer | 1 << 46 | depth_16 |
+    list.double(@as(u64, width) << 8 | @as(u64, height) << 24 | multisample | no_depth_buffer | 1 << 46 | depth_type |
         log2_width << 52 | log2_height << 55);
 }
 
@@ -694,7 +726,7 @@ test "the packets have Mesa's lengths and its fields" {
     var memory: [64]u8 = undefined;
     var list = List{ .at = &memory, .address = 0x1000 };
 
-    renderingCommon(&list, 1280, 720, .{ .width = 64, .height = 64 }, false, false);
+    renderingCommon(&list, 1280, 720, .{ .width = 64, .height = 64 }, false, false, false);
     try std.testing.expectEqual(@as(u32, 9), list.used);
     // Image size at 8 and 24, early-Z off at 46, log2 of the tile at 52, 55.
     try std.testing.expectEqual(@as(u8, 121), memory[0]);
@@ -704,6 +736,19 @@ test "the packets have Mesa's lengths and its fields" {
     try std.testing.expectEqual(@as(u64, 1), common >> 46 & 1);
     try std.testing.expectEqual(@as(u64, 3), common >> 52 & 7);
     try std.testing.expectEqual(@as(u64, 3), common >> 55 & 7);
+    // The tiles' depth of 16 bits at 47, and of 24 where asked (since 1.224).
+    try std.testing.expectEqual(@as(u64, 2), common >> 47 & 0xF);
+    list.used = 0;
+    renderingCommon(&list, 1280, 720, .{ .width = 64, .height = 64 }, true, true, false);
+    const deep = std.mem.readInt(u64, memory[1..9], .little);
+    try std.testing.expectEqual(@as(u64, 1), deep >> 47 & 0xF);
+    try std.testing.expectEqual(@as(u64, 0), deep >> 44 & 1);
+    try std.testing.expectEqual(common & ~(@as(u64, 0xF) << 47 | @as(u64, 1) << 44), deep & ~(@as(u64, 0xF) << 47));
+    // Which buffer holds which plane.
+    try std.testing.expectEqual(STORE_ZSTENCIL, planes(true, true));
+    try std.testing.expectEqual(STORE_Z, planes(true, false));
+    try std.testing.expectEqual(STORE_STENCIL, planes(false, true));
+    try std.testing.expectEqual(STORE_NONE, planes(false, false));
 
     list.used = 0;
     store(&list, STORE_RENDER_TARGET_0, OUTPUT_RGBA8, true, 0x12345000, 5120, MEMORY_RASTER, .sample_0);
@@ -738,7 +783,7 @@ test "the 4x fields lie where v3d_packet.xml has them, and one sample's packets 
 
     // COMMON: the multisample bit at 42, and the tile's log2 width at 52
     // and height at 55 apart, 32 x 16 being one of v3d_choose_tile_size's.
-    renderingCommon(&list, 800, 600, .{ .width = 32, .height = 16 }, true, true);
+    renderingCommon(&list, 800, 600, .{ .width = 32, .height = 16 }, true, false, true);
     const four = std.mem.readInt(u64, memory[1..9], .little);
     try std.testing.expectEqual(@as(u64, 1), four >> 42 & 1);
     try std.testing.expectEqual(@as(u64, 0), four >> 44 & 1);
@@ -747,7 +792,7 @@ test "the 4x fields lie where v3d_packet.xml has them, and one sample's packets 
     try std.testing.expectEqual(@as(u64, 800), four >> 8 & 0xFFFF);
     try std.testing.expectEqual(@as(u64, 600), four >> 24 & 0xFFFF);
     list.used = 0;
-    renderingCommon(&list, 800, 600, .{ .width = 32, .height = 16 }, true, false);
+    renderingCommon(&list, 800, 600, .{ .width = 32, .height = 16 }, true, false, false);
     const one = std.mem.readInt(u64, memory[1..9], .little);
     try std.testing.expectEqual(four & ~(@as(u64, 1) << 42), one);
 

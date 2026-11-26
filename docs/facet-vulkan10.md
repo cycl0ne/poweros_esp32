@@ -1401,12 +1401,39 @@ two formats (four samples a pixel with a cut-out, the depth pre-pass,
 the depth input attachment). FacetProbe 1.51 draws an X8_D24 on the
 cores, reads it back and samples it at all 24 bits.
 
+**Step 3, in 1.224: the V3D draws them.** Its tiles keep a depth of 24
+bits where the attachment's format has one (`cl.renderingCommon`'s
+"Internal Depth Type", depth_24 1 against depth_16 2), as v3dv sets it
+from its view (`get_internal_depth_type`, v3dvx_formats.c:555-570, at
+v3dvx_cmd_buffer.c:997). Either format is stored and loaded as D24S8
+(`cl.OUTPUT_D24S8`, 43; v3dvx_formats.c:206, 209), through the buffer of
+the planes each op keeps: Z, STENCIL, or both at once, ZSTENCIL (11),
+the load's planes and the store's picked apart as v3dv picks them
+(`v3dv_zs_buffer`, v3dvx_cmd_buffer.c:213-223, 331-334, 594-599;
+`frames.Kept.loaded`). A pass that loads the depth of a D24S8, clears
+its stencil and stores both loads Z and stores ZSTENCIL; over a render
+area a tile sticks out of, each plane stored is loaded and the ones the
+op did not load are drawn over inside, plane by plane. The depth bias
+needs nothing: v3dv scales its units by 256 for a D16 on V3D 4.2 alone
+(v3dvx_cmd_buffer.c:1529-1532). `stored_both` is D16_UNORM_S8_UINT's
+alone now, which the V3D still keeps neither plane of; CreateRenderPass
+holds a D24S8 to its feature. One host test is new (the frame's loads
+and stores and its depth type), and three grew (the packet's fields,
+the format answer of a device with `depth24` and no `stored_both`, and
+such a device keeping a D24S8). FacetProbe 1.52 draws an
+X8_D24 on both devices, stores a D24S8's two planes in one store, loads
+its depth alone with the stencil cleared and stores both again, and
+stores and loads a D24S8's stencil alone; on the CM5 (package f230) it is
+997 of 997, and FacetBoth's 316 cases are each as at 1.223.
+
 Still left out. Each is marked *facet-wide* or *V3D-only*:
-- **The V3D draws neither.** Its frames are set up for `depth_16`
-  (`cl.renderingCommon`), and it stores and loads OUTPUT_D16 and
-  OUTPUT_S8 alone; v3dv uses `depth_24` (v3dvx_formats.c:560-575) and the
-  d24s8 format through Z, STENCIL or ZSTENCIL
-  (v3dvx_cmd_buffer.c:150-222, :377-394). Step 3. *V3D-only*.
+- **The V3D samples no D24_UNORM_S8_UINT**, nor reads one as an input
+  attachment: it samples no stencil (`sampled_stencil`), so CreateImage
+  refuses SAMPLED and INPUT_ATTACHMENT on a format that holds one, and
+  the format says no SAMPLED_IMAGE. v3dv samples its depth aspect as
+  DEPTH24_X8 (v3dvx_formats.c:209) and its stencil aspect as the word
+  read as RGBA8UI (v3dv_image.c:781-790). X8_D24_UNORM_PACK32 is sampled
+  on both. *V3D-only*.
 - **D32_SFLOAT is not here**, which Vulkan has sampled and blitted
   unconditionally, and neither is D32_SFLOAT_S8_UINT; lavapipe has both,
   v3dv D32_SFLOAT alone (v3dvx_formats.c:205). *Facet-wide*.

@@ -194,9 +194,10 @@ pub const Capabilities = extern struct {
     /// (FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT), tested, stored and loaded
     /// at all 24 bits, which Vulkan has one of each pair hold
     /// (docs/facet-vulkan10.md item 35). The cores have it since 1.223,
-    /// keeping it in their tiles at 32 bits a pixel; the V3D has not, its
-    /// frames being set up for 16 bits of depth. False where neither is
-    /// an attachment and CreateRenderPass refuses one.
+    /// keeping it in their tiles at 32 bits a pixel; the V3D since 1.224,
+    /// its tiles' depth of 24 bits stored a word a pixel with the stencil
+    /// in the low byte, either plane or both. False where neither is an
+    /// attachment and CreateRenderPass refuses one.
     depth24: bool = false,
     /// `input_attachment` descriptors and `SubpassDescription`'s
     /// `input_attachments`: an attachment a later subpass reads pixel by
@@ -218,9 +219,10 @@ pub const Capabilities = extern struct {
     /// load and store ops, a plane of the image's rows beside the depth's
     /// (`s8_uint`, `d16_unorm_s8_uint`), so a stencil outlives its pass
     /// and can be read back, written and cleared. The cores have it since
-    /// 1.38, the V3D since 1.47 for a stencil of its own (`s8_uint`); a
-    /// pass that keeps both planes of `d16_unorm_s8_uint` asks for
-    /// `stored_both` as well, which the V3D has not.
+    /// 1.38, the V3D since 1.47 for a stencil of its own (`s8_uint`), and
+    /// since 1.224 for D24_UNORM_S8_UINT's (`depth24`); a pass that keeps
+    /// a plane of `d16_unorm_s8_uint` asks for `stored_both` as well,
+    /// which the V3D has not.
     stored_stencil: bool = false,
     /// A depth attachment's image may be sampled where it lies: an image
     /// of `d16_unorm` with IMAGE_USAGE_SAMPLED, kept in rows as a depth
@@ -352,13 +354,15 @@ pub const Capabilities = extern struct {
     /// block where it lies, so this is true on every device from 1.46 and
     /// says only that the formats are taken.
     etc2_textures: bool = false,
-    /// Whether a format that holds a depth **and** a stencil may keep
-    /// either of them in its image's rows (`stored_depth`,
-    /// `stored_stencil`): the cores write each pixel's planes where they
-    /// lie in its four bytes, while a device that stores the whole of a
-    /// tile buffer writes one plane's pixels one after another and so
-    /// keeps only a format of that plane alone - `d16_unorm` or
-    /// `s8_uint`. False on the V3D, where GetPhysicalDeviceFormatProperties
+    /// Whether D16_UNORM_S8_UINT, a format that holds a depth **and** a
+    /// stencil, may keep either of them in its image's rows
+    /// (`stored_depth`, `stored_stencil`): the cores write each pixel's
+    /// planes where they lie in its four bytes, while a device that stores
+    /// the whole of a tile buffer writes one plane's pixels one after
+    /// another and so keeps only a format of that plane alone -
+    /// `d16_unorm` or `s8_uint`. D24_UNORM_S8_UINT asks for `depth24`
+    /// instead since 1.224, the V3D storing its word whole. False on the
+    /// V3D, where GetPhysicalDeviceFormatProperties
     /// gives `d16_unorm_s8_uint` no DEPTH_STENCIL_ATTACHMENT and a load or
     /// a store op of it is `error_validation_failed` (CreateRenderPass;
     /// `error_feature_not_present` until 1.135). (Since 1.47.)

@@ -68,16 +68,26 @@ pub const Area = struct {
     bottom: u32,
 };
 
-/// A plane of the tiles kept in an image's rows: the depth or the stencil,
-/// loaded as a tile starts and stored as it ends
-/// (`Capabilities.stored_depth`, `stored_stencil`, since 1.47).
-/// The hardware stores a plane as its own pixels one after another, so the
-/// image's format holds that plane alone - `d16_unorm` or `s8_uint` - and a
-/// format that holds both is refused on this device.
+/// The planes of the tiles kept in an image's rows: the depth, the
+/// stencil, or since 1.224 both of D24_UNORM_S8_UINT, loaded as a tile
+/// starts and stored as it ends (`Capabilities.stored_depth`,
+/// `stored_stencil`, since 1.47). The hardware stores a plane of 16 bits
+/// or of 8 as its own pixels one after another, so such an image's format
+/// holds that plane alone - `d16_unorm` or `s8_uint` - and
+/// `d16_unorm_s8_uint` keeps neither here; a depth of 24 bits lies in a
+/// word with its stencil, either stored alone or both together, as v3dv
+/// stores a D24S8 (v3dvx_cmd_buffer.c:213-223, 557-599).
 pub const Kept = struct {
-    /// Which buffer of the tiles: `cl.STORE_Z` or `cl.STORE_STENCIL`.
+    /// Which buffer of the tiles is stored, or where nothing is, loaded:
+    /// `cl.STORE_Z`, `cl.STORE_STENCIL`, or both, `cl.STORE_ZSTENCIL`.
     buffer: u64,
-    /// How the image holds it: `cl.OUTPUT_D16` or `cl.OUTPUT_S8`.
+    /// The buffer loaded where it is not `buffer`: a pass that loads one
+    /// plane of a D24S8 and stores the other or both, v3dv picking the
+    /// load's planes and the store's apart (v3dvx_cmd_buffer.c:331-334,
+    /// 594-599; since 1.224). Null for `buffer`.
+    loaded: ?u64 = null,
+    /// How the image holds it: `cl.OUTPUT_D16`, `cl.OUTPUT_S8`, or
+    /// `cl.OUTPUT_D24S8` for either plane of a depth of 24 bits.
     format: u64,
     image: u32,
     /// Its rows' bytes, or for a UIF level its height in UIF blocks.
@@ -120,6 +130,9 @@ pub const Frame = struct {
     clear_inside: bool = false,
     /// There is a depth buffer, cleared to this; it stays in the tiles.
     depth: bool = false,
+    /// Of 24 bits, not 16: the attachment's format is X8_D24_UNORM_PACK32
+    /// or D24_UNORM_S8_UINT (`cl.renderingCommon`, since 1.224).
+    depth24: bool = false,
     clear_depth: f32 = 1.0,
     /// And a stencil, the same.
     stencil: bool = false,
@@ -338,7 +351,7 @@ pub fn writeTileList(list: *List, frame: *const Frame, load: bool) void {
     if (load and frame.color) cl.load(list, cl.STORE_RENDER_TARGET_0, frame.format, frame.swap_rb, frame.image, frame.stride, frame.memory, samples);
     // The depth or the stencil read in after the colour, as Mesa orders
     // them, whether or not this list's tiles read the colour.
-    if (frame.kept) |kept| if (kept.load) cl.load(list, kept.buffer, kept.format, false, kept.image, kept.stride, kept.memory, samples);
+    if (frame.kept) |kept| if (kept.load) cl.load(list, kept.loaded orelse kept.buffer, kept.format, false, kept.image, kept.stride, kept.memory, samples);
     list.byte(cl.END_OF_LOADS);
     // The binner starts each tile's list assuming triangles.
     cl.primListFormat(list, cl.LIST_TRIANGLES);
@@ -376,7 +389,7 @@ pub fn writeTileList(list: *List, frame: *const Frame, load: bool) void {
 pub fn writeRender(list: *List, frame: *const Frame, tiles: TileList, inside: ?TileList) void {
     const tiles_x = frame.tilesX();
     const tiles_y = frame.tilesY();
-    cl.renderingCommon(list, frame.width, frame.height, frame.tile, frame.depth or frame.stencil, frame.four);
+    cl.renderingCommon(list, frame.width, frame.height, frame.tile, frame.depth or frame.stencil, frame.depth24, frame.four);
     if (frame.color) cl.renderTarget0(list, frame.tile.width, frame.clear) else cl.unusedRenderTarget(list);
     cl.zsClear(list, frame.clear_depth, frame.clear_stencil);
     cl.tileListInitialBlock(list);
@@ -664,6 +677,56 @@ test "a frame of no colour configures the unused render target, and its tiles mo
     writeRender(&list, &frame, .{ .start = 0x2000, .end = 0x2020 }, null);
     try std.testing.expect(std.mem.readInt(u64, memory[10..18], .little) != 2);
     try std.testing.expectEqual(@as(u64, 2), std.mem.readInt(u64, memory[10..18], .little) & 7);
+}
+
+test "a frame of D24_UNORM_S8_UINT loads the plane its ops load and stores both in one store, as D24S8, its tiles' depth of 24 bits (since 1.224)" {
+    var memory: [512]u8 = undefined;
+    var list = List{ .at = &memory, .address = 0x1000 };
+    var frame = Frame{
+        .width = 64,
+        .height = 64,
+        .image = 0,
+        .stride = 0,
+        .swap_rb = false,
+        .clear = 0,
+        .tile_lists = 0x20_0000,
+        .binned = false,
+        .color = false,
+        .depth = true,
+        .depth24 = true,
+        .stencil = true,
+        .tile = chooseTile(0, false),
+        .kept = .{ .buffer = cl.STORE_ZSTENCIL, .loaded = cl.STORE_Z, .format = cl.OUTPUT_D24S8, .image = 0x30_0000, .stride = 256, .load = true, .store = true },
+    };
+    // The depth alone loaded, then both stored, each as D24S8, as v3dv
+    // picks the load's buffer and the store's apart (v3dvx_cmd_buffer.c:
+    // 331-334, 594-599).
+    writeTileList(&list, &frame, true);
+    try std.testing.expectEqual(@as(u8, 30), memory[1]);
+    const load = std.mem.readInt(u64, memory[2..10], .little);
+    try std.testing.expectEqual(cl.STORE_Z, load & 0xF);
+    try std.testing.expectEqual(cl.OUTPUT_D24S8, load >> 12 & 0x3F);
+    try std.testing.expectEqual(cl.END_OF_LOADS, memory[14]);
+    try std.testing.expectEqual(@as(u8, 29), memory[17]);
+    const store = std.mem.readInt(u64, memory[18..26], .little);
+    try std.testing.expectEqual(cl.STORE_ZSTENCIL, store & 0xF);
+    try std.testing.expectEqual(cl.OUTPUT_D24S8, store >> 12 & 0x3F);
+    try std.testing.expectEqual(@as(u32, 0x30_0000), std.mem.readInt(u32, memory[26..30], .little));
+    // With no plane of its own to load, it loads what it stores.
+    frame.kept.?.loaded = null;
+    list.used = 0;
+    writeTileList(&list, &frame, true);
+    try std.testing.expectEqual(cl.STORE_ZSTENCIL, std.mem.readInt(u64, memory[2..10], .little) & 0xF);
+    // The rendering mode: the tiles' depth of 24 bits, and of 16 for a
+    // frame of D16.
+    list.used = 0;
+    writeRender(&list, &frame, .{ .start = 0x2000, .end = 0x2020 }, null);
+    try std.testing.expectEqual(cl.TILE_RENDERING_MODE_CFG, memory[0]);
+    try std.testing.expectEqual(@as(u64, 1), std.mem.readInt(u64, memory[1..9], .little) >> 47 & 0xF);
+    frame.depth24 = false;
+    list.used = 0;
+    writeRender(&list, &frame, .{ .start = 0x2000, .end = 0x2020 }, null);
+    try std.testing.expectEqual(@as(u64, 2), std.mem.readInt(u64, memory[1..9], .little) >> 47 & 0xF);
 }
 
 test "a frame of four that resolves stores the average into the resolve's rows, or a sampled one's level in its tiling, before the colour, and only over supertiles inside its area" {
