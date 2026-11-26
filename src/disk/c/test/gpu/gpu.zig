@@ -34,8 +34,11 @@
 //! display clock, the pipes' clock and each pipe's share, the state that
 //! serves it and whether the memory's clock may change in the active
 //! picture - and what the manager answered to each of those four; the
-//! fabric's clock now. The messages change nothing, but they are
-//! written to the device: the watchdog is armed for them.
+//! fabric's clock now; the hub's watermarks the board last wrote, each of
+//! the hub's four sets as it holds them, whether the hub lets the memory
+//! into self-refresh, and which pipes' fetchers read with their time to
+//! urgency. The messages change nothing, but they are written to the
+//! device: the watchdog is armed for them.
 //!
 //! DMCUB prints the display controller - the display engine's own
 //! processor - as its registers read (RTGCTRL_AMD_CONTROLLER): whether
@@ -110,7 +113,9 @@
 //! the display's clocks (RTGCTRL_AMD_CLOCKS): the display clock as it
 //! runs, what the board asked for it, the pipes' clock, each pipe's share
 //! and the display controller's, what the power manager answered to each,
-//! and the state that serves them; then it is held HOLD seconds (2 unless given) for
+//! and the state that serves them; and the hub's first watermark set as it
+//! holds it, with whether it lets the memory into self-refresh; then it is
+//! held HOLD seconds (2 unless given) for
 //! a look at the monitor. Ctrl-C stops after the mode shown. The watchdog
 //! is armed for it and fed after each mode.
 //!
@@ -283,7 +288,7 @@ const RtgBase = sdk.interface.rtg.RtgBase;
 const TagItem = sdk.utility.TagItem;
 
 pub const COMMAND_NAME = "Gpu";
-const VERSION_STRING = "\x00$VER: Gpu 1.20 (26.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Gpu 1.21 (26.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,SLEEP/K/N,RANGE/S,POINTER/S,MIRROR/S,OVERLAY/S,DIRECT/S,BANDS/S,VIDEO/S,WATCHDOG/K/N";
@@ -563,7 +568,31 @@ fn clocks(sys: *ExecBase, dl: *DosBase, millis: u32) i32 {
     if (found.fabric_now_mhz != 0) {
         _ = Printf(dl, "Fabric now: %u MHz\n", .{found.fabric_now_mhz});
     } else _ = Printf(dl, "Fabric now: not answered\n", .{});
+    printHub(dl, &found);
     return dos.RETURN_OK;
+}
+
+/// The hub's watermarks: what the board last wrote, in nanoseconds and
+/// thousandths; each of the hub's sets as it holds them, in its reference
+/// cycles; whether it lets the memory into self-refresh, and which pipes'
+/// fetchers read with their time to urgency.
+fn printHub(dl: *DosBase, found: *const rtg.tags.RtgAmdClocks) void {
+    const marks = &found.asked_marks;
+    _ = Printf(dl, "Hub, written: urgency %u ns, a trip to the memory %u ns, self-refresh's entry and exit %u ns, the deeper state's %u ns,\n", .{ marks[0], marks[1], marks[2], marks[3] });
+    _ = Printf(dl, "  self-refresh's exit %u ns, the deeper state's %u ns, the memory clock's change %u ns, the share of the return %u, with a flip %u (thousandths)\n", .{ marks[4], marks[5], marks[6], marks[7], marks[8] });
+    for (found.hub_marks, 0..) |set, index| {
+        _ = Printf(dl, "Hub set %c, as it holds it:", .{@as(u32, 'A') + @as(u32, @intCast(index))});
+        for (set) |mark| _ = Printf(dl, " %u", .{mark});
+        _ = Printf(dl, "\n", .{});
+    }
+    _ = Printf(dl, "Self-refresh %s; time to urgency on for pipes", .{@as([*:0]const u8, if (found.self_refresh != 0) "allowed" else "forbidden")});
+    var any = false;
+    for (0..rtg.tags.RTG_AMD_PIPES) |pipe_index| {
+        if (found.timed_pipes >> @intCast(pipe_index) & 1 == 0) continue;
+        _ = Printf(dl, " %u", .{@as(u32, @intCast(pipe_index))});
+        any = true;
+    }
+    _ = Printf(dl, "%s\n", .{@as([*:0]const u8, if (any) "" else " none")});
 }
 
 /// The display's board, from rtg.library opened as `base`: null with why
@@ -1035,7 +1064,9 @@ fn everyMode(sys: *ExecBase, dl: *DosBase, millis: u32, seconds: u32) i32 {
 /// The display's clocks in a line of their own: the display clock as it
 /// runs, what the board asked for it, for the pipes' clock and each pipe's
 /// share and for the display controller's, and what the power manager
-/// answered to each; the state that serves them.
+/// answered to each; the state that serves them. Then the hub's first
+/// watermark set as it holds it, and whether it lets the memory into
+/// self-refresh.
 fn clocksLine(dl: *DosBase, rb: *RtgBase, board: *rtg.RtgBoard) void {
     var found: rtg.tags.RtgAmdClocks = .{};
     if (rb.BoardControl(board, rtg.tags.RTGCTRL_AMD_CLOCKS, @bitCast(@intFromPtr(&found))) != rtg.errors.RTGERR_OK) {
@@ -1051,6 +1082,14 @@ fn clocksLine(dl: *DosBase, rb: *RtgBase, board: *rtg.RtgBoard) void {
     });
     for (found.asked_pipe_khz) |khz| _ = Printf(dl, " %u", .{khz});
     _ = Printf(dl, " kHz; controller at least %u kHz (%u MHz), state %u\n", .{ found.asked_dcf_khz, found.answered_dcf_mhz, found.level });
+    const set = &found.hub_marks[0];
+    _ = Printf(dl, "    hub set A: urgency %u, self-refresh's entry and exit %u, exit %u, the memory clock's change %u reference cycles; self-refresh %s\n", .{
+        set[0],
+        set[2],
+        set[4],
+        set[6],
+        @as([*:0]const u8, if (found.self_refresh != 0) "allowed" else "forbidden"),
+    });
 }
 
 /// The most modes MODES goes through.

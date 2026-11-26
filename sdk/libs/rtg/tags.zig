@@ -168,8 +168,9 @@ pub const RTGCTRL_DCS_FORGET_ROWS: u32 = RTGCTRL_DRIVER + 17;
 /// not answer, RTGERR_IO where the manager refuses.
 pub const RTGCTRL_AMD_FIRMWARE: u32 = RTGCTRL_DRIVER + 32;
 /// `value` an `*RtgAmdClocks`, filled in: the display's clocks, what the
-/// power manager offers, what runs now, and what the board asked of the
-/// manager for what it shows and the manager answered. RTGERR_OK, or a negative
+/// power manager offers, what runs now, what the board asked of the
+/// manager for what it shows and the manager answered, and the hub's
+/// watermark sets. RTGERR_OK, or a negative
 /// RTGERR_* where the mailbox does not answer or no memory could be had
 /// for the manager's table, RTGERR_IO where the manager refused a message.
 pub const RTGCTRL_AMD_CLOCKS: u32 = RTGCTRL_DRIVER + 33;
@@ -499,6 +500,9 @@ pub const RTG_AMD_LEVELS = 8;
 pub const RTG_AMD_FABRIC_STATES = 4;
 /// The pipes RtgAmdClocks has room for.
 pub const RTG_AMD_PIPES = 4;
+/// The hub's watermark sets, and the watermarks in each, in RtgAmdClocks.
+pub const RTG_AMD_SETS = 4;
+pub const RTG_AMD_MARKS = 9;
 
 /// What RTGCTRL_AMD_CLOCKS fills in. The levels are the power manager's
 /// table of them, in MHz, each list's first `*_count` in use: the display
@@ -528,6 +532,18 @@ pub const RTG_AMD_PIPES = 4;
 /// display clock's divider reads back the clock asked, rounded up to the
 /// next divider. The fabric's clock now, in MHz, as the manager answers
 /// it, 0 where it did not.
+///
+/// The hub's watermarks, each set in the order of its registers: urgency,
+/// a trip to the memory, self-refresh's entry and exit, the engine's
+/// deeper state's (Z8), self-refresh's exit, the deeper state's, the
+/// memory clock's change, the share of the return the planes read without
+/// their bursts nominally and with an immediate flip. `asked_marks` is
+/// what the board last wrote into every set, the times in nanoseconds and
+/// the shares in thousandths, all 0 before it wrote any; `hub_marks` the
+/// four sets as the hub holds them, the times in its reference cycles (24
+/// a microsecond). `self_refresh` is 1 where the hub lets the memory into
+/// self-refresh, 0 where it is forced out of it; `timed_pipes` a bit for
+/// each pipe whose fetcher reads with its time to urgency.
 pub const RtgAmdClocks = extern struct {
     firmware: u32 = 0,
     message: u32 = 0,
@@ -560,6 +576,10 @@ pub const RtgAmdClocks = extern struct {
     answered_disp_mhz: u32 = 0,
     answered_dpp_mhz: u32 = 0,
     fabric_now_mhz: u32 = 0,
+    asked_marks: [RTG_AMD_MARKS]u32 = @splat(0),
+    hub_marks: [RTG_AMD_SETS][RTG_AMD_MARKS]u32 = @splat(@splat(0)),
+    self_refresh: u32 = 0,
+    timed_pipes: u32 = 0,
 };
 
 // RTGA_DriverBase + 64, 64 wide, is not used.

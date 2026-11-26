@@ -810,7 +810,10 @@ display clock running now, as the engine reads its divider back - the
 pipes' clock is not read back - and each pipe's divider of the pipes'
 clock; what the board asked of the manager for what it shows (see the
 board below) and what the manager answered to each - at least what was
-asked, though not the clock that runs; the fabric's clock now. Both send messages to the device, which
+asked, though not the clock that runs; the fabric's clock now; the
+hub's watermarks the board last wrote and each of the hub's four sets as
+it holds them, whether the hub lets the memory into self-refresh, and
+which pipes' fetchers read with their time to urgency. Both send messages to the device, which
 `C:test/Gpu CLOCKS` does with the watchdog armed. `RTGCTRL_AMD_CONTROLLER` fills an `RtgAmdController`
 with the display controller's registers - the engine's own processor:
 whether it runs its firmware, its boot options, its rings, the windows it
@@ -1749,9 +1752,8 @@ infoframe sent each frame, DVI otherwise. The fetcher's schedule is
 worked out for one plane of 32-bit pixels, unscaled, read at the
 device's physical addresses at the clocks set: when in the blank it
 starts, how many lines ahead it fetches, and how its requests are paced
-in the hub's 24 MHz reference. The hub's watermarks stay as the firmware
-set them, the fetcher's time to urgency switched off as it left it. A
-mode set is said on the log, with how long the pipe was down; the
+in the hub's 24 MHz reference, with its time to urgency, which the
+firmware leaves off, used from then on. A mode set is said on the log, with how long the pipe was down; the
 frames keep their size and rows, so a mode larger than the firmware's
 is not offered. The firmware's picture stays until the board is first
 shown in another mode: the mode its settings' line names
@@ -1772,14 +1774,22 @@ where one goes up, and once the pipes have taken it where one goes down;
 each pipe's divider of the pipes' clock is set in the engine, and the
 display controller is told them. Each lit pipe's schedule is worked out
 at them, the other pipes' anew where they change, with the timing
-generator's global sync, at one update. The hub's watermarks stay as the
-firmware wrote them, and the fetchers' time to urgency in the blank
-starts from them. A mode, or a plane, no state serves is refused. The
-board's first show sets the clocks for its picture, and the manager is
-told the display is in use, so the engine's idle optimizations and its
-deeper power states stay off while a monitor is driven.
-`C:test/Gpu CLOCKS` prints what was asked beside what the manager
-answered and what runs, and `C:test/Gpu MODES` the clocks in each mode.
+generator's global sync, at one update. The hub's watermarks are worked
+out by the same model - urgency, a trip to the memory, self-refresh's
+entry and exit, the memory clock's change, the share of the return the
+planes read - and written into all four of the hub's sets, which the
+manager picks between by the controller's clock: before a change those
+that go up, once the pipes have taken it every one, and then the memory
+is let into self-refresh between the fetchers' bursts, which the
+firmware forbids. Every fetcher the board gives a schedule reads with
+its time to urgency, which in the blank starts from the longest of
+those watermarks the blank allows. A mode, or a plane, no state serves
+is refused. The board's first show sets the clocks and the watermarks
+for its picture, and the manager is told the display is in use, so the
+engine's idle optimizations and its deeper power states stay off while
+a monitor is driven. `C:test/Gpu CLOCKS` prints what was asked beside
+what the manager answered and what runs, and the hub's sets; `C:test/Gpu
+MODES` the clocks and the hub's first set in each mode.
 
 The link's sound is set each time the board is put in a mode: the
 sample clock and the numbers the monitor rebuilds it from at the mode's

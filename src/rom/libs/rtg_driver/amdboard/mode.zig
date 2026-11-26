@@ -47,10 +47,12 @@
 //!   48 MHz crystal halved: a plane whose lines come no faster than the
 //!   glass's at the rate its place is scanned, one whose lines come
 //!   faster at the rate its scaler takes them across. Its time to urgency
-//!   in a blank is the longest of the hub's watermarks, in the sets the
-//!   firmware wrote that the hub runs on (`Held.watermark`,
-//!   `hubWatermark`), the time to work out a request, and the time from
-//!   the start worked out to the one the fetcher has.
+//!   in a blank is the longest of the watermarks the hub is given that
+//!   the blank allows (`Held.watermark`), the time to work out a request,
+//!   and the time from the start worked out to the one the fetcher has.
+//!   The fetcher reads with its time to urgency from the first schedule
+//!   the board writes it (`writeSchedule`), as the vendor's fetchers do
+//!   from their start (hubp3_init); the firmware leaves it off.
 //!
 //! The fetcher's requests' sizes and its buffer stay as they are, the
 //! frames' surface being the same in every mode.
@@ -120,14 +122,6 @@ const hubp_line_delivery = 0x065b;
 const hubp_reference_to_pixel = 0x065d;
 const hubp_stride = 0xdc;
 
-/// The hub's watermarks of its first set - urgency, self-refresh's entry
-/// and the memory clock's change - and the stride to the next of its four.
-const hub_urgency = 0x04fd;
-const hub_self_refresh = 0x04ff;
-const hub_memory_clock = 0x0503;
-const hub_set_stride = 9;
-const hub_sets = 4;
-
 /// A pipe's scaler: the blanking it is told, its output rectangle's
 /// start and size, its size into the blender.
 const dscl_h_blank = 0x0d0f;
@@ -162,12 +156,10 @@ pub const hubp_idle: u32 = 1 << 1;
 pub const hubp_underflow: u32 = 0x7 << 28;
 pub const hubp_underflow_clear: u32 = 1 << 31;
 /// In the fetcher's control: that it is ready at or after the vertical
-/// sync.
+/// sync, and that it reads without its time to urgency.
 const hubp_ready_after_sync: u32 = 1 << 8;
+pub const hubp_ttu_off: u32 = 1 << 12;
 const pitch_mask: u32 = 0x3fff;
-const urgency_mask: u32 = 0x3fff;
-const self_refresh_mask: u32 = 0xfffff;
-const memory_clock_mask: u32 = 0xffff;
 
 /// What the counters hold: a total, a blank's ends and a sync's in 15
 /// bits, a picture's side in 14.
@@ -245,21 +237,6 @@ pub const Held = struct {
     /// The wait for the memory the prefetch allows, in nanoseconds.
     wait_ns: u32,
 };
-
-/// The longest of the hub's watermarks in any of its sets - urgency,
-/// self-refresh's entry, the memory clock's change - in its reference
-/// cycles: what a fetcher's time to urgency in a blank starts from while
-/// the hub runs on the sets the firmware wrote.
-pub fn hubWatermark(engine: dcn.Engine) u32 {
-    var watermark: u32 = 0;
-    for (0..hub_sets) |set| {
-        const base: u32 = @intCast(set * hub_set_stride);
-        watermark = @max(watermark, at(engine, hub_urgency + base).* & urgency_mask);
-        watermark = @max(watermark, at(engine, hub_self_refresh + base).* & self_refresh_mask);
-        watermark = @max(watermark, at(engine, hub_memory_clock + base).* & memory_clock_mask);
-    }
-    return watermark;
-}
 
 /// The row length of the surface `fetcher` reads, in pixels.
 pub fn pitchOf(engine: dcn.Engine, fetcher: u32) u32 {
@@ -688,10 +665,12 @@ pub fn passThrough(engine: dcn.Engine, fetcher: u32) void {
 /// The fetcher `fetcher` told its pace (`Schedule`): when it starts in
 /// the blank, its prefetch - the colour's at a ratio of 1 for a picture
 /// of one plane - and the time it has for its requests, a 4:2:0
-/// picture's colour's too. Its ready is the caller's, which knows whether
-/// the timing generator's is its own.
+/// picture's colour's too; and its time to urgency used from then on
+/// (`HUBP_TTU_DISABLE` cleared). Its ready is the caller's, which knows
+/// whether the timing generator's is its own.
 pub fn writeSchedule(engine: dcn.Engine, fetcher: u32, schedule: *const Schedule) void {
     const hubp = fetcher * hubp_stride;
+    at(engine, hubp + hubp_control).* &= ~hubp_ttu_off;
     at(engine, hubp + hubp_blank_offset).* = schedule.blank_offset;
     at(engine, hubp + hubp_next_start).* = schedule.next_start;
     at(engine, hubp + hubp_dst_dimensions).* = schedule.dst_dimensions;
@@ -794,8 +773,8 @@ fn scalerBlank(blank: u32) u32 {
 }
 
 /// The fetcher blanked - once it has no requests out, waited for up to
-/// `wait_us` - or let go of (hubp2_set_blank). Its time-to-urgency is
-/// left as the firmware set it.
+/// `wait_us` - or let go of (hubp2_set_blank). Its time to urgency stays
+/// as its schedule left it (`writeSchedule`).
 pub fn blankFetcher(engine: dcn.Engine, fetcher: u32, blank: bool, wait_us: u64) void {
     const control = at(engine, fetcher * hubp_stride + hubp_control);
     if (!blank) {

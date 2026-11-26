@@ -122,12 +122,15 @@
 //! divider of the pipes' clock is set in the engine, and the display
 //! controller is told them. Each lit pipe's schedule is worked out at
 //! them, and the other pipes' anew where they change, with the timing
-//! generator's global sync, at one update; the fetchers' time to urgency
-//! in a blank starts from the hub's watermarks as the firmware wrote
-//! them. A mode or a plane no state serves is refused. The clocks, the
-//! states, what was asked and the manager's readings are read through
-//! the board's controls (RTGCTRL_AMD_CLOCKS), which ask the manager
-//! nothing else.
+//! generator's global sync, at one update. The hub's watermark sets are
+//! written from the same model in the same two passes (`hub.zig`), and
+//! the memory let into self-refresh, which the firmware forbids, once the
+//! pipes have taken the first change; each fetcher the board gives a
+//! schedule reads with its time to urgency, which in a blank starts from
+//! those watermarks. A mode or a plane no state serves is refused. The
+//! clocks, the states, what was asked, the manager's readings and the
+//! hub's sets are read through the board's controls (RTGCTRL_AMD_CLOCKS),
+//! which ask the manager nothing else.
 //!
 //! The display controller - the engine's own processor - is started with
 //! its firmware as the board is made, before the library first looks at
@@ -213,11 +216,12 @@ const video = @import("video.zig");
 const coefficients = @import("coefficients.zig");
 const bandwidth = @import("bandwidth.zig");
 const clocks = @import("clocks.zig");
+const hub = @import("hub.zig");
 
 const MODULE_NAME = "rtg-amd";
 const DRIVER_NAME = "amd";
 const VERSION = 1;
-const REVISION = 23;
+const REVISION = 24;
 const BUILD_DATE = "26.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -324,7 +328,8 @@ const Screen = struct {
     /// `smu_lock`; and under `pipe_lock` what each pipe reads, by its
     /// number - null for one that reads nothing - the demand they were
     /// last set for, what the power manager and the pipes' dividers were
-    /// told, whether the other pipes' schedules are to be worked out anew
+    /// told and the hub's watermark sets last written (`hub.program`),
+    /// whether the other pipes' schedules are to be worked out anew
     /// and the clocks lowered once the pipes have taken a change, whether
     /// a mode set makes the change - its drops only counted - whether the
     /// display controller still waits to be told them, and what the log
@@ -333,6 +338,7 @@ const Screen = struct {
     reading: [pipe_count]?Reading = @splat(null),
     fitted: ?Fitted = null,
     told: clocks.Told = .{},
+    marks: hub.Marks = @splat(0),
     rewrite_due: bool = false,
     lower_due: bool = false,
     setting_mode: bool = false,
@@ -693,7 +699,7 @@ fn showBands(screen: *Screen, bands: []const rtg.RtgBand) i32 {
     }
     const fitted = demandFor(screen, screen.timings, vstartup, &next) orelse return refused;
     for (1..count) |i| {
-        const held = fitted.heldOf(engine, wanted[i].index) orelse return refused;
+        const held = fitted.heldOf(wanted[i].index) orelse return refused;
         schedules[i] = mode.fetchSchedule(screen.timings, next[wanted[i].index].?.fetch, held, vstartup) orelse return refused;
     }
     raiseTo(screen, fitted, next);
@@ -1576,7 +1582,7 @@ fn showOverlay(screen: *Screen) void {
         screen.overlay_refused = true;
         return;
     };
-    const held = fitted.heldOf(engine, index) orelse return;
+    const held = fitted.heldOf(index) orelse return;
     const schedule = mode.fetchSchedule(screen.timings, shown.fetch, held, vstartup) orelse return;
     raiseTo(screen, fitted, next);
     const output = mode.outputOf(engine, engine.pipe);
@@ -1674,15 +1680,13 @@ const Fitted = struct {
 
     /// What pipe `index`'s schedule is worked out at: its share of the
     /// pipes' clock, the controller's deep sleep, the memory's wait, and
-    /// its time to urgency in a blank from the hub's watermarks as the hub
-    /// runs on them (`mode.hubWatermark`). Null for a pipe it has no plane
-    /// of.
-    fn heldOf(fitted: *const Fitted, engine: dcn.Engine, index: u32) ?mode.Held {
+    /// its time to urgency in a blank from the longest of the watermarks
+    /// the hub is given that the blank allows. Null for a pipe it has no
+    /// plane of.
+    fn heldOf(fitted: *const Fitted, index: u32) ?mode.Held {
         for (fitted.pipes[0..fitted.count], 0..) |pipe_index, plane_index| {
             if (pipe_index != index) continue;
-            var held = bandwidth.heldOf(fitted.load(), plane_index, fitted.demand.clocks, @as(u64, fitted.demand.wait_ns) * 1000, fitted.demand.blankPs());
-            held.watermark = mode.hubWatermark(engine);
-            return held;
+            return bandwidth.heldOf(fitted.load(), plane_index, fitted.demand.clocks, @as(u64, fitted.demand.wait_ns) * 1000, fitted.demand.blankPs());
         }
         return null;
     }
@@ -1768,8 +1772,9 @@ fn demandFor(screen: *Screen, timings: rtg.RtgTimings, vstartup: ?u32, reading: 
     return fitted;
 }
 
-/// Whether two demands set the same clocks and the same schedules: the
-/// same pipes at the same shares, the same clocks, state, wait and blank.
+/// Whether two demands set the same clocks, the same schedules and the
+/// same watermarks: the same pipes at the same shares, the same clocks,
+/// state, wait, blank and hub's sets.
 fn sameFit(was: *const Fitted, now: *const Fitted) bool {
     if (was.count != now.count) return false;
     for (0..now.count) |index| {
@@ -1785,7 +1790,15 @@ fn sameFit(was: *const Fitted, now: *const Fitted) bool {
         before.controller_khz == after.controller_khz and
         before.prefetch_mode == after.prefetch_mode and
         before.wait_ns == after.wait_ns and
-        before.blankPs() == after.blankPs();
+        before.blankPs() == after.blankPs() and
+        sameMarks(hub.marksOf(before.watermarks), hub.marksOf(after.watermarks));
+}
+
+fn sameMarks(was: hub.Marks, now: hub.Marks) bool {
+    for (was, now) |was_mark, now_mark| {
+        if (was_mark != now_mark) return false;
+    }
+    return true;
 }
 
 /// The controller clock's first four states, in MHz: what the watermark
@@ -1799,9 +1812,10 @@ fn firstLevels(facts: *const bandwidth.Facts) [4]u32 {
 /// The display's clocks raised for `fitted` before a change makes the
 /// pipes read what it counts - `next`, by pipe - where they go up
 /// (`clocks.raise`): the first time from what runs, after the manager is
-/// told the display is in use and handed the watermark sets. The demand
-/// kept, and where it changed the other pipes' schedules and the clocks'
-/// lowering left due. Holding `pipe_lock`.
+/// told the display is in use and handed the watermark sets' ranges; then
+/// the hub's watermarks that go up (`hub.program`). The demand kept, and
+/// where it changed the other pipes' schedules and the lowering left due.
+/// Holding `pipe_lock`.
 fn raiseTo(screen: *Screen, fitted: Fitted, next: [pipe_count]?Reading) void {
     screen.reading = next;
     const changed = if (screen.fitted) |*was| !sameFit(was, &fitted) else true;
@@ -1822,17 +1836,21 @@ fn raiseTo(screen: *Screen, fitted: Fitted, next: [pipe_count]?Reading) void {
     screen.sys.ReleaseSemaphore(&screen.smu_lock);
     sayRefused(screen);
     notifyClocks(screen);
+    hub.program(engine, &screen.marks, hub.marksOf(kept.demand.watermarks), false);
 }
 
 /// The display's clocks lowered to the demand they were raised for, once
 /// the pipes have taken the change - a frame waited for, unless `waited`
 /// says the caller has - where a change left them to be (`clocks.lower`):
-/// every pipe's divider written too. Holding `pipe_lock`.
+/// every pipe's divider written too, and before them every one of the
+/// hub's watermarks, the memory let into self-refresh after
+/// (`hub.program`). Holding `pipe_lock`.
 fn lowerDue(screen: *Screen, waited: bool) void {
     if (!screen.lower_due) return;
     screen.lower_due = false;
     const fitted = if (screen.fitted) |*one| one else return;
     if (!waited) pace(screen, 1);
+    hub.program(screen.dcn, &screen.marks, hub.marksOf(fitted.demand.watermarks), true);
     const asked = clocks.askedOf(&fitted.demand, fitted.pipes[0..fitted.count]);
     screen.sys.ObtainSemaphore(&screen.smu_lock);
     clocks.lower(screen.dcn, screen.smu, &screen.told, asked);
@@ -1887,7 +1905,7 @@ fn writeOthers(screen: *Screen, made: []const u32) void {
     for (screen.reading, 0..) |maybe, index| {
         const one = maybe orelse continue;
         const pipe_index: u32 = @intCast(index);
-        const held = fitted.heldOf(engine, pipe_index) orelse continue;
+        const held = fitted.heldOf(pipe_index) orelse continue;
         schedules[count] = mode.fetchSchedule(fitted.timings, one.fetch, held, vstartup) orelse continue;
         if (pipe_index == engine.fetcher) picture = count;
         lit[count] = pipe_index;
@@ -1918,7 +1936,7 @@ fn rewriteOthers(screen: *Screen, made: []const u32) void {
 /// for: null where they are set for none it is in.
 fn heldFor(screen: *const Screen, index: u32) ?mode.Held {
     const fitted = if (screen.fitted) |*one| one else return null;
-    return fitted.heldOf(screen.dcn, index);
+    return fitted.heldOf(index);
 }
 
 /// What pipe `index` read no longer counted, once it reads nothing: the
@@ -2236,7 +2254,7 @@ fn showFilm(screen: *Screen, wait: bool) i32 {
         dropFilm(screen);
         return refused;
     };
-    const held = fitted.heldOf(engine, index) orelse {
+    const held = fitted.heldOf(index) orelse {
         dropFilm(screen);
         return refused;
     };
@@ -2388,7 +2406,7 @@ fn modeFit(screen: *Screen, timings: *const rtg.RtgTimings, alone: *[pipe_count]
     alone.* = @splat(null);
     alone[engine.fetcher] = readingOf(mode.pictureFetch(timings.h_active, framesPitch(screen)));
     const fitted = demandFor(screen, timings.*, null, alone) orelse return null;
-    const held = fitted.heldOf(engine, engine.fetcher) orelse return null;
+    const held = fitted.heldOf(engine.fetcher) orelse return null;
     const set = mode.of(timings.*, screen.fb.width, screen.fb.height, held) orelse return null;
     return .{ .set = set, .fitted = fitted };
 }
@@ -2728,6 +2746,7 @@ fn control(board: *rtg.RtgBoard, what: u32, value: isize) callconv(.c) isize {
             screen.sys.ObtainSemaphore(&screen.pipe_lock);
             const told = screen.told;
             const fitted = screen.fitted;
+            const marks = screen.marks;
             screen.sys.ReleaseSemaphore(&screen.pipe_lock);
             screen.sys.ObtainSemaphore(&screen.smu_lock);
             defer screen.sys.ReleaseSemaphore(&screen.smu_lock);
@@ -2747,6 +2766,13 @@ fn control(board: *rtg.RtgBoard, what: u32, value: isize) callconv(.c) isize {
             if (fitted) |one| {
                 into.level = one.demand.level;
                 into.change_in_active = @intFromBool(one.demand.change_in_active);
+            }
+            into.asked_marks = marks;
+            hub.read(screen.dcn, &into.hub_marks);
+            into.self_refresh = @intFromBool(hub.selfRefreshAllowed(screen.dcn));
+            for (0..pipe_count) |index| {
+                const timed = mode.fetcherControl(screen.dcn, @intCast(index)) & mode.hubp_ttu_off == 0;
+                if (timed) into.timed_pipes |= @as(u32, 1) << @intCast(index);
             }
             into.fabric_now_mhz = smu.fabricNow(screen.sys, screen.smu);
             return code;
