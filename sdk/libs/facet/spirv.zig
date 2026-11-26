@@ -126,6 +126,9 @@ pub const Op = enum(u16) {
     // query_levels (vtn_handle_texture, spirv_to_nir.c; since 1.181).
     image = 100,
     image_query_size_lod = 103,
+    // A storage image's size: NIR's image_size (vtn_handle_image,
+    // spirv_to_nir.c; since facet 1.219).
+    image_query_size = 104,
     image_query_levels = 106,
     convert_f_to_u = 109,
     convert_f_to_s = 110,

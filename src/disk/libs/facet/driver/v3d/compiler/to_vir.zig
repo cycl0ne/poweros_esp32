@@ -731,6 +731,17 @@ fn emitStep(e: *Emit, each: Step, at: u16) Error!void {
         // make floats, which the flush defines, and one written (since
         // 1.218).
         .image_load, .image_store => return emitImageLoadStore(e, each, at),
+        // ntq_emit_image_size (nir_to_vir.c:2653-2679): each size a
+        // uniform of the view's, a 3D image's depth third or an array's
+        // layers, and no level, which is 0 (since 1.219).
+        .image_size => for (0..parts) |k| {
+            const contents: vir.Uniform = switch (k) {
+                0 => .image_width,
+                1 => .image_height,
+                else => if (e.work.samplers[each.at].dim == .layers) .image_array_size else .image_depth,
+            };
+            try storeDef(e, at, k, try c.uniform(contents, each.at));
+        },
         // What passed is where a depth is read, the first half of the
         // first word: one float out, as nir_lower_tex's packing_16 leaves
         // the one component a shadow sample's def has.
@@ -1986,17 +1997,20 @@ fn emitTex(e: *Emit, each: Step, at: u16) Error!void {
 }
 
 /// v3d_vir_emit_image_load_store (v3d_tex.c:564-655), for a compute
-/// program's image_load and image_store of an Rgba8 image (since 1.218).
+/// program's image_load and image_store of an Rgba8 image (since 1.218),
+/// and a fragment program's (since 1.219).
 /// P0 the words to hand back, and the image's number in its high bits for
 /// the driver to put the image's state there (:609-613), as a sample's;
 /// a store hands back none (return_channels_required, :531-561), a load
 /// both words of its four 16-bit floats, the output of an image of 8 bits
 /// a channel (v3d_gl_format_is_return_32,
 /// v3d_nir_lower_image_load_store.c:48-62), whatever the program reads of
-/// them, as a sample does (`texel_words`). P1 has the per-pixel mask, a
-/// compute program's, and the 16-bit output (:576-580); P2 the regular
-/// operation (:592). Both are the defaults, p1_unpacked_default's and
-/// p2_unpacked_default's, so neither is written (:645-648). Then
+/// them, as a sample does (`texel_words`). P1 has the per-pixel mask and
+/// the 16-bit output (:576-580); P2 the regular operation (:592). Both
+/// are the defaults, p1_unpacked_default's and p2_unpacked_default's, so
+/// neither is written (:645-648), but for a fragment program's load that
+/// reads its helper pixels (ACCESS_SKIP_HELPERS not set, `lanes`): its
+/// mask is off, and P1 the constant 0 of no bit set. Then
 /// vir_image_emit_register_writes (:440-518): the coordinate's y to TMUT,
 /// a 3D image's slice to TMUR and a layer, an array's or a cube's face, to
 /// TMUI; a store's words to TMUD; and x to TMUSF, which starts the lookup,
@@ -2030,6 +2044,8 @@ fn emitImageLoadStore(e: *Emit, each: Step, at: u16) Error!void {
     if (tmuFifoOverflow(e, @popCount(return_words))) try flushTmu(e);
 
     try wrtmuc(c, .image_tmu_config_p0, return_words | @as(u32, each.at) << 24);
+    const per_pixel = c.stage != .fragment or is_store or e.work.skip_helpers[at];
+    if (!per_pixel) try wrtmuc(c, .constant, 0);
     _ = try tmuWrite(c, .tmut, try getSrc(e, each.a, 1));
     switch (dim) {
         .flat => {},
@@ -2358,16 +2374,17 @@ fn emitFragEnd(e: *Emit) Error!void {
     // A colour the TLB takes: render target 0 is among the key's, and
     // the program writes it (nir_to_vir.c:2050-2054).
     const has_any_tlb_color_write = e.key.cbufs & 1 != 0 and hasColor(e);
-    // There is no image or sample mask, so early_fragment_tests is
-    // promoted where a colour is written, no storage buffer is named
-    // (info.num_ssbos, :2074; since 1.168), nothing discards and nothing
+    // There is no sample mask, so early_fragment_tests is promoted where
+    // a colour is written, no storage buffer is named (info.num_ssbos,
+    // :2074; since 1.168) nor an image, a storage image's or an input
+    // attachment's (info.num_images; since 1.219), nothing discards and nothing
     // covers by alpha (nir_to_vir.c:2073-2081; v3dv has no
     // can_earlyz_with_discard), and where it is not the program writes Z
     // (nir_to_vir.c:2098): a program of no colour always does, its one
     // TLB write, where Mesa also says it discards (:2125-2126), which
     // nothing after reads here. It has no gl_FragDepth, so that Z is the
     // one the rasterizer made, written through as it is.
-    e.early_fragment_tests = has_any_tlb_color_write and !e.work.uses_ssbo and !e.uses_discard and !e.key.sample_alpha_to_coverage;
+    e.early_fragment_tests = has_any_tlb_color_write and !e.work.uses_ssbo and !e.work.uses_images and !e.uses_discard and !e.key.sample_alpha_to_coverage;
     // A program that reads Z writes it, the V3D 4.2 spec's "If a shader
     // performs a Z read the 'Fragment shader does Z writes' bit in the
     // shader record must be enabled" (nir_to_vir.c:2091-2099; since

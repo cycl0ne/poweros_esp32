@@ -1587,7 +1587,7 @@ const Configuration = struct {
     sampler: u32,
     /// The view's width, height and depth at its first level, its layers
     /// and its levels, in `compile.TextureSize.Field`'s order: what
-    /// get_texture_size_from_image_view answers (v3dv_uniforms.c:378-414),
+    /// get_texture_size_from_image_view answers (v3dv_uniforms.c:378-416),
     /// a 3D image's slices its depth (since 1.181).
     sizes: [5]u32 = @splat(0),
 };
@@ -1707,6 +1707,8 @@ fn sampledBy(queue: *Queue, which: compile.Sampler) ?Configuration {
     // binds one for a txf with none (v3dv_pipeline.c:1877-1891, :833-841;
     // since 1.216).
     if (which.input_attachment) return tmuConfiguration(queue, which.set, which.binding, tiling.samplerOf(&input_sampler, false).?, false);
+    // A fragment program's storage image, as a dispatch's (since 1.219).
+    if (which.storage) return storageBy(queue, which);
     const player = playerOf(queue);
     const sampler = player.resources.samplerOf(which.set, which.binding, 0) orelse return null;
     // A program that compares writes the reference to TMUDREF, and the
@@ -1715,18 +1717,19 @@ fn sampledBy(queue: *Queue, which: compile.Sampler) ?Configuration {
     return tmuConfiguration(queue, which.set, which.binding, how, which.compared);
 }
 
-/// The TMU's state of a dispatch's storage image: the view the compute
-/// sets bind at its set and binding, as v3dv writes a storage image's
+/// The TMU's state of a storage image of a dispatch (since 1.218) or a
+/// draw (since 1.219): the view the job's sets bind at its set and
+/// binding (`resourcesOf`), as v3dv writes a storage image's
 /// texture state, the one it samples it with (v3dv_descriptor_set.c:
 /// 1146-1159, the second state a cube array's alone, :1153-1155;
 /// write_tmu_p0, v3dv_uniforms.c:139-185), and a default
 /// sampler beside it, which its lookups at TMUSF never read. Its memory
-/// is kept to be dropped from the CPU's caches after the dispatch, as a
+/// is kept to be dropped from the CPU's caches after the job, as a
 /// storage buffer's is. Null where nothing of the V3D's layout is bound
-/// there (since 1.218).
+/// there.
 fn storageBy(queue: *Queue, which: compile.Sampler) ?Configuration {
     const player = playerOf(queue);
-    const texels = player.compute_resources.written(which.set, which.binding, 0) orelse return null;
+    const texels = resourcesOf(player).written(which.set, which.binding, 0) orelse return null;
     const view: *const _image.ImageView = @fieldParentPtr("texels", texels);
     const made = tmuConfiguration(queue, which.set, which.binding, tiling.samplerOf(&input_sampler, false).?, false) orelse return null;
     keepStorage(player, .{ .at = view.image.data.?, .bytes = @intCast(view.image.bytes) });
