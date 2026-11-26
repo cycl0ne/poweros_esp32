@@ -57,7 +57,19 @@ fn copyPlane(command: *const _command.CopyImage, source: *const Image, destinati
     if (from_blocks or to_blocks) return copyAcross(command, source, destination);
     const pixel = _image.bytesOf(source.format);
     if (pixel != _image.bytesOf(destination.format)) return;
+    // A depth or a stencil goes into an image of its own format alone
+    // (VUID-vkCmdCopyImage-srcImage-01548): D16_UNORM_S8_UINT and
+    // D24_UNORM_S8_UINT are both four bytes a pixel, laid out apart.
+    const planes = _image.hasDepth(source.format) or _image.hasStencil(source.format);
+    if ((planes or _image.hasDepth(destination.format) or _image.hasStencil(destination.format)) and source.format != destination.format) return;
     for (_stream.items(_command.CopyImage, facet.ImageCopy, command, command.count)) |*region| {
+        // One aspect of a format that holds two moves its own bytes and
+        // leaves the other's where they lie (since 1.222), as lavapipe
+        // copies one aspect (`handle_copy_image`,
+        // src/gallium/frontends/lavapipe/lvp_execute.c:2835-2855); both
+        // aspects at once, or a format of one, move the whole pixel.
+        const lane = if (planes) _image.laneOf(source.format, region.src_subresource.aspect_mask) else null;
+        const partly = if (lane) |one| one.bytes < pixel and _image.hasDepth(source.format) and _image.hasStencil(source.format) else false;
         const from_level = region.src_subresource.mip_level;
         const to_level = region.dst_subresource.mip_level;
         if (from_level >= source.levels or to_level >= destination.levels) continue;
@@ -78,8 +90,16 @@ fn copyPlane(command: *const _command.CopyImage, source: *const Image, destinati
         for (0..@min(from_layers.count, to_layers.count)) |layer_number| {
             const layer: u32 = @intCast(layer_number);
             for (0..height) |row| for (0..width) |column| {
+                const into_x = to_x + @as(u32, @intCast(column));
+                const into_y = to_y + @as(u32, @intCast(row));
                 _image.readTexel(source, from_level, from_layers.first + layer, from_x + @as(u32, @intCast(column)), from_y + @as(u32, @intCast(row)), &texel);
-                _image.writeTexel(destination, to_level, to_layers.first + layer, to_x + @as(u32, @intCast(column)), to_y + @as(u32, @intCast(row)), &texel);
+                if (partly) {
+                    var there: [4]u8 = undefined;
+                    _image.readTexel(destination, to_level, to_layers.first + layer, into_x, into_y, &there);
+                    _image.laneIn(lane.?, texel[lane.?.at..], &there);
+                    @memcpy(texel[0..4], &there);
+                }
+                _image.writeTexel(destination, to_level, to_layers.first + layer, into_x, into_y, &texel);
             };
         }
     }
@@ -207,6 +227,9 @@ pub fn resolveImage(command: *const _command.ResolveImage) void {
     const destination = command.destination;
     if (source.samples != 4 or destination.samples != 1 or source.format != destination.format) return;
     if (!_image.readable(source) or !_image.readable(destination)) return;
+    // A depth or a stencil is no resolve's (VUID-VkImageResolve-aspectMask-00266):
+    // a format of 24 bits of depth is four bytes a pixel too (since 1.222).
+    if (_image.hasDepth(source.format) or _image.hasStencil(source.format)) return;
     const pixel = _image.bytesOf(source.format);
     if (pixel != 4 and source.format != .r5g6b5_unorm_pack16) return;
     for (_stream.items(_command.ResolveImage, facet.ImageResolve, command, command.count)) |*region| {
@@ -266,8 +289,11 @@ pub fn copyImageToBuffer(command: *const _command.CopyImageToBuffer) void {
     if (image.samples != 1) return;
     const into = _buffer.bytes(command.destination, 0, facet.WHOLE_SIZE) orelse return;
     if (_image.blocked(image)) return blocksToBuffer(command, into);
-    const pixel = _image.bytesOf(image.format);
     for (_stream.items(_command.CopyImageToBuffer, facet.BufferImageCopy, command, command.count)) |*region| {
+        // A depth or a stencil as Vulkan has the aspect lie in a buffer
+        // (since 1.222, `_image.laneOf`); a colour as it lies.
+        const lane = _image.laneOf(image.format, region.image_subresource.aspect_mask);
+        const pixel = if (lane) |one| one.buffer else _image.bytesOf(image.format);
         const level = region.image_subresource.mip_level;
         if (level >= image.levels or region.image_offset.x < 0 or region.image_offset.y < 0) continue;
         const size = _image.levelSize(image, level);
@@ -285,7 +311,14 @@ pub fn copyImageToBuffer(command: *const _command.CopyImageToBuffer) void {
             const at = start + slice * slice_height * pitch + row * pitch;
             if (at + width * pixel > into.len) break;
             for (0..width) |column| {
-                _image.readTexel(image, level, layers.first + @as(u32, @intCast(slice)), left + @as(u32, @intCast(column)), top + @as(u32, @intCast(row)), into[at + column * pixel ..]);
+                const x = left + @as(u32, @intCast(column));
+                const y = top + @as(u32, @intCast(row));
+                const layer = layers.first + @as(u32, @intCast(slice));
+                if (lane) |one| {
+                    var texel: [4]u8 = undefined;
+                    _image.readTexel(image, level, layer, x, y, &texel);
+                    _image.laneOut(one, &texel, into[at + column * pixel ..]);
+                } else _image.readTexel(image, level, layer, x, y, into[at + column * pixel ..]);
             }
         };
     }
@@ -410,8 +443,20 @@ pub fn clearDepthImage(command: *const _command.ClearDepthStencilImage) bool {
     if (image.kind != .depth) return false;
     const data = image.data orelse return true;
     const stride = _image.bytesOf(image.format);
-    const depth_there = _image.hasDepth(image.format);
-    const stencil_there = _image.hasStencil(image.format);
+    const depth_lane = _image.laneOf(image.format, facet.IMAGE_ASPECT_DEPTH);
+    const stencil_lane = _image.laneOf(image.format, facet.IMAGE_ASPECT_STENCIL);
+    // A pixel as the clear leaves it, each aspect in its own bytes: a
+    // depth of 24 bits in the top three of its word (since 1.222).
+    var cleared = [4]u8{ 0, 0, 0, 0 };
+    var depth_bytes: [4]u8 = undefined;
+    std.mem.writeInt(u32, &depth_bytes, command.depth, .little);
+    if (depth_lane) |lane| _image.laneIn(lane, &depth_bytes, &cleared);
+    if (stencil_lane) |lane| _image.laneIn(lane, &.{command.stencil}, &cleared);
+    const value: Texel = switch (stride) {
+        1 => .{ .one = cleared[0] },
+        2 => .{ .two = std.mem.readInt(u16, cleared[0..2], .little) },
+        else => .{ .four = std.mem.readInt(u32, &cleared, .little) },
+    };
     for (_stream.items(_command.ClearDepthStencilImage, facet.ImageSubresourceRange, command, command.count)) |range| {
         // The levels and the layers the range names: a depth image may
         // have layers since 1.58 and levels since 1.63.
@@ -419,8 +464,14 @@ pub fn clearDepthImage(command: *const _command.ClearDepthStencilImage) bool {
         if (range.level_count == 0 or range.layer_count == 0) continue;
         const levels = @min(if (range.level_count == facet.REMAINING) image.levels else range.level_count, image.levels - range.base_mip_level);
         const layers = @min(if (range.layer_count == facet.REMAINING) image.layers else range.layer_count, image.layers - range.base_array_layer);
-        const clears_depth = depth_there and range.aspect_mask & facet.IMAGE_ASPECT_DEPTH != 0;
-        const clears_stencil = stencil_there and range.aspect_mask & facet.IMAGE_ASPECT_STENCIL != 0;
+        const clears_depth = depth_lane != null and range.aspect_mask & facet.IMAGE_ASPECT_DEPTH != 0;
+        const clears_stencil = stencil_lane != null and range.aspect_mask & facet.IMAGE_ASPECT_STENCIL != 0;
+        if (!clears_depth and !clears_stencil) continue;
+        // Every plane the format has cleared: every byte of the level is
+        // the one value. Otherwise the one plane's bytes of each pixel,
+        // the other's left as they lie.
+        const whole = (clears_depth or stencil_lane == null) and (clears_stencil or depth_lane == null);
+        const lane = if (clears_depth) depth_lane.? else stencil_lane.?;
         // Every sample's plane, as a colour clear does (since 1.99).
         for (0.._image.planesOf(image)) |sample| for (0..layers) |one| for (0..levels) |step| {
             const level = range.base_mip_level + @as(u32, @intCast(step));
@@ -431,33 +482,29 @@ pub fn clearDepthImage(command: *const _command.ClearDepthStencilImage) bool {
             if (_image.deviceLaid(image)) {
                 const span = image.device.physical.ops.texture_level.?(image, level, layer);
                 const into: [*]u8 = data + @as(usize, @intCast(span.at));
-                if (clears_depth and stride == 2) fill(into, @intCast(span.bytes), .{ .two = command.depth });
-                if (clears_stencil and stride == 1) fill(into, @intCast(span.bytes), .{ .one = command.stencil });
+                if (whole) {
+                    fill(into, @intCast(span.bytes), value);
+                } else {
+                    // Its device keeps a pixel's bytes together as well.
+                    var at: usize = 0;
+                    while (at + stride <= span.bytes) : (at += stride) _image.laneIn(lane, cleared[lane.at..], (into + at)[0..stride]);
+                }
                 continue;
             }
             const rows = _image.rowsAt(image, level, layer);
             const size = _image.levelSize(image, level);
             const into_level = data + sample * @as(usize, @intCast(image.sample_bytes)) + rows.at;
-            // A format of depth alone or stencil alone, both aspects
-            // asked for: every byte of every row is the one value.
-            if (clears_depth and stride == 2) {
-                fill(into_level, @as(usize, rows.pitch) * size[1], .{ .two = command.depth });
-            } else if (clears_stencil and stride == 1) {
-                fill(into_level, @as(usize, rows.pitch) * size[1], .{ .one = command.stencil });
+            // Every plane: every byte of every row is the one value.
+            if (whole) {
+                fill(into_level, @as(usize, rows.pitch) * size[1], value);
+                continue;
             }
-            // A format that holds both: each pixel's own bytes, the
-            // padding at a row's end left as it is.
-            if (stride == 4) for (0..size[1]) |row| {
+            // One plane of a format that holds both: each pixel's own
+            // bytes, the padding at a row's end left as it is.
+            for (0..size[1]) |row| {
                 const into = into_level + row * rows.pitch;
-                for (0..size[0]) |column| {
-                    const pixel = into + column * stride;
-                    if (clears_depth) {
-                        pixel[0] = @truncate(command.depth);
-                        pixel[1] = @truncate(command.depth >> 8);
-                    }
-                    if (clears_stencil) pixel[2] = command.stencil;
-                }
-            };
+                for (0..size[0]) |column| _image.laneIn(lane, cleared[lane.at..], (into + column * stride)[0..stride]);
+            }
         };
     }
     return true;
@@ -602,7 +649,7 @@ fn texelOf(image: *const Image, color: u32, parts: [4]f32, words: [4]u32) ?Texel
             // CmdClearDepthStencilImage writes that one. Nor for a
             // compressed image, whose texels are written as whole blocks
             // and which nothing here compresses.
-            .d16, .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc7, .bc6hu, .bc6hs => null,
+            .d16, .d24, .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc7, .bc6hu, .bc6hs => null,
         },
         // Its pixels are rows of depth, which a clear of a colour does
         // not write; a transient one's live in the tiles.
@@ -654,11 +701,13 @@ pub fn blitImage(command: *const _command.BlitImage) void {
     // pixel takes the nearest one's depth as it lies (since 1.126), which
     // is lavapipe's blit of the depth aspect (`handle_blit_image`,
     // src/gallium/frontends/lavapipe/lvp_execute.c:3040-3047). D16_UNORM
-    // is the format that says so; one with a stencil is left alone. Before
-    // 1.126 a blit into a depth image wrote two bytes it never set.
+    // and X8_D24_UNORM_PACK32 (since 1.222) are the formats that say so;
+    // one with a stencil is left alone. Before 1.126 a blit into a depth
+    // image wrote two bytes it never set.
     const depth = source.kind == .depth;
     if (depth or destination.kind == .depth) {
-        if (source.format != .d16_unorm or destination.format != .d16_unorm) return;
+        if (source.format != destination.format) return;
+        if (source.format != .d16_unorm and source.format != .x8_d24_unorm_pack32) return;
     } else if (_image.blocked(destination) or _image.keptTexels(destination)) {
         // A compressed source is read block by block and scaled like any
         // other, and a float one texel by texel; nothing here compresses
@@ -693,7 +742,7 @@ pub fn blitImage(command: *const _command.BlitImage) void {
                 while (x < right) : (x += 1) {
                     const u = along(x, to_x, from_x);
                     if (depth) {
-                        var texel: [2]u8 = undefined;
+                        var texel: [4]u8 = undefined;
                         _image.readTexel(source, from_level, from_layer, held(@intFromFloat(@floor(u)), from_size[0]), held(@intFromFloat(@floor(v)), from_size[1]), &texel);
                         _image.writeTexel(destination, to_level, to_layer, @intCast(x), @intCast(y), &texel);
                         continue;

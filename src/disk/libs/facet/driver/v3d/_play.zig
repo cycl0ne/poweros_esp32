@@ -1621,9 +1621,12 @@ fn tmuConfiguration(queue: *Queue, set: u32, binding: u32, how: tiling.Sampled, 
         .r8_unorm => .r8,
         // As v3dv samples D16_UNORM (v3dvx_formats.c:204; since 1.142).
         .d16_unorm => .d16,
+        // And X8_D24_UNORM_PACK32 as DEPTH24_X8 (v3dvx_formats.c:206;
+        // since 1.222).
+        .x8_d24_unorm_pack32 => .d24,
         else => return null,
     };
-    if (compared and texels != .d16) return null;
+    if (compared and texels != .d16 and texels != .d24) return null;
     const layout = imageLayout(image);
     const state = carve(queue, tiling.texture_state_bytes, tiling.texture_state_alignment) orelse return null;
     // The view's swizzle, which the TMU applies over the format's own

@@ -198,24 +198,79 @@ const row_alignment = 64;
 
 /// Whether a format of an attachment has a depth.
 pub fn hasDepth(format: facet.Format) bool {
-    return format == .d16_unorm or format == .d16_unorm_s8_uint;
+    return depthBits(format) != 0;
 }
 
 /// Whether a format of an attachment has a stencil.
 pub fn hasStencil(format: facet.Format) bool {
-    return format == .s8_uint or format == .d16_unorm_s8_uint;
+    return format == .s8_uint or format == .d16_unorm_s8_uint or format == .d24_unorm_s8_uint;
 }
 
-/// Where a pixel's depth lies in its bytes, and where its stencil does:
-/// `d16_unorm_s8_uint` holds the depth first and the stencil after it, and
-/// a format of one alone holds it at the pixel's first byte.
+/// The bits of a format's depth: 16, 24 (since 1.222), or 0 for one that
+/// has none.
+pub fn depthBits(format: facet.Format) u32 {
+    return switch (format) {
+        .d16_unorm, .d16_unorm_s8_uint => 16,
+        .x8_d24_unorm_pack32, .d24_unorm_s8_uint => 24,
+        else => 0,
+    };
+}
+
+/// Where a pixel's depth lies in its bytes, and where its stencil does,
+/// for a plane read through `texture.Format.d16`, `d24` or `r8`:
+/// `d16_unorm_s8_uint` holds the depth first and the stencil after it, a
+/// format of 24 bits the depth in the top three bytes of its word, which
+/// `d24` reads, and the stencil or nothing in the first, and a format of
+/// one alone holds it at the pixel's first byte.
 pub fn depthOffset(format: facet.Format) u32 {
     _ = format;
     return 0;
 }
 
 pub fn stencilOffset(format: facet.Format) u32 {
-    return if (hasDepth(format)) 2 else 0;
+    return if (format == .d16_unorm_s8_uint) 2 else 0;
+}
+
+/// Where one aspect of a pixel of a depth or stencil format lies in its
+/// bytes, `bytes` of them from `at`, and how many a buffer copy gives it,
+/// as Vulkan has a copy of one aspect lie in a buffer: a D16_UNORM depth
+/// in 2, a stencil in 1, and a D24 one's in 4 with the depth in the low
+/// 24 bits, which this library keeps in the top three of its word
+/// ("Copying Data Between Buffers and Images"). lavapipe moves an aspect
+/// between the two the same way (`handle_copy_image_to_buffer2`,
+/// src/gallium/frontends/lavapipe/lvp_execute.c:2442-2449, and
+/// `copy_depth_rect`, lvp_image.c:1246-1292), and v3dv turns a D24 word
+/// round on the copy, its hardware having the depth on top as this
+/// library does (v3dvx_meta_common.c:436-445). Null for a colour format,
+/// or an aspect the format has not. (Since 1.222: before, a copy moved a
+/// D16_UNORM_S8_UINT pixel's four bytes whichever aspect it named.)
+pub const Lane = struct { at: u32, bytes: u32, buffer: u32 };
+
+pub fn laneOf(format: facet.Format, aspect: u32) ?Lane {
+    const depth = aspect == facet.IMAGE_ASPECT_DEPTH;
+    const stencil = aspect == facet.IMAGE_ASPECT_STENCIL;
+    const depth_16 = Lane{ .at = 0, .bytes = 2, .buffer = 2 };
+    const depth_24 = Lane{ .at = 1, .bytes = 3, .buffer = 4 };
+    return switch (format) {
+        .d16_unorm => if (depth) depth_16 else null,
+        .s8_uint => if (stencil) .{ .at = 0, .bytes = 1, .buffer = 1 } else null,
+        .d16_unorm_s8_uint => if (depth) depth_16 else if (stencil) .{ .at = 2, .bytes = 1, .buffer = 1 } else null,
+        .x8_d24_unorm_pack32 => if (depth) depth_24 else null,
+        .d24_unorm_s8_uint => if (depth) depth_24 else if (stencil) .{ .at = 0, .bytes = 1, .buffer = 1 } else null,
+        else => null,
+    };
+}
+
+/// A pixel's aspect `lane` as a buffer holds it, into `into`: its bytes,
+/// and nothing in the rest.
+pub fn laneOut(lane: Lane, pixel: []const u8, into: []u8) void {
+    @memcpy(into[0..lane.bytes], pixel[lane.at..][0..lane.bytes]);
+    @memset(into[lane.bytes..lane.buffer], 0);
+}
+
+/// The same back into the pixel, its other aspect left as it lies.
+pub fn laneIn(lane: Lane, from: []const u8, pixel: []u8) void {
+    @memcpy(pixel[lane.at..][0..lane.bytes], from[0..lane.bytes]);
 }
 
 /// How a fragment function reads the pixels of an image kept in rows;
@@ -328,6 +383,8 @@ pub fn bytesOf(format: facet.Format) u32 {
         .r16g16b16a16_uint, .r16g16b16a16_sint, .r32g32_uint, .r32g32_sint => 8,
         .r32g32b32a32_uint, .r32g32b32a32_sint => 16,
         .d16_unorm_s8_uint => 4,
+        // 24 bits of depth and a byte below them (since 1.222).
+        .x8_d24_unorm_pack32, .d24_unorm_s8_uint => 4,
         .r8g8b8a8_unorm, .b8g8r8a8_unorm, .r32_sfloat => 4,
         // The float formats a texture keeps as they lie (since 1.45), and
         // the vertex ones, which are the same sizes.
@@ -411,6 +468,7 @@ pub fn keptFormat(format: facet.Format, packed_texels: bool) ?texture.Format {
         // A depth sampled where it lies, in rows
         // (`Capabilities.sampled_depth`).
         .d16_unorm => .d16,
+        .x8_d24_unorm_pack32 => .d24,
         else => null,
     };
 }
@@ -608,17 +666,21 @@ pub fn shapeOf(device: *Device, info: *const facet.ImageCreateInfo) ?Image {
 /// (`viewable`). So a storage image of a compressed format, or of a float
 /// one on a device that unpacks floats, is refused where it was made
 /// unpacked into 8888, and an input attachment of one on the cores where
-/// it was kept in rows. Two usages are not held yet. The transfers are
-/// not, Vulkan 1.0 having no feature for them, where both drivers hold
-/// TRANSFER_SRC and TRANSFER_DST. Nor is DEPTH_STENCIL_ATTACHMENT: the
-/// V3D's D16_UNORM_S8_UINT says no DEPTH_STENCIL_ATTACHMENT, keeping
+/// it was kept in rows. DEPTH_STENCIL_ATTACHMENT wants its feature too
+/// since 1.222, which refuses an attachment of the two formats of 24 bits
+/// of depth that no device draws yet (item 35). One usage is not held
+/// yet, and one format is let off another. The transfers are not held,
+/// Vulkan 1.0 having no feature for them, where both drivers hold
+/// TRANSFER_SRC and TRANSFER_DST. And D16_UNORM_S8_UINT is let off
+/// DEPTH_STENCIL_ATTACHMENT: the V3D's says no such feature, keeping
 /// neither plane past its pass (`Capabilities.stored_both`), and is drawn
 /// in its tiles alone, the V3D's one format of a depth and a stencil until
-/// it has v3dv's D24_UNORM_S8_UINT (item 35).
+/// it draws v3dv's D24_UNORM_S8_UINT (item 35).
 pub fn shapeFor(physical: *_instance.PhysicalDevice, info: *const facet.ImageCreateInfo) ?Image {
     const own = physical.ops.format_properties(physical, info.format);
     const own_features = if (info.tiling == .optimal) own.optimal_tiling_features else own.linear_tiling_features;
-    const held = info.usage & (facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_STORAGE | facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_INPUT_ATTACHMENT);
+    const depth_held: u32 = if (info.format == .d16_unorm_s8_uint) 0 else facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT;
+    const held = info.usage & (facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_STORAGE | facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_INPUT_ATTACHMENT | depth_held);
     if (held != 0 and !viewable(own_features, held)) return null;
     const image = laidOut(physical, info) orelse return null;
     if (image.mutable) for (std.enums.values(facet.Format)) |other| {
@@ -770,8 +832,9 @@ fn laidOut(physical: *_instance.PhysicalDevice, info: *const facet.ImageCreateIn
         // Sampled as well, since 1.39: its rows are the texture, and it
         // wants memory behind it, which `requirements` holds to. Any of
         // the three formats since 1.58, each plane read through a view of
-        // that aspect (`depthPlane`): the depth as 16 bits, and the
-        // stencil as one byte of every four where the format holds both.
+        // that aspect (`depthPlane`): the depth as 16 bits, or as the 24
+        // at the top of a word since 1.222, and the stencil as one byte
+        // of every four where the format holds both.
         // Read as an input attachment as well, since 1.62: a later
         // subpass reads the plane pixel by pixel where it lies, which
         // wants the same memory behind it that a sampled one does.
@@ -788,7 +851,11 @@ fn laidOut(physical: *_instance.PhysicalDevice, info: *const facet.ImageCreateIn
         var allowed = depth_usage;
         if (sampled) allowed |= facet.IMAGE_USAGE_SAMPLED;
         if (read_back) allowed |= facet.IMAGE_USAGE_INPUT_ATTACHMENT;
-        if (info.usage & facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT == 0 or info.usage & ~allowed != 0) return null;
+        // Not an attachment at all, since 1.222: a depth only sampled and
+        // copied into, which Vulkan's SAMPLED_IMAGE on D16_UNORM lets a
+        // program make, and the one image of a format of 24 bits of depth
+        // there is while nothing draws one (item 35).
+        if (info.usage & ~allowed != 0) return null;
         // Levels since 1.63, and never a volume: a pass draws into the
         // rows of the level its framebuffer's view names, and a slice of
         // a 3D image is nothing it draws into.
@@ -1126,9 +1193,10 @@ pub fn requirements(image: *const Image) facet.MemoryRequirements {
 /// has not got. (Since 1.58.)
 fn planeOver(image: *const Image, aspect: u32, first_level: u32, levels: u32, first_layer: u32, layers: u32, memory: [*]u8) ?texture.Texture {
     const plane = planeAt(image, aspect) orelse return null;
-    // The depth is read as 16 bits of depth and the stencil as one byte,
-    // which `texture.Format.r8` reads as (red, 0, 0, 1).
-    const kept: texture.Format = if (plane.depth) .d16 else .r8;
+    // The depth is read as 16 bits of depth or 24 (since 1.222) and the
+    // stencil as one byte, which `texture.Format.r8` reads as (red, 0, 0,
+    // 1).
+    const kept: texture.Format = if (!plane.depth) .r8 else if (depthBits(image.format) == 24) .d24 else .d16;
     return levelsOver(image, kept, plane.at, plane.stride, first_level, levels, first_layer, layers, memory);
 }
 
@@ -1275,6 +1343,9 @@ pub fn rowsAt(image: *const Image, level: u32, layer: u32) struct { at: usize, p
 pub fn depthRows(image: *const Image, aspect: u32, level: u32, first_layer: u32) ?shader.Attachment {
     const data = image.data orelse return null;
     const plane = planeAt(image, aspect) orelse return null;
+    // A depth of 24 bits is read by nothing here yet: no device draws one,
+    // so none is an input attachment (`shapeFor`, since 1.222).
+    if (plane.depth and depthBits(image.format) != 16) return null;
     const rows = rowsAt(image, level, first_layer);
     const size = levelSize(image, level);
     const first = data + rows.at + plane.at;
@@ -1500,7 +1571,13 @@ pub fn copyFromBuffer(image: *Image, from: []const u8, region: *const facet.Buff
     if (left >= level_width or top >= level_height) return;
     const width = @min(region.image_extent.width, level_width - left);
     const height = @min(region.image_extent.height, level_height - top);
-    const pixel = bytesOf(image.format);
+    // A depth or a stencil as Vulkan has the aspect lie in a buffer (since
+    // 1.222, `laneOf`): put into its own bytes of each pixel, the other
+    // aspect's left as they lie, where that is not the whole pixel as it
+    // lies - a format of both, or of 24 bits of depth.
+    const lane = laneOf(image.format, region.image_subresource.aspect_mask);
+    const by_lane = if (lane) |one| one.at != 0 or one.bytes != bytesOf(image.format) or one.buffer != one.bytes else false;
+    const pixel = if (lane) |one| one.buffer else bytesOf(image.format);
     // An image that keeps what it is given - a float one's floats, or a
     // texture's own channels since 1.69 - takes the texel's bytes as they
     // lie rather than through a colour of 8 bits a channel, and so since
@@ -1517,6 +1594,16 @@ pub fn copyFromBuffer(image: *Image, from: []const u8, region: *const facet.Buff
             if (at + width * pixel > from.len) return;
             const source = from[at..][0 .. width * pixel];
             const y = top + @as(u32, @intCast(row));
+            if (by_lane) {
+                for (0..width) |column| {
+                    const x = left + @as(u32, @intCast(column));
+                    var texel: [4]u8 = undefined;
+                    readTexel(image, level, layer, x, y, &texel);
+                    laneIn(lane.?, source[column * pixel ..], &texel);
+                    writeTexel(image, level, layer, x, y, &texel);
+                }
+                continue;
+            }
             if (deviceLaid(image)) {
                 // Where the device keeps each texel (since 1.142: a
                 // sampled depth image there).

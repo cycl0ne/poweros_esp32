@@ -177,6 +177,29 @@ fn describe(can: *const _instance.Capabilities, format: facet.Format) facet.Form
                 (if (stencil_sampled) depth_sampled else 0),
             .buffer_features = 0,
         },
+        // 24 bits of depth, alone and with a stencil (since 1.222,
+        // docs/facet-vulkan10.md item 35), in the top three bytes of a word
+        // whose low byte is the stencil or nothing, as the V3D keeps a
+        // D24S8 (`texture.Format.d24`). Copied by aspect, cleared, sampled
+        // where the device samples a depth and the one of the two with a
+        // stencil where it samples that too, and the one without blitted
+        // as D16_UNORM is. Not drawn into yet, which both Mesa drivers do
+        // (v3dvx_formats.c:206, :209; lavapipe's every depth format,
+        // lvp_formats.c:93-104): the cores' tiles hold 16 bits of depth
+        // and the V3D's frames are set up for 16, so neither says
+        // DEPTH_STENCIL_ATTACHMENT, and CreateImage and CreateRenderPass
+        // hold an attachment to that.
+        .x8_d24_unorm_pack32 => .{
+            .linear_tiling_features = 0,
+            .optimal_tiling_features = transfer | facet.FORMAT_FEATURE_BLIT_SRC | facet.FORMAT_FEATURE_BLIT_DST |
+                if (can.sampled_depth) depth_sampled else 0,
+            .buffer_features = 0,
+        },
+        .d24_unorm_s8_uint => .{
+            .linear_tiling_features = 0,
+            .optimal_tiling_features = transfer | (if (stencil_sampled) depth_sampled else 0),
+            .buffer_features = 0,
+        },
         // Compressed: sampled and written, and read back as well where the
         // blocks are kept, there being something of the format to read.
         .bc1_rgb_unorm_block, .bc1_rgba_unorm_block, .bc2_unorm_block, .bc3_unorm_block, .bc4_unorm_block, .bc5_unorm_block, .bc7_unorm_block, .bc6h_ufloat_block, .bc6h_sfloat_block => .{

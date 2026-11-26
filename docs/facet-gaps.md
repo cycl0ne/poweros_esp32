@@ -228,6 +228,20 @@ pass's depth. What is left out:
   keeps only `d16_unorm` or `s8_uint`. There `d16_unorm_s8_uint` says no
   DEPTH_STENCIL_ATTACHMENT, and one kept is `error_validation_failed`
   (since 1.135; `error_feature_not_present` before).
+- **24 bits of depth since 1.222, as images alone**: X8_D24_UNORM_PACK32
+  and D24_UNORM_S8_UINT, one word a pixel with the depth in its top 24
+  bits and the stencil or nothing in its low byte, as the V3D keeps a
+  D24S8. Each aspect is copied as Vulkan has it lie in a buffer, the depth
+  in the low 24 bits of 4 bytes and a stencil in 1 (and so since 1.222
+  for D16_UNORM_S8_UINT: 2 bytes of depth, 1 of stencil, where a copy
+  moved the pixel's four bytes whichever aspect it named). They are
+  cleared, sampled at all 24 bits (the V3D reading DEPTH24_X8, the
+  stencil sampled where `sampled_stencil` is), and the one without a
+  stencil is blitted. No device draws either yet: each says no
+  DEPTH_STENCIL_ATTACHMENT, and CreateImage and CreateRenderPass refuse an
+  attachment of one (docs/facet-vulkan10.md item 35). A depth image need
+  not be an attachment at all since then: one only sampled or copied
+  into is made.
 - **A depth image is a texture since 1.39** (`sampled_depth`): a depth
   attachment with `SAMPLED` is sampled out of the very rows the pass
   stored it into, through a sampler, and a shadow sample compares it at
@@ -702,7 +716,7 @@ is past its answer (-mipLevels-02255, -arrayLayers-02256).
 | What | Where it is refused |
 |---|---|
 | An image both INPUT_ATTACHMENT and TRANSIENT_ATTACHMENT; one both INPUT_ATTACHMENT and STORAGE but as a colour attachment written through is (above); on a device whose images lie in a layout of its own, the V3D, one sampled as well as drawn into until 1.210 (docs/facet-vulkan10.md item 48's V3D half) and one read as an input attachment until 1.216 (item 56), the cores' since 1.119. On the V3D an input attachment that is linear or 3D, or of a format its TMU does not read | `image/createimage.zig` |
-| A sampled depth image on a device that samples none (`sampled_depth`; the V3D until 1.142), or of a format that holds a stencil on one that samples no stencil, the V3D (`sampled_stencil`, since 1.142); a transient one, or one written through as a storage image; one of more levels than halving its longer side gives, which VkImageCreateInfo forbids whatever the query says (-mipLevels-00958); or of type `3d`. Any of the three depth formats is taken since 1.58 and levels of its own since 1.63, and a view of it names one plane, or both at once since 1.94 for a framebuffer, sampling the depth (`image/createimageview.zig`) | `image/createimage.zig` |
+| A sampled depth image on a device that samples none (`sampled_depth`; the V3D until 1.142), or of a format that holds a stencil on one that samples no stencil, the V3D (`sampled_stencil`, since 1.142); a transient one, or one written through as a storage image; one of more levels than halving its longer side gives, which VkImageCreateInfo forbids whatever the query says (-mipLevels-00958); or of type `3d`. Any of the three depth formats is taken since 1.58, and the two of 24 bits of depth since 1.222, an attachment of those refused while no device draws one (docs/facet-vulkan10.md item 35); levels of its own since 1.63, and a view of it names one plane, or both at once since 1.94 for a framebuffer, sampling the depth (`image/createimageview.zig`) | `image/createimage.zig` |
 | Shapes Vulkan has the query take, until docs/facet-vulkan10.md item 94: an image of the transfers alone in a format that is kept for a function; a depth or stencil format without DEPTH_STENCIL_ATTACHMENT - sampled, or for the transfers or TRANSIENT_ATTACHMENT alone; a 3D image deeper than a slice for the transfers alone or as a colour or input attachment, CreateImage making such an image a slice deep, which the query declines; and an optimal colour attachment written through of more than one level or layer, past the one of each the query answers | `image/createimage.zig` |
 
 And these are answered with `error_validation_failed` (since 1.133;

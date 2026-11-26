@@ -505,6 +505,14 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
                 // (docs/facet-vulkan10.md item 94).
                 if ((loads_depth or stores_depth or loads_stencil or stores_stencil or shared != null) and
                     tests_depth and tests_stencil and !owner.physical.can.stored_both) return .error_validation_failed;
+                // And of a format the device draws a depth or a stencil of
+                // at all (the same VUID, since 1.222): not yet one of 24
+                // bits of depth (docs/facet-vulkan10.md item 35). The two
+                // formats a device says no attachment of where it keeps
+                // their stencil nowhere, S8_UINT and D16_UNORM_S8_UINT, are
+                // drawn in its tiles alone all the same, as above.
+                const attaches = owner.physical.ops.format_properties(owner.physical, depth.format).optimal_tiling_features & facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT != 0;
+                if (!attaches and depth.format != .s8_uint and depth.format != .d16_unorm_s8_uint) return .error_validation_failed;
                 // The part that drew it last keeps what it left, so that
                 // this subpass can read it in.
                 if (shared) |earlier| {

@@ -1157,8 +1157,12 @@ pub const Format = enum(u32) {
     r32g32b32a32_sfloat = 109,
     /// 16 bits of depth: 0 nearest.
     d16_unorm = 124,
+    /// 24 bits of depth, in the top of a word whose low byte holds
+    /// nothing, and the same with a stencil there (since 1.222).
+    x8_d24_unorm_pack32 = 125,
     s8_uint = 127,
     d16_unorm_s8_uint = 128,
+    d24_unorm_s8_uint = 129,
     /// As textures: kept in 8 bits a channel, cut to 0 to 1.
     b10g11r11_ufloat_pack32 = 122,
     e5b9g9r9_ufloat_pack32 = 123,
