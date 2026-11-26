@@ -424,6 +424,15 @@ pub const Sampler = struct {
     /// map takes the kind (pipeline_get_descriptor_map, v3dv_pipeline.c:
     /// 601-606; since 1.215).
     input_attachment: bool = false,
+    /// A storage image, Sampled 2 of a format: read and written with no
+    /// sampler, at an integer coordinate, its layer or its slice the
+    /// third word where `dim` is layers or a volume. A cube is its six
+    /// faces' layers, as v3d reads one (vir_image_emit_register_writes,
+    /// v3d_tex.c:473-480). The draw points the TMU at the view the
+    /// storage image's descriptor holds, which v3dv's texture map takes
+    /// (pipeline_get_descriptor_map, v3dv_pipeline.c:601-606; since
+    /// 1.218).
+    storage: bool = false,
 };
 
 /// What a sampled image's coordinate names, as a nir_tex_instr's
@@ -553,20 +562,28 @@ pub const profile: spirv.Profile = .{
         .image,                        .image_fetch,                    .image_query_size_lod,           .image_query_levels,
         .image_sample_explicit_lod,    .image_sample_dref_explicit_lod,
         // An input attachment read where the pixel is, a subpassLoad
-        // (since 1.215).
-        .image_read,
+        // (since 1.215), or a storage image's texel; and one written
+        // (since 1.218).
+        .image_read,                     .image_write,
         // The bit operations, as nir_lower_alu and nir_opt_algebraic lower
         // them for a device of no BFE, BFM or BFI (since 1.202).
-                            .bit_field_insert,
-        .bit_field_s_extract,          .bit_field_u_extract,            .bit_reverse,                    .bit_count,
+        .bit_field_insert,             .bit_field_s_extract,            .bit_field_u_extract,            .bit_reverse,
+        .bit_count,
         // A compute program's workgroup waiting for all its invocations
         // (since 1.203).
-        .control_barrier,
+                           .control_barrier,
     },
     // Workgroup: a compute program's shared memory (since 1.203).
     .storage_classes = &.{ .input, .output, .function, .uniform_constant, .push_constant, .uniform, .workgroup },
     // SubpassData: an input attachment (since 1.215).
     .image_dims = &.{ .dim_2d, .dim_3d, .cube, .subpass_data },
+    // A storage image of 8 bits a channel, R8G8B8A8_UNORM's, which the
+    // TMU keeps as RGBA8 (v3dvx_formats.c:131): the one of Vulkan's
+    // storage formats of no StorageImageExtendedFormats this device keeps
+    // in its own layout (`can.kept_floats` is false), and of the others
+    // it keeps, BGRA8 and RGB565 have no SPIR-V format and R8 needs that
+    // capability (since 1.218).
+    .storage_formats = &.{.rgba8},
     // A bias, a level and a constant texel offset, TMUB's and P2's
     // (handle_tex_src, v3d_tex.c:129-170; since 1.180); and a gradient,
     // which nir_lower_tex's lower_txd makes a level (vir.c:802; since
@@ -781,6 +798,20 @@ pub const Tag = enum {
     /// uniform the draw writes (ntq_emit_tex, nir_to_vir.c:972-975; since
     /// 1.181).
     texture_levels,
+    /// A texel of a storage image, NIR's image_load: of the image `at`
+    /// names, at the integer coordinate `a`, the layer or the slice its
+    /// third word where the image has one. An image of 8 bits a channel
+    /// hands back two words of two half-floats each, `kind` the two,
+    /// which the steps v3d_nir_lower_image_load makes after it read as
+    /// four floats (v3d_nir_lower_image_load_store.c:397-420; since
+    /// 1.218).
+    image_load,
+    /// NIR's image_store: the words of `b` written into the storage image
+    /// `at` names at the integer coordinate `a`, the texel
+    /// v3d71_nir_lower_image_store packed in the image's format
+    /// (v3d_nir_lower_image_load_store.c:354-394), `b`'s kind as many
+    /// words as it is. It makes no value (since 1.218).
+    image_store,
     /// A vertex program's float `a` written to the VPM at `at`, one
     /// float as v3d_nir_store_output stores each (v3d_nir_lower_io.c:
     /// 72-92): a varying where the fragment program reads it, or one of
@@ -886,11 +917,24 @@ pub const Integer = enum(u32) {
     /// f2f32 of that, an FMOV of the low half (nir_to_vir.c:1575-1578,
     /// 1599-1611; since 1.200).
     half_float,
+    /// Each half of a word, a half-float, made a byte of 0 to 255 in the
+    /// low byte of its half: pack_2x16_to_unorm_2x8_v3d
+    /// (nir_opcodes.py:1827-1828), each _mesa_half_to_unorm's
+    /// (format_utils.h:69-84), held to 0 to 1 and the nearest even of
+    /// 255 times it; the V3D's VFTOUNORM8 (nir_to_vir.c:1829-1831), which
+    /// v3d71_nir_lower_image_store packs an Rgba8 texel with (since
+    /// 1.218).
+    pack_unorm_8,
+    /// The low bytes of the two halves of `a` and of `b`, the four bytes
+    /// of a word, `a`'s first: pack_4x16_to_4x8_v3d (nir_opcodes.py:
+    /// 1822-1824), the V3D's V8PACK (nir_to_vir.c:1825-1827; since
+    /// 1.218).
+    pack_4x8,
 
     /// Whether it reads one value, not two.
     pub fn unary(op: Integer) bool {
         return switch (op) {
-            .ineg, .iabs, .inot, .f2i32, .f2u32, .i2f32, .u2f32, .b2f32, .b2i32, .uclz, .half_float => true,
+            .ineg, .iabs, .inot, .f2i32, .f2u32, .i2f32, .u2f32, .b2f32, .b2i32, .uclz, .half_float, .pack_unorm_8 => true,
             else => false,
         };
     }
@@ -1279,6 +1323,13 @@ pub const Word = union(enum) {
     /// (get_texture_size_from_image_view, v3dv_uniforms.c:378-414; since
     /// 1.181).
     texture_size: TextureSize,
+    /// The state of a unit's storage image, as a load's or a store's
+    /// `wrtmuc` takes it: Mesa's QUNIFORM_IMAGE_TMU_CONFIG_P0, which v3dv
+    /// writes as it writes a texture's (write_tmu_p0, v3dv_uniforms.c:
+    /// 139-185, :563-567), the state's address with the words to hand
+    /// back in its low bits, `bits`: a load's two, a store's none (since
+    /// 1.218).
+    image: SamplerWord,
 };
 
 /// A `.texture_size` word: the unit, and which of its view's sizes.
@@ -1551,6 +1602,9 @@ pub const Work = struct {
     /// An image type of Dim SubpassData, an input attachment's (since
     /// 1.215).
     subpass: std.StaticBitSet(most_ids) = .initEmpty(),
+    /// An image type of Sampled 2 and a format, a storage image's (since
+    /// 1.218).
+    storage_image: std.StaticBitSet(most_ids) = .initEmpty(),
     /// Which step a value id answers.
     step_of: [most_ids]u16 = @splat(none),
     /// `member_pointer`: which float of the member it names, or `whole`
@@ -1911,7 +1965,7 @@ pub fn compile(work: *Work, words: []const u32) Error!Code {
     // reads it once.
     if (work.sample_count > 1) return Error.Samplers;
     for (work.program()) |each| switch (each.tag) {
-        .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier, .scratch, .scratch_indirect, .scratch_store, .shared, .shared_store, .shared_atomic, .control_barrier => return Error.Storage,
+        .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier, .scratch, .scratch_indirect, .scratch_store, .shared, .shared_store, .shared_atomic, .control_barrier, .image_load, .image_store => return Error.Storage,
         .discard => return Error.Discards,
         .sample_compared => return Error.Samplers,
         // Every one reads a 2D texture at s and t (since 1.179), at the
@@ -2068,6 +2122,13 @@ fn compileRead(work: *Work, allocator: std.mem.Allocator, compiler: *const vir.C
             // program's own here (since 1.173).
             .tmu_config_p0 => if (vir.unitDataGetOffset(data) == to_vir.texel_words) .{ .texture = try units.at(vir.unitDataGetUnit(data)) } else return Error.Invalid,
             .tmu_config_p1 => if (vir.unitDataGetOffset(data) & ~per_pixel_mask == 0) .{ .sampler = .{ .unit = try units.at(vir.unitDataGetUnit(data)), .bits = vir.unitDataGetOffset(data) } } else return Error.Invalid,
+            // A storage image's: the words a load hands back, or a
+            // store's none (since 1.218).
+            .image_tmu_config_p0 => image: {
+                const bits = vir.unitDataGetOffset(data);
+                if (bits != 0 and bits != to_vir.texel_words) return Error.Invalid;
+                break :image .{ .image = .{ .unit = try units.at(vir.unitDataGetUnit(data)), .bits = bits } };
+            },
             // A word of the push constants: `Step.at` of a `.push`.
             .uniform => .{ .push = data },
             // A uniform buffer's address: the unit is the buffer's slot
@@ -2204,9 +2265,12 @@ const Units = struct {
         // it takes the unit a sample made, or one of its own that no
         // comparison is in (since 1.181); and so does a fetch, whose P1
         // is a constant (v3d_tex.c:350-354; since 1.182).
+        // A storage image's load and store read no sampler state either
+        // (since 1.218).
         for (work.program()) |each| {
             const fetches = each.tag == .sample and each.lookup.fetches();
-            if (each.tag != .texture_size and each.tag != .texture_levels and !fetches) continue;
+            const storage = each.tag == .image_load or each.tag == .image_store;
+            if (each.tag != .texture_size and each.tag != .texture_levels and !fetches and !storage) continue;
             if (units.of_declared[each.at] != no_unit) continue;
             const declared = work.samplers[each.at];
             const unit: u8 = units.find(declared) orelse made: {
@@ -2544,6 +2608,11 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                         work.non_writable[id] = true;
                         continue;
                     },
+                    // A storage image the program reads none of, which
+                    // glslc says of a writeonly one: vtn's
+                    // ACCESS_NON_READABLE (vtn_variables.c:1669-1670),
+                    // which v3d does not read (since 1.218).
+                    .non_readable => continue,
                     else => return Error.Refused,
                 }
                 if (operands.len < 3) return Error.Body;
@@ -2791,6 +2860,27 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 if (operands[3] > 2 or operands[4] > 1 or operands[5] > 1) return Error.Refused;
                 const dim: spirv.Dim = @enumFromInt(operands[2]);
                 const arrayed = operands[4] == 1;
+                // A storage image: Sampled 2 and of a format the
+                // profile's, which `look` has held it to (since 1.218).
+                // One of four samples is refused, as
+                // shaderStorageImageMultisample is false. A cube is read
+                // and written as its six faces' layers, the face the
+                // coordinate's third word in TMUI, as for an array
+                // (vir_image_emit_register_writes, v3d_tex.c:449-480);
+                // a cube of an array wants ImageCubeArray, which `look`
+                // refuses.
+                if (operands[6] == 2 and dim != .subpass_data) {
+                    if (operands[5] == 1) return Error.Refused;
+                    work.sampler_dim[id] = switch (dim) {
+                        .dim_2d => if (arrayed) .layers else .flat,
+                        .dim_3d => if (arrayed) return Error.Refused else .volume,
+                        .cube => if (arrayed) return Error.Refused else .layers,
+                        else => return Error.Refused,
+                    };
+                    work.storage_image.set(id);
+                    work.thing[id] = .image;
+                    continue;
+                }
                 if (operands[5] == 1) {
                     if (dim != .dim_2d) return Error.Refused;
                     work.multisampled.set(id);
@@ -2975,8 +3065,10 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     // one TMU, it is configured from two words of the
                     // uniform stream, and where those words come from is
                     // the set and the binding the draw looks up.
+                    // Or a storage image (since 1.218).
                     const subpass = work.thing[pointee] == .image and work.subpass.isSet(pointee);
-                    if (work.thing[pointee] != .sampled_image and !subpass) return Error.Storage;
+                    const storage = work.thing[pointee] == .image and work.storage_image.isSet(pointee);
+                    if (work.thing[pointee] != .sampled_image and !subpass and !storage) return Error.Storage;
                     // This is the table's bound, not the device's: what
                     // the device can run is one *sample*, and a module
                     // may declare many samplers and sample one of them.
@@ -2988,7 +3080,7 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     work.thing[id] = .variable;
                     work.class[id] = @intCast(@intFromEnum(class));
                     work.sampler_of[id] = @intCast(work.sampler_count);
-                    work.samplers[work.sampler_count] = .{ .set = work.set[id], .binding = work.binding[id], .dim = work.sampler_dim[pointee], .multisampled = work.multisampled.isSet(pointee), .input_attachment = subpass };
+                    work.samplers[work.sampler_count] = .{ .set = work.set[id], .binding = work.binding[id], .dim = work.sampler_dim[pointee], .multisampled = work.multisampled.isSet(pointee), .input_attachment = subpass, .storage = storage };
                     work.sampler_count += 1;
                     continue;
                 }
@@ -3518,7 +3610,17 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                         // nir_opt_cse before nir_opt_peephole_select
                         // (nir_to_vir.c:2265, :2269-2279), which finds
                         // the arm without it (since 1.185).
-                        .image_sample_implicit_lod, .image_sample_dref_implicit_lod, .image_sample_explicit_lod, .image_sample_dref_explicit_lod, .image_fetch, .image_read, .image_query_size_lod, .image_query_levels => texture = true,
+                        .image_sample_implicit_lod, .image_sample_dref_implicit_lod, .image_sample_explicit_lod, .image_sample_dref_explicit_lod, .image_fetch, .image_query_size_lod, .image_query_levels => texture = true,
+                        // A subpassLoad is a txf; a storage image's texel
+                        // read or written an image_load or an
+                        // image_store, intrinsics
+                        // block_check_for_allowed_instrs lets none of
+                        // through (its default, nir_opt_peephole_select.c:
+                        // 235-236; since 1.218).
+                        .image_read => if (storageOf(work, operands, 2) != null) selection.keep() else {
+                            texture = true;
+                        },
+                        .image_write => selection.keep(),
                         // An atomic or a barrier is neither either: it
                         // would run where the arm is not taken (since
                         // 1.169).
@@ -4450,7 +4552,7 @@ fn loopCost(work: *const Work, from: u16, to: u16) u32 {
                 cost += each.kind.parts();
                 continue;
             },
-            .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier, .scratch, .scratch_indirect, .scratch_store, .shared, .shared_store, .shared_atomic, .control_barrier, .discard, .sample, .sample_compared, .output, .viewport, .system => {
+            .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier, .scratch, .scratch_indirect, .scratch_store, .shared, .shared_store, .shared_atomic, .control_barrier, .discard, .sample, .sample_compared, .output, .viewport, .system, .image_load, .image_store => {
                 cost += 1;
                 continue;
             },
@@ -5964,7 +6066,8 @@ fn armCost(work: *const Work, from: u16, to: u16) u32 {
             // load_scratch is made of later, is let through by none
             // (nir_opt_peephole_select.c:109-129), nor is a store_deref
             // (since 1.177).
-            .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier, .scratch, .scratch_indirect, .scratch_store, .shared, .shared_store, .shared_atomic, .control_barrier => return std.math.maxInt(u32),
+            // An image_load and an image_store neither (since 1.218).
+            .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier, .scratch, .scratch_indirect, .scratch_store, .shared, .shared_store, .shared_atomic, .control_barrier, .image_load, .image_store => return std.math.maxInt(u32),
             // ineg and iabs are move-like, as fneg and fabs are
             // (nir_opt_peephole_select.c:251-264; since 1.165).
             .integer => switch (@as(Integer, @enumFromInt(each.at))) {
@@ -6311,8 +6414,9 @@ const Order = struct {
             // What writes memory, or orders it, is kept whatever reads it
             // (nir_instr_can_remove, nir_opt_dce.c; since 1.168 and 1.169).
             if (each.tag == .discard or each.tag == .output or each.tag == .ssbo_store or each.tag == .ssbo_atomic or each.tag == .barrier or each.tag == .scratch_store) reached[at] = true;
-            // Shared memory's too (since 1.203).
-            if (each.tag == .shared_store or each.tag == .shared_atomic or each.tag == .control_barrier) reached[at] = true;
+            // Shared memory's too (since 1.203), and a storage image's
+            // (since 1.218).
+            if (each.tag == .shared_store or each.tag == .shared_atomic or each.tag == .control_barrier or each.tag == .image_store) reached[at] = true;
             // A kept selection's marks are its nir_if, which nir_opt_dce
             // does not take out (since 1.171): `flattenEmptied` does, once
             // its arms are empty.
@@ -7200,7 +7304,11 @@ fn oneFloat(work: *const Work, left: Float, right: Float) bool {
 /// component and a construct only name floats.
 fn computes(tag: Tag) bool {
     return switch (tag) {
-        .input, .constant, .push, .component, .construct, .discard, .output, .viewport, .system, .ssbo_store, .ssbo_atomic, .barrier, .begin_if, .begin_else, .end_if, .phi, .scratch, .scratch_indirect, .scratch_store, .shared, .shared_store, .shared_atomic, .control_barrier => false,
+        // An image_load is not taken for another either: an image's
+        // loads are ACCESS_CAN_REORDER where nir_opt_access finds no store
+        // to any image (nir_opt_access.c:224-293), which is not ported
+        // (since 1.218).
+        .input, .constant, .push, .component, .construct, .discard, .output, .viewport, .system, .ssbo_store, .ssbo_atomic, .barrier, .begin_if, .begin_else, .end_if, .phi, .scratch, .scratch_indirect, .scratch_store, .shared, .shared_store, .shared_atomic, .control_barrier, .image_load, .image_store => false,
         else => true,
     };
 }
@@ -7304,6 +7412,9 @@ fn readsOf(each: Step) [4]?u16 {
         // A load_shared's offset, where it is computed (since 1.203).
         .shared => .{ if (each.a != none) each.a else null, null, null, null },
         .barrier, .control_barrier => .{ null, null, null, null },
+        // A storage image's coordinate, and a store's texel (since 1.218).
+        .image_load => .{ each.a, null, null, null },
+        .image_store => .{ each.a, each.b, null, null },
     };
 }
 
@@ -8592,7 +8703,10 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
             work.step_of[id] = try glslCall(work, operands[3], kind, operands[4..]);
         },
         .image_sample_implicit_lod, .image_sample_explicit_lod, .image_sample_dref_implicit_lod, .image_sample_dref_explicit_lod, .image_fetch => try readSample(work, instruction.op, operands),
-        .image_read => try readSubpass(work, operands),
+        // An input attachment's subpassLoad, or a storage image's texel
+        // (since 1.218).
+        .image_read => if (storageOf(work, operands, 2) != null) try readStorage(work, operands) else try readSubpass(work, operands),
+        .image_write => try writeStorage(work, operands),
         .image => {
             // ResultType, Result, SampledImage: the image of a sampled
             // image, which vtn reads as the same texture deref
@@ -10697,6 +10811,8 @@ fn foldedInteger(work: *Work, op: Integer, a: u16, b: ?u16) Error!?u16 {
             .uclz => @clz(x),
             .pack_half => halvesOf(f, @bitCast(y)),
             .half_float => @bitCast(floatOfHalf(x)),
+            .pack_unorm_8 => unormsOfHalves(x),
+            .pack_4x8 => bytesOfPairs(x, y),
         };
         work.pool[out + k] = @bitCast(word);
     }
@@ -10710,6 +10826,29 @@ fn halvesOf(low: f32, high: f32) u32 {
     const l: u16 = @bitCast(@as(f16, @floatCast(low)));
     const h: u16 = @bitCast(@as(f16, @floatCast(high)));
     return @as(u32, h) << 16 | l;
+}
+
+/// _mesa_half_to_unorm(half, 8) of the half in `word`'s low 16 bits
+/// (format_utils.h:69-84): 0 below 0, 255 above 1, and else the nearest
+/// even of 255 times it, a NaN 0 as neither bound takes it.
+fn unormOfHalf(word: u32) u32 {
+    const f = floatOfHalf(word);
+    if (f < 0) return 0;
+    if (f > 1) return 255;
+    if (std.math.isNan(f)) return 0;
+    return @intFromFloat(roundEven(f * 255));
+}
+
+/// pack_2x16_to_unorm_2x8_v3d's word (nir_opcodes.py:1827-1828): each half
+/// of `word` made a byte in the low bits of its own half.
+fn unormsOfHalves(word: u32) u32 {
+    return unormOfHalf(word) | unormOfHalf(word >> 16) << 16;
+}
+
+/// pack_4x16_to_4x8_v3d's word (nir_opcodes.py:1817-1824): the low byte of
+/// each half of `low`, then of `high`.
+fn bytesOfPairs(low: u32, high: u32) u32 {
+    return (low & 0xff) | (low & 0xff0000) >> 8 | (high & 0xff) << 16 | (high & 0xff0000) << 8;
 }
 
 /// The float of the half in `word`'s low 16 bits, exactly.
@@ -11156,6 +11295,93 @@ fn readSubpass(work: *Work, operands: []const u32) Error!void {
     work.sample_count += 1;
 }
 
+/// The storage image the OpLoad of `operands[at]` reads, as the
+/// sampler the module declares it: null where it reads another kind.
+fn storageOf(work: *const Work, operands: []const u32, at: usize) ?u16 {
+    if (operands.len <= at) return null;
+    const id = idOf(operands[at]) catch return null;
+    const which = work.sampler_of[id];
+    if (which == none or !work.samplers[which].storage) return null;
+    return which;
+}
+
+/// A storage image's coordinate, as vtn hands it to image_deref_load and
+/// image_deref_store: an integer for each word its image's `dim` names, x
+/// and y, and the layer, a cube's face or a 3D image's slice
+/// (vir_image_emit_register_writes, v3d_tex.c:449-480; since 1.218).
+fn storageCoordinate(work: *Work, word: u32, which: u16) Error!u16 {
+    const kind: Kind = if (work.samplers[which].dim == .flat) .f32x2 else .f32x3;
+    return operand(work, word, kind);
+}
+
+/// OpImageRead of a storage image, vtn's image_deref_load, which
+/// nir_lower_image makes an image_load of the image's unit
+/// (vtn_handle_image, spirv_to_nir.c:3895-3900, :4087-4095): the texel at an integer
+/// coordinate. An image of 8 bits a channel returns 16-bit floats, two
+/// words of two each (v3d_gl_format_is_return_32,
+/// v3d_nir_lower_image_load_store.c:48-62), which v3d_nir_lower_image_load
+/// makes four floats (:397-420): nir_extract_bits's halves of each word,
+/// nir_unpack_32_2x16 (nir_builder.h:1573-1635, :1536-1541), which
+/// nir_lower_pack splits and nir_opt_algebraic makes the word's u2u16 and
+/// the u2u16 of the word shifted down by 16, as v3dv lowers the split
+/// (lower_unpack_32_2x16_split, v3dv_pipeline.c:191;
+/// nir_opt_algebraic.py:2271-2272), and the f2f32 of each, an FMOV of the
+/// low half (`half_float`). Its ImageOperands are refused: a Sample is an
+/// image of four's, which is refused, and no other is in the profile. A
+/// compute program's alone: a fragment program's per-pixel mask and its
+/// helper pixels are step 3 of docs/facet-vulkan10.md item 57 (since
+/// 1.218).
+fn readStorage(work: *Work, operands: []const u32) Error!void {
+    // ResultType, Result, Image, Coordinate.
+    if (operands.len < 4) return Error.Body;
+    if (operands.len > 4) return Error.Operands;
+    if (work.stage != .gl_compute) return Error.Refused;
+    const type_id = try idOf(operands[0]);
+    const id = try idOf(operands[1]);
+    if (try kindOf(work, type_id) != .f32x4) return Error.Type;
+    const which = storageOf(work, operands, 2) orelse return Error.Body;
+    const coordinate = try storageCoordinate(work, operands[3], which);
+    const words = try put(work, .{ .tag = .image_load, .kind = .f32x2, .a = coordinate, .at = which });
+    const sixteen = try integerSplat(work, .f32x1, 16);
+    var floats: [4]u16 = undefined;
+    for (0..2) |k| {
+        const word = try channelOf(work, words, @intCast(k));
+        floats[2 * k] = try integerOf(work, .half_float, word, null);
+        floats[2 * k + 1] = try integerOf(work, .half_float, try integerOf(work, .ushr, word, sixteen), null);
+    }
+    work.step_of[id] = try vectorOf(work, &floats);
+}
+
+/// OpImageWrite of a storage image, vtn's image_deref_store, an
+/// image_store of the image's unit (vtn_handle_image, spirv_to_nir.c:
+/// 3937-3945, :4097-4110), its texel packed in the image's format as
+/// v3d71_nir_lower_image_store packs it (v3d_nir_lower_image_load_store.c:
+/// 354-394): an Rgba8 one's four floats of 0 to 1 as pack_xbit's
+/// pack_8bit makes them with TO_UNORM (:153-195, :242-274), the first two
+/// and the last two each two halves (pack_half_2x16_split, VFPACK), each
+/// pair of halves two bytes (pack_2x16_to_unorm_2x8_v3d, VFTOUNORM8), and
+/// the two pairs the four bytes of one word (pack_4x16_to_4x8_v3d,
+/// V8PACK). Each a constant where its floats are, as
+/// nir_opt_constant_folding makes it (`Order.fold`). A compute program's
+/// alone, as `readStorage` (since 1.218).
+fn writeStorage(work: *Work, operands: []const u32) Error!void {
+    // Image, Coordinate, Texel.
+    if (operands.len < 3) return Error.Body;
+    if (operands.len > 3) return Error.Operands;
+    if (work.stage != .gl_compute) return Error.Refused;
+    const which = storageOf(work, operands, 0) orelse return Error.Body;
+    const coordinate = try storageCoordinate(work, operands[1], which);
+    // Each channel a float of its own, so that a pair of constants is
+    // packed to one by the folding of the loop of passes (`Order.fold`).
+    const texel = try operand(work, operands[2], .f32x4);
+    var channels: [4]u16 = undefined;
+    for (&channels, 0..) |*each, k| each.* = try floatOf(work, partOf(work, texel, @intCast(k)));
+    const low = try integerOf(work, .pack_unorm_8, try integerOf(work, .pack_half, channels[0], channels[1]), null);
+    const high = try integerOf(work, .pack_unorm_8, try integerOf(work, .pack_half, channels[2], channels[3]), null);
+    const word = try integerOf(work, .pack_4x8, low, high);
+    _ = try put(work, .{ .tag = .image_store, .kind = .f32x1, .a = coordinate, .b = word, .at = which });
+}
+
 /// lower_gradient (nir_lower_tex.c:855-912): the level a gradient's
 /// sample is taken at, which replace_gradient_with_lod makes the txl's
 /// lod (:690-704). The size of level 0, a txs at the integer 0
@@ -11446,7 +11672,7 @@ fn settle(work: *Work) Error!void {
             // are already in registers, so neither costs an instruction.
             .input, .component, .construct => {},
             // Refused by `compile` before the plan is laid out.
-            .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier, .scratch, .scratch_indirect, .scratch_store, .shared, .shared_store, .shared_atomic, .control_barrier => return Error.Storage,
+            .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier, .scratch, .scratch_indirect, .scratch_store, .shared, .shared_store, .shared_atomic, .control_barrier, .image_load, .image_store => return Error.Storage,
             .compare, .discard => return Error.Discards,
             .sample_compared, .texture_size, .texture_levels => return Error.Samplers,
             .begin_if, .begin_else, .end_if, .phi => return Error.Branches,
@@ -14923,6 +15149,9 @@ fn evaluatedStep(work: *const Work, values: *const [most_steps]?[4]f32, at: u16,
                     .uclz => @bitCast(@as(u32, @clz(u))),
                     .pack_half => @bitCast(halvesOf(x[k], y[if (single) 0 else k])),
                     .half_float => floatOfHalf(u),
+                    // A storage image's texel packed (since 1.218).
+                    .pack_unorm_8 => @bitCast(unormsOfHalves(u)),
+                    .pack_4x8 => @bitCast(bytesOfPairs(u, v)),
                     else => @bitCast(switch (op) {
                         .iadd => u +% v,
                         .isub => u -% v,
@@ -22610,4 +22839,155 @@ test "a subpassLoad of an image of four samples, of an array of input attachment
     // Sampled 1: an input attachment is Sampled 2, and only one is.
     try testing.expect(spirv.look(&comptime patched(&reference.glslc_subpass, .type_image, 0, 6, 1), profile) == .fault);
     try testing.expect(spirv.look(&reference.glslc_subpass, profile) == .seen);
+}
+
+test "through Mesa's back end, an imageStore of an Rgba8 storage image is its texel packed to one word, VFPACK, VFTOUNORM8 and V8PACK, written at TMUD, x at TMUSF and y at TMUT, with P0 its unit and no words back" {
+    // vir_image_emit_register_writes and v3d_vir_emit_image_load_store
+    // (v3d_tex.c:440-655): P0 alone, of no return words and the unit,
+    // y at TMUT and the data at TMUD, x last at TMUSF, and a TMUWT for
+    // the store (ntq_flush_tmu's wait, nir_to_vir.c). The texel's red and
+    // green are the place over 64, packed at run time
+    // (v3d71_nir_lower_image_store); its blue and alpha, 0.5 and 1, the
+    // constant 0x00FF0080 (nir_opt_constant_folding of
+    // pack_2x16_to_unorm_2x8_v3d of pack_half_2x16_split), V8PACK's
+    // second word (since 1.218).
+    var work: Work = .{};
+    const code = try computeThroughMesa(&work, &reference.glslc_storage_store);
+    try expectText(code, &.{
+        text("nop", "nop", "ldunif"),
+        text("and rf4, rf3, rf0", "nop", "ldunif"),
+        text("shr rf5, rf3, rf0", "nop", "ldunif"),
+        text("add rf6, rf4, rf0", "nop", "ldunif"),
+        text("add rf7, rf5, rf0", "nop", "ldunif"),
+        text("shr rf8, rf2, rf0", "nop", "ldunif"),
+        text("shr rf10, rf8, 3", "nop", ""),
+        text("shl rf12, rf6, 3", "nop", ""),
+        text("shl rf14, rf7, 3", "nop", ""),
+        text("and rf9, rf8, 7", "nop", ""),
+        text("and rf11, rf10, 7", "add rf13, rf12, rf9", ""),
+        text("itof rf16, rf13", "add rf15, rf14, rf11", "wrtmuc"),
+        text("itof rf17, rf15", "fmul rf18, rf16, 0x3c800000", ""),
+        text("mov tmut, rf15", "fmul rf19, rf17, 0x3c800000", ""),
+        text("vfpack rf20, rf18, rf19", "nop", ""),
+        text("nop", "vftounorm8 rf21, rf20", ""),
+        text("v8pack rf22, rf21, rf0", "nop", "thrsw"),
+        text("nop", "mov tmud, rf22", "thrsw"),
+        text("nop", "mov tmusf, rf13", ""),
+        text("tmuwt -", "nop", "thrsw"),
+        text("nop", "nop", ""),
+        text("nop", "nop", ""),
+    });
+    try expectStream(&.{
+        wordOf(0xFFFF),
+        wordOf(16),
+        .{ .work_group_base = 0 },
+        .{ .work_group_base = 1 },
+        wordOf(26),
+        wordOf(0x00FF_0080),
+        .{ .image = .{ .unit = 0, .bits = 0 } },
+    }, code.stream());
+    try testing.expectEqual(@as(u8, 4), code.threads);
+    try testing.expect(code.tmu_dirty_rcl);
+    try testing.expectEqual(@as(u32, 1), code.sampler_count);
+    try testing.expectEqual(Sampler{ .set = 0, .binding = 0, .storage = true }, code.sampled()[0]);
+}
+
+test "through Mesa's back end, an imageLoad of an Rgba8 storage image is two words back, each two halves its FMOV makes floats, which an imageStore packs again where VFPACK reads the halves" {
+    // The load's P0 asks for two words (v3d_gl_format_is_return_32 is
+    // false for an image of 8 bits a channel, v3d_nir_lower_image_load_store.c:
+    // 48-62), each two halves of the texel; the store's for none. The
+    // swizzle's blue and green are the second word's low half and the
+    // first's high one: try_opt_extract_h16 (vir_opt_alu.c:62) makes the
+    // FMOV of the shifted word one of the high half, and copy propagation
+    // hands each FMOV's unpack to the VFPACK that reads it
+    // (vir_opt_copy_propagate.c). The load's lookup is written before the
+    // store's, both of x at TMUSF (since 1.218).
+    var work: Work = .{};
+    const code = try computeThroughMesa(&work, &reference.glslc_storage_copy);
+    try expectText(code, &.{
+        text("nop", "nop", "ldunif"),
+        text("and rf4, rf3, rf0", "nop", "ldunif"),
+        text("shr rf5, rf3, rf0", "nop", "ldunif"),
+        text("add rf6, rf4, rf0", "nop", "ldunif"),
+        text("add rf7, rf5, rf0", "nop", "ldunif"),
+        text("shr rf8, rf2, rf0", "nop", "wrtmuc"),
+        text("shr rf10, rf8, 3", "nop", ""),
+        text("shl rf14, rf7, 3", "nop", ""),
+        text("and rf11, rf10, 7", "nop", ""),
+        text("shl rf12, rf6, 3", "add rf15, rf14, rf11", ""),
+        text("and rf9, rf8, 7", "mov tmut, rf15", ""),
+        text("add rf13, rf12, rf9", "nop", "thrsw"),
+        text("nop", "mov tmusf, rf13", ""),
+        text("nop", "nop", ""),
+        text("nop", "mov tmut, rf15", "ldtmu.rf16; wrtmuc"),
+        text("nop", "nop", "ldtmu.rf17"),
+        text("vfpack rf18, rf17.l, rf16.h", "nop", ""),
+        text("vfpack rf20, rf16.l, rf17.h", "vftounorm8 rf19, rf18", ""),
+        text("nop", "vftounorm8 rf21, rf20", ""),
+        text("v8pack rf22, rf19, rf21", "nop", "thrsw"),
+        text("nop", "mov tmud, rf22", "thrsw"),
+        text("nop", "mov tmusf, rf13", ""),
+        text("tmuwt -", "nop", "thrsw"),
+        text("nop", "nop", ""),
+        text("nop", "nop", ""),
+    });
+    try expectStream(&.{
+        wordOf(0xFFFF),
+        wordOf(16),
+        .{ .work_group_base = 0 },
+        .{ .work_group_base = 1 },
+        wordOf(26),
+        .{ .image = .{ .unit = 0, .bits = to_vir.texel_words } },
+        .{ .image = .{ .unit = 1, .bits = 0 } },
+    }, code.stream());
+    try testing.expect(code.tmu_dirty_rcl);
+    try testing.expectEqual(@as(u32, 2), code.sampler_count);
+    try testing.expectEqual(Sampler{ .set = 0, .binding = 0, .storage = true }, code.sampled()[0]);
+    try testing.expectEqual(Sampler{ .set = 0, .binding = 1, .storage = true }, code.sampled()[1]);
+}
+
+test "a storage image's texel packs as the V3D's VFTOUNORM8 and V8PACK do: 0 below 0, 255 above 1, a NaN 0, the even of two as near, each pair's low bytes one word" {
+    var work: Work = .{};
+    // _mesa_float_to_unorm (format_utils.h:69-79): 0.5 is 127.5, and
+    // goes to 128, the even; -2 to 0, 2 to 255, 1 to 255, 0 to 0.
+    const Case = struct { word: u32, made: u32 };
+    const cases = [_]Case{
+        .{ .word = 0x3C00_3800, .made = 0x00FF_0080 },
+        .{ .word = 0x4000_C000, .made = 0x00FF_0000 },
+        .{ .word = 0x0000_7E00, .made = 0x0000_0000 },
+        .{ .word = 0x3400_3BFF, .made = 0x0040_00FF },
+    };
+    for (cases) |case| {
+        const made = try integerOf(&work, .pack_unorm_8, try integerSplat(&work, .f32x1, @bitCast(case.word)), null);
+        try testing.expectEqual(Tag.constant, work.steps[made].tag);
+        try testing.expectEqual(case.made, @as(u32, @bitCast(work.pool[work.steps[made].at])));
+        try testing.expectEqual(case.made, unormsOfHalves(case.word));
+    }
+    // pack_4x16_to_4x8_v3d (nir_opcodes.py:1817-1824).
+    const word = try integerOf(&work, .pack_4x8, try integerSplat(&work, .f32x1, 0x00FF_0080), try integerSplat(&work, .f32x1, 0x0011_0022));
+    try testing.expectEqual(Tag.constant, work.steps[word].tag);
+    try testing.expectEqual(@as(u32, 0x1122_FF80), @as(u32, @bitCast(work.pool[work.steps[word].at])));
+}
+
+test "a storage image in a fragment program, of four samples, of a format other than Rgba8, or with an image operand, is refused" {
+    // A fragment program's stores are step 3 of docs/facet-vulkan10.md
+    // item 57: its per-pixel mask and helper pixels (since 1.218).
+    var work: Work = .{};
+    try expectRefusal(Error.Refused, compile(&work, &reference.glslc_storage_fragment));
+    work = .{};
+    try expectRefusal(Error.Refused, computeThroughMesa(&work, &comptime patched(&reference.glslc_storage_store, .type_image, 0, 5, 1)));
+    // Rgba32f, which the V3D's profile does not take (`storage_formats`).
+    try testing.expect(spirv.look(&comptime patched(&reference.glslc_storage_store, .type_image, 0, 7, 1), profile) == .fault);
+    try testing.expect(spirv.look(&reference.glslc_storage_store, profile) == .seen);
+    // A Sample, or any operand: none is in the profile.
+    work = .{};
+    try expectRefusal(Error.Operands, computeThroughMesa(&work, &comptime widened(&reference.glslc_storage_copy, .image_read, 0, &.{ @intFromEnum(spirv.ImageOperands.sample), 15 })));
+    work = .{};
+    try expectRefusal(Error.Operands, computeThroughMesa(&work, &comptime widened(&reference.glslc_storage_store, .image_write, 0, &.{ @intFromEnum(spirv.ImageOperands.sample), 15 })));
+}
+
+/// That `made` is the refusal `expected`, without printing a program made
+/// instead: a Code's units past its count are undefined.
+fn expectRefusal(expected: anyerror, made: anyerror!Code) !void {
+    if (made) |_| return error.TestExpectedError else |err| try testing.expectEqual(expected, err);
 }

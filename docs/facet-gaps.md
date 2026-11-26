@@ -300,9 +300,11 @@ is left out:
   layout of its own, and a view's texture there finds each texel where the
   device keeps it (`texture.Texture.place`, `_image.deviceTexels`), so a
   function run on the cores beside the V3D writes it where the TMU reads
-  it. No QPU program reads or writes one yet: a compute shader that does
-  runs its function on the cores, and a graphics pipeline is refused there
-  (docs/facet-vulkan10.md item 57, steps 2 and 3).
+  it. Since 1.218 a compute program of the V3D's reads and writes an
+  R8G8B8A8 one through its TMU, and a compute shader of any other format
+  runs its function on the cores. A fragment or vertex program that uses
+  one is refused there, and the cores draw (docs/facet-vulkan10.md item
+  57, step 3).
 - **Nothing orders two writes.** A frame's work is shared between the
   cores, and groups run in no order, so two functions writing the same texel
   is for the program to avoid - as it is in Vulkan, there being no barrier

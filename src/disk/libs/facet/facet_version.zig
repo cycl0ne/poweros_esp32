@@ -7179,4 +7179,40 @@ pub const LIBRARY_VERSION = 1;
 /// each fail the new test. The caches are the board's to see: FacetBoth
 /// 1.76's "stored by a function" draws such a texture. Read from the code
 /// and the host's tests: not yet on a board, the CM5 being off.
-pub const LIBRARY_REVISION = 217;
+///
+/// 218: **imageLoad and imageStore in the V3D's compute programs
+/// (docs/facet-vulkan10.md item 57, step 2).** A compute shader that reads
+/// or writes an R8G8B8A8 storage image runs on the QPUs, whose TMU reads
+/// and writes each texel where the texture lies.
+///
+/// `spirv.look` takes a storage image of a format the profile names
+/// (`Profile.storage_formats`), and OpImageRead and OpImageWrite of one.
+/// The V3D's profile names Rgba8 alone, which v3dv's table keeps as RGBA8
+/// of 16-bit returns (v3dvx_formats.c:131). The walk makes an OpImageRead
+/// an `image_load` of two words, each two halves made floats, as
+/// v3d_nir_lower_image_load does (v3d_nir_lower_image_load_store.c:
+/// 397-420). It makes an OpImageWrite an `image_store` of its texel packed
+/// as v3d71_nir_lower_image_store packs an Rgba8 one (:354-394): VFPACK,
+/// VFTOUNORM8 and V8PACK. `to_vir.emitImageLoadStore` is
+/// v3d_vir_emit_image_load_store (v3d_tex.c:564-655): P0 of the unit and
+/// the words back, y at TMUT, the layer at TMUI or the slice at TMUR, the
+/// data at TMUD, and x last at TMUSF, under the execute mask where the
+/// lanes differ. A store waits at a TMUWT and marks the job
+/// tmu_dirty_rcl. A compute pipeline whose units are all storage images
+/// keeps them, and a dispatch writes each one's texture state, the one a
+/// draw samples the view through, as v3dv writes it
+/// (v3dv_descriptor_set.c:1146-1159), with the words back in P0's low
+/// bits (`_play.storageBy`). Where one is not bound where the V3D keeps
+/// it, the function runs on the cores. A fragment program's image is
+/// step 3: it is refused, and the cores draw.
+///
+/// Four host tests are new: two programs from glslc compile to Mesa's
+/// code instruction for instruction (a store of a texel made of the place,
+/// and a copy from one image into another, red and blue swapped); the
+/// packings fold as nir_opcodes.py has them; and a fragment program's
+/// store, an image of four samples, an Rgba32f one and an image operand
+/// are refused. Seven mutations each fail one. The dispatch is the
+/// board's to see: FacetBoth 1.77's "shipped stored" writes "stored"'s
+/// texels by glslc's imageStore and samples them. Read from the code and
+/// the host's tests: not yet on a board, the CM5 being off.
+pub const LIBRARY_REVISION = 218;

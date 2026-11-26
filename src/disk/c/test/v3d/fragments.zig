@@ -922,8 +922,8 @@ fn compiled(back: Back, work: *compile.Work, words: []const u32, stream: *[compi
         // library's pipelines make it), nor does one ask a view's sizes,
         // which the library's draws measure (since 1.181), nor of a
         // compute program's work groups (since 1.194) or its shared memory
-        // (since 1.203).
-        .push, .ubo, .ssbo, .viewport, .first_vertex, .num_work_groups, .work_group_base, .spill_offset, .spill_size_per_thread, .texture_size, .shared_offset => return null,
+        // (since 1.203), nor reads a storage image (facet 1.218).
+        .push, .ubo, .ssbo, .viewport, .first_vertex, .num_work_groups, .work_group_base, .spill_offset, .spill_size_per_thread, .texture_size, .shared_offset, .image => return null,
     };
     return .{
         .{
