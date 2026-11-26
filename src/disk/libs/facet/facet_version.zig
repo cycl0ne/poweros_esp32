@@ -7416,4 +7416,29 @@ pub const LIBRARY_VERSION = 1;
 /// alone with the stencil cleared and stores both again, and stores and
 /// loads its stencil alone. On the CM5 (package f230) FacetProbe is 997
 /// of 997 and FacetBoth's 316 cases are each as at 1.223.
-pub const LIBRARY_REVISION = 224;
+/// 225: **DEPTH_STENCIL_ATTACHMENT held for every format
+/// (docs/facet-vulkan10.md item 35, step 4 of four; item 94).**
+/// `_image.shapeFor` holds that usage to the format's feature for
+/// D16_UNORM_S8_UINT too, as lavapipe and v3dv hold every usage
+/// (lvp_formats.c:394-435, v3dv_formats.c:512-551), and CreateRenderPass
+/// refuses an attachment of any format without it
+/// (VUID-VkSubpassDescription-pDepthStencilAttachment-02650,
+/// `error_validation_failed`): the V3D's D16_UNORM_S8_UINT, which it drew
+/// in its tiles alone where a pass kept neither plane, and S8_UINT on a
+/// device that keeps no stencil. The check that refused a
+/// D16_UNORM_S8_UINT kept on a device without `stored_both` goes, the
+/// feature saying the same. The V3D's format of both planes is
+/// D24_UNORM_S8_UINT since 1.224. Item 35 is done: both devices draw
+/// X8_D24_UNORM_PACK32 and D24_UNORM_S8_UINT, one of each pair Vulkan
+/// has a device hold.
+///
+/// Two host tests are turned round: the device without `stored_both`
+/// refuses a D16S8 that keeps neither plane, and an image of it to be an
+/// attachment; and one without `stored_stencil` refuses an S8_UINT pass
+/// for its format before its sharing. Three mutations each fail one.
+/// FacetBoth 1.80 draws its eighteen stencil cases with a stencil beside a
+/// depth on D24_UNORM_S8_UINT, and FacetProbe 1.53 checks the V3D refuses
+/// a D16S8 attachment kept nowhere and its image. On the CM5 (package
+/// f231) FacetProbe is 998 of 998 and FacetBoth's 316 cases are each as at
+/// 1.224, the eighteen on D24_UNORM_S8_UINT.
+pub const LIBRARY_REVISION = 225;

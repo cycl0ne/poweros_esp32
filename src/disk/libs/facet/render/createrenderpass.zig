@@ -497,31 +497,23 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
                 if (loads_stencil or stores_stencil or (shared != null and tests_stencil)) {
                     if (!owner.physical.can.stored_stencil) return .error_feature_not_present;
                 }
-                // D16_UNORM_S8_UINT keeps either plane only where the
-                // device writes a pixel's planes where they lie in it
-                // (`stored_both`, since 1.47): one that stores a tile
-                // buffer whole writes a plane's own pixels one after
-                // another, which those rows are not. D24_UNORM_S8_UINT is
-                // held to its feature below alone (since 1.224): the V3D
-                // stores it a word a pixel, either plane or both. Where it does not,
-                // `_format.describe` gives such a format no
-                // DEPTH_STENCIL_ATTACHMENT
-                // (VUID-VkSubpassDescription-pDepthStencilAttachment-02650;
-                // `error_feature_not_present` until 1.135). One that keeps
-                // neither plane is drawn there all the same, in the tiles
-                // alone, though it breaks the same rule
-                // (docs/facet-vulkan10.md item 94).
-                if ((loads_depth or stores_depth or loads_stencil or stores_stencil or shared != null) and
-                    depth.format == .d16_unorm_s8_uint and !owner.physical.can.stored_both) return .error_validation_failed;
-                // And of a format the device draws a depth or a stencil of
-                // at all (the same VUID, since 1.222): one of 24 bits of
-                // depth only where it draws that (`Capabilities.depth24`,
-                // since 1.223; docs/facet-vulkan10.md item 35). The two
-                // formats a device says no attachment of where it keeps
-                // their stencil nowhere, S8_UINT and D16_UNORM_S8_UINT, are
-                // drawn in its tiles alone all the same, as above.
+                // Every format held to its DEPTH_STENCIL_ATTACHMENT
+                // feature (VUID-VkSubpassDescription-pDepthStencilAttachment-02650,
+                // `error_feature_not_present` until 1.135): since 1.222
+                // one of 24 bits of depth only where the device draws that
+                // (`Capabilities.depth24`, the cores since 1.223 and the
+                // V3D since 1.224), and since 1.225 the two stencil formats
+                // where it keeps one - S8_UINT where it stores a stencil
+                // (`stored_stencil`) and D16_UNORM_S8_UINT where it writes
+                // a pixel's planes where they lie (`stored_both`), which
+                // the V3D does not, storing a tile buffer whole, a plane's
+                // own pixels one after another. Until 1.225 those two were
+                // drawn in the tiles alone where the device said no such
+                // attachment, which broke the same rule, and a pass that
+                // kept a plane of a D16_UNORM_S8_UINT there was refused
+                // here alone (docs/facet-vulkan10.md item 94).
                 const attaches = owner.physical.ops.format_properties(owner.physical, depth.format).optimal_tiling_features & facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT != 0;
-                if (!attaches and depth.format != .s8_uint and depth.format != .d16_unorm_s8_uint) return .error_validation_failed;
+                if (!attaches) return .error_validation_failed;
                 // The part that drew it last keeps what it left, so that
                 // this subpass can read it in.
                 if (shared) |earlier| {
