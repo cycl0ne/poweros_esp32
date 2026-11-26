@@ -11,7 +11,7 @@
 //! the display reads. Built against the SDK only.
 //!
 //!   Gpu TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,
-//!       SLEEP/K/N,RANGE/S,WATCHDOG/K/N
+//!       SLEEP/K/N,RANGE/S,POINTER/S,WATCHDOG/K/N
 //!
 //! BIOS prints the device's video BIOS image (GetGPUBios): where it is
 //! and how long, its tables' header's version, the version of each of
@@ -123,6 +123,14 @@
 //! (SetBoardSettings), which is put back as it was, and so is the
 //! picture. The watchdog is armed for it.
 //!
+//! POINTER shows the same still picture and reads its checksum with the
+//! board's pointer hidden, shown at three places - the last partly off
+//! the picture's top left - and hidden again, with what pipe 0's cursor
+//! is told at each: shown or not, its place and its hot spot. The first
+//! and the last checksum should be the same and the others each another.
+//! The pointer is put back where it was, shown or not as it was, and so
+//! is the picture. The watchdog is armed for it.
+//!
 //! DUMP prints LENGTH (16 unless given, at most 512) of the display
 //! engine's registers from DUMP on, in 32-bit words from the engine's
 //! address SEGMENT (2 unless given: the one its pipes, links and
@@ -131,7 +139,7 @@
 //! is armed for it.
 //!
 //! Without BIOS, CLOCKS, DMCUB, CRC, EVENTS, AUX, EDID, CYCLE, MODES,
-//! SLEEP, RANGE, DUMP, FRAMES or FLIP the two files are read from
+//! SLEEP, RANGE, POINTER, DUMP, FRAMES or FLIP the two files are read from
 //! DEVS:firmware/amdgpu/, named for the blocks that use them as the
 //! device's table gives their versions - psp_13_0_4_toc.bin for the
 //! security processor 13.0.4, vcn_4_0_2.bin for the video decoder 4.0.2 -
@@ -185,10 +193,10 @@ const rtg = sdk.rtg;
 const RtgBase = sdk.interface.rtg.RtgBase;
 
 pub const COMMAND_NAME = "Gpu";
-const VERSION_STRING = "\x00$VER: Gpu 1.13 (26.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Gpu 1.14 (26.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,SLEEP/K/N,RANGE/S,WATCHDOG/K/N";
+const template = "TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,SLEEP/K/N,RANGE/S,POINTER/S,WATCHDOG/K/N";
 const arg_toc = 0;
 const arg_firmware = 1;
 const arg_frames = 2;
@@ -216,8 +224,9 @@ const arg_modes = 23;
 const arg_hold = 24;
 const arg_sleep = 25;
 const arg_range = 26;
-const arg_watchdog = 27;
-const arg_count = 28;
+const arg_pointer = 27;
+const arg_watchdog = 28;
+const arg_count = 29;
 
 /// Where the files are.
 const directory = "DEVS:firmware/amdgpu/";
@@ -1050,6 +1059,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     if (argv[arg_cycle] != 0) return pipeCycle(sys, dl, millis);
     if (argv[arg_modes] != 0 and argv[arg_sleep] == 0) return everyMode(sys, dl, millis, if (argv[arg_hold] != 0) number(argv[arg_hold]) else 2);
     if (argv[arg_range] != 0) return rangeCheck(sys, dl, millis);
+    if (argv[arg_pointer] != 0) return pointerCheck(sys, dl, ab, info, millis);
     if (argv[arg_sleep] != 0) return asleepFor(sys, dl, ab, info, millis, number(argv[arg_sleep]), argv[arg_modes] != 0);
     if (argv[arg_dump] != 0) {
         const length = if (argv[arg_length] != 0) number(argv[arg_length]) else 16;
@@ -1302,6 +1312,53 @@ fn printChecksum(dl: *DosBase, rb: *RtgBase, board: *rtg.RtgBoard, when: [*:0]co
     _ = Printf(dl, "%-7s checksum %04x %04x %04x%s\n", .{ when, second.red, second.green, second.blue, @as([*:0]const u8, if (same) "" else " CHANGING") });
 }
 
+/// A still picture of bars shown on the board in the mode it is in, and
+/// the picture shown before, which `end` shows again.
+const Still = struct {
+    rb: *RtgBase,
+    board: *rtg.RtgBoard,
+    mode_id: u32,
+    before: *rtg.RtgBitMap,
+    picture: *rtg.RtgBitMap,
+
+    fn begin(dl: *DosBase, rb: *RtgBase, board: *rtg.RtgBoard) ?Still {
+        var list: [modes_most]rtg.RtgMode = undefined;
+        const count = @min(rb.GetBoardModes(board, &list, modes_most), modes_most);
+        var current: ?*const rtg.RtgMode = null;
+        for (list[0..count]) |*one| {
+            if (one.flags & rtg.modes.RTGMF_CURRENT != 0) current = one;
+        }
+        const shown = current orelse {
+            _ = Printf(dl, "The board is in no mode\n", .{});
+            return null;
+        };
+        const before = rb.BoardDisplayBitMap(board) orelse {
+            _ = Printf(dl, "The board shows no picture\n", .{});
+            return null;
+        };
+        const picture = rb.AllocBitMap(board, shown.width, shown.height, @intFromEnum(shown.format), rtg.bitmaps.RTGBMF_DISPLAYABLE) orelse {
+            _ = Printf(dl, "No room for a picture of %ux%u\n", .{ shown.width, shown.height });
+            return null;
+        };
+        bars(picture);
+        _ = rb.RefreshRect(picture, null);
+        const band = [_]rtg.RtgBand{.{ .bitmap = picture }};
+        if (rb.ShowBoard(board, shown.id, &band, band.len) != rtg.errors.RTGERR_OK) {
+            rb.FreeBitMap(picture);
+            _ = Printf(dl, "The bars were not shown\n", .{});
+            return null;
+        }
+        return .{ .rb = rb, .board = board, .mode_id = shown.id, .before = before, .picture = picture };
+    }
+
+    /// The picture before shown again, and the bars freed once they are
+    /// no longer shown.
+    fn end(still: Still) void {
+        const band = [_]rtg.RtgBand{.{ .bitmap = still.before }};
+        if (still.rb.ShowBoard(still.board, still.mode_id, &band, band.len) == rtg.errors.RTGERR_OK) still.rb.FreeBitMap(still.picture);
+    }
+};
+
 /// RANGE: a still picture's checksum in full range, limited and full
 /// again.
 fn rangeCheck(sys: *ExecBase, dl: *DosBase, millis: u32) i32 {
@@ -1318,32 +1375,10 @@ fn rangeCheck(sys: *ExecBase, dl: *DosBase, millis: u32) i32 {
         _ = Printf(dl, "The board does not send its colours in another range\n", .{});
         return dos.RETURN_WARN;
     }
-    var list: [modes_most]rtg.RtgMode = undefined;
-    const count = @min(rb.GetBoardModes(board, &list, modes_most), modes_most);
-    var current: ?*const rtg.RtgMode = null;
-    for (list[0..count]) |*one| {
-        if (one.flags & rtg.modes.RTGMF_CURRENT != 0) current = one;
-    }
-    const shown = current orelse {
-        _ = Printf(dl, "The board is in no mode\n", .{});
-        return dos.RETURN_WARN;
-    };
-    const before = rb.BoardDisplayBitMap(board) orelse return dos.RETURN_WARN;
     const wb = arm(sys, dl, millis) orelse return dos.RETURN_FAIL;
     defer wb.DisarmWatchdog();
-
-    const picture = rb.AllocBitMap(board, shown.width, shown.height, @intFromEnum(shown.format), rtg.bitmaps.RTGBMF_DISPLAYABLE) orelse {
-        _ = Printf(dl, "No room for a picture of %ux%u\n", .{ shown.width, shown.height });
-        return dos.RETURN_FAIL;
-    };
-    bars(picture);
-    _ = rb.RefreshRect(picture, null);
-    const band = [_]rtg.RtgBand{.{ .bitmap = picture }};
-    if (rb.ShowBoard(board, shown.id, &band, band.len) != rtg.errors.RTGERR_OK) {
-        rb.FreeBitMap(picture);
-        _ = Printf(dl, "The bars were not shown\n", .{});
-        return dos.RETURN_FAIL;
-    }
+    const still = Still.begin(dl, rb, board) orelse return dos.RETURN_FAIL;
+    defer still.end();
     wb.FeedWatchdog();
     var line: rtg.RtgSettings = .{};
     _ = rb.GetBoardSettings(board, &line, @sizeOf(rtg.RtgSettings));
@@ -1364,9 +1399,76 @@ fn rangeCheck(sys: *ExecBase, dl: *DosBase, millis: u32) i32 {
 
     var back = kept;
     _ = rb.SetBoardSettings(board, &back);
-    const back_band = [_]rtg.RtgBand{.{ .bitmap = before }};
-    if (rb.ShowBoard(board, shown.id, &back_band, back_band.len) == rtg.errors.RTGERR_OK) rb.FreeBitMap(picture);
     return dos.RETURN_OK;
+}
+
+/// Pipe 0's cursor, a fetcher's stride apart: its control - bit 0 shown
+/// - its place and its hot spot.
+const cursor_control = 0x0678;
+const cursor_position = 0x067c;
+const cursor_hot_spot = 0x067d;
+
+/// POINTER: a still picture's checksum with the pointer hidden, at
+/// three places and hidden again, and what the cursor is told at each.
+fn pointerCheck(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUInfo, millis: u32) i32 {
+    var block: amdgpu.GPUBlock = .{};
+    if (!ab.FindGPUBlock(amdgpu.GPUBLOCK_DISPLAY, 0, &block) or block.count < 3) {
+        _ = Printf(dl, "The device %04x:%04x names no display engine\n", .{ info.vendor, info.device });
+        return dos.RETURN_FAIL;
+    }
+    const engine = Display{ .registers = @intCast(info.registers), .segment = block.addresses[2], .pipe = 0, .fetcher = 0 };
+    const base = sys.OpenLibrary(rtg.RTGNAME, rtg.RTG_VERSION) orelse {
+        _ = Printf(dl, "No %s\n", .{rtg.RTGNAME});
+        return dos.RETURN_FAIL;
+    };
+    defer sys.CloseLibrary(base);
+    const rb: *RtgBase = @ptrCast(base);
+    const board = amdBoard(dl, rb) orelse return dos.RETURN_WARN;
+    const was_x = board.pointer_x;
+    const was_y = board.pointer_y;
+    const was_shown = board.info.flags & rtg.boards.RTGBF_POINTER != 0;
+    const wb = arm(sys, dl, millis) orelse return dos.RETURN_FAIL;
+    defer wb.DisarmWatchdog();
+    const still = Still.begin(dl, rb, board) orelse return dos.RETURN_FAIL;
+    defer still.end();
+    defer {
+        rb.MoveBoardPointer(board, was_x, was_y);
+        _ = rb.ShowBoardPointer(board, was_shown);
+    }
+
+    _ = rb.ShowBoardPointer(board, false);
+    pointerAt(dl, rb, board, engine, "hidden");
+    const places = [_][2]i32{ .{ 200, 150 }, .{ 900, 500 }, .{ -5, -5 } };
+    for (places) |place| {
+        rb.MoveBoardPointer(board, place[0], place[1]);
+        _ = rb.ShowBoardPointer(board, true);
+        wb.FeedWatchdog();
+        var name: [24]u8 = undefined;
+        const stream = exec.fmtStream(.{ place[0], place[1] });
+        _ = sys.RawDoFmt("%d,%d", &stream, null, &name);
+        pointerAt(dl, rb, board, engine, @ptrCast(&name));
+    }
+    _ = rb.ShowBoardPointer(board, false);
+    wb.FeedWatchdog();
+    pointerAt(dl, rb, board, engine, "hidden");
+    return dos.RETURN_OK;
+}
+
+/// The checksum once the pipe has taken the pointer, and what its cursor
+/// is told.
+fn pointerAt(dl: *DosBase, rb: *RtgBase, board: *rtg.RtgBoard, engine: Display, when: [*:0]const u8) void {
+    dl.Delay(5);
+    printChecksum(dl, rb, board, when);
+    const control = engine.hubp(cursor_control).*;
+    const position = engine.hubp(cursor_position).*;
+    const hot_spot = engine.hubp(cursor_hot_spot).*;
+    _ = Printf(dl, "        cursor %s at %u,%u, hot spot %u,%u\n", .{
+        @as([*:0]const u8, if (control & 1 != 0) "shown" else "hidden"),
+        position >> 16 & 0x3fff,
+        position & 0x3fff,
+        hot_spot >> 16 & 0xff,
+        hot_spot & 0xff,
+    });
 }
 
 /// The pipe's count of frames, read twice 100 ms apart, on a line.

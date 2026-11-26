@@ -29,8 +29,12 @@
 //! firmware's buffer for good, each picture then made in it, and says so
 //! on the log.
 //!
-//! The display has no cursor plane: the pointer and the overlay are
-//! laid in the pictures by the library. Its connector - the one whose
+//! The pointer is the pipe's own cursor (`cursor.zig`), on a board in
+//! `bgra32` whose engine's blender is reached: the library's image
+//! copied into one of two of the device's memory, and the cursor told
+//! to read it, where it is and whether it is shown - so the pictures
+//! never hold it, and a move rewrites nothing but the cursor's place.
+//! The overlay is laid in the pictures by the library. Its connector - the one whose
 //! PHY drives the lit link - is looked at by the library (`detect`,
 //! `monitor.zig`): whether its hot-plug line senses a monitor, and that
 //! monitor's EDID over its DDC line (`i2c.zig`). Of the timings the
@@ -136,13 +140,14 @@ const aux = @import("aux.zig");
 const monitor = @import("monitor.zig");
 const i2c = @import("i2c.zig");
 const colours = @import("colours.zig");
+const cursor = @import("cursor.zig");
 const pipe = @import("pipe.zig");
 const mode = @import("mode.zig");
 
 const MODULE_NAME = "rtg-amd";
 const DRIVER_NAME = "amd";
 const VERSION = 1;
-const REVISION = 16;
+const REVISION = 17;
 const BUILD_DATE = "26.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -239,6 +244,14 @@ const Screen = struct {
     /// kHz, once read: what a mode is worked out at.
     top_display_khz: u32 = 0,
     top_pipes_khz: u32 = 0,
+    /// The pointer as the pipe's cursor: the device's memory of its two
+    /// images, null on a board whose library lays the pointer; which of
+    /// them the cursor was last told to read; what it was told; and the
+    /// lock that keeps one writer at a time at it.
+    cursor_memory: ?sdk.resources.amdgpu.GPUMemory = null,
+    cursor_turn: u32 = 0,
+    cursor_told: cursor.Cursor = .{},
+    cursor_lock: exec.SignalSemaphore = .{},
 };
 
 /// Wait for `frames` frames, as the library waits (WaitVBlank): for the
@@ -537,9 +550,12 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, device_tags: ?[*]const
     // says of itself goes in the boot's lines.
     var found = dcn.find(sys, fb) orelse return err.RTGERR_NO_DISPLAY;
     found.rtg_base = rb;
+    // The pointer the pipe's cursor, where the cursor can be had: room
+    // for its two images in the device's memory.
+    const cursor_memory = cursorMemory(found, format);
 
     const board = rb.CreateBoard(driver, device, &.{
-        .ops = &ops,
+        .ops = if (cursor_memory != null) &ops_with_cursor else &ops,
         .instance_size = @sizeOf(Screen),
         // The display runs as the firmware lit it: its mode is kept.
         .flags = rtg.boards.RTGBF_ADOPTED,
@@ -562,8 +578,10 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, device_tags: ?[*]const
         .bytes = bytes,
         .board = board,
         .smu = smu.find(found),
+        .cursor_memory = cursor_memory,
     };
     sys.InitSemaphore(&screen.smu_lock);
+    sys.InitSemaphore(&screen.cursor_lock);
     sys.InitSemaphore(&screen.controller_lock);
     sys.InitSemaphore(&screen.ddc_lock);
     sys.InitSemaphore(&screen.pipe_lock);
@@ -651,6 +669,16 @@ fn tellConnector(screen: *const Screen) void {
 /// the server, which giving it back waits by. The device is
 /// amdgpu.resource's, which is never given back.
 fn halt(screen: *Screen) void {
+    if (screen.cursor_memory) |*memory| {
+        screen.sys.ObtainSemaphore(&screen.cursor_lock);
+        screen.cursor_told = .{};
+        writeCursor(screen);
+        screen.cursor_memory = null;
+        screen.sys.ReleaseSemaphore(&screen.cursor_lock);
+        // Read no more once the pipe has updated.
+        pace(screen, 2);
+        dcn.freeFrame(screen.dcn, memory);
+    }
     giveAmdFrame(screen);
     unhookFrames(screen);
     hpd.unlisten(screen.dcn, &screen.lines, &screen.hot_plug_int);
@@ -714,6 +742,80 @@ fn showOp(board: *rtg.RtgBoard, what: *const rtg.RtgShow) callconv(.c) i32 {
     // What it read until now says nothing about the new mode.
     screen.scanning = 0;
     scanFrom(screen, start);
+    // The cursor's fetch timed by the mode's pixel clock, and kept on
+    // its picture.
+    if (screen.cursor_memory != null) {
+        screen.sys.ObtainSemaphore(&screen.cursor_lock);
+        writeCursor(screen);
+        screen.sys.ReleaseSemaphore(&screen.cursor_lock);
+    }
+    return err.RTGERR_OK;
+}
+
+// --- the pointer, as the pipe's cursor ------------------------------------------
+
+/// The device's memory for the cursor's two images, on a board in
+/// `bgra32` - the cursor's own format - whose blender is reached; null
+/// where not, or where there is no room, and the library lays the
+/// pointer.
+fn cursorMemory(engine: dcn.Engine, format: rtg.PixelFormat) ?sdk.resources.amdgpu.GPUMemory {
+    if (format != .bgra32 or !cursor.reached(engine)) return null;
+    return dcn.newFrame(engine, 2 * cursor.image_bytes);
+}
+
+/// The cursor told what the board's pointer is now, on the picture the
+/// mode has, its fetch timed by the mode's pixel clock. Holding
+/// `cursor_lock`.
+fn writeCursor(screen: *Screen) void {
+    const engine = screen.dcn;
+    screen.cursor_told.pixel_hz = screen.timings.pixel_clock_hz;
+    cursor.write(engine, engine.fetcher, mode.outputOf(engine, engine.pipe), screen.cursor_told, screen.width, screen.height);
+}
+
+/// A new image, or none: copied into the image the cursor does not read,
+/// and the cursor told to read that one from the pipe's next update.
+fn setPointer(board: *rtg.RtgBoard, image: ?*const rtg.RtgPointerImage) callconv(.c) i32 {
+    const screen = screenOf(board);
+    if (image) |one| {
+        if (one.format != .bgra32) return err.RTGERR_BAD_FORMAT;
+    }
+    screen.sys.ObtainSemaphore(&screen.cursor_lock);
+    defer screen.sys.ReleaseSemaphore(&screen.cursor_lock);
+    const memory = screen.cursor_memory orelse return err.RTGERR_NOT_SUPPORTED;
+    const told = &screen.cursor_told;
+    if (image) |one| {
+        const turn = screen.cursor_turn ^ 1;
+        const offset = @as(usize, turn) * cursor.image_bytes;
+        const into: [*]u8 = @ptrFromInt(@as(usize, @intCast(memory.cpu)) + offset);
+        const size = cursor.copyImage(into, one);
+        screen.cursor_turn = turn;
+        told.address = memory.device + offset;
+        told.width = size.width;
+        told.height = size.height;
+    } else {
+        told.address = 0;
+        told.width = 0;
+        told.height = 0;
+    }
+    writeCursor(screen);
+    return err.RTGERR_OK;
+}
+
+fn movePointer(board: *rtg.RtgBoard, left: i32, top: i32) callconv(.c) void {
+    const screen = screenOf(board);
+    screen.sys.ObtainSemaphore(&screen.cursor_lock);
+    defer screen.sys.ReleaseSemaphore(&screen.cursor_lock);
+    screen.cursor_told.left = left;
+    screen.cursor_told.top = top;
+    writeCursor(screen);
+}
+
+fn showPointer(board: *rtg.RtgBoard, show: bool) callconv(.c) i32 {
+    const screen = screenOf(board);
+    screen.sys.ObtainSemaphore(&screen.cursor_lock);
+    defer screen.sys.ReleaseSemaphore(&screen.cursor_lock);
+    screen.cursor_told.shown = show;
+    writeCursor(screen);
     return err.RTGERR_OK;
 }
 
@@ -1206,6 +1308,15 @@ const ops = rtg.boards.RtgBoardOps{
     .set_brightness = &setBrightnessOp,
     .brightness = &brightnessOp,
 };
+
+/// The same, with the pointer the pipe's cursor.
+const ops_with_cursor = with: {
+    var with = ops;
+    with.pointer = &pointer_ops;
+    break :with with;
+};
+
+const pointer_ops = rtg.RtgPointerOps{ .set = &setPointer, .move = &movePointer, .show = &showPointer };
 
 const driver_ops = rtg.RtgDriverOps{ .attach = &attach, .detach = &detach };
 

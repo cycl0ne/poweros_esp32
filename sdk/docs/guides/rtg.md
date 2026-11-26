@@ -1741,6 +1741,17 @@ the audio driver reads from the codec when a stream starts. A monitor
 that plays no sound, and a link driven as DVI, carry none: the endpoint
 says nothing is there, and the machine plays elsewhere.
 
+The pointer is the pipe's own cursor on a board in `bgra32`: the
+library's image copied into one of two images of the device's memory
+and the cursor told to read it, its place and whether it is shown -
+written with the output's cursor locked, so the pipe's next update takes
+all of it or none. The pictures never hold it, and a move rewrites
+nothing but the cursor's place. Partly off the picture's top left, the
+cursor stays at its edge with its hot spot moved in by as much.
+`C:test/Gpu POINTER` shows a still picture and prints its checksum with
+the pointer hidden, at three places and hidden again, and what the
+cursor is told at each. The overlay is laid by the library.
+
 The colours go out in full or limited range (`RTGBC_COLOR_RANGE`,
 `Rtg amd.0 SET RANGE=LIMITED`): the range the settings ask for, else
 limited for a CEA mode to an HDMI monitor that does not let its range
