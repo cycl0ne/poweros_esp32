@@ -252,6 +252,10 @@ const TEXTURE_RGB565: u64 = 6;
 /// D16_UNORM's, as v3dv samples it (v3dvx_formats.c:204;
 /// v3d_packet.xml:354).
 const TEXTURE_DEPTH_COMP16: u64 = 21;
+/// X8_D24_UNORM_PACK32's, the depth in the word's top 24 bits ("X low, D
+/// high"), as v3dv samples it and D24_UNORM_S8_UINT's depth
+/// (v3dvx_formats.c:206, :209; v3d_packet.xml:357). (Since 1.222.)
+const TEXTURE_DEPTH24_X8: u64 = 24;
 
 const SWIZZLE_ZERO: u64 = 0;
 const SWIZZLE_ONE: u64 = 1;
@@ -276,10 +280,14 @@ pub const Texels = enum {
     /// the program writes a reference, what passed stands in the depth's
     /// place, as the cores give it (since 1.121).
     d16,
+    /// 24 bits of depth above a byte the TMU passes over, read the same
+    /// way: v3dv's DEPTH24_X8 and SWIZ_X001 for X8_D24_UNORM_PACK32
+    /// (v3dvx_formats.c:206; since 1.222).
+    d24,
 
     pub fn bytes(texels: Texels) u32 {
         return switch (texels) {
-            .rgba, .bgra => 4,
+            .rgba, .bgra, .d24 => 4,
             .rgb565, .d16 => 2,
             .r8 => 1,
         };
@@ -306,16 +314,17 @@ pub fn writeTextureState(into: []u8, layout: *const Layout, texels: Texels, pick
         .rgb565 => TEXTURE_RGB565,
         .r8 => TEXTURE_R8,
         .d16 => TEXTURE_DEPTH_COMP16,
+        .d24 => TEXTURE_DEPTH24_X8,
     };
     // Which channel of the texel each of the four comes out of: a 565
     // texel has no alpha and an R8 one has red alone, so those read 1 and
     // 0, as Vulkan reads a format that is short of a channel. A depth is
     // red alone too.
     const red: u64 = if (texels == .bgra) SWIZZLE_BLUE else SWIZZLE_RED;
-    const green: u64 = if (texels == .r8 or texels == .d16) SWIZZLE_ZERO else SWIZZLE_GREEN;
+    const green: u64 = if (texels == .r8 or texels == .d16 or texels == .d24) SWIZZLE_ZERO else SWIZZLE_GREEN;
     const blue: u64 = switch (texels) {
         .bgra => SWIZZLE_RED,
-        .r8, .d16 => SWIZZLE_ZERO,
+        .r8, .d16, .d24 => SWIZZLE_ZERO,
         .rgba, .rgb565 => SWIZZLE_BLUE,
     };
     const alpha: u64 = if (texels == .rgba or texels == .bgra) SWIZZLE_ALPHA else SWIZZLE_ONE;

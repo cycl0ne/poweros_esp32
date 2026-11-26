@@ -150,6 +150,14 @@ pub fn depthOf(value: facet.ClearDepthStencilValue) u16 {
     return @intFromFloat(@round(depth * 65535));
 }
 
+/// The same as a depth of `bits` holds it: 0 to 65535 for 16, and 0 to
+/// 16777215 for 24 (since 1.222).
+pub fn depthOfBits(value: facet.ClearDepthStencilValue, bits: u32) u32 {
+    if (bits != 24) return depthOf(value);
+    const depth = if (value.depth >= 0) @min(value.depth, 1) else 0; // a NaN as well
+    return @intFromFloat(@round(@as(f64, depth) * 0xFF_FFFF));
+}
+
 fn byteOf(channel: f32) u32 {
     const held = if (channel >= 0) @min(channel, 1) else 0;
     return @intFromFloat(@round(held * 255));

@@ -866,7 +866,6 @@ test "an image: a texture, rows or a depth, by what it is for" {
         .{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 64, .height = 64 }, .tiling = .linear, .usage = sampled },
         .{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 64, .height = 64 }, .mip_levels = 8, .usage = sampled },
         .{ .format = .r32_sfloat, .extent = .{ .width = 64, .height = 64 }, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT },
-        .{ .format = .d16_unorm, .extent = .{ .width = 64, .height = 64 }, .usage = facet.IMAGE_USAGE_SAMPLED },
         .{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 64, .height = 64, .depth = 2 }, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT },
         .{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 64, .height = 64 }, .samples = 2, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT },
         .{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 64, .height = 64 }, .samples = 8, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT },
@@ -875,6 +874,22 @@ test "an image: a texture, rows or a depth, by what it is for" {
     };
     for (refused) |info| {
         try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.CreateImage(device, &info, &image));
+        try testing.expect(image == null);
+    }
+    // A depth only sampled, and one only copied, since 1.222: Vulkan has
+    // D16_UNORM sampled, which no attachment has to be, and a depth of 24
+    // bits is no attachment while nothing draws one (item 35). An
+    // attachment of one is refused, its format saying no such feature.
+    for ([_]facet.ImageCreateInfo{
+        .{ .format = .d16_unorm, .extent = .{ .width = 64, .height = 64 }, .usage = facet.IMAGE_USAGE_SAMPLED },
+        .{ .format = .x8_d24_unorm_pack32, .extent = .{ .width = 64, .height = 64 }, .usage = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST },
+        .{ .format = .d24_unorm_s8_uint, .extent = .{ .width = 64, .height = 64 }, .usage = facet.IMAGE_USAGE_TRANSFER_SRC | facet.IMAGE_USAGE_TRANSFER_DST },
+    }) |info| {
+        try testing.expectEqual(facet.Result.success, rig.fb.CreateImage(device, &info, &image));
+        rig.fb.DestroyImage(device, image);
+    }
+    for ([_]facet.Format{ .x8_d24_unorm_pack32, .d24_unorm_s8_uint }) |format| {
+        try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.CreateImage(device, &.{ .format = format, .extent = .{ .width = 64, .height = 64 }, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT }, &image));
         try testing.expect(image == null);
     }
 }

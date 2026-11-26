@@ -169,10 +169,11 @@ pub const ClearDepthStencilImage = extern struct {
     pub const op: _stream.Op = .clear_depth_stencil_image;
     head: Head = .{ .op = op },
     count: u32,
-    /// The depth as the tiles hold one: 0 nearest, 65535 furthest.
-    depth: u16,
+    /// The depth as the image's format holds one: 0 nearest, 65535
+    /// furthest, or 16777215 for a format of 24 bits (since 1.222).
+    depth: u32,
     stencil: u8,
-    pad: u8 = 0,
+    pad: [3]u8 = .{ 0, 0, 0 },
     image: *Image,
 };
 

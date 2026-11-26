@@ -1342,6 +1342,61 @@ Vulkan requires DEPTH_STENCIL_ATTACHMENT for at least one of X8_D24_UNORM_PACK32
 
 Found independently by: formats, semantics, conformance-path (3 strands).
 
+**The port, in four steps.** Both Mesa drivers have X8_D24_UNORM_PACK32
+and D24_UNORM_S8_UINT (v3dvx_formats.c:206, :209; lavapipe's every depth
+format, lvp_formats.c:93-104), and those are the two facet takes: one of
+each "at least one of" pair. They are one word a pixel, the depth in its
+top 24 bits and the stencil or nothing in its low byte, which is the V3D's
+own D24S8 ("X low, D high", v3d_packet.xml:357; v3dv turns the word round
+on a copy, v3dvx_meta_common.c:436-445), so the V3D can store and sample
+facet's image where it lies. Step 1 makes them images, step 2 has the
+cores draw them, step 3 the V3D, and step 4 holds DEPTH_STENCIL_ATTACHMENT
+for D16_UNORM_S8_UINT too (item 94).
+
+**Step 1, in 1.222: the two as images.** `texture.Format.d24` is a texel
+of the word's top 24 bits, compared at all 24 by a shadow sample and read
+as (D, 0, 0, 1) of its top 8 by one that does not; the V3D samples it as
+DEPTH24_X8 (v3dvx_formats.c:206; `tiling.Texels.d24`). Each aspect is
+copied as Vulkan has it lie in a buffer (`_image.laneOf`): a D24 depth in
+the low 24 bits of 4 bytes, the top one nothing, and a stencil in 1, as
+lavapipe moves an aspect (`handle_copy_image_to_buffer2`,
+lvp_execute.c:2442-2449; `copy_depth_rect`, lvp_image.c:1246-1292). That
+fixes D16_UNORM_S8_UINT as well, whose copies moved a pixel's four bytes
+whichever aspect they named: 2 bytes of depth, 1 of stencil now. A copy
+between images and a clear of one aspect leave the other's bytes, and
+CmdClearDepthStencilImage keeps a depth at the format's width
+(`_render.depthOfBits`). X8_D24 is blitted as D16_UNORM is. Both formats
+say SAMPLED where the device samples a depth (the one with a stencil
+where it samples a stencil too, which the V3D does not), the transfers,
+and no DEPTH_STENCIL_ATTACHMENT; CreateImage holds that usage to the
+feature (`shapeFor`, every format but D16_UNORM_S8_UINT, item 94) and
+CreateRenderPass refuses an attachment of a format without it but for
+the two drawn in the tiles alone. A depth image need not be an
+attachment since: one only sampled, which Vulkan's SAMPLED_IMAGE on
+D16_UNORM lets a program make, or only copied into, is made. Three host
+tests are new and three changed, and six mutations each fail one.
+FacetProbe 1.50 samples an X8_D24 copied into and cleared at all 24 bits,
+a reference three quarters of a step nearer passing and one a quarter
+further not. On the CM5 (package f227) it is 947 of 947, the V3D's
+DEPTH24_X8 among them, and FacetBoth's 316 cases are each as at 1.221.
+
+Still left out. Each is marked *facet-wide* or *V3D-only*:
+- **No device draws a depth of 24 bits.** The cores' tile holds 16 bits
+  of depth (`raster/target.zig` Buffer.depth), with the bias's smallest
+  difference, the clamp and the bounds in 65535ths (`raster/setup.zig`,
+  `batched.zig`); llvmpipe keeps a depth tile at the format's own width.
+  CreateRenderPass refuses such an attachment for every device until its
+  driver says DEPTH_STENCIL_ATTACHMENT, a Radeon's too. Step 2.
+  *Facet-wide*.
+- **The V3D draws neither.** Its frames are set up for `depth_16`
+  (`cl.renderingCommon`), and it stores and loads OUTPUT_D16 and
+  OUTPUT_S8 alone; v3dv uses `depth_24` (v3dvx_formats.c:560-575) and the
+  d24s8 format through Z, STENCIL or ZSTENCIL
+  (v3dvx_cmd_buffer.c:150-222, :377-394). Step 3. *V3D-only*.
+- **D32_SFLOAT is not here**, which Vulkan has sampled and blitted
+  unconditionally, and neither is D32_SFLOAT_S8_UINT; lavapipe has both,
+  v3dv D32_SFLOAT alone (v3dvx_formats.c:205). *Facet-wide*.
+
 ### 36. Make the mandatory colour-attachment formats drawable
 
 *formats / colour attachments* &mdash; conformance-blocking, large
@@ -5013,12 +5068,14 @@ FacetBoth's 316 cases are each as they were at 1.219, and FacetProbe is
 923 of 923.
 
 Still left out. Each is marked *facet-wide* or *V3D-only*:
-- **DEPTH_STENCIL_ATTACHMENT is not held.** Held, it would refuse the
-  V3D's D16_UNORM_S8_UINT, its one format of a depth and a stencil, which
-  eighteen of FacetBoth's stencil cases draw in the tiles alone. v3dv's is
-  D24_UNORM_S8_UINT, stored in one word with both planes, which facet has
-  not got (item 35). Once that is there, the D16S8 bullet above is one
-  more bit in `shapeFor`'s held usage. *V3D-only*.
+- **DEPTH_STENCIL_ATTACHMENT is not held for D16_UNORM_S8_UINT.** Held
+  for every other format since 1.222, which refuses an attachment of the
+  two of 24 bits of depth no device draws yet (item 35). Held for this
+  one, it would refuse the V3D's, its one format of a depth and a
+  stencil, which eighteen of FacetBoth's stencil cases draw in the tiles
+  alone. v3dv's is D24_UNORM_S8_UINT, stored in one word with both
+  planes, which facet has as an image since 1.222 and the V3D does not
+  draw yet (item 35, step 3). *V3D-only*.
 - **The transfers are not held.** Both drivers hold TRANSFER_SRC and
   TRANSFER_DST to their features (lvp_formats.c:418-428). Vulkan 1.0 has
   no feature for either, which VK_KHR_maintenance1 brings, and held here

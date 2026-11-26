@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetProbe";
-const VERSION_STRING = "\x00$VER: FacetProbe 1.49 (26.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetProbe 1.50 (26.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "CORES/S,V3D/S,QUIET/S";
@@ -2593,8 +2593,11 @@ fn stencilChecks(probe: *Probe) void {
     // where the device keeps either of the two.
     const formats: []const facet.Format = if (probe.can.stored_both) &.{ .s8_uint, .d16_unorm_s8_uint } else &.{.s8_uint};
     for (formats) |format| {
-        const stride: u32 = if (format == .s8_uint) 1 else 4;
-        const inside: u32 = if (stride == 1) 0 else 2;
+        // A byte a pixel in the buffer, of either format, as Vulkan has a
+        // stencil aspect lie there (since facet 1.222; four for the format
+        // that holds a depth too before).
+        const stride: u32 = 1;
+        const inside: u32 = 0;
         const storing = passStenciling(probe, format, "cdcs") orelse return probe.check(false, "a pass that stores its stencil");
         probe.check(true, "a pass that stores its stencil");
         const loading = passStenciling(probe, format, "cdld") orelse return probe.check(false, "a pass that loads its stencil");
@@ -2832,6 +2835,70 @@ fn sampledDepthChecks(probe: *Probe) void {
         if (!probe.submit()) return probe.check(false, "the sampling frame submitted");
         probe.checkEqual(wanted_left, pixelAt(pixels, pitch, 16, 8), name);
         probe.checkEqual(wanted_right, pixelAt(pixels, pitch, 48, 40), "and where the clear left its depth");
+    }
+
+    // --- facet 1.222: a depth of 24 bits, sampled at all 24 ---
+    // X8_D24_UNORM_PACK32, filled by a copy and then by clears, no device
+    // drawing one yet. Its texels are 0x040000, a 64th; a reference three
+    // quarters of a 24-bit step nearer passes and one a quarter further
+    // does not, which a depth read at 16 bits could not tell apart. The
+    // V3D reads one as DEPTH24_X8, as v3dv does (v3dvx_formats.c:206).
+    deep: {
+        const transfers = facet.IMAGE_USAGE_TRANSFER_SRC | facet.IMAGE_USAGE_TRANSFER_DST;
+        for ([2]facet.Format{ .x8_d24_unorm_pack32, .d24_unorm_s8_uint }) |format| {
+            const features = Can.formatOf(fb, probe.physical, format).optimal_tiling_features;
+            probe.check(features & facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT == 0, "a depth of 24 bits says no attachment, nothing drawing one yet");
+            var refused: ?*facet.Image = null;
+            probe.check(fb.CreateImage(device, &.{ .format = format, .extent = extent, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT }, &refused) != .success and refused == null, "and an attachment of one is refused");
+        }
+        const deep = probe.bound(.{ .format = .x8_d24_unorm_pack32, .extent = extent, .usage = facet.IMAGE_USAGE_SAMPLED | transfers }, 0) orelse {
+            probe.check(false, "a sampled depth image of 24 bits, only copied into");
+            break :deep;
+        };
+        probe.check(true, "a sampled depth image of 24 bits, only copied into");
+        const deep_view = probe.viewed(.{ .image = deep, .format = .x8_d24_unorm_pack32, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH } }) orelse {
+            probe.check(false, "a view of its depth");
+            break :deep;
+        };
+        const staging, const staged = probe.buffer(side * side * 4, facet.BUFFER_USAGE_TRANSFER_SRC) orelse {
+            probe.check(false, "a buffer to copy its depths out of");
+            break :deep;
+        };
+        // In a buffer's low 24 bits, the top byte nothing.
+        for (0..side * side) |k| std.mem.writeInt(u32, staged[k * 4 ..][0..4], 0x04_0000, .little);
+        const deep_aspect = facet.ImageSubresourceLayers{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH };
+        commands = probe.record() orelse break :deep;
+        fb.CmdCopyBufferToImage(commands, staging, deep, .general, 1, @ptrCast(&facet.BufferImageCopy{ .image_subresource = deep_aspect, .image_extent = extent }));
+        if (!probe.submit()) {
+            probe.check(false, "its depths copied in");
+            break :deep;
+        }
+        const whole: f64 = 0xFF_FFFF;
+        const nearer: f32 = @floatCast((0x04_0000 - 0.75) / whole);
+        const further: f32 = @floatCast((0x04_0000 + 0.25) / whole);
+        probe.checkEqual(white, sampledWith(probe, deep_view, sampler.?, sets[0].?, layout.?, reading, onto, shade, vertex_buffer, vertex_bytes, pixels, pitch, nearer), "a depth of 24 bits copied in, a reference a step nearer passes");
+        probe.checkEqual(black, sampledWith(probe, deep_view, sampler.?, sets[0].?, layout.?, reading, onto, shade, vertex_buffer, vertex_bytes, pixels, pitch, further), "and a quarter of a step further does not: all 24 bits are compared");
+        // Cleared to the furthest, and then to a 64th, which is the same
+        // 0x040000 rounded.
+        const every = facet.ImageSubresourceRange{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH };
+        commands = probe.record() orelse break :deep;
+        fb.CmdClearDepthStencilImage(commands, deep, .general, &.{ .depth = 1 }, 1, @ptrCast(&every));
+        if (!probe.submit()) break :deep;
+        probe.checkEqual(white, sampledWith(probe, deep_view, sampler.?, sets[0].?, layout.?, reading, onto, shade, vertex_buffer, vertex_bytes, pixels, pitch, 0.5), "cleared to the furthest");
+        commands = probe.record() orelse break :deep;
+        fb.CmdClearDepthStencilImage(commands, deep, .general, &.{ .depth = 1.0 / 64.0 }, 1, @ptrCast(&every));
+        if (!probe.submit()) break :deep;
+        probe.checkEqual(white, sampledWith(probe, deep_view, sampler.?, sets[0].?, layout.?, reading, onto, shade, vertex_buffer, vertex_bytes, pixels, pitch, nearer), "cleared to a 64th at all 24 bits, a step nearer passes");
+        probe.checkEqual(black, sampledWith(probe, deep_view, sampler.?, sets[0].?, layout.?, reading, onto, shade, vertex_buffer, vertex_bytes, pixels, pitch, further), "and a quarter further does not");
+        // And read back as a buffer holds it: the 24 bits low, nothing
+        // above them.
+        const back, const backed = probe.buffer(side * side * 4, facet.BUFFER_USAGE_TRANSFER_DST) orelse break :deep;
+        @memset(backed[0 .. side * side * 4], 0xAA);
+        commands = probe.record() orelse break :deep;
+        fb.CmdCopyImageToBuffer(commands, deep, .general, back, 1, @ptrCast(&facet.BufferImageCopy{ .image_subresource = deep_aspect, .image_extent = extent }));
+        if (!probe.submit()) break :deep;
+        probe.checkEqual(0x04_0000, std.mem.readInt(u32, backed[(8 * side + 16) * 4 ..][0..4], .little), "its depth read back in a buffer's low 24 bits");
+        probe.checkEqual(0x04_0000, std.mem.readInt(u32, backed[(side * side - 1) * 4 ..][0..4], .little), "to the last pixel");
     }
 
     // --- 1.58: the planes a view names, and layers ---

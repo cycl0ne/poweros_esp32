@@ -4846,14 +4846,20 @@ test "every format whose features say BLIT_SRC is blitted out of as the colour a
         if (image_zig.wholeNumbers(format) or image_zig.hasStencil(format))
             try testing.expectEqual(@as(u32, 0), (properties.optimal_tiling_features | properties.linear_tiling_features) & blits);
 
-        if (format == .d16_unorm) {
+        if (format == .d16_unorm or format == .x8_d24_unorm_pack32) {
             // A depth into one of its own format, without a filter, turned
             // round left to right: each pixel the depth of the one it
-            // mirrors, as it lies.
+            // mirrors, as it lies. X8_D24_UNORM_PACK32 since 1.222, made
+            // for the transfers alone, no device drawing one yet: a buffer
+            // holds its depth in the low 24 bits of 4 bytes, and the top
+            // byte comes back as nothing.
             try testing.expectEqual(blits, properties.optimal_tiling_features & blits);
             sources += 1;
             destinations += 1;
-            const depths = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | transfers;
+            const sixteen = format == .d16_unorm;
+            const given: usize = if (sixteen) 2 else 4;
+            const kept: usize = if (sixteen) 2 else 3;
+            const depths = (if (sixteen) facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT else 0) | transfers;
             const from = (try Blitted.of(&bench, format, .optimal, depths)).?;
             defer from.gone(&bench);
             const to = (try Blitted.of(&bench, format, .optimal, depths)).?;
@@ -4868,7 +4874,8 @@ test "every format whose features say BLIT_SRC is blitted out of as the colour a
             fb.CmdCopyImageToBuffer(commands, to.image, .transfer_src_optimal, back, 1, @ptrCast(&facet.BufferImageCopy{ .image_subresource = plane, .image_extent = whole }));
             try bench.submit();
             for (0..4) |y| for (0..4) |x| {
-                try testing.expectEqualSlices(u8, staged[(y * 4 + 3 - x) * 2 ..][0..2], backed[(y * 4 + x) * 2 ..][0..2]);
+                try testing.expectEqualSlices(u8, staged[(y * 4 + 3 - x) * given ..][0..kept], backed[(y * 4 + x) * given ..][0..kept]);
+                if (!sixteen) try testing.expectEqual(@as(u8, 0), backed[(y * 4 + x) * given + 3]);
             };
             continue;
         }
@@ -4930,10 +4937,11 @@ test "every format whose features say BLIT_SRC is blitted out of as the colour a
     // Sources: every colour format a sample reads but the whole numbers -
     // B8G8R8A8, R8G8B8A8, R5G6B5, R8_UNORM, nine of BC, five of ETC2 and
     // EAC, five of floats, four of channels of their own, and B4G4R4A4 and
-    // A1R5G5B5 since 1.127 - and D16_UNORM. Destinations: the three colour
-    // attachments in either tiling, R8_UNORM, and D16_UNORM.
-    try testing.expectEqual(@as(u32, 30), sources);
-    try testing.expectEqual(@as(u32, 8), destinations);
+    // A1R5G5B5 since 1.127 - and D16_UNORM, and X8_D24_UNORM_PACK32 since
+    // 1.222. Destinations: the three colour attachments in either tiling,
+    // R8_UNORM, D16_UNORM and X8_D24_UNORM_PACK32.
+    try testing.expectEqual(@as(u32, 31), sources);
+    try testing.expectEqual(@as(u32, 9), destinations);
 }
 
 test "the five formats Vulkan 1.0 asks for that had no value: four channels in 16 bits unpacked as they come in, and A8B8G8R8 words that are their R8G8B8A8 forms (since 1.127)" {
@@ -9541,18 +9549,20 @@ test "a stencil attachment that outlives its pass: stored as the tiles are drawn
         try testing.expectEqual(clear, picture.at(48, 8));
         try testing.expectEqual(clear, picture.at(48, 40));
 
-        // Read into a buffer, a pixel's whole bytes at a time, and cleared
-        // without a pass over it.
-        const pixels = 64 * 64 * stride;
-        const read_back, const back_bytes = try bench.buffer(pixels, facet.BUFFER_USAGE_TRANSFER_DST);
-        @memset(back_bytes[0..pixels], 0xAA);
+        // Read into a buffer, a byte a pixel of either format as Vulkan
+        // has a stencil aspect lie there (since 1.222: a pixel's whole
+        // four bytes before), and cleared without a pass over it.
+        const pixels = 64 * 64;
+        const read_back, const back_bytes = try bench.buffer(pixels + 4, facet.BUFFER_USAGE_TRANSFER_DST);
+        @memset(back_bytes[0 .. pixels + 4], 0xAA);
         const whole = facet.BufferImageCopy{ .image_extent = .{ .width = 64, .height = 64 }, .image_subresource = .{ .aspect_mask = facet.IMAGE_ASPECT_STENCIL } };
         commands = try bench.record();
         fb.CmdCopyImageToBuffer(commands, stencil_image, .general, read_back, 1, @ptrCast(&whole));
         try bench.submit();
-        const stencil_byte = if (stride == 1) @as(usize, 0) else 2;
-        try testing.expectEqual(marked, back_bytes[(8 * 64 + 16) * stride + stencil_byte]);
-        try testing.expectEqual(@as(u8, 0), back_bytes[(8 * 64 + 48) * stride + stencil_byte]);
+        try testing.expectEqual(marked, back_bytes[8 * 64 + 16]);
+        try testing.expectEqual(@as(u8, 0), back_bytes[8 * 64 + 48]);
+        // Nothing past the last pixel's byte.
+        try testing.expectEqual(@as(u8, 0xAA), back_bytes[pixels]);
 
         const depth_word = @as(usize, 8) * kept.pitch + @as(usize, 16) * stride;
         const depth_was = kept.data.?[depth_word];
@@ -18289,4 +18299,180 @@ test "what Vulkan allows and facet does not do stays error_feature_not_present, 
     var none: ?*facet.DescriptorSetLayout = null;
     try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&far) }, &none));
     try testing.expect(none == null);
+}
+
+test "a depth of 24 bits, alone and with a stencil: each aspect copied in and out as a buffer holds it, cleared, copied between images, kept as the V3D keeps a D24S8, and sampled at all 24 bits (since 1.222)" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const image_zig = @import("../image/_image.zig");
+    const transfers = facet.IMAGE_USAGE_TRANSFER_SRC | facet.IMAGE_USAGE_TRANSFER_DST;
+    const side = 4;
+    const extent = facet.Extent3D{ .width = side, .height = side };
+    const depth_aspect = facet.ImageSubresourceLayers{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH };
+    const stencil_aspect = facet.ImageSubresourceLayers{ .aspect_mask = facet.IMAGE_ASPECT_STENCIL };
+    const staging, const staged = try bench.buffer(side * side * 4 + 4, facet.BUFFER_USAGE_TRANSFER_SRC);
+    const back, const backed = try bench.buffer(side * side * 4 + 4, facet.BUFFER_USAGE_TRANSFER_DST);
+    const depthOf = struct {
+        fn of(k: usize) u32 {
+            return 0x12_3456 + @as(u32, @intCast(k)) * 0x1_1111;
+        }
+    }.of;
+    const wordAt = struct {
+        fn of(image: *const image_zig.Image, k: usize) u32 {
+            const at = (k / side) * image.pitch + (k % side) * 4;
+            return std.mem.readInt(u32, image.data.?[at..][0..4], .little);
+        }
+    }.of;
+
+    // Neither format draws yet: no attachment of either, and no pass.
+    for ([_]facet.Format{ .x8_d24_unorm_pack32, .d24_unorm_s8_uint }) |format| {
+        var properties: facet.FormatProperties = undefined;
+        fb.GetPhysicalDeviceFormatProperties(bench.physical, format, &properties);
+        try testing.expectEqual(@as(u32, 0), properties.optimal_tiling_features & facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT);
+        try testing.expect(properties.optimal_tiling_features & facet.FORMAT_FEATURE_SAMPLED_IMAGE != 0);
+        try testing.expectEqual(@as(u32, 0), properties.linear_tiling_features);
+        var image_properties: facet.ImageFormatProperties = undefined;
+        try testing.expectEqual(facet.Result.error_format_not_supported, fb.GetPhysicalDeviceImageFormatProperties(bench.physical, format, .@"2d", .optimal, facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT, 0, &image_properties));
+        try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(bench.physical, format, .@"2d", .optimal, facet.IMAGE_USAGE_SAMPLED | transfers, 0, &image_properties));
+        const attachments = [2]facet.AttachmentDescription{ .{ .format = .b8g8r8a8_unorm, .final_layout = .general }, .{ .format = format, .final_layout = .general } };
+        const color = facet.AttachmentReference{ .attachment = 0, .layout = .color_attachment_optimal };
+        const depth = facet.AttachmentReference{ .attachment = 1, .layout = .depth_stencil_attachment_optimal };
+        const subpass = facet.SubpassDescription{ .color_attachment_count = 1, .color_attachments = @ptrCast(&color), .depth_stencil_attachment = &depth };
+        var pass: ?*facet.RenderPass = null;
+        try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateRenderPass(bench.device, &.{ .attachment_count = 2, .attachments = &attachments, .subpass_count = 1, .subpasses = @ptrCast(&subpass) }, &pass));
+        try testing.expect(pass == null);
+    }
+
+    // The depths into a D24_UNORM_S8_UINT, in a buffer's low 24 bits with
+    // something in the top byte, and the stencils after them, a byte each.
+    const both = try bench.bareImage(.{ .format = .d24_unorm_s8_uint, .extent = extent, .usage = transfers }, false);
+    const kept = _objects.of(image_zig.Image, both);
+    for (0..side * side) |k| std.mem.writeInt(u32, staged[k * 4 ..][0..4], 0xEE00_0000 | depthOf(k), .little);
+    var commands = try bench.record();
+    fb.CmdCopyBufferToImage(commands, staging, both, .general, 1, @ptrCast(&facet.BufferImageCopy{ .image_subresource = depth_aspect, .image_extent = extent }));
+    try bench.submit();
+    for (0..side * side) |k| staged[k] = @intCast(k + 1);
+    commands = try bench.record();
+    fb.CmdCopyBufferToImage(commands, staging, both, .general, 1, @ptrCast(&facet.BufferImageCopy{ .image_subresource = stencil_aspect, .image_extent = extent }));
+    try bench.submit();
+    // As the V3D keeps one: the stencil in the low byte, the depth above.
+    for (0..side * side) |k| try testing.expectEqual(depthOf(k) << 8 | @as(u32, @intCast(k + 1)), wordAt(kept, k));
+
+    // And out again, each aspect as a buffer holds it: the depth in four
+    // bytes, its top one nothing, and the stencil in one, nothing past
+    // the last.
+    @memset(backed[0 .. side * side * 4 + 4], 0xAA);
+    commands = try bench.record();
+    fb.CmdCopyImageToBuffer(commands, both, .general, back, 1, @ptrCast(&facet.BufferImageCopy{ .image_subresource = depth_aspect, .image_extent = extent }));
+    try bench.submit();
+    for (0..side * side) |k| try testing.expectEqual(depthOf(k), std.mem.readInt(u32, backed[k * 4 ..][0..4], .little));
+    @memset(backed[0 .. side * side * 4 + 4], 0xAA);
+    commands = try bench.record();
+    fb.CmdCopyImageToBuffer(commands, both, .general, back, 1, @ptrCast(&facet.BufferImageCopy{ .image_subresource = stencil_aspect, .image_extent = extent }));
+    try bench.submit();
+    for (0..side * side) |k| try testing.expectEqual(@as(u8, @intCast(k + 1)), backed[k]);
+    try testing.expectEqual(@as(u8, 0xAA), backed[side * side]);
+
+    // Cleared an aspect at a time, the other left: the stencil to 7, then
+    // the depth to a half, 8388607.5 of 16777215 rounded up.
+    const stencil_range = facet.ImageSubresourceRange{ .aspect_mask = facet.IMAGE_ASPECT_STENCIL };
+    const depth_range = facet.ImageSubresourceRange{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH };
+    commands = try bench.record();
+    fb.CmdClearDepthStencilImage(commands, both, .general, &.{ .depth = 1, .stencil = 7 }, 1, @ptrCast(&stencil_range));
+    try bench.submit();
+    for (0..side * side) |k| try testing.expectEqual(depthOf(k) << 8 | 7, wordAt(kept, k));
+    commands = try bench.record();
+    fb.CmdClearDepthStencilImage(commands, both, .general, &.{ .depth = 0.5, .stencil = 9 }, 1, @ptrCast(&depth_range));
+    try bench.submit();
+    for (0..side * side) |k| try testing.expectEqual(@as(u32, 0x8000_0007), wordAt(kept, k));
+
+    // Copied into another of its format, the stencil alone: the depth
+    // there stays the furthest.
+    const other = try bench.bareImage(.{ .format = .d24_unorm_s8_uint, .extent = extent, .usage = transfers }, false);
+    const other_kept = _objects.of(image_zig.Image, other);
+    const both_range = facet.ImageSubresourceRange{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH | facet.IMAGE_ASPECT_STENCIL };
+    commands = try bench.record();
+    fb.CmdClearDepthStencilImage(commands, other, .general, &.{ .depth = 1, .stencil = 0 }, 1, @ptrCast(&both_range));
+    fb.CmdCopyImage(commands, both, .general, other, .general, 1, @ptrCast(&facet.ImageCopy{ .src_subresource = stencil_aspect, .dst_subresource = stencil_aspect, .extent = extent }));
+    try bench.submit();
+    for (0..side * side) |k| try testing.expectEqual(@as(u32, 0xFFFF_FF07), wordAt(other_kept, k));
+    // Into a D16_UNORM_S8_UINT, four bytes a pixel as well: nothing.
+    const sixteen = try bench.bareImage(.{ .format = .d16_unorm_s8_uint, .extent = extent, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | transfers }, false);
+    const sixteen_kept = _objects.of(image_zig.Image, sixteen);
+    @memset(sixteen_kept.data.?[0 .. side * sixteen_kept.pitch], 0x55);
+    commands = try bench.record();
+    fb.CmdCopyImage(commands, both, .general, sixteen, .general, 1, @ptrCast(&facet.ImageCopy{ .src_subresource = stencil_aspect, .dst_subresource = stencil_aspect, .extent = extent }));
+    try bench.submit();
+    try testing.expectEqual(@as(u32, 0x5555_5555), wordAt(sixteen_kept, 5));
+
+    // An X8_D24_UNORM_PACK32 sampled: through a view of its depth, a
+    // texture of 24 bits a texel in the rows where the copy put them,
+    // compared at all 24 bits - two depths a step apart either side of a
+    // reference half a step from each.
+    const alone = try bench.bareImage(.{ .format = .x8_d24_unorm_pack32, .extent = extent, .usage = facet.IMAGE_USAGE_SAMPLED | transfers }, false);
+    for (0..side * side) |k| std.mem.writeInt(u32, staged[k * 4 ..][0..4], if (k % side < side / 2) 0x20_0000 else 0x20_0001, .little);
+    commands = try bench.record();
+    fb.CmdCopyBufferToImage(commands, staging, alone, .general, 1, @ptrCast(&facet.BufferImageCopy{ .image_subresource = depth_aspect, .image_extent = extent }));
+    try bench.submit();
+    const view = try bench.viewOf(.{ .image = alone, .format = .x8_d24_unorm_pack32, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH } });
+    const texels = &_objects.of(image_zig.ImageView, view).texels;
+    try testing.expectEqual(texture_zig.Format.d24, texels.format);
+    const between: f32 = @floatCast((0x20_0000 + 0.5) / @as(f64, 0xFF_FFFF));
+    const sampler = texture_zig.Sampler{ .mag_filter = .nearest, .min_filter = .nearest, .compare = .less };
+    // What passed is the red alone, the view reading a depth as (D, 0, 0,
+    // 1) as lavapipe's does.
+    try testing.expectEqual(@as(u32, 0xFFFF_0000), texture_zig.sampleBy(texels, &sampler, 0, .{ .u = 0.8, .v = 0.5, .reference = between }));
+    try testing.expectEqual(@as(u32, 0xFF00_0000), texture_zig.sampleBy(texels, &sampler, 0, .{ .u = 0.2, .v = 0.5, .reference = between }));
+    // Cleared whole, as a format of the one plane is, and blitted into
+    // another turned round, each at all its 24 bits.
+    const mirrored = try bench.bareImage(.{ .format = .x8_d24_unorm_pack32, .extent = extent, .usage = transfers }, false);
+    const turned = facet.ImageBlit{ .src_subresource = depth_aspect, .src_offsets = .{ .{}, .{ .x = side, .y = side, .z = 1 } }, .dst_subresource = depth_aspect, .dst_offsets = .{ .{ .x = side }, .{ .y = side, .z = 1 } } };
+    @memset(backed[0 .. side * side * 4], 0xAA);
+    commands = try bench.record();
+    fb.CmdBlitImage(commands, alone, .transfer_src_optimal, mirrored, .transfer_dst_optimal, 1, @ptrCast(&turned), .nearest);
+    fb.CmdCopyImageToBuffer(commands, mirrored, .transfer_src_optimal, back, 1, @ptrCast(&facet.BufferImageCopy{ .image_subresource = depth_aspect, .image_extent = extent }));
+    try bench.submit();
+    for (0..side * side) |k| try testing.expectEqual(@as(u32, if (k % side < side / 2) 0x20_0001 else 0x20_0000), std.mem.readInt(u32, backed[k * 4 ..][0..4], .little));
+    commands = try bench.record();
+    fb.CmdClearDepthStencilImage(commands, alone, .general, &.{ .depth = 0.25, .stencil = 0 }, 1, @ptrCast(&depth_range));
+    fb.CmdCopyImageToBuffer(commands, alone, .general, back, 1, @ptrCast(&facet.BufferImageCopy{ .image_subresource = depth_aspect, .image_extent = extent }));
+    try bench.submit();
+    // 4194303.75 of 16777215, rounded.
+    for (0..side * side) |k| try testing.expectEqual(@as(u32, 0x40_0000), std.mem.readInt(u32, backed[k * 4 ..][0..4], .little));
+}
+
+test "each aspect of a D16_UNORM_S8_UINT copied as a buffer holds it: two bytes of depth, one of stencil, the other aspect left (since 1.222)" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const image_zig = @import("../image/_image.zig");
+    const transfers = facet.IMAGE_USAGE_TRANSFER_SRC | facet.IMAGE_USAGE_TRANSFER_DST;
+    const side = 4;
+    const extent = facet.Extent3D{ .width = side, .height = side };
+    const depth_aspect = facet.ImageSubresourceLayers{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH };
+    const stencil_aspect = facet.ImageSubresourceLayers{ .aspect_mask = facet.IMAGE_ASPECT_STENCIL };
+    const staging, const staged = try bench.buffer(side * side * 4, facet.BUFFER_USAGE_TRANSFER_SRC);
+    const back, const backed = try bench.buffer(side * side * 4, facet.BUFFER_USAGE_TRANSFER_DST);
+    const both = try bench.bareImage(.{ .format = .d16_unorm_s8_uint, .extent = extent, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | transfers }, false);
+    const kept = _objects.of(image_zig.Image, both);
+    for (0..side * side) |k| std.mem.writeInt(u16, staged[k * 2 ..][0..2], 0x1000 + @as(u16, @intCast(k)), .little);
+    var commands = try bench.record();
+    fb.CmdCopyBufferToImage(commands, staging, both, .general, 1, @ptrCast(&facet.BufferImageCopy{ .image_subresource = depth_aspect, .image_extent = extent }));
+    try bench.submit();
+    for (0..side * side) |k| staged[k] = @intCast(0x80 + k);
+    commands = try bench.record();
+    fb.CmdCopyBufferToImage(commands, staging, both, .general, 1, @ptrCast(&facet.BufferImageCopy{ .image_subresource = stencil_aspect, .image_extent = extent }));
+    try bench.submit();
+    for (0..side * side) |k| {
+        const at = (k / side) * kept.pitch + (k % side) * 4;
+        try testing.expectEqual(0x1000 + @as(u16, @intCast(k)), std.mem.readInt(u16, kept.data.?[at..][0..2], .little));
+        try testing.expectEqual(@as(u8, @intCast(0x80 + k)), kept.data.?[at + 2]);
+    }
+    @memset(backed[0 .. side * side * 4], 0xAA);
+    commands = try bench.record();
+    fb.CmdCopyImageToBuffer(commands, both, .general, back, 1, @ptrCast(&facet.BufferImageCopy{ .image_subresource = depth_aspect, .image_extent = extent }));
+    try bench.submit();
+    for (0..side * side) |k| try testing.expectEqual(0x1000 + @as(u16, @intCast(k)), std.mem.readInt(u16, backed[k * 2 ..][0..2], .little));
+    try testing.expectEqual(@as(u8, 0xAA), backed[side * side * 2]);
 }

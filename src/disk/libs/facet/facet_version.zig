@@ -7312,4 +7312,38 @@ pub const LIBRARY_VERSION = 1;
 /// and a float storage image on a device that unpacks floats, the query
 /// saying the same. Three mutations each fail it. On the CM5, FacetBoth's
 /// 316 cases are each as they were at 1.219 and FacetProbe is 923 of 923.
-pub const LIBRARY_REVISION = 221;
+/// 222: **X8_D24_UNORM_PACK32 and D24_UNORM_S8_UINT, as images
+/// (docs/facet-vulkan10.md item 35, step 1 of four).** One word a pixel,
+/// the depth in its top 24 bits and the stencil or nothing in its low
+/// byte, as the V3D keeps a D24S8 (v3d_packet.xml:357;
+/// v3dvx_meta_common.c:436-445). `texture.Format.d24` is a texel of those
+/// 24 bits, compared at all of them, and the V3D samples one as DEPTH24_X8
+/// (v3dvx_formats.c:206, `tiling.Texels.d24`). Each aspect is copied as
+/// Vulkan has it lie in a buffer (`_image.laneOf`), as lavapipe moves one
+/// (lvp_execute.c:2442-2449, lvp_image.c:1246-1292): a D24 depth in the
+/// low 24 bits of 4 bytes and a stencil in 1, and D16_UNORM_S8_UINT's
+/// depth in 2 and stencil in 1, where a copy of it moved the pixel's four
+/// bytes whichever aspect it named. A copy between images and a clear of
+/// one aspect leave the other's bytes, and the clear keeps a depth at the
+/// format's width (`ClearDepthStencilImage.depth` is a u32,
+/// `_render.depthOfBits`). X8_D24 is blitted as D16_UNORM is. Both say
+/// SAMPLED where a depth is sampled (the one with a stencil where a
+/// stencil is too), the transfers, and no DEPTH_STENCIL_ATTACHMENT, no
+/// device drawing either yet: `_image.shapeFor` holds that usage to the
+/// feature for every format but D16_UNORM_S8_UINT (item 94), and
+/// CreateRenderPass refuses an attachment of a format without it but for
+/// S8_UINT and D16_UNORM_S8_UINT, drawn in the tiles alone. A depth image
+/// need not be an attachment any more: one only sampled or only copied
+/// into is made. `texture.Format` grew `d24` at its end, the values before
+/// it as they were.
+///
+/// Three host tests are new: the two formats' aspects copied, cleared,
+/// copied between images, blitted and sampled at all 24 bits on the cores;
+/// D16_UNORM_S8_UINT's aspects; and `texture.Format.d24` itself. Three
+/// changed: a depth only sampled is made, the BLIT test takes X8_D24, and a
+/// stored stencil reads back a byte a pixel. FacetProbe 1.50 does the same
+/// on the stencil, and samples an X8_D24 copied into and cleared at all 24
+/// bits. Six mutations each fail a test. On the CM5 (package f227),
+/// FacetProbe is 947 of 947, the V3D comparing an X8_D24 at all 24 bits
+/// through DEPTH24_X8, and FacetBoth's 316 cases are each as at 1.221.
+pub const LIBRARY_REVISION = 222;
