@@ -140,6 +140,22 @@
 //! the frames', told to the fetcher with its address at the same
 //! update.
 //!
+//! The video layer (`RTGBC_VIDEO`, `video_ops`) is a plane of its own
+//! (`plane.lightFilm`) on a free pipe, on a board whose page table and
+//! blender are reached: one layer, under the picture or over it. A frame
+//! is NV12 of eight bits in BT.601 or BT.709, video's range or the whole
+//! byte, with rows of a whole number of 256 bytes, which the engine reads
+//! through the page table as it reads a flipped buffer - each plane's
+//! run of pages mapped as the frame is shown, one run where the two lie
+//! close - while the one before is kept from being mapped over until the
+//! plane has taken the new one; up to 4096 pixels a side, sixteen times
+//! up and a sixth down. Under the picture it is seen where the picture
+//! has the key colour, or the shades of it a shadow leaves, which the
+//! picture's keyer makes clear; over it, it covers the picture, the
+//! pointer too. It goes down with the pipe - for a mode set, the
+//! monitor's sleep - and is lit again after from the frame it shows; while
+//! it is open, bands are made in frames.
+//!
 //! The module keeps nothing of its own: a ROM image is read only, so what
 //! changes is the library's to allocate - a `Screen` beside the board -
 //! and found again through what an op is handed.
@@ -173,11 +189,13 @@ const plane = @import("plane.zig");
 const pipe = @import("pipe.zig");
 const mode = @import("mode.zig");
 const gart = @import("gart.zig");
+const video = @import("video.zig");
+const coefficients = @import("coefficients.zig");
 
 const MODULE_NAME = "rtg-amd";
 const DRIVER_NAME = "amd";
 const VERSION = 1;
-const REVISION = 21;
+const REVISION = 22;
 const BUILD_DATE = "26.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -340,6 +358,28 @@ const Screen = struct {
     /// picture. Under `cursor_lock`, written holding `pipe_lock` too.
     band_cursors: [pipe_count]CursorPlane = undefined,
     band_cursor_count: u32 = 0,
+    /// The video layer (`videoOpen`), null while none is open: under the
+    /// picture or over it; the frame shown, the part of it shown and its
+    /// place on the display, before any turn - kept, so that it is lit
+    /// again once the pipe has gone down and come up; the pipe its plane
+    /// is lit on, null while it is not; what that pipe's scaler holds,
+    /// the colour matrix it was given, and the device's addresses of the
+    /// frame it reads, whose pages the engine's page table keeps; and the
+    /// picture's keyer and stage as they were before the film under it
+    /// was seen through it. Under `pipe_lock`.
+    film: ?*rtg.RtgVideoLayer = null,
+    film_layer: plane.Layer = .under,
+    film_frame: ?rtg.RtgYuv = null,
+    film_part: rtg.RtgRect = .{},
+    film_place: rtg.RtgRect = .{},
+    film_pipe: ?u32 = null,
+    film_filters: ?video.Filters = null,
+    film_matrix: ?*const [12]u16 = null,
+    film_reads: [2]u64 = .{ 0, 0 },
+    film_unkeyed: plane.Unkeyed = .{},
+    /// Whether the log has said a film's plane could not be lit, since
+    /// one last was.
+    film_refused: bool = false,
 };
 
 /// A plane the cursor is laid over too (`Screen.cursor_plane`,
@@ -501,8 +541,9 @@ fn scanFrom(screen: *Screen, picture: *const rtg.RtgBitMap) bool {
 fn bufferAddress(screen: *Screen, picture: *const rtg.RtgBitMap) ?u64 {
     const table = if (screen.gart) |*one| one else return null;
     if (picture.width < screen.width or picture.height < screen.height) return null;
-    // The buffer read until now keeps its pages.
-    const busy = [_]u64{screen.flip_wanted};
+    // The buffer read until now keeps its pages, and so does the film's
+    // frame.
+    const busy = [_]u64{ screen.flip_wanted, screen.film_reads[0], screen.film_reads[1] };
     return mapRows(screen, table, picture, screen.height, &busy);
 }
 
@@ -562,10 +603,11 @@ fn tell(screen: *Screen, address: u64, pitch: u32, now: bool) void {
 /// of a buffer wider than the picture or narrower by no whole number,
 /// where the table cannot map its rows, and where the hub gives a new
 /// plane no buffer - after which bands are refused until the next mode
-/// set. Holding `pipe_lock`.
+/// set - and while a video layer is open, whose place is on the picture
+/// whole. Holding `pipe_lock`.
 fn showBands(screen: *Screen, bands: []const rtg.RtgBand) i32 {
     const refused = err.RTGERR_NOT_SUPPORTED;
-    if (screen.asleep or !screen.amd_flipping or screen.bands_refused) return refused;
+    if (screen.asleep or !screen.amd_flipping or screen.bands_refused or screen.film != null) return refused;
     if (bands.len < 2 or bands.len > pipe_count) return refused;
     const table = if (screen.gart) |*one| one else return refused;
     const engine = screen.dcn;
@@ -739,10 +781,19 @@ fn leaveBands(screen: *Screen, address: u64, pitch: u32, now: bool) void {
         .mirror_y = screen.turn_y,
     };
     const planes = screen.band_planes[1..@max(screen.band_count, 1)];
+    // A film's plane over the picture stays right above it.
+    var film_over: [1]u32 = undefined;
+    var over_picture: []const u32 = &.{};
+    if (screen.film_pipe) |index| {
+        if (screen.film_layer == .over) {
+            film_over[0] = index;
+            over_picture = &film_over;
+        }
+    }
     plane.lock(engine, engine.pipe);
     plane.writePlace(engine, engine.fetcher, &whole);
     dcn.flip(engine, address, now);
-    plane.stack(engine, output, screen.overlay_pipe, &.{}, engine.fetcher);
+    plane.stack(engine, output, screen.overlay_pipe, over_picture, engine.fetcher);
     for (planes) |one| plane.release(engine, one.index);
     bandCursors(screen, &.{});
     plane.unlock(engine, engine.pipe);
@@ -959,7 +1010,7 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, device_tags: ?[*]const
     const overlay_memory = if (cursor_memory != null) overlayMemory(found, format) else null;
 
     const board = rb.CreateBoard(driver, device, &.{
-        .ops = opsFor(cursor_memory != null, overlay_memory != null),
+        .ops = opsFor(cursor_memory != null, overlay_memory != null, false),
         .instance_size = @sizeOf(Screen),
         // The display runs as the firmware lit it: its mode is kept.
         .flags = rtg.boards.RTGBF_ADOPTED,
@@ -1019,8 +1070,10 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, device_tags: ?[*]const
     // pixel or two.
     mode.passThrough(found, found.fetcher);
     // A program's buffer read in place of a frame, through the engine's
-    // page table, where the display is flipped.
+    // page table, where the display is flipped; and a film's frames read
+    // through it by a plane of their own, where planes can be lit.
     if (screen.amd_flipping) readBuffers(screen);
+    board.ops = opsFor(cursor_memory != null, overlay_memory != null, screen.gart != null and plane.reached(found));
 
     // At most as many pictures of the mode as the board asks for, each
     // taken by the library as it is allocated. Not cleared: each is
@@ -1100,6 +1153,9 @@ fn tellConnector(screen: *const Screen) void {
 fn halt(screen: *Screen) void {
     screen.sys.ObtainSemaphore(&screen.pipe_lock);
     dropBands(screen);
+    dropFilm(screen);
+    screen.film = null;
+    screen.film_frame = null;
     screen.sys.ReleaseSemaphore(&screen.pipe_lock);
     if (screen.overlay_memory) |*memory| {
         screen.sys.ObtainSemaphore(&screen.pipe_lock);
@@ -1205,13 +1261,12 @@ fn showOp(board: *rtg.RtgBoard, what: *const rtg.RtgShow) callconv(.c) i32 {
         writeCursor(screen);
         screen.sys.ReleaseSemaphore(&screen.cursor_lock);
     }
-    // The overlay's plane worked out for the mode, and lit again where a
-    // set took it down.
-    if (screen.overlay_memory != null) {
-        screen.sys.ObtainSemaphore(&screen.pipe_lock);
-        showOverlay(screen);
-        screen.sys.ReleaseSemaphore(&screen.pipe_lock);
-    }
+    // The overlay's plane and the film's worked out for the mode, and lit
+    // again where a set took them down.
+    screen.sys.ObtainSemaphore(&screen.pipe_lock);
+    if (screen.overlay_memory != null) showOverlay(screen);
+    _ = showFilm(screen, false);
+    screen.sys.ReleaseSemaphore(&screen.pipe_lock);
     return err.RTGERR_OK;
 }
 
@@ -1321,6 +1376,7 @@ fn mirrorOp(board: *rtg.RtgBoard, x: bool, y: bool) callconv(.c) i32 {
         mode.writeTurn(screen.dcn, screen.dcn.fetcher, x, y);
     }
     showOverlay(screen);
+    _ = showFilm(screen, false);
     sys.ReleaseSemaphore(&screen.pipe_lock);
     sys.ObtainSemaphore(&screen.cursor_lock);
     defer sys.ReleaseSemaphore(&screen.cursor_lock);
@@ -1517,6 +1573,351 @@ fn planeHeld(screen: *Screen, pitch: u32) ?mode.Held {
         topHeld(screen) orelse return null;
     held.pitch = pitch;
     return held;
+}
+
+// --- the video layer, a film's plane ----------------------------------------------
+
+/// The colour the picture shows a film under it through: near black, and
+/// the same in each format a screen has - five, six or eight bits a
+/// channel. Keyed with it, each channel down to `video_key_darkest`, are
+/// the shades of it shadows leave: the library darkens what is under a
+/// shadow by multiplying it, to (4, 0, 4) under one, (2, 0, 2) under two
+/// laid over each other, (1, 0, 1) under three - so the film shows under
+/// a window's shadow, undarkened, rather than a dark band.
+const video_key: u32 = 0x0008_0008;
+const video_key_darkest: u32 = 0x0001_0001;
+/// The keyer's mode: a pixel whose colour lies in its ranges made clear,
+/// every other opaque. Its other modes, as the engine shows them: 0 makes
+/// every pixel clear, 1 every pixel opaque, 2 the pixels in the ranges
+/// opaque and every other clear.
+const video_keyer_mode: u32 = 3;
+
+/// The largest frame a layer takes each way, and how far it scales one,
+/// each way on its own: sixteen times up, a sixth down, the vendor's
+/// limits for these frames - as far as the line buffer holds the rows
+/// the taps read and the hub the bytes (`video.scalingOf`,
+/// `mode.fetchSchedule`).
+const video_max_side: u32 = 4096;
+const video_max_up: u32 = 16;
+const video_max_down: u32 = 6;
+
+/// The keyer's range for a channel of the key's shades, the channel
+/// `shift` bits up in 0x00RRGGBB: its eight bits at the top of the
+/// keyer's sixteen, the least with nothing below them and the most with
+/// all, however the converter widens eight bits.
+fn keyRange(shift: u5) [2]u16 {
+    const least: u16 = @intCast((video_key_darkest >> shift) & 0xff);
+    const most: u16 = @intCast((video_key >> shift) & 0xff);
+    return .{ least << 8, most << 8 | 0xff };
+}
+
+const video_keyed: plane.Key = .{
+    .red = keyRange(16),
+    .green = keyRange(8),
+    .blue = keyRange(0),
+    .mode = video_keyer_mode,
+};
+
+/// Whether a film's plane makes the display's colours out of such a
+/// picture. Its colour matrix holds BT.601's or BT.709's weights, either
+/// range, and there is nothing after it the board sets: no curve, so a
+/// film of high dynamic range would come out flat and grey, and no way
+/// to move BT.2020's red, green and blue to the display's; and its
+/// fetcher is told 4:2:0 frames of a byte a sample. Such a film is left
+/// to graphics.library, which maps it.
+fn videoColours(matrix: u8, transfer: u8, primaries: u8, depth: u8) bool {
+    if (matrix != rtg.bitmaps.RTGYUV_BT601 and matrix != rtg.bitmaps.RTGYUV_BT709) return false;
+    if (transfer != rtg.bitmaps.RTGYUV_SDR or primaries != rtg.bitmaps.RTGYUV_BT709) return false;
+    return depth == 8;
+}
+
+/// The layer taken: under the picture unless asked over, with the key
+/// colour the picture shows it through, nothing on it and no place yet.
+/// None for a picture the plane cannot make colours out of, or where the
+/// engine has no page table to read a frame through, which is in the
+/// machine's memory; RTGERR_IN_USE while one is open. Bands the display
+/// reads are given up for the picture whole - the film's place is on
+/// it - and refused while the layer is open.
+fn videoOpen(board: *rtg.RtgBoard, layer: *rtg.RtgVideoLayer) callconv(.c) i32 {
+    if (!videoColours(layer.matrix, layer.transfer, layer.primaries, layer.depth)) return err.RTGERR_NOT_SUPPORTED;
+    const screen = screenOf(board);
+    if (screen.gart == null or !plane.reached(screen.dcn)) return err.RTGERR_NOT_SUPPORTED;
+    const under = layer.flags & rtg.RTGVLF_UNDER != 0;
+    layer.key = if (under) video_key else 0;
+    layer.max_width = video_max_side;
+    layer.max_height = video_max_side;
+    layer.max_up = video_max_up;
+    layer.max_down = video_max_down;
+    screen.sys.ObtainSemaphore(&screen.pipe_lock);
+    defer screen.sys.ReleaseSemaphore(&screen.pipe_lock);
+    if (screen.film != null) return err.RTGERR_IN_USE;
+    dropBands(screen);
+    screen.film = layer;
+    screen.film_layer = if (under) .under else .over;
+    screen.film_frame = null;
+    screen.film_place = .{};
+    screen.film_refused = false;
+    return err.RTGERR_OK;
+}
+
+/// The layer given back: its plane taken down, the picture whole again,
+/// and a frame waited for, so that the last frame is no longer read.
+fn videoClose(board: *rtg.RtgBoard, layer: *rtg.RtgVideoLayer) callconv(.c) void {
+    const screen = screenOf(board);
+    screen.sys.ObtainSemaphore(&screen.pipe_lock);
+    if (screen.film == layer) {
+        dropFilm(screen);
+        screen.film = null;
+        screen.film_frame = null;
+    }
+    screen.sys.ReleaseSemaphore(&screen.pipe_lock);
+    pace(screen, 1);
+}
+
+/// A frame shown, or none, from the pipe's next update - waited for, so
+/// that the one before is no longer read. One the plane cannot read, or
+/// scale into its place, is not kept: nothing is shown.
+fn videoShow(board: *rtg.RtgBoard, layer: *rtg.RtgVideoLayer, picture: ?*const rtg.RtgYuv, src: ?*const rtg.RtgRect) callconv(.c) i32 {
+    const screen = screenOf(board);
+    screen.sys.ObtainSemaphore(&screen.pipe_lock);
+    defer screen.sys.ReleaseSemaphore(&screen.pipe_lock);
+    if (screen.film != layer) return err.RTGERR_BAD_ARG;
+    const one = picture orelse {
+        screen.film_frame = null;
+        dropFilm(screen);
+        return err.RTGERR_OK;
+    };
+    const part = src.?.*;
+    if (!filmReads(one, part)) {
+        screen.film_frame = null;
+        dropFilm(screen);
+        return err.RTGERR_BAD_ARG;
+    }
+    screen.film_frame = one.*;
+    screen.film_part = part;
+    const code = showFilm(screen, true);
+    if (code != err.RTGERR_OK) screen.film_frame = null;
+    return code;
+}
+
+/// The layer's place, on the display before any turn, the frame shown in
+/// it from the pipe's next update: hidden for an empty place, one off
+/// the glass, and - RTGERR_BAD_ARG - where the frame cannot be scaled
+/// into it.
+fn videoMove(board: *rtg.RtgBoard, layer: *rtg.RtgVideoLayer, place: *const rtg.RtgRect) callconv(.c) i32 {
+    const screen = screenOf(board);
+    screen.sys.ObtainSemaphore(&screen.pipe_lock);
+    defer screen.sys.ReleaseSemaphore(&screen.pipe_lock);
+    if (screen.film != layer) return err.RTGERR_BAD_ARG;
+    screen.film_place = place.*;
+    return showFilm(screen, false);
+}
+
+/// Whether the plane reads `part` of `picture`: colours it makes the
+/// display's out of (`videoColours` - the picture may not be the kind
+/// the layer was opened for), NV12, each plane's rows a whole number of
+/// the 256 bytes a fetcher reads a linear surface's rows by and no
+/// longer than it counts, the colour's samples on pairs of bytes, and the
+/// part - its left and top on a pair of pixels - within the rows from
+/// the 256 bytes each plane starts in.
+fn filmReads(picture: *const rtg.RtgYuv, part: rtg.RtgRect) bool {
+    if (!videoColours(picture.matrix, picture.transfer, picture.primaries, picture.depth)) return false;
+    if (picture.layout != rtg.bitmaps.RTGYUV_NV12) return false;
+    if (picture.y_pitch == 0 or picture.y_pitch % row_alignment != 0 or picture.y_pitch > largest_side + 1) return false;
+    if (picture.c_pitch == 0 or picture.c_pitch % row_alignment != 0 or picture.c_pitch / 2 > largest_side + 1) return false;
+    if (@intFromPtr(picture.cb) % 2 != 0) return false;
+    if (@rem(part.x, 2) != 0 or @rem(part.y, 2) != 0) return false;
+    const right: usize = @intCast(@as(i64, part.x) + part.width);
+    if (@intFromPtr(picture.y) % row_alignment + right > picture.y_pitch) return false;
+    if (@intFromPtr(picture.cb) % row_alignment + (right + 1) / 2 * 2 > picture.c_pitch) return false;
+    return true;
+}
+
+/// Whether any of `place` lies on a glass `width` by `height`.
+fn onGlass(place: rtg.RtgRect, width: u32, height: u32) bool {
+    if (place.width <= 0 or place.height <= 0) return false;
+    if (@as(i64, place.x) + place.width <= 0 or @as(i64, place.y) + place.height <= 0) return false;
+    return place.x < @as(i64, width) and place.y < @as(i64, height);
+}
+
+/// Whether `read` pixels scale to `shown`, as far as a layer says it
+/// does (`video_max_up`, `video_max_down`).
+fn filmScales(read: i32, shown: i32) bool {
+    const from: u64 = @intCast(read);
+    const into: u64 = @intCast(shown);
+    return into <= from * video_max_up and into * video_max_down >= from;
+}
+
+/// The film's frame kept shown in its place, as much of it as the glass
+/// has: its plane lit on a free pipe where it is not, told the frame,
+/// the place and the scaling where it is; taken down with no frame, an
+/// empty place or none of it on the glass. RTGERR_BAD_ARG, the plane
+/// taken down, where the frame cannot be scaled into its place, the
+/// engine's page table cannot map its planes, no pipe is free or the hub
+/// gives the plane no buffer. With `wait`, returns once the pipe has
+/// taken the frame, so that the one before is no longer read. Holding
+/// `pipe_lock`; nothing while the pipe is asleep, which took the plane
+/// down: the frame is kept for waking.
+fn showFilm(screen: *Screen, wait: bool) i32 {
+    const engine = screen.dcn;
+    if (screen.film == null) return err.RTGERR_OK;
+    const one = screen.film_frame orelse {
+        dropFilm(screen);
+        return err.RTGERR_OK;
+    };
+    if (screen.asleep) return err.RTGERR_OK;
+    const place = screen.film_place;
+    const part = screen.film_part;
+    if (!onGlass(place, screen.width, screen.height)) {
+        dropFilm(screen);
+        return err.RTGERR_OK;
+    }
+    const refused = err.RTGERR_BAD_ARG;
+    if (!filmScales(part.width, place.width) or !filmScales(part.height, place.height)) {
+        dropFilm(screen);
+        return refused;
+    }
+    const scaling = video.scalingOf(.{
+        .src_x = @intCast(part.x),
+        .src_y = @intCast(part.y),
+        .src_width = @intCast(part.width),
+        .src_height = @intCast(part.height),
+        .dst_x = place.x,
+        .dst_y = place.y,
+        .dst_width = @intCast(place.width),
+        .dst_height = @intCast(place.height),
+        .glass_width = screen.width,
+        .glass_height = screen.height,
+        .mirror_x = screen.turn_x,
+        .mirror_y = screen.turn_y,
+    }) orelse {
+        dropFilm(screen);
+        return refused;
+    };
+    const table = if (screen.gart) |*held| held else return refused;
+    const rows: u32 = @intCast(part.y + part.height);
+    const addresses = filmAddresses(screen, table, &one, rows) orelse {
+        dropFilm(screen);
+        return refused;
+    };
+    // Each plane's first element counted from the 256 bytes it starts in.
+    const luma_x: u32 = @intCast(@intFromPtr(one.y) % row_alignment);
+    const chroma_x: u32 = @intCast(@intFromPtr(one.cb) % row_alignment / 2);
+    const right: u32 = @intCast(part.x + part.width);
+    const across = scaling.across;
+    const down = scaling.down;
+    const fetch: mode.Fetch = .{
+        .out_width = scaling.out_width,
+        .luma = .{ .width = across.size, .surface = luma_x + right, .pitch = one.y_pitch, .bytes = 1, .h_ratio = across.ratio, .v_ratio = down.ratio, .h_taps = across.taps, .v_taps = down.taps },
+        .chroma = .{ .width = across.size_c, .surface = chroma_x + (right + 1) / 2, .pitch = one.c_pitch / 2, .bytes = 2, .h_ratio = across.ratio_c, .v_ratio = down.ratio_c, .h_taps = across.taps_c, .v_taps = down.taps_c },
+        .scaled = true,
+    };
+    const held = planeHeld(screen, one.y_pitch) orelse {
+        dropFilm(screen);
+        return refused;
+    };
+    const schedule = mode.fetchSchedule(screen.timings, fetch, held, mode.vstartupOf(engine, engine.pipe)) orelse {
+        dropFilm(screen);
+        return refused;
+    };
+    const film: plane.Film = .{
+        .luma = addresses[0],
+        .chroma = addresses[1],
+        .luma_x = luma_x,
+        .chroma_x = chroma_x,
+        .luma_pitch = one.y_pitch,
+        .chroma_pitch = one.c_pitch / 2,
+        .scaling = scaling,
+        .mirror_x = screen.turn_x,
+        .mirror_y = screen.turn_y,
+    };
+    const matrix = coefficients.matrixOf(one.matrix == rtg.bitmaps.RTGYUV_BT709, one.range != rtg.bitmaps.RTGYUV_FULL);
+    const index = if (screen.film_pipe) |lit| lit: {
+        plane.moveFilm(engine, lit, engine.pipe, &schedule, &film, if (screen.film_matrix != matrix) matrix else null, &screen.film_filters);
+        break :lit lit;
+    } else lit: {
+        const free = freePipe(engine) orelse {
+            if (!screen.film_refused) exec.kprintf(screen.sys, "%s: no pipe is free for the film, which is not shown\n", .{MODULE_NAME});
+            screen.film_refused = true;
+            return refused;
+        };
+        gart.reach(engine, free);
+        const output = mode.outputOf(engine, engine.pipe);
+        if (!plane.lightFilm(engine, free, engine.pipe, output, engine.fetcher, screen.width | screen.height << 16, &schedule, &film, matrix, &screen.film_filters, screen.film_layer, &video_keyed, &screen.film_unkeyed)) {
+            plane.darkenFilm(engine, free, engine.pipe, output, engine.fetcher, screen.film_layer, screen.film_unkeyed);
+            if (!screen.film_refused) exec.kprintf(screen.sys, "%s: the hub gave pipe %d no buffer, so the film is not shown\n", .{ MODULE_NAME, free });
+            screen.film_refused = true;
+            return refused;
+        }
+        screen.film_pipe = free;
+        screen.film_refused = false;
+        break :lit free;
+    };
+    screen.film_matrix = matrix;
+    screen.film_reads = addresses;
+    if (!wait) return err.RTGERR_OK;
+    // Taken at the pipe's next update, as a flip.
+    pace(screen, 1);
+    var looks: u32 = 0;
+    while (!plane.taken(engine, index)) : (looks += 1) {
+        if (looks == 2) {
+            dropFilm(screen);
+            return err.RTGERR_IO;
+        }
+        pace(screen, 1);
+    }
+    return err.RTGERR_OK;
+}
+
+/// The device's addresses of a film's two planes, each from the 256
+/// bytes its first row starts in to the end of its row for `rows` rows
+/// of the frame, mapped in the engine's page table by the machine's
+/// addresses exec names for them: one run where the colour lies close
+/// past the brightness, as a decoder's frame has it, two where not. The
+/// frame the film's plane reads now and the buffer the picture's fetcher
+/// reads keep their pages. Null where a plane is not one run of the
+/// machine's memory or the table cannot map it.
+fn filmAddresses(screen: *Screen, table: *gart.Table, one: *const rtg.RtgYuv, rows: u32) ?[2]u64 {
+    const step: usize = row_alignment;
+    const luma_start = @intFromPtr(one.y) / step * step;
+    const chroma_start = @intFromPtr(one.cb) / step * step;
+    const luma_end = @intFromPtr(one.y) + @as(usize, rows) * one.y_pitch;
+    const chroma_end = @intFromPtr(one.cb) + @as(usize, (rows + 1) / 2) * one.c_pitch;
+    var busy = [_]u64{ screen.flip_wanted, screen.film_reads[0], screen.film_reads[1], 0 };
+    const first = @min(luma_start, chroma_start);
+    const last = @max(luma_end, chroma_end);
+    if (last - first <= 2 * ((luma_end - luma_start) + (chroma_end - chroma_start))) {
+        const start = mapSpan(screen, table, first, last - first, &busy) orelse return null;
+        return .{ start + (luma_start - first), start + (chroma_start - first) };
+    }
+    const luma = mapSpan(screen, table, luma_start, luma_end - luma_start, &busy) orelse return null;
+    busy[3] = luma;
+    const chroma = mapSpan(screen, table, chroma_start, chroma_end - chroma_start, &busy) orelse return null;
+    return .{ luma, chroma };
+}
+
+/// The device's address of `length` bytes of the machine's memory from
+/// `start`, mapped in the engine's page table: null where they are not
+/// one run of the machine's memory, as exec's CachePreDMA names them, or
+/// the table cannot map them.
+fn mapSpan(screen: *Screen, table: *gart.Table, start: usize, length: usize, busy: []const u64) ?u64 {
+    if (length == 0 or length > 0xffff_ffff) return null;
+    var bytes: u32 = @intCast(length);
+    const machine = @intFromPtr(screen.sys.CachePreDMA(@ptrFromInt(start), &bytes, exec.DMAF_ReadFromRAM));
+    if (bytes != length) return null;
+    return gart.map(table, machine, bytes, busy);
+}
+
+/// The film's plane taken down where it is lit, the picture whole again
+/// and no longer keyed; the frame kept. Holding `pipe_lock`.
+fn dropFilm(screen: *Screen) void {
+    const index = screen.film_pipe orelse return;
+    const engine = screen.dcn;
+    plane.darkenFilm(engine, index, engine.pipe, mode.outputOf(engine, engine.pipe), engine.fetcher, screen.film_layer, screen.film_unkeyed);
+    screen.film_pipe = null;
+    screen.film_filters = null;
+    screen.film_matrix = null;
+    screen.film_reads = .{ 0, 0 };
 }
 
 /// What is on the connector (`monitor.detect`), one reader at a time at
@@ -1750,6 +2151,7 @@ fn sleepLink(screen: *Screen, pixel_hz: u32) i32 {
     if (screen.asleep) return err.RTGERR_OK;
     dropOverlay(screen);
     dropBands(screen);
+    dropFilm(screen);
     sound.soundDown(screen.dcn);
     var stage: u32 = 0;
     const started = screen.sys.UptimeUs();
@@ -1762,6 +2164,7 @@ fn sleepLink(screen: *Screen, pixel_hz: u32) i32 {
         }
         soundFor(screen);
         showOverlay(screen);
+        _ = showFilm(screen, false);
         return code;
     }
     screen.asleep = true;
@@ -1786,6 +2189,7 @@ fn wakeLink(screen: *Screen) i32 {
     }
     screen.asleep = false;
     showOverlay(screen);
+    _ = showFilm(screen, false);
     exec.kprintf(screen.sys, "%s: the monitor is sent its stream again after %d us, the PHY %s\n", .{
         MODULE_NAME,
         @as(u32, @intCast(@min(screen.sys.UptimeUs() - started, 0xffff_ffff))),
@@ -1850,6 +2254,7 @@ fn setMode(screen: *Screen, timings: *const rtg.RtgTimings) i32 {
     // A plane goes down with the pipe; the show lights it again.
     dropOverlay(screen);
     dropBands(screen);
+    dropFilm(screen);
     const code = pipe.set(screen.dcn, &screen.controller, screen.connector, &new, hdmi, if (sends_avi) &avi else null, screen.pixel_clock_hz, &screen.last_set);
     const done = &screen.last_set;
     if (code != err.RTGERR_OK) {
@@ -2023,23 +2428,25 @@ const ops = rtg.boards.RtgBoardOps{
     .mirror = &mirrorOp,
 };
 
-/// The same with the pointer the pipe's cursor, the overlay a plane, or
-/// both, by `opsFor`.
+/// The same with the pointer the pipe's cursor, the overlay a plane, a
+/// video layer, or any of them together, by `opsFor`.
 const op_tables = tables: {
-    var tables: [4]rtg.boards.RtgBoardOps = .{ ops, ops, ops, ops };
-    tables[1].pointer = &pointer_ops;
-    tables[2].overlay = &overlay_ops;
-    tables[3].pointer = &pointer_ops;
-    tables[3].overlay = &overlay_ops;
+    var tables: [8]rtg.boards.RtgBoardOps = @splat(ops);
+    for (&tables, 0..) |*table, index| {
+        if (index & 1 != 0) table.pointer = &pointer_ops;
+        if (index & 2 != 0) table.overlay = &overlay_ops;
+        if (index & 4 != 0) table.video = &video_ops;
+    }
     break :tables tables;
 };
 
-fn opsFor(with_cursor: bool, with_overlay: bool) *const rtg.boards.RtgBoardOps {
-    return &op_tables[@as(usize, @intFromBool(with_cursor)) | @as(usize, @intFromBool(with_overlay)) << 1];
+fn opsFor(with_cursor: bool, with_overlay: bool, with_video: bool) *const rtg.boards.RtgBoardOps {
+    return &op_tables[@as(usize, @intFromBool(with_cursor)) | @as(usize, @intFromBool(with_overlay)) << 1 | @as(usize, @intFromBool(with_video)) << 2];
 }
 
 const pointer_ops = rtg.RtgPointerOps{ .set = &setPointer, .move = &movePointer, .show = &showPointer };
 const overlay_ops = rtg.RtgOverlayOps{ .set = &setOverlay, .move = &moveOverlay };
+const video_ops = rtg.RtgVideoOps{ .open = &videoOpen, .close = &videoClose, .show = &videoShow, .move = &videoMove };
 
 const driver_ops = rtg.RtgDriverOps{ .attach = &attach, .detach = &detach };
 

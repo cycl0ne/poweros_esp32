@@ -58,9 +58,12 @@
 //!
 //! **The frames** are the parser's slots: each its picture's copy in the
 //! system's memory, read back from the target - NV12, the rows the
-//! picture shows, a target row apart. A slot is given back to the parser
-//! once it said the stream needs it no more, the frame was handed out as
-//! often as it was to be shown, and the caller released each.
+//! picture shows, a target row apart, the first on 256 bytes: rows of a
+//! whole number of 256 bytes, starting on 256, are what a display's
+//! controller reads a frame by as it is (rtg's video layer). A slot is
+//! given back to the parser once it said the stream needs it no more,
+//! the frame was handed out as often as it was to be shown, and the
+//! caller released each.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -87,11 +90,17 @@ const bitstream_least: u32 = 256 * 1024;
 /// How long a picture's decode is waited for.
 const picture_most_us: u64 = 1_000_000;
 
+/// The bytes a frame's first row starts on (`Frame.memory`).
+const frame_align = 256;
+
 /// A frame: a slot's picture in the system's memory.
 const Frame = struct {
+    /// The memory it was given, `room` bytes, which `memory` lies in.
+    block: ?[*]u8 = null,
+    room: usize = 0,
     /// Its rows of brightness, then of colour pairs, `pitch` bytes
-    /// apart, from the first row shown; `left` bytes in is the first
-    /// sample shown.
+    /// apart, from the first row shown, `bytes` in all, starting on
+    /// `frame_align` bytes; `left` bytes in is the first sample shown.
     memory: ?[*]u8 = null,
     bytes: usize = 0,
     pitch: u32 = 0,
@@ -362,7 +371,7 @@ pub const Session = struct {
         s.parser = null;
         s.library = null;
         for (&s.frames) |*f| {
-            if (f.memory) |memory| sys_base.FreeMem(memory, f.bytes);
+            if (f.block) |block| sys_base.FreeMem(block, f.room);
             f.* = .{};
         }
         if (s.packet) |packet| sys_base.FreeMem(packet, s.packet_room);
@@ -976,22 +985,27 @@ pub const Session = struct {
     // --- the system's memory -------------------------------------------------------
 
     /// Frame `f` laid out for the sequence and its memory as large as that
-    /// takes: the rows shown, a target row apart.
+    /// takes: the rows shown, a target row apart, from `frame_align` bytes
+    /// on.
     fn frameRoom(s: *Session, f: *Frame) bool {
         const q = &s.sequence;
         const pitch = if (s.layout.target_pitch != 0) s.layout.target_pitch else (q.coded_width + 255) & ~@as(u32, 255);
         const rows = q.height;
         const bytes: usize = @as(usize, pitch) * (rows + (rows + 1) / 2);
         if (bytes == 0) return false;
-        if (f.bytes < bytes) {
-            if (f.memory) |memory| s.sys().FreeMem(memory, f.bytes);
+        const room = bytes + frame_align - 1;
+        if (f.room < room) {
+            if (f.block) |block| s.sys().FreeMem(block, f.room);
+            f.block = null;
+            f.room = 0;
+            f.memory = null;
             f.bytes = 0;
-            f.memory = @ptrCast(s.sys().AllocMem(bytes, exec.MEMF_ANY | exec.MEMF_SYSTEM) orelse {
-                f.memory = null;
-                return false;
-            });
-            f.bytes = bytes;
+            const block: [*]u8 = @ptrCast(s.sys().AllocMem(room, exec.MEMF_ANY | exec.MEMF_SYSTEM) orelse return false);
+            f.block = block;
+            f.room = room;
         }
+        f.memory = @ptrFromInt((@intFromPtr(f.block.?) + frame_align - 1) & ~@as(usize, frame_align - 1));
+        f.bytes = bytes;
         f.pitch = pitch;
         f.rows = rows;
         f.left = q.left & ~@as(u32, 1);

@@ -62,6 +62,8 @@ test {
     _ = @import("libs/rtg_driver/amdboard/cursor.zig");
     _ = @import("libs/rtg_driver/amdboard/plane.zig");
     _ = @import("libs/rtg_driver/amdboard/gart.zig");
+    _ = @import("libs/rtg_driver/amdboard/video.zig");
+    _ = @import("libs/rtg_driver/amdboard/coefficients.zig");
     _ = @import("libs/rtg_driver/amdboard/hpd.zig");
     _ = @import("libs/rtg_driver/amdboard/aux.zig");
     _ = @import("libs/rtg_driver/amdboard/i2c.zig");

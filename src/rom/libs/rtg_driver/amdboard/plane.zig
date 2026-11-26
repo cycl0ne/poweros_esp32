@@ -64,11 +64,36 @@
 //! instead. A ratio that is no whole number mixes pixels in the
 //! picture the library makes, which this scaler does not: such a band
 //! has no place.
+//!
+//! **A film's frame** (`lightFilm`) is a plane of NV12 - its brightness
+//! and its colour each a surface of their own, each read from the 256
+//! bytes its first row starts in with a viewport that starts part way
+//! into them - as the vendor's driver lights one for video: the
+//! fetcher's two planes' requests and its share of the hub's buffer, half
+//! of it the colour's; the converter's samples expanded with zeros below,
+//! the pipe's cursor off; the scaler scaling each way on its own
+//! (`video.scalingOf`), its line buffer laid out for 4:2:0, and its
+//! filters - as many of the vendor's taps as the scale takes
+//! (`coefficients.filterOf`) - loaded only where they are not those it
+//! holds, into the set it does not read, which it then reads from; and
+//! the colour matrix after the scaler making red, green and blue of the
+//! samples, written into its set not read too. Under the picture the
+//! film's stage is the bottom of the tree, its pixels passed through, and
+//! the picture's keyer makes the key's colours clear (`keyPicture`) - its
+//! mode 3, sixteen bits a channel - its stage blending the picture over
+//! the film by each pixel's alpha; `unkeyPicture` puts the picture back.
+//! Over it the film's stage lies right above the picture's, laid whole
+//! by its global alpha. A frame, place or scaling shown anew is written
+//! under the lock (`moveFilm`); taken down (`darkenFilm`), the picture is
+//! put back and the stage taken out at one update, and the pipe shut.
 
 const sdk = @import("sdk");
 const reg = sdk.hardware.mmio.reg;
 const dcn = @import("dcn.zig");
 const mode = @import("mode.zig");
+const video = @import("video.zig");
+const coefficients = @import("coefficients.zig");
+const cursor = @import("cursor.zig");
 
 // --- the registers, in 32-bit words from the engine's third address ---------------
 
@@ -432,12 +457,19 @@ pub fn lit(engine: dcn.Engine, index: u32, pipe: u32, output: u32, picture: u32,
     config.* = (config.* & ~format_mask) | format_argb8888;
     const flip = at(engine, hubp + hubp_flip_control);
     flip.* &= ~(flip_now | update_lock);
+    // One plane: none of the hub's buffer kept for a colour plane, as a
+    // film's plane on this pipe had.
+    const back = at(engine, hubp + hubp_return);
+    back.* &= ~plane1_mask;
     writePlace(engine, index, where);
 
     // The scaler: the picture's colours with their alpha, passed through
-    // into the plane's place.
+    // into the plane's place - no keyer and no colour matrix after the
+    // scaler, which a film's plane on this pipe had.
     at(engine, dpp + cnvc_format).* = format_argb8888;
     at(engine, dpp + cnvc_control).* = at(engine, own_dpp + cnvc_control).* | cnvc_alpha;
+    at(engine, dpp + keyer_control).* = 0;
+    at(engine, dpp + cm_post_csc).* = 0;
     at(engine, dpp + dscl_autocal).* = 0;
     at(engine, dpp + dscl_control).* = 0;
     at(engine, dpp + dscl_h_blank).* = at(engine, own_dpp + dscl_h_blank).*;
@@ -545,7 +577,7 @@ fn writeScale(engine: dcn.Engine, index: u32, scale: ?Scale) void {
     const dpp = index * dpp_stride;
     const scaling = at(engine, dpp + scl_mode);
     const how = scale orelse {
-        scaling.* &= ~scl_mode_mask;
+        scaling.* &= ~(scl_mode_mask | chroma_coef);
         return;
     };
     at(engine, dpp + scl_tap_control).* = 0;
@@ -560,7 +592,7 @@ fn writeScale(engine: dcn.Engine, index: u32, scale: ?Scale) void {
     // not interlaced.
     at(engine, dpp + scl_v_init_bottom).* = how.init_y + how.ratio;
     at(engine, dpp + scl_v_init_bottom_c).* = how.init_y + how.ratio;
-    scaling.* = (scaling.* & ~scl_mode_mask) | scaling_rgb;
+    scaling.* = (scaling.* & ~(scl_mode_mask | chroma_coef)) | scaling_rgb;
 }
 
 /// Plane `index` taken down: out of output `output`'s tree at the pipe's
@@ -627,6 +659,450 @@ pub fn taken(engine: dcn.Engine, index: u32) bool {
 pub fn isFree(engine: dcn.Engine, index: u32) bool {
     if (blended(engine, index * mpcc_stride + mpcc_top).* & mux_mask != none) return false;
     return at(engine, index * hubp_stride + hubp_control).* & hubp_blank != 0;
+}
+
+// --- a film's frame ------------------------------------------------------------------
+
+/// The fetcher's for a picture's second plane - a film's colour - and for
+/// what it reads of both: the colour's viewports, the size of its
+/// requests, its rows' length and its address; how the fetcher expands
+/// its requests; and where the colour's part of its share of the hub's
+/// buffer starts, in KiB (DET_BUF_PLANE1_BASE_ADDRESS). A stride apart
+/// per pipe.
+const hubp_viewport_start_c = 0x05eb;
+const hubp_viewport_c = 0x05ec;
+const hubp_second_viewport_start_c = 0x05ef;
+const hubp_second_viewport_c = 0x05f0;
+const hubp_request_size_c = 0x05f2;
+const hubp_pitch_c = 0x0608;
+const hubp_address_c = 0x060c;
+const hubp_address_high_c = 0x060d;
+const hubp_expansion = 0x0629;
+const hubp_return = 0x066c;
+const plane1_shift = 4;
+const plane1_mask: u32 = 0x1ff << plane1_shift;
+/// A segment of the hub's buffer, in KiB.
+const det_segment_kib: u32 = 64;
+/// A film's surface - 4:2:0 YCbCr, the colour's samples in pairs, Cb
+/// first - in the fetcher's code and the converter's alike: 64, the
+/// code the engine reads Cb first by; 65 reads Cr first.
+const format_nv12: u32 = 64;
+
+/// The converter's for a film: its samples expanded with zeros below, a
+/// sample a fraction of 256 as the colour matrices take it; an alpha of
+/// its own, whole; the samples to the channels in order
+/// (dpp3_cnv_setup). Its alpha neither divided out nor in again.
+const cnvc_film: u32 = 0x2400_0101;
+const cnvc_dealpha = 0x0cde;
+const cnvc_realpha = 0x0cee;
+
+/// The colour keyer: on, and how it takes the colours it keys; and the
+/// range of each channel it keys, the least in the low half of its
+/// register and the most in the high.
+const keyer_control = 0x0cd7;
+const keyer_alpha = 0x0cd8;
+const keyer_red = 0x0cd9;
+const keyer_green = 0x0cda;
+const keyer_blue = 0x0cdb;
+const keyer_on: u32 = 1 << 0;
+const keyer_mode_shift = 4;
+const keyer_any_alpha: u32 = 0xffff << 16;
+
+/// The scaler's filters: where in its coefficients a write goes - the
+/// filter, from its first phase and pair on - and two of a phase's
+/// weights written, each in 14 bits with its write bit; in its mode, the
+/// set of coefficients it reads from the next update on, the one it
+/// reads now, and that the colour has filters of its own; each way's
+/// filter of two taps the scaler's own (dpp1_dscl_set_scl_filter).
+const scl_coef_select = 0x0cf9;
+const scl_coef_data = 0x0cfa;
+const coef_filter_shift = 16;
+const coef_weight_mask: u32 = 0x3fff;
+const coef_even_on: u32 = 1 << 15;
+const coef_odd_shift = 16;
+const coef_odd_on: u32 = 1 << 31;
+const coef_select: u32 = 1 << 8;
+const coef_current: u32 = 1 << 12;
+const chroma_coef: u32 = 1 << 16;
+const two_taps_across: u32 = 1 << 0;
+const two_taps_down: u32 = 1 << 16;
+/// The filters as the coefficients name them (SCL_COEF_*_FILTER).
+const filter_luma_down: u32 = 0;
+const filter_luma_across: u32 = 1;
+const filter_chroma_down: u32 = 2;
+const filter_chroma_across: u32 = 3;
+/// The power of the scaler's coefficients' memory: forced, and as it is;
+/// how long it is waited for once on (dpp1_power_on_dscl).
+const dscl_power = 0x0d17;
+const dscl_power_state = 0x0d18;
+const lut_power_mask: u32 = 0x3;
+const lut_wait_us: u64 = 5;
+/// The line buffer's layout for 4:2:0 pictures (LB_MEMORY_CONFIG_3).
+const lb_config_420: u32 = 3;
+/// A ratio's or an init's 19 bits of a pixel moved into the scaler's 24.
+const scale_shift = scale_bits - video.fraction_bits;
+
+/// The colour matrix after the scaler (CM_POST_CSC): which of its two
+/// sets it reads from the next update on - none for 0 - and, above, the
+/// one it reads now; each set's six words, two weights to a word.
+const cm_post_csc = 0x0d21;
+const cm_post_csc_a = 0x0d22;
+const cm_post_csc_b = 0x0d28;
+const csc_words = 6;
+const csc_mode_mask: u32 = 0x3;
+const csc_current_shift = 2;
+const csc_set_a: u32 = 1;
+const csc_set_b: u32 = 2;
+
+/// A stage that shows its scaler's pixels alone, at the bottom of a tree
+/// (MPCC_BLEND_MODE_TOP_LAYER_PASSTHROUGH).
+const top_layer_passthrough: u32 = 1;
+
+/// A film's frame as a plane: the device's addresses of its brightness
+/// and of its colour, each on 256 bytes, and how many of the plane's
+/// elements - pixels, pairs of colour samples - lie there before the
+/// frame's first column; each plane's rows' length in its elements; what
+/// its scaler is told (`video.scalingOf`); and the picture's turn, which
+/// the plane takes too.
+pub const Film = struct {
+    luma: u64,
+    chroma: u64,
+    luma_x: u32 = 0,
+    chroma_x: u32 = 0,
+    luma_pitch: u32,
+    chroma_pitch: u32,
+    scaling: video.Scaling,
+    mirror_x: bool = false,
+    mirror_y: bool = false,
+};
+
+/// Where a film's plane lies: under the picture, seen where the picture's
+/// keyer takes its colours to nothing, or over it.
+pub const Layer = enum { under, over };
+
+/// The colours the picture's keyer takes to nothing - each channel's
+/// least and most, as the keyer reads it - and its mode.
+pub const Key = struct {
+    red: [2]u16,
+    green: [2]u16,
+    blue: [2]u16,
+    mode: u32,
+};
+
+/// What the picture's converter and stage were before a film under it
+/// was seen through it (`keyPicture`), which `unkeyPicture` puts back.
+pub const Unkeyed = struct {
+    keyer: u32 = 0,
+    line_buffer: u32 = 0,
+    control: u32 = 0,
+};
+
+/// Pipe `index` lit with a film's frame `film` on output `output`'s
+/// picture, driven by timing generator `pipe`, as `layer` says - under
+/// the picture, seen where the picture's keyer takes the colours `key`
+/// names to nothing, `was` then holding what `unkeyPicture` puts back -
+/// with `schedule`, its colours made by `matrix`, and `loaded` the filters
+/// its scaler holds from then on. The picture's fetcher `picture` has its
+/// requests and its share of the hub's buffer copied, the picture is
+/// `picture_size` (width low). False, as `light`, where the hub gives the
+/// plane no share of its buffer, and the caller takes it down.
+pub fn lightFilm(engine: dcn.Engine, index: u32, pipe: u32, output: u32, picture: u32, picture_size: u32, schedule: *const mode.Schedule, film: *const Film, matrix: *const [12]u16, loaded: *?video.Filters, layer: Layer, key: *const Key, was: *Unkeyed) bool {
+    prepare(engine, index, picture);
+    loaded.* = null;
+    lock(engine, pipe);
+    litFilm(engine, index, pipe, picture, picture_size, schedule, film, matrix, loaded);
+    stageFilm(engine, index, output, picture, layer);
+    if (layer == .under) was.* = keyPicture(engine, picture, index, key);
+    unlock(engine, pipe);
+    return settled(engine, index, picture);
+}
+
+/// `lightFilm`'s writes to pipe `index`'s fetcher and scaler, under the
+/// timing generator's lock.
+fn litFilm(engine: dcn.Engine, index: u32, pipe: u32, picture: u32, picture_size: u32, schedule: *const mode.Schedule, film: *const Film, matrix: *const [12]u16, loaded: *?video.Filters) void {
+    const hubp = index * hubp_stride;
+    const dpp = index * dpp_stride;
+    const own_hubp = picture * hubp_stride;
+    const own_dpp = picture * dpp_stride;
+    // The fetcher: tied to the timing generator, as ready as the
+    // picture's, both planes' requests sized and expanded as the
+    // picture's, half its share of the hub's buffer the colour's - the
+    // vendor's split where a swath of the brightness is no more than half
+    // again one of the colour, as a linear frame's is (extract_rq_regs) -
+    // its schedule and its surface.
+    const control = at(engine, hubp + hubp_control);
+    const own_ready = at(engine, own_hubp + hubp_control).* & ready_after_sync;
+    control.* = (control.* & ~(vtg_mask | ready_after_sync)) | (pipe << vtg_shift) | own_ready;
+    const requests = at(engine, own_hubp + hubp_request_size).*;
+    at(engine, hubp + hubp_request_size).* = requests;
+    at(engine, hubp + hubp_request_size_c).* = requests;
+    at(engine, hubp + hubp_expansion).* = at(engine, own_hubp + hubp_expansion).*;
+    const share = at(engine, det_control + picture).* & det_mask;
+    const back = at(engine, hubp + hubp_return);
+    back.* = (back.* & ~plane1_mask) | ((share * det_segment_kib / 2) << plane1_shift & plane1_mask);
+    mode.writeSchedule(engine, index, schedule);
+    at(engine, hubp + hubp_tiling).* = at(engine, own_hubp + hubp_tiling).*;
+    const config = at(engine, hubp + hubp_surface_config);
+    config.* = (config.* & ~format_mask) | format_nv12;
+    const flip = at(engine, hubp + hubp_flip_control);
+    flip.* &= ~(flip_now | update_lock);
+    cursor.off(engine, index);
+
+    // The converter: the samples as they are, with no keyer; the colour
+    // matrix after the scaler making red, green and blue of them.
+    at(engine, dpp + cnvc_format).* = format_nv12;
+    at(engine, dpp + cnvc_control).* = cnvc_film;
+    at(engine, dpp + cnvc_dealpha).* = 0;
+    at(engine, dpp + cnvc_realpha).* = 0;
+    at(engine, dpp + keyer_control).* = 0;
+    at(engine, dpp + dscl_h_blank).* = at(engine, own_dpp + dscl_h_blank).*;
+    at(engine, dpp + dscl_v_blank).* = at(engine, own_dpp + dscl_v_blank).*;
+    at(engine, dpp + dscl_mpc_size).* = picture_size;
+    at(engine, dpp + cm_control).* = at(engine, own_dpp + cm_control).*;
+    writeMatrix(engine, index, matrix);
+    writeFilm(engine, index, film, loaded);
+    control.* &= ~hubp_blank;
+}
+
+/// A film's stage in output `output`'s tree, laid whole by its global
+/// alpha as the vendor lays a plane without alpha of its own: under the
+/// picture's stage `picture`, at the bottom, its pixels passed through -
+/// the picture's stage blending over it (`keyPicture`) - or right above
+/// it, covering what is below where the film lies. Under the timing
+/// generator's lock.
+fn stageFilm(engine: dcn.Engine, index: u32, output: u32, picture: u32, layer: Layer) void {
+    const stage = index * mpcc_stride;
+    blended(engine, stage + mpcc_top).* = index;
+    blended(engine, stage + mpcc_output).* = output;
+    blended(engine, stage + mpcc_lock_select).* = output;
+    blended(engine, stage + mpcc_top_gain).* = gain_whole;
+    blended(engine, stage + mpcc_bottom_inside).* = gain_whole;
+    blended(engine, stage + mpcc_bottom_outside).* = gain_whole;
+    const whole = background_12_bits | global_alpha_whole | global_gain_whole;
+    switch (layer) {
+        .under => {
+            blended(engine, stage + mpcc_control).* = top_layer_passthrough | blend_global | whole;
+            blended(engine, stage + mpcc_bottom).* = none;
+        },
+        .over => {
+            blended(engine, stage + mpcc_control).* = top_bottom_blending | blend_global | whole;
+            blended(engine, stage + mpcc_bottom).* = picture;
+            if (aboveOf(engine, output, picture)) |over| {
+                const select = blended(engine, over * mpcc_stride + mpcc_bottom);
+                select.* = (select.* & ~mux_mask) | index;
+            } else {
+                const mux = blended(engine, mpc_out_mux + output * mpc_out_stride);
+                mux.* = (mux.* & ~mux_mask) | index;
+            }
+        },
+    }
+}
+
+/// The picture's stage `picture` blending its pixels over the film's
+/// stage `film` below it, each by its own alpha and not premultiplied -
+/// so that a pixel whose alpha the keyer takes to nothing shows the film
+/// alone, and the key colour is not added to it - its keyer on for the
+/// colours `key` names and its line buffer keeping the alpha. What was
+/// there is answered, for `unkeyPicture`. Under the timing generator's
+/// lock.
+pub fn keyPicture(engine: dcn.Engine, picture: u32, film: u32, key: *const Key) Unkeyed {
+    const dpp = picture * dpp_stride;
+    const stage = picture * mpcc_stride;
+    const was: Unkeyed = .{
+        .keyer = at(engine, dpp + keyer_control).*,
+        .line_buffer = at(engine, dpp + lb_data_format).*,
+        .control = blended(engine, stage + mpcc_control).*,
+    };
+    at(engine, dpp + keyer_alpha).* = keyer_any_alpha;
+    at(engine, dpp + keyer_red).* = rangeOf(key.red);
+    at(engine, dpp + keyer_green).* = rangeOf(key.green);
+    at(engine, dpp + keyer_blue).* = rangeOf(key.blue);
+    at(engine, dpp + keyer_control).* = keyer_on | key.mode << keyer_mode_shift;
+    at(engine, dpp + lb_data_format).* = was.line_buffer | lb_alpha;
+    blended(engine, stage + mpcc_control).* = top_bottom_blending | blend_per_pixel | background_12_bits | global_alpha_whole | global_gain_whole;
+    blended(engine, stage + mpcc_bottom).* = film;
+    return was;
+}
+
+fn rangeOf(range: [2]u16) u32 {
+    return range[0] | @as(u32, range[1]) << 16;
+}
+
+/// The picture's converter and stage `picture` as `was` had them, the
+/// stage below it none. Under the timing generator's lock.
+pub fn unkeyPicture(engine: dcn.Engine, picture: u32, was: Unkeyed) void {
+    const dpp = picture * dpp_stride;
+    const stage = picture * mpcc_stride;
+    at(engine, dpp + keyer_control).* = was.keyer;
+    at(engine, dpp + lb_data_format).* = was.line_buffer;
+    blended(engine, stage + mpcc_control).* = was.control;
+    blended(engine, stage + mpcc_bottom).* = none;
+}
+
+/// Plane `index` showing `film` anew - another frame, place or scaling -
+/// with `schedule`, and its colours made by `matrix` where it is not
+/// null, all of it taken at the pipe's next update.
+pub fn moveFilm(engine: dcn.Engine, index: u32, pipe: u32, schedule: *const mode.Schedule, film: *const Film, matrix: ?*const [12]u16, loaded: *?video.Filters) void {
+    lock(engine, pipe);
+    defer unlock(engine, pipe);
+    mode.writeSchedule(engine, index, schedule);
+    if (matrix) |weights| writeMatrix(engine, index, weights);
+    writeFilm(engine, index, film, loaded);
+}
+
+/// A film's plane `index` taken down: out of output `output`'s tree at
+/// the pipe's next update - the picture `picture` as `was` had it, where
+/// the film was under it - and once its stage is idle the pipe shut
+/// (`shut`).
+pub fn darkenFilm(engine: dcn.Engine, index: u32, pipe: u32, output: u32, picture: u32, layer: Layer, was: Unkeyed) void {
+    {
+        lock(engine, pipe);
+        defer unlock(engine, pipe);
+        switch (layer) {
+            .under => {
+                unkeyPicture(engine, picture, was);
+                release(engine, index);
+            },
+            .over => unlink(engine, index, output),
+        }
+    }
+    shut(engine, index);
+}
+
+/// The fetcher's viewports, turn, rows and addresses for `film`, and its
+/// scaler's place on the picture and its scaling. Under the timing
+/// generator's lock.
+fn writeFilm(engine: dcn.Engine, index: u32, film: *const Film, loaded: *?video.Filters) void {
+    const hubp = index * hubp_stride;
+    const dpp = index * dpp_stride;
+    const scaling = &film.scaling;
+    const across = scaling.across;
+    const down = scaling.down;
+    const start = (film.luma_x + across.start) | down.start << 16;
+    const size = across.size | down.size << 16;
+    const start_c = (film.chroma_x + across.start_c) | down.start_c << 16;
+    const size_c = across.size_c | down.size_c << 16;
+    at(engine, hubp + hubp_viewport_start).* = start;
+    at(engine, hubp + hubp_viewport).* = size;
+    at(engine, hubp + hubp_second_viewport_start).* = start;
+    at(engine, hubp + hubp_second_viewport).* = size;
+    at(engine, hubp + hubp_viewport_start_c).* = start_c;
+    at(engine, hubp + hubp_viewport_c).* = size_c;
+    at(engine, hubp + hubp_second_viewport_start_c).* = start_c;
+    at(engine, hubp + hubp_second_viewport_c).* = size_c;
+    mode.writeTurn(engine, index, film.mirror_x, film.mirror_y);
+    const pitch = at(engine, hubp + hubp_pitch);
+    pitch.* = (pitch.* & ~pitch_mask) | ((film.luma_pitch - 1) & pitch_mask);
+    const pitch_c = at(engine, hubp + hubp_pitch_c);
+    pitch_c.* = (pitch_c.* & ~pitch_mask) | ((film.chroma_pitch - 1) & pitch_mask);
+    sdk.hardware.barrier.full();
+    // The colour's address before the brightness's, by which the fetcher
+    // takes both (hubp2_program_surface_flip_and_addr).
+    at(engine, hubp + hubp_address_high_c).* = @truncate(film.chroma >> 32 & address_high_mask);
+    at(engine, hubp + hubp_address_c).* = @truncate(film.chroma);
+    at(engine, hubp + hubp_address_high).* = @truncate(film.luma >> 32 & address_high_mask);
+    at(engine, hubp + hubp_address).* = @truncate(film.luma);
+    at(engine, dpp + dscl_recout_start).* = scaling.out_x | scaling.out_y << 16;
+    at(engine, dpp + dscl_recout_size).* = scaling.out_width | scaling.out_height << 16;
+    writeFilmScale(engine, index, scaling, loaded);
+}
+
+/// The scaler of pipe `index` scaling a 4:2:0 picture as `scaling` says
+/// (dpp1_dscl_set_scaler_manual_scale): its coefficients' memory on, no
+/// self-calibration and the edge pixels repeated, its mode, the line
+/// buffer in its 4:2:0 layout without alpha, each plane's ratios, inits
+/// and taps, and the filters those take (`writeFilters`). Under the
+/// timing generator's lock.
+fn writeFilmScale(engine: dcn.Engine, index: u32, scaling: *const video.Scaling, loaded: *?video.Filters) void {
+    const dpp = index * dpp_stride;
+    const power = at(engine, dpp + dscl_power);
+    power.* &= ~lut_power_mask;
+    const deadline = engine.sys.UptimeUs() + lut_wait_us;
+    while (at(engine, dpp + dscl_power_state).* & lut_power_mask != 0 and engine.sys.UptimeUs() < deadline) {}
+    at(engine, dpp + dscl_autocal).* = 0;
+    at(engine, dpp + dscl_control).* = 0;
+    const scaler_mode = at(engine, dpp + scl_mode);
+    scaler_mode.* = (scaler_mode.* & ~scl_mode_mask) | scaling.mode;
+    at(engine, dpp + lb_data_format).* = 0;
+    at(engine, dpp + lb_memory).* = lb_config_420 | lb_partitions;
+    if (scaling.mode == video.mode_bypass) return;
+    const across = scaling.across;
+    const down = scaling.down;
+    at(engine, dpp + scl_h_ratio).* = across.ratio << scale_shift;
+    at(engine, dpp + scl_h_ratio_c).* = across.ratio_c << scale_shift;
+    at(engine, dpp + scl_v_ratio).* = down.ratio << scale_shift;
+    at(engine, dpp + scl_v_ratio_c).* = down.ratio_c << scale_shift;
+    at(engine, dpp + scl_h_init).* = across.init << scale_shift;
+    at(engine, dpp + scl_h_init_c).* = across.init_c << scale_shift;
+    at(engine, dpp + scl_v_init).* = down.init << scale_shift;
+    at(engine, dpp + scl_v_init_c).* = down.init_c << scale_shift;
+    // A field's second, a ratio on: the vendor's, unused by a picture not
+    // interlaced.
+    at(engine, dpp + scl_v_init_bottom).* = (down.init + down.ratio) << scale_shift;
+    at(engine, dpp + scl_v_init_bottom_c).* = (down.init_c + down.ratio_c) << scale_shift;
+    at(engine, dpp + scl_tap_control).* = (down.taps - 1) | (across.taps - 1) << 4 | (down.taps_c - 1) << 8 | (across.taps_c - 1) << 12;
+    at(engine, dpp + scl_replicate).* = 0;
+    writeFilters(engine, index, scaling, loaded);
+}
+
+/// The filters `scaling` takes: a way of two taps for both planes on the
+/// scaler's own; the others loaded into the set of coefficients the
+/// scaler does not read now, and switched to at the next update with the
+/// colour's own filters - where one of them is not what it holds
+/// (`loaded`), as the vendor loads them (dpp1_dscl_set_scl_filter).
+fn writeFilters(engine: dcn.Engine, index: u32, scaling: *const video.Scaling, loaded: *?video.Filters) void {
+    const dpp = index * dpp_stride;
+    const wanted = video.filtersOf(scaling.*);
+    at(engine, dpp + scl_2tap_control).* = (if (wanted.two_taps_across) two_taps_across else 0) | (if (wanted.two_taps_down) two_taps_down else 0);
+    if (wanted.two_taps_across and wanted.two_taps_down) return;
+    if (!wanted.updates(loaded.*)) return;
+    const scaler_mode = at(engine, dpp + scl_mode);
+    const reading = scaler_mode.*;
+    if (!wanted.two_taps_across) {
+        if (wanted.luma_across) |table| loadFilter(engine, dpp, filter_luma_across, scaling.across.taps, table);
+        if (wanted.chroma_across) |table| loadFilter(engine, dpp, filter_chroma_across, scaling.across.taps_c, table);
+    }
+    if (!wanted.two_taps_down) {
+        if (wanted.luma_down) |table| loadFilter(engine, dpp, filter_luma_down, scaling.down.taps, table);
+        if (wanted.chroma_down) |table| loadFilter(engine, dpp, filter_chroma_down, scaling.down.taps_c, table);
+    }
+    const other: u32 = if (reading & coef_current != 0) 0 else coef_select;
+    scaler_mode.* = (reading & ~(coef_select | chroma_coef)) | other | chroma_coef;
+    loaded.* = wanted;
+}
+
+/// Filter `filter`'s weights for `taps` taps loaded from `table`, phase
+/// after phase, each phase's in pairs - the second of the last pair 0
+/// where the taps are odd (dpp1_dscl_set_scaler_filter); where in the
+/// coefficients goes on by itself from the first.
+fn loadFilter(engine: dcn.Engine, dpp: u32, filter: u32, taps: u32, table: []const u16) void {
+    at(engine, dpp + scl_coef_select).* = filter << coef_filter_shift;
+    const data = at(engine, dpp + scl_coef_data);
+    const pairs = (taps + 1) / 2;
+    for (0..coefficients.phases) |phase| {
+        for (0..pairs) |pair| {
+            const first = phase * taps + 2 * pair;
+            const even: u32 = table[first] & coef_weight_mask;
+            const odd: u32 = if (2 * pair + 1 < taps) table[first + 1] & coef_weight_mask else 0;
+            data.* = even | coef_even_on | odd << coef_odd_shift | coef_odd_on;
+        }
+    }
+}
+
+/// The colour matrix after pipe `index`'s scaler made `matrix`
+/// (`coefficients.matrixOf`): written into the set it does not read now
+/// and switched to at the pipe's next update (dpp3_program_post_csc).
+/// Under the timing generator's lock.
+fn writeMatrix(engine: dcn.Engine, index: u32, matrix: *const [12]u16) void {
+    const dpp = index * dpp_stride;
+    const control = at(engine, dpp + cm_post_csc);
+    const reading = (control.* >> csc_current_shift) & csc_mode_mask;
+    const set = if (reading != csc_set_a) csc_set_a else csc_set_b;
+    const first: u32 = if (set == csc_set_a) cm_post_csc_a else cm_post_csc_b;
+    for (0..csc_words) |word| {
+        at(engine, dpp + first + @as(u32, @intCast(word))).* = matrix[2 * word] | @as(u32, matrix[2 * word + 1]) << 16;
+    }
+    control.* = set;
 }
 
 // --- tests (host: ./zig build test) -----------------------------------------

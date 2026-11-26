@@ -820,9 +820,12 @@ rings, its trace buffer and its state - its boot options set, and the
 controller let out of reset and asked what it can do; `stage` says how
 far that got. The memory stays the board's. `RTGCTRL_AMD_CRC` fills an
 `RtgAmdCrc` with the checksum the timing generator sums over each frame
-it sends, each colour's CRC over the whole picture - a test tool, the
-same before and after a step that should leave the picture alone; the
-first ask switches the sum on. `C:test/Gpu DMCUB START` and `CRC` do
+it sends, each colour's CRC over the whole picture or over the window
+it is asked for (`x`, `y`, `width`, `height`, its left on four pixels) -
+a test tool, the same before and after a step that should leave the
+picture alone, and the same for a window of one colour wherever it
+lies; the first ask switches the sum on, and one for another window
+moves it, three frames waited for after. `C:test/Gpu DMCUB START` and `CRC` do
 these with the watchdog armed, the start with the checksum before and
 after. `RTGCTRL_AMD_EVENTS` fills an `RtgAmdEvents` with what the
 engine's five hot-plug lines and the controller's notifications have
@@ -1870,6 +1873,39 @@ decoder's frames and videocodec's Motion JPEG frames are laid out for
 it. The controller keys the shades of the key a window's shadow darkens
 it to as well (layers' compose darkens by multiplying), so a shadow on
 a film shows the film, undarkened, not a dark band.
+
+On an AMD display (`amd`, the NucBox) the layer is a plane of the
+display engine on a free pipe, lit on the picture's timing generator:
+NV12 of eight bits, BT.601 and BT.709, video's range and the whole
+byte, by the vendor's matrices; pictures up to 4096 x 4096, sixteen
+times up and a sixth down, each way on its own, filtered with as many
+of the vendor's taps as the scale takes, two to eight. Each plane's
+rows are a whole number of 256 bytes and its start on two bytes - part
+way into 256 is read as a viewport that starts there - and are read
+through the engine's page table, as a flipped buffer is. The decoder's
+frames start on 256 bytes; the frames decoded by the processor are
+I420, which the engine does not read, and go through graphics. Under
+the picture, the picture's own keyer makes the key and the shades a
+shadow leaves of it clear - each channel's eight bits within their
+bounds - and the picture is laid over the film by each pixel's alpha;
+the pointer is laid over the film as over the picture. Over the
+picture, the film covers it whole, the pointer too: a cursor is laid by
+the picture's pipe, under the film. While a layer is open the bands
+are made in frames. The film goes down with the pipe for a mode set
+and the monitor's sleep and is lit again after. `C:test/Gpu VIDEO`
+checks it with a frame whose planes start part way into 256 bytes:
+the frame's black, white, red, green and blue, each against the same
+colour drawn; then the frame as it is - whole, off the glass's top left
+and bottom right, a part of it, for each way of mirroring - moved while
+shown, keyed over part of its place, under the key's shades and next
+to colours near the key, with the pointer over it and across its edge,
+after the monitor slept through two mode sets, made larger, smaller
+and by 500 to 320, and over the picture with the pointer, each against
+the same picture the program draws, and nothing shown, an empty place
+and one off the glass against the picture with no layer; on the NucBox
+all fifty-one are the same. The engine's arithmetic leaves the blue of
+video's black, 16, a part of a step above nothing at the precision the
+checksum reads; 15 and below are black in every channel.
 
 On the VisionFive 2 `jh7110` says on the raw port when the power domain
 or the transmitter's PLL does not come up, and when no monitor is

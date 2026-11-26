@@ -15,9 +15,10 @@
 //! **The fetcher** reads a viewport of the picture's size from the top
 //! left of the frame, whose rows stay as far apart as the frame's are.
 //! When it starts each frame, how far ahead it fetches and how its
-//! requests are paced are the schedule (`Schedule`), worked out for one
-//! plane of 32-bit pixels in linear memory, unscaled, read at the
-//! device's physical addresses, without a cursor of its own (`scheduleOf`):
+//! requests are paced are the schedule (`Schedule`), worked out for what
+//! it reads (`Fetch`) - a plane of 32-bit pixels, or a 4:2:0 picture's
+//! brightness and colour, scaled or not - in linear memory, without a
+//! cursor of its own (`scheduleOf`):
 //!
 //! - The fetcher starts a nominal blank before the picture: as many lines
 //!   as 668 us take, at least the sync, the back porch and two lines, at
@@ -25,21 +26,29 @@
 //!   quarter line into it, for as long as the slowest of the display's
 //!   clocks need to take them; it is ready a while after.
 //! - Its prefetch takes a quarter line for the page table, half a line
-//!   twice for its rows and the lines of two rows of pixels at the rate
-//!   the picture is scanned at, or fewer lines read faster where the time
-//!   left before the picture allows no more: the time from the fetcher's
-//!   start, less that to take its registers, to wait for the memory and
-//!   to work out the request, and the pipe's own delay. The earliest
-//!   start from the ninth line before the picture on that leaves the
-//!   prefetch two lines is the one it is worked out for; a mode with no
-//!   such start is refused. The wait for the memory is the longer of
-//!   the two kinds these chips take (DDR5's clock change and the urgent
-//!   latency, LPDDR5's self-refresh), so either is served.
+//!   twice for its rows and the lines of each plane's first rows at the
+//!   rate the picture is scanned at - those its taps reach before the
+//!   first line's and one more, two unscaled - or fewer lines read
+//!   faster where the time left before the picture allows no more: the
+//!   time from the fetcher's start, less that to take its registers, to
+//!   wait for the memory and to work out the request, and the pipe's own
+//!   delay, longer where its scaler scales. A 4:2:0 picture's pixel
+//!   counts as a byte and a half there, its colour having a pair of
+//!   samples for each four pixels. The earliest start from the ninth
+//!   line before the picture on that leaves the prefetch two lines, and
+//!   its rows no more than four times as fast as they are scanned, is
+//!   the one it is worked out for; a mode with no such start is refused.
+//!   The wait for the memory is the longer of the two kinds these chips
+//!   take (DDR5's clock change and the urgent latency, LPDDR5's
+//!   self-refresh), so either is served.
 //! - Its pace - the reference cycles a line, a request and the blank's
-//!   end take - is counted in the hub's reference, the 48 MHz crystal
-//!   halved; its time to urgency in a blank is the longest of the hub's
-//!   watermarks, kept as they are (`Held.watermark`), and the time from
-//!   the start worked out to the one the fetcher has.
+//!   end take, for each plane - is counted in the hub's reference, the
+//!   48 MHz crystal halved: a plane whose lines come no faster than the
+//!   glass's at the rate its place is scanned, one whose lines come
+//!   faster at the rate its scaler takes them across. Its time to urgency
+//!   in a blank is the longest of the hub's watermarks, kept as they are
+//!   (`Held.watermark`), and the time from the start worked out to the
+//!   one the fetcher has.
 //!
 //! The fetcher's time-to-urgency is left switched off as the firmware
 //! left it, so the pace it is told waits for the watermarks to be worked
@@ -97,6 +106,8 @@ const hubp_qos = 0x062a;
 const hubp_global_ttu = 0x062b;
 const hubp_surface_ttu = 0x062c;
 const hubp_surface_ttu_prefetch = 0x062d;
+const hubp_chroma_ttu = 0x062e;
+const hubp_chroma_ttu_prefetch = 0x062f;
 const hubp_blank_offset = 0x0644;
 const hubp_next_start = 0x0645;
 const hubp_dst_dimensions = 0x0646;
@@ -200,13 +211,20 @@ pub const Schedule = struct {
     after_scaler: u32 = 0,
     reference_to_pixel: u32 = 0,
     prefetch: u32 = 0,
+    /// The colour's prefetch ratio, 1 for a picture of one plane.
+    prefetch_chroma: u32 = ratio_one,
     vblank: u32 = 0,
+    /// A line's delivery, the brightness's low and the colour's high.
     line_delivery: u32 = 0,
     line_delivery_prefetch: u32 = 0,
     qos: u32 = 0,
     global_ttu: u32 = 0,
     surface_ttu: u32 = 0,
     surface_ttu_prefetch: u32 = 0,
+    /// A 4:2:0 picture's: its colour's request delivery.
+    two_planes: bool = false,
+    chroma_ttu: u32 = 0,
+    chroma_ttu_prefetch: u32 = 0,
 };
 
 /// What a mode is worked out at besides its timings: the clocks the
@@ -270,7 +288,7 @@ pub fn of(timings: rtg.RtgTimings, frame_width: u32, frame_height: u32, held: He
     if (timings.h_sync == 0 or timings.v_sync == 0 or timings.v_front == 0) return null;
     const lengths = lengthsOf(timings);
     if (lengths.h_total > counter_most + 1 or lengths.v_total > counter_most + 1) return null;
-    const schedule = scheduleOf(timings, lengths, held, timings.h_active, null) orelse return null;
+    const schedule = scheduleOf(timings, lengths, held, pictureFetch(timings.h_active, held.pitch), null) orelse return null;
 
     const h_blank_start = lengths.h_blank_end + timings.h_active;
     const v_blank_start = lengths.v_blank_end + timings.v_active;
@@ -316,18 +334,21 @@ const vstartup_most: u32 = 1023;
 /// The wait for the memory the prefetch allows for, in microseconds.
 const memory_wait_us: u64 = 32;
 /// The pipe's own delay before the blender, in cycles of the pipes'
-/// clock and of the display clock.
-const pipe_delay_cycles: u64 = 46 + 27 + 16;
+/// clock - its scaler's part where it passes the picture through and
+/// where it scales - and of the display clock.
+const pipe_delay_cycles: u64 = 46 + 27;
+const scaler_delay_cycles: u64 = 16;
+const scaling_delay_cycles: u64 = 50;
 const display_delay_cycles: u64 = 119;
 /// The prefetch's quarter line for the page table and half a line twice
 /// for its rows, in quarters of a line; the rows of pixels it fetches.
 const prefetch_table_quarters: u32 = 1 + 2 * 2;
 const prefetch_rows: u32 = 2;
-/// A request's width in pixels: 256 bytes of 32-bit pixels.
-const request_pixels: u32 = 64;
+/// The bytes a request reads.
+const request_bytes: u32 = 256;
 /// The fetcher's prefetch ratio and the fetch's urgency level for a
 /// flip, as the registers hold them.
-const ratio_one: u64 = 1 << 19;
+const ratio_one: u32 = 1 << 19;
 const flip_level: u32 = 14;
 const fixed_level: u32 = 8;
 
@@ -346,23 +367,120 @@ fn wholeUp(fixed: u64) u64 {
     return (fixed + fraction_one - 1) >> fraction_bits;
 }
 
+/// What a fetcher reads, for its schedule: the width of its place on
+/// the glass; its picture's planes - the one plane of its pixels, or a
+/// 4:2:0 picture's brightness and its colour - and whether its scaler
+/// scales, as it does a 4:2:0 picture's colour.
+pub const Fetch = struct {
+    out_width: u32,
+    luma: Read,
+    chroma: ?Read = null,
+    scaled: bool = false,
+};
+
+/// One plane a fetcher reads: its viewport's width, the surface's width
+/// and its rows' length, in the plane's elements - its pixels, or the
+/// colour's pairs of samples - and an element's bytes; how it is scaled
+/// each way: its ratio, in 19 bits of a pixel, and its taps.
+pub const Read = struct {
+    width: u32,
+    surface: u32,
+    pitch: u32,
+    bytes: u32,
+    h_ratio: u32 = ratio_one,
+    v_ratio: u32 = ratio_one,
+    h_taps: u32 = 1,
+    v_taps: u32 = 1,
+};
+
+/// A picture of 32-bit pixels `width` across, unscaled, in rows `pitch`
+/// pixels long.
+fn pictureFetch(width: u32, pitch: u32) Fetch {
+    return .{ .out_width = width, .luma = .{ .width = width, .surface = width, .pitch = pitch, .bytes = 4 } };
+}
+
 /// The schedule of a plane `width` pixels across, unscaled, at `timings`
 /// beside the picture: its fetcher's registers for the timing generator's
 /// start `vstartup` as it runs (`vstartupOf`) - the timing generator's
 /// own are left as they are. Null as `scheduleOf`, and for a start the
 /// blank has no room for.
 pub fn planeSchedule(timings: rtg.RtgTimings, width: u32, held: Held, vstartup: u32) ?Schedule {
-    if (width == 0 or width > side_most) return null;
-    if (timings.pixel_clock_hz == 0 or timings.h_active == 0 or timings.v_active == 0) return null;
-    return scheduleOf(timings, lengthsOf(timings), held, width, vstartup);
+    return fetchSchedule(timings, pictureFetch(width, held.pitch), held, vstartup);
 }
 
-/// The schedule for one plane `width` pixels across at `timings` (the
+/// The schedule of what `fetch` says a fetcher reads at `timings`
+/// beside the picture, as `planeSchedule`.
+pub fn fetchSchedule(timings: rtg.RtgTimings, fetch: Fetch, held: Held, vstartup: u32) ?Schedule {
+    if (fetch.out_width == 0 or fetch.out_width > side_most) return null;
+    if (fetch.luma.width == 0 or fetch.luma.bytes == 0 or fetch.luma.bytes > request_bytes) return null;
+    if (fetch.chroma) |chroma| {
+        if (chroma.width == 0 or chroma.bytes == 0 or chroma.bytes > request_bytes) return null;
+    }
+    if (timings.pixel_clock_hz == 0 or timings.h_active == 0 or timings.v_active == 0) return null;
+    return scheduleOf(timings, lengthsOf(timings), held, fetch, vstartup);
+}
+
+/// The rows of a plane its prefetch reads: those its taps reach before
+/// the first line's and one more, its swath being a row
+/// (CalculatePrefetchSourceLines).
+fn sourceLines(plane: Read) u32 {
+    return @intCast((@as(u64, plane.v_ratio) + (@as(u64, plane.v_taps) + 1) * ratio_one) / (2 * @as(u64, ratio_one)) + 1);
+}
+
+/// The elements of a row the prefetch is counted to read: the viewport
+/// less one rounded up to a request and one more, no more than the
+/// surface rounded up to one.
+fn swathOf(plane: Read) u64 {
+    const element = request_bytes / plane.bytes;
+    const surface = (@as(u64, plane.surface) + element - 1) / element * element;
+    const row = (@as(u64, plane.width) - 1 + element - 1) / element * element + element;
+    return @min(surface, row);
+}
+
+/// A plane's pace, in the hub's reference: a line's delivery and a
+/// request's, in 10 bits of a cycle, as it is scanned and in the
+/// prefetch.
+const Delivery = struct { line: u64 = 0, line_prefetch: u64 = 0, request: u64 = 0, request_prefetch: u64 = 0 };
+
+/// The pace of `plane` read into a place `out_width` across at
+/// `pixel_hz`, its prefetch at `prefetch_ratio` (get_refcyc_per_delivery):
+/// where its lines come no faster than the glass's, the place's width at
+/// the rate it is scanned; where faster, what it reads at the rate its
+/// scaler takes it across - the pipes' clock twice over, or times twice
+/// its ratio across where it is made smaller that way, its ratio alone
+/// past six taps, at most four times.
+fn deliveryOf(plane: Read, out_width: u32, prefetch_ratio: u64, pixel_hz: u64, pipes_hz: u64) Delivery {
+    const element = request_bytes / plane.bytes;
+    // A row's requests: the viewport less one rounded up to a request
+    // and one more, or the surface's row where that is shorter.
+    var row: u64 = (@as(u64, plane.width) - 1 + element - 1) / element * element + element;
+    if (row > plane.pitch and plane.pitch >= plane.width) row = plane.pitch;
+    const requests = @max(1, row / element);
+    const factor: u64 = if (plane.h_ratio <= ratio_one)
+        2 * @as(u64, ratio_one)
+    else if (plane.h_taps <= 6)
+        @min(2 * @as(u64, plane.h_ratio), 4 * @as(u64, ratio_one))
+    else
+        @min(@as(u64, plane.h_ratio), 4 * @as(u64, ratio_one));
+    const rate = factor * pipes_hz / ratio_one;
+    const scanned_line = @as(u64, out_width) * reference_hz / pixel_hz;
+    const scanned_request = @as(u64, out_width) * reference_hz * 1024 / (pixel_hz * requests);
+    const scaled_line = reference_hz * row / rate;
+    const scaled_request = @as(u64, plane.width) * reference_hz * 1024 / (rate * requests);
+    return .{
+        .line = if (plane.v_ratio <= ratio_one) scanned_line else scaled_line,
+        .line_prefetch = if (prefetch_ratio <= ratio_one) scanned_line else scaled_line,
+        .request = if (plane.v_ratio <= ratio_one) scanned_request else scaled_request,
+        .request_prefetch = if (prefetch_ratio <= ratio_one) scanned_request else scaled_request,
+    };
+}
+
+/// The schedule for what `fetch` says a fetcher reads at `timings` (the
 /// module's header says how it is worked out), from the timing
 /// generator's start `started` where it runs already, else from the one
 /// worked out: null where no start leaves the prefetch its lines, or a
 /// register would not hold its part.
-fn scheduleOf(timings: rtg.RtgTimings, lengths: Lengths, held: Held, width: u32, started: ?u32) ?Schedule {
+fn scheduleOf(timings: rtg.RtgTimings, lengths: Lengths, held: Held, fetch: Fetch, started: ?u32) ?Schedule {
     const pixel_hz: u64 = timings.pixel_clock_hz;
     const display_hz: u64 = @as(u64, held.display_khz) * 1000;
     const pipes_hz: u64 = @as(u64, held.pipes_khz) * 1000;
@@ -389,11 +507,22 @@ fn scheduleOf(timings: rtg.RtgTimings, lengths: Lengths, held: Held, width: u32,
 
     // The prefetch's lines, in quarters: the table's and the rows' at the
     // scan's rate, or what the time left allows.
-    const swath: u64 = (width + request_pixels - 1) / request_pixels * request_pixels;
-    const row_quarters: u32 = @intCast(@max(4, (8 * swath + @max(h_total, swath) - 1) / @max(h_total, swath)));
+    const rows_luma = sourceLines(fetch.luma);
+    const rows_chroma: u32 = if (fetch.chroma) |chroma| sourceLines(chroma) else 0;
+    const rows_most = @max(rows_luma, rows_chroma);
+    var row_bytes: u64 = rows_luma * swathOf(fetch.luma) * fetch.luma.bytes;
+    if (fetch.chroma) |chroma| row_bytes += rows_chroma * swathOf(chroma) * chroma.bytes;
+    // A pixel's bytes, in quarters: a 4:2:0 picture's colour has a pair
+    // of samples for each four pixels.
+    const pixel_quarters: u64 = 4 * @as(u64, fetch.luma.bytes) + (if (fetch.chroma) |chroma| chroma.bytes else 0);
+    const scan_ratio: u64 = @min(ratio_one, fetch.luma.v_ratio);
+    const scan = pixel_quarters * h_total * scan_ratio;
+    const scanned = (16 * row_bytes * ratio_one + scan - 1) / scan;
+    const row_quarters: u32 = @intCast(@max(@min(scanned, 4 * @as(u64, rows_most)), @max(4, rows_most)));
     const at_once_quarters = prefetch_table_quarters + row_quarters;
+    const scaler_cycles = if (fetch.scaled) scaling_delay_cycles else scaler_delay_cycles;
     const calculate = pixelsOf(24, deep_sleep_hz, pixel_hz);
-    const delay = pixelsOf(pipe_delay_cycles, pipes_hz, pixel_hz) + pixelsOf(display_delay_cycles, display_hz, pixel_hz);
+    const delay = pixelsOf(pipe_delay_cycles + scaler_cycles, pipes_hz, pixel_hz) + pixelsOf(display_delay_cycles, display_hz, pixel_hz);
     const taken = (setup << fraction_bits) + pixelsOf(memory_wait_us, 1_000_000, pixel_hz) + calculate + delay;
     const line_fixed = h_total * fraction_one;
     var start: u32 = vstartup_least;
@@ -403,12 +532,16 @@ fn scheduleOf(timings: rtg.RtgTimings, lengths: Lengths, held: Held, width: u32,
         if (left < 0) continue;
         const left_quarters: u32 = @intCast(@min(255, @as(u64, @intCast(left)) / line_fixed));
         if (left_quarters < 8) continue;
-        prefetch_quarters = @min(at_once_quarters, left_quarters);
+        const quarters = @min(at_once_quarters, left_quarters);
+        // Its rows no more than four times as fast as they are scanned.
+        if (quarters - prefetch_table_quarters < rows_most) continue;
+        prefetch_quarters = quarters;
         break;
     }
     if (prefetch_quarters == 0) return null;
     const rows_quarters = prefetch_quarters - prefetch_table_quarters;
-    const ratio = @max(ratio_one, (@as(u64, 4 * prefetch_rows) << 19) / rows_quarters);
+    const ratio = @max(ratio_one, (@as(u64, 4 * rows_luma) << 19) / rows_quarters);
+    const ratio_chroma: u64 = if (fetch.chroma != null) @max(ratio_one, (@as(u64, 4 * rows_chroma) << 19) / rows_quarters) else ratio_one;
 
     // The pace, in the hub's reference.
     const h_blank_end = lengths.h_blank_end * reference_hz / pixel_hz;
@@ -417,19 +550,12 @@ fn scheduleOf(timings: rtg.RtgTimings, lengths: Lengths, held: Held, width: u32,
     const delay_cycles = (delay - delay_lines * line_fixed) * reference_hz / pixel_hz >> fraction_bits;
     const reference_to_pixel = reference_hz * ratio_one / pixel_hz;
     if (h_blank_end > 0x1fff or per_line > 0x1fffff or delay_cycles > 0x1fff or delay_lines > 7 or reference_to_pixel > 0x1fffff) return null;
-    // A row's requests: the picture's width less one rounded up to a
-    // request and one more, or the frames' row where that is shorter.
-    var row_pixels: u64 = (width - 1 + request_pixels - 1) / request_pixels * request_pixels + request_pixels;
-    if (row_pixels > held.pitch and held.pitch >= width) row_pixels = held.pitch;
-    const requests = row_pixels / request_pixels;
-    const line_delivery = width * reference_hz / pixel_hz;
-    const request_delivery = width * reference_hz * 1024 / (pixel_hz * requests);
-    const faster = ratio > ratio_one;
-    const line_delivery_prefetch = if (faster) reference_hz * row_pixels / (2 * pipes_hz) else line_delivery;
-    const request_delivery_prefetch = if (faster) width * reference_hz * 1024 / (2 * pipes_hz * requests) else request_delivery;
+    const luma = deliveryOf(fetch.luma, fetch.out_width, ratio, pixel_hz, pipes_hz);
+    const chroma: Delivery = if (fetch.chroma) |plane| deliveryOf(plane, fetch.out_width, ratio_chroma, pixel_hz, pipes_hz) else .{};
     const high_level = 4 * h_total * reference_hz / pixel_hz;
     const next_start: u64 = (2 * @as(u64, lengths.v_total) - timings.v_front - timings.v_active - vstartup + setup / h_total) * 4;
-    if (line_delivery > 0x1fff or line_delivery_prefetch > 0x1fff or high_level > 0x3fff or next_start > 0x3ffff) return null;
+    if (@max(luma.line, chroma.line) > 0x1fff or @max(luma.line_prefetch, chroma.line_prefetch) > 0x1fff) return null;
+    if (high_level > 0x3fff or next_start > 0x3ffff) return null;
 
     // Its time to urgency in a blank: the hub's watermarks, the time to
     // work out a request and the start's margin.
@@ -447,13 +573,17 @@ fn scheduleOf(timings: rtg.RtgTimings, lengths: Lengths, held: Held, width: u32,
         .after_scaler = @intCast(delay_cycles | delay_lines << high_shift),
         .reference_to_pixel = @intCast(reference_to_pixel),
         .prefetch = @intCast(@as(u64, prefetch_quarters) << 24 | ratio),
+        .prefetch_chroma = @intCast(ratio_chroma),
         .vblank = 1 | 2 << 8,
-        .line_delivery = @intCast(line_delivery),
-        .line_delivery_prefetch = @intCast(line_delivery_prefetch),
+        .line_delivery = @intCast(luma.line | chroma.line << high_shift),
+        .line_delivery_prefetch = @intCast(luma.line_prefetch | chroma.line_prefetch << high_shift),
         .qos = @intCast(high_level << high_shift),
         .global_ttu = @intCast(blank_ttu | @as(u64, flip_level) << 28),
-        .surface_ttu = @intCast(@min(0x7fffff, request_delivery) | @as(u64, fixed_level) << 24),
-        .surface_ttu_prefetch = @intCast(@min(0x7fffff, request_delivery_prefetch)),
+        .surface_ttu = @intCast(@min(0x7fffff, luma.request) | @as(u64, fixed_level) << 24),
+        .surface_ttu_prefetch = @intCast(@min(0x7fffff, luma.request_prefetch)),
+        .two_planes = fetch.chroma != null,
+        .chroma_ttu = @intCast(@min(0x7fffff, chroma.request) | @as(u64, fixed_level) << 24),
+        .chroma_ttu_prefetch = @intCast(@min(0x7fffff, chroma.request_prefetch)),
     };
 }
 
@@ -526,9 +656,10 @@ pub fn passThrough(engine: dcn.Engine, fetcher: u32) void {
 }
 
 /// The fetcher `fetcher` told its pace (`Schedule`): when it starts in
-/// the blank, its prefetch - the chroma's at a ratio of 1, as a plane
-/// without one is told - and the time it has for its requests. Its ready
-/// is the caller's, which knows whether the timing generator's is its own.
+/// the blank, its prefetch - the colour's at a ratio of 1 for a picture
+/// of one plane - and the time it has for its requests, a 4:2:0
+/// picture's colour's too. Its ready is the caller's, which knows whether
+/// the timing generator's is its own.
 pub fn writeSchedule(engine: dcn.Engine, fetcher: u32, schedule: *const Schedule) void {
     const hubp = fetcher * hubp_stride;
     at(engine, hubp + hubp_blank_offset).* = schedule.blank_offset;
@@ -537,7 +668,7 @@ pub fn writeSchedule(engine: dcn.Engine, fetcher: u32, schedule: *const Schedule
     at(engine, hubp + hubp_after_scaler).* = schedule.after_scaler;
     at(engine, hubp + hubp_reference_to_pixel).* = schedule.reference_to_pixel;
     at(engine, hubp + hubp_prefetch).* = schedule.prefetch;
-    at(engine, hubp + hubp_prefetch_chroma).* = ratio_one;
+    at(engine, hubp + hubp_prefetch_chroma).* = schedule.prefetch_chroma;
     at(engine, hubp + hubp_vblank).* = schedule.vblank;
     at(engine, hubp + hubp_line_delivery).* = schedule.line_delivery;
     at(engine, hubp + hubp_line_delivery_prefetch).* = schedule.line_delivery_prefetch;
@@ -545,6 +676,10 @@ pub fn writeSchedule(engine: dcn.Engine, fetcher: u32, schedule: *const Schedule
     at(engine, hubp + hubp_global_ttu).* = schedule.global_ttu;
     at(engine, hubp + hubp_surface_ttu).* = schedule.surface_ttu;
     at(engine, hubp + hubp_surface_ttu_prefetch).* = schedule.surface_ttu_prefetch;
+    if (schedule.two_planes) {
+        at(engine, hubp + hubp_chroma_ttu).* = schedule.chroma_ttu;
+        at(engine, hubp + hubp_chroma_ttu_prefetch).* = schedule.chroma_ttu_prefetch;
+    }
 }
 
 /// The lines before the picture timing generator `pipe` starts its
@@ -726,4 +861,58 @@ test "a mode whose prefetch is read faster than it is scanned" {
     try testing.expectEqual(@as(u32, 0x058E0000), schedule.qos);
     try testing.expectEqual(@as(u32, 0x0800295F), schedule.surface_ttu);
     try testing.expectEqual(@as(u32, 655), schedule.surface_ttu_prefetch);
+}
+
+test "a 4:2:0 picture's schedule, as the vendor's model works it out for its two planes" {
+    // 1920 by 1080 as it is: two rows of each plane in two lines, each
+    // plane's lines and requests at the rate its place is scanned.
+    const shown: Fetch = .{
+        .out_width = 1920,
+        .luma = .{ .width = 1920, .surface = 1920, .pitch = 2048, .bytes = 1 },
+        .chroma = .{ .width = 960, .surface = 960, .pitch = 1024, .bytes = 2, .h_ratio = ratio_one / 2, .v_ratio = ratio_one / 2 },
+        .scaled = true,
+    };
+    const as_it_is = fetchSchedule(own, shown, top, 40) orelse return error.TestUnexpectedResult;
+    try testing.expectEqual(@as(u32, 0x0D080000), as_it_is.prefetch);
+    try testing.expectEqual(ratio_one, as_it_is.prefetch_chroma);
+    try testing.expectEqual(@as(u32, 190 | 190 << 16), as_it_is.line_delivery);
+    try testing.expectEqual(@as(u32, 190 | 190 << 16), as_it_is.line_delivery_prefetch);
+    try testing.expectEqual(@as(u32, 0x08000000 | 24423), as_it_is.surface_ttu);
+    try testing.expectEqual(@as(u32, 0x08000000 | 24423), as_it_is.chroma_ttu);
+    try testing.expectEqual(@as(u32, 24423), as_it_is.chroma_ttu_prefetch);
+    try testing.expect(as_it_is.two_planes);
+    // The scaler's delay, 46 + 27 + 50 cycles of the pipes' clock and
+    // 119 of the display clock: 48 pixels, 4 reference cycles.
+    try testing.expectEqual(@as(u32, 4), as_it_is.after_scaler);
+
+    // 3840 by 2160 halved: the brightness's lines come twice as fast as
+    // the glass's, read at four times the pipes' clock; four rows of it
+    // and two of the colour in four lines.
+    const halved: Fetch = .{
+        .out_width = 1920,
+        .luma = .{ .width = 3840, .surface = 3840, .pitch = 4096, .bytes = 1, .h_ratio = 2 * ratio_one, .v_ratio = 2 * ratio_one, .h_taps = 4, .v_taps = 4 },
+        .chroma = .{ .width = 1920, .surface = 1920, .pitch = 2048, .bytes = 2 },
+        .scaled = true,
+    };
+    const smaller = fetchSchedule(own, halved, top, 40) orelse return error.TestUnexpectedResult;
+    try testing.expectEqual(@as(u32, 21 << 24 | ratio_one), smaller.prefetch);
+    try testing.expectEqual(@as(u32, 20 | 190 << 16), smaller.line_delivery);
+    try testing.expectEqual(@as(u32, 190 | 190 << 16), smaller.line_delivery_prefetch);
+    try testing.expectEqual(@as(u32, 0x08000000 | 1228), smaller.surface_ttu);
+    try testing.expectEqual(@as(u32, 12211), smaller.surface_ttu_prefetch);
+    try testing.expectEqual(@as(u32, 0x08000000 | 12211), smaller.chroma_ttu);
+
+    // 1280 by 720 doubled onto the whole glass, its rows as long as the
+    // picture: three rows of each plane in three lines.
+    const doubled: Fetch = .{
+        .out_width = 2560,
+        .luma = .{ .width = 1280, .surface = 1280, .pitch = 1280, .bytes = 1, .h_ratio = ratio_one / 2, .v_ratio = ratio_one / 2, .h_taps = 4, .v_taps = 4 },
+        .chroma = .{ .width = 640, .surface = 640, .pitch = 640, .bytes = 2, .h_ratio = ratio_one / 4, .v_ratio = ratio_one / 4, .h_taps = 4, .v_taps = 4 },
+        .scaled = true,
+    };
+    const larger = fetchSchedule(own, doubled, top, 40) orelse return error.TestUnexpectedResult;
+    try testing.expectEqual(@as(u32, 17 << 24 | ratio_one), larger.prefetch);
+    try testing.expectEqual(@as(u32, 254 | 254 << 16), larger.line_delivery);
+    try testing.expectEqual(@as(u32, 0x08000000 | 52103), larger.surface_ttu);
+    try testing.expectEqual(@as(u32, 0x08000000 | 52103), larger.chroma_ttu);
 }

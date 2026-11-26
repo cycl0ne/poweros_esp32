@@ -184,6 +184,29 @@
 //! board's mirror, pointer and picture are put back after, and the
 //! overlay taken off. The watchdog is armed for it.
 //!
+//! VIDEO shows a film's frame on the board's video layer - 320 by 180
+//! in NV12, its planes starting part way into the 256 bytes the
+//! display's fetcher reads by - and says what the layer is. Under the
+//! picture: the frame's black, white, red, green and blue - each
+//! channel made exactly nothing or all of it - read as a window of the
+//! glass against the same colours drawn beside it, and video's black
+//! said as the greys it matches; then blocks of black and white, shown
+//! as they are - whole, partly off the glass's top left and bottom right,
+//! a part of the frame - for each way of mirroring, a place moved to
+//! while the frame is shown, the picture's key colour only over part of
+//! the place, the shades of it a shadow leaves, colours next to it, the
+//! pointer over the film and across its edge, and the film after the
+//! monitor slept and the board was shown in another mode and back
+//! meanwhile, each against the same picture drawn by the program; made larger, smaller and by a
+//! ratio that is no whole number, as windows inside the blocks against
+//! the same windows of the blocks drawn the size they are shown. Then
+//! nothing shown, a place with nothing in it and one off the glass, each
+//! against the picture with no layer open. Over the picture: the frame
+//! unmirrored and mirrored both ways, against the program's drawing, and
+//! the pointer over it. The layer is closed after, and the board's
+//! mirror, pointer and picture put back as they were. The watchdog is
+//! armed for it.
+//!
 //! DUMP prints LENGTH (16 unless given, at most 512) of the display
 //! engine's registers from DUMP on, in 32-bit words from the engine's
 //! address SEGMENT (2 unless given: the one its pipes, links and
@@ -192,8 +215,8 @@
 //! is armed for it.
 //!
 //! Without BIOS, CLOCKS, DMCUB, CRC, EVENTS, AUX, EDID, CYCLE, MODES,
-//! SLEEP, RANGE, POINTER, MIRROR, OVERLAY, DIRECT, BANDS, DUMP, FRAMES or
-//! FLIP the two files are read from
+//! SLEEP, RANGE, POINTER, MIRROR, OVERLAY, DIRECT, BANDS, VIDEO, DUMP,
+//! FRAMES or FLIP the two files are read from
 //! DEVS:firmware/amdgpu/, named for the blocks that use them as the
 //! device's table gives their versions - psp_13_0_4_toc.bin for the
 //! security processor 13.0.4, vcn_4_0_2.bin for the video decoder 4.0.2 -
@@ -245,12 +268,13 @@ const reg = sdk.hardware.mmio.reg;
 const Printf = dos.stdio.Printf;
 const rtg = sdk.rtg;
 const RtgBase = sdk.interface.rtg.RtgBase;
+const TagItem = sdk.utility.TagItem;
 
 pub const COMMAND_NAME = "Gpu";
-const VERSION_STRING = "\x00$VER: Gpu 1.18 (26.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Gpu 1.19 (26.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,SLEEP/K/N,RANGE/S,POINTER/S,MIRROR/S,OVERLAY/S,DIRECT/S,BANDS/S,WATCHDOG/K/N";
+const template = "TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,SLEEP/K/N,RANGE/S,POINTER/S,MIRROR/S,OVERLAY/S,DIRECT/S,BANDS/S,VIDEO/S,WATCHDOG/K/N";
 const arg_toc = 0;
 const arg_firmware = 1;
 const arg_frames = 2;
@@ -283,8 +307,9 @@ const arg_mirror = 28;
 const arg_overlay = 29;
 const arg_direct = 30;
 const arg_bands = 31;
-const arg_watchdog = 32;
-const arg_count = 33;
+const arg_video = 32;
+const arg_watchdog = 33;
+const arg_count = 34;
 
 /// Where the files are.
 const directory = "DEVS:firmware/amdgpu/";
@@ -1122,6 +1147,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     if (argv[arg_overlay] != 0) return overlayCheck(sys, dl, ab, info, millis);
     if (argv[arg_direct] != 0) return directCheck(sys, dl, ab, info, millis);
     if (argv[arg_bands] != 0) return bandsCheck(sys, dl, ab, info, millis);
+    if (argv[arg_video] != 0) return videoCheck(sys, dl, ab, info, millis);
     if (argv[arg_sleep] != 0) return asleepFor(sys, dl, ab, info, millis, number(argv[arg_sleep]), argv[arg_modes] != 0);
     if (argv[arg_dump] != 0) {
         const length = if (argv[arg_length] != 0) number(argv[arg_length]) else 16;
@@ -1732,6 +1758,633 @@ fn overlayCheck(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUI
     return if (differ == 0) dos.RETURN_OK else dos.RETURN_WARN;
 }
 
+// --- VIDEO --------------------------------------------------------------------------
+
+/// The film's frame VIDEO shows: 320 by 180 in NV12, rows 512 bytes
+/// apart, each plane starting 64 bytes into a run of 256 - as a frame
+/// cut from a larger one does - so that the board reads it from part way
+/// into what its fetcher reads by; its blocks 40 by 36.
+const Film = struct {
+    memory: *anyopaque,
+    luma: [*]u8,
+    chroma: [*]u8,
+    picture: rtg.RtgYuv,
+
+    const width = 320;
+    const height = 180;
+    const pitch = 512;
+    const offset = 64;
+    const block_width = 40;
+    const block_height = 36;
+
+    fn make(sys: *ExecBase) ?Film {
+        const bytes = pitch * height + pitch * height / 2 + 256 + offset;
+        const memory = sys.AllocVec(bytes, exec.MEMF_ANY) orelse return null;
+        const start = (@intFromPtr(memory) + 255) / 256 * 256 + offset;
+        const luma: [*]u8 = @ptrFromInt(start);
+        const chroma: [*]u8 = @ptrFromInt(start + pitch * height);
+        return .{
+            .memory = memory,
+            .luma = luma,
+            .chroma = chroma,
+            .picture = .{ .y = luma, .cb = chroma, .y_pitch = pitch, .c_pitch = pitch },
+        };
+    }
+
+    /// Every pixel the one colour.
+    fn fill(film: *Film, y: u8, cb: u8, cr: u8) void {
+        for (0..height) |row| @memset(film.luma[row * pitch ..][0..width], y);
+        for (0..height / 2) |row| {
+            const line = film.chroma[row * pitch ..];
+            for (0..width / 2) |pair| {
+                line[2 * pair] = cb;
+                line[2 * pair + 1] = cr;
+            }
+        }
+    }
+
+    /// Blocks of black and white, in a pattern no mirroring leaves as it
+    /// is: a step below video's black, 15, and its white, 235, the colour
+    /// none - which the engine makes exactly nothing and all of each
+    /// channel, where its rounding leaves the blue of video's black, 16, a
+    /// part of a step above nothing.
+    fn blocks(film: *Film) void {
+        film.fill(128, 128, 128);
+        for (0..height) |row| {
+            for (0..width) |column| film.luma[row * pitch + column] = if (white(@intCast(column), @intCast(row))) 235 else 15;
+        }
+    }
+
+    /// Whether the frame's pixel at (`column`, `row`) is white.
+    fn white(column: u32, row: u32) bool {
+        return (column / block_width * 7 + row / block_height * 3) % 5 < 2;
+    }
+};
+
+/// The colours VIDEO draws its pictures in: the background; the key, the
+/// shades of it a shadow leaves, and two next to it, which hide the film.
+const video_background: u32 = 0xFF40_4040;
+const video_key: u32 = 0xFF08_0008;
+const video_shades = [_]u32{ 0xFF04_0004, 0xFF02_0002, 0xFF01_0001 };
+const video_unkeyed = [_]u32{ 0xFF09_0009, 0xFF08_0108 };
+
+/// `colour` in the part of `rect` on the picture.
+fn fillRect(into: *rtg.RtgBitMap, rect: rtg.RtgRect, colour: u32) void {
+    const pixels = into.pixels orelse return;
+    const left: u32 = @intCast(@max(rect.x, 0));
+    const top: u32 = @intCast(@max(rect.y, 0));
+    const right: u32 = @intCast(@min(@as(i64, rect.x) + rect.width, into.width));
+    const bottom: u32 = @intCast(@min(@as(i64, rect.y) + rect.height, into.height));
+    var row = top;
+    while (row < bottom) : (row += 1) {
+        const line: [*]u32 = @ptrCast(@alignCast(pixels + @as(usize, row) * into.pitch));
+        var column = left;
+        while (column < right) : (column += 1) line[column] = colour;
+    }
+}
+
+/// The film's `part` drawn into `place` of the picture, as much of it as
+/// the picture has: each pixel the one of the part it falls in, black or
+/// white - the frame shown as it is, or a block's inside shown scaled.
+fn drawFilm(into: *rtg.RtgBitMap, part: rtg.RtgRect, place: rtg.RtgRect) void {
+    const pixels = into.pixels orelse return;
+    const left: u32 = @intCast(@max(place.x, 0));
+    const top: u32 = @intCast(@max(place.y, 0));
+    const right: u32 = @intCast(@min(@as(i64, place.x) + place.width, into.width));
+    const bottom: u32 = @intCast(@min(@as(i64, place.y) + place.height, into.height));
+    var row = top;
+    while (row < bottom) : (row += 1) {
+        const line: [*]u32 = @ptrCast(@alignCast(pixels + @as(usize, row) * into.pitch));
+        const from_y: u32 = @intCast(part.y + @divFloor((@as(i64, row) - place.y) * part.height, place.height));
+        var column = left;
+        while (column < right) : (column += 1) {
+            const from_x: u32 = @intCast(part.x + @divFloor((@as(i64, column) - place.x) * part.width, place.width));
+            line[column] = if (Film.white(from_x, from_y)) 0xFFFF_FFFF else 0xFF00_0000;
+        }
+    }
+}
+
+/// What VIDEO compares: the cases that came out the same, and all.
+const VideoTally = struct { same: u32 = 0, compared: u32 = 0 };
+
+fn videoCompare(dl: *DosBase, what: [*:0]const u8, drawn: ?[3]u32, laid: ?[3]u32, tally: *VideoTally) void {
+    const same = drawn != null and laid != null and sameSum(drawn.?, laid.?);
+    tally.compared += 1;
+    if (same) tally.same += 1;
+    _ = Printf(dl, "%s: drawn %04x %04x %04x, the board's %04x %04x %04x%s\n", .{
+        what,
+        if (drawn) |sum| sum[0] else 0,
+        if (drawn) |sum| sum[1] else 0,
+        if (drawn) |sum| sum[2] else 0,
+        if (laid) |sum| sum[0] else 0,
+        if (laid) |sum| sum[1] else 0,
+        if (laid) |sum| sum[2] else 0,
+        @as([*:0]const u8, if (same) ", the same" else ", DIFFERENT"),
+    });
+}
+
+/// The pipes the blender's tree for output 0 is made of, from the top
+/// down, and which of the four fetchers fetch.
+fn sayTree(dl: *DosBase, engine: Display, blender: Display) void {
+    var stages: [4]u32 = @splat(0xf);
+    var stage = blender.at(mpc_out_mux).* & 0xf;
+    var count: usize = 0;
+    while (stage < 4 and count < 4) : (count += 1) {
+        stages[count] = stage;
+        stage = blender.at(stage * mpcc_stride + mpcc_bottom_select).* & 0xf;
+    }
+    var fetching: [4]u32 = undefined;
+    for (0..4) |index| fetching[index] = @intFromBool(engine.at(dchubp_control + @as(u32, @intCast(index)) * dcn.HUBP_STRIDE).* & 1 == 0);
+    _ = Printf(dl, "        blender: output 0 from stage %u, then %u, %u, %u (15: none); fetchers fetching: %u %u %u %u\n", .{
+        stages[0], stages[1], stages[2], stages[3], fetching[0], fetching[1], fetching[2], fetching[3],
+    });
+}
+
+/// VIDEO: a film's frame on the board's video layer, under the picture
+/// and over it, against the same pictures drawn by the program.
+fn videoCheck(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUInfo, millis: u32) i32 {
+    var block: amdgpu.GPUBlock = .{};
+    if (!ab.FindGPUBlock(amdgpu.GPUBLOCK_DISPLAY, 0, &block) or block.count < 4) {
+        _ = Printf(dl, "The device %04x:%04x names no display engine with a blender\n", .{ info.vendor, info.device });
+        return dos.RETURN_FAIL;
+    }
+    const engine = Display{ .registers = @intCast(info.registers), .segment = block.addresses[2], .pipe = 0, .fetcher = 0 };
+    const blender = Display{ .registers = @intCast(info.registers), .segment = block.addresses[3], .pipe = 0, .fetcher = 0 };
+    const base = sys.OpenLibrary(rtg.RTGNAME, rtg.RTG_VERSION) orelse {
+        _ = Printf(dl, "No %s\n", .{rtg.RTGNAME});
+        return dos.RETURN_FAIL;
+    };
+    defer sys.CloseLibrary(base);
+    const rb: *RtgBase = @ptrCast(base);
+    const board = amdBoard(dl, rb) orelse return dos.RETURN_WARN;
+    var board_info: rtg.RtgBoardInfo = .{};
+    _ = rb.GetBoardInfo(board, &board_info, @sizeOf(rtg.RtgBoardInfo));
+    if (board_info.caps & rtg.boards.RTGBC_VIDEO == 0) {
+        _ = Printf(dl, "The board has no video layer\n", .{});
+        return dos.RETURN_WARN;
+    }
+    const pointer = board.pointer orelse {
+        _ = Printf(dl, "The board has no pointer image\n", .{});
+        return dos.RETURN_WARN;
+    };
+    var film = Film.make(sys) orelse {
+        _ = Printf(dl, "No room for the film's frame\n", .{});
+        return dos.RETURN_FAIL;
+    };
+    defer sys.FreeVec(film.memory);
+    const was_x = board.pointer_x;
+    const was_y = board.pointer_y;
+    const was_shown = board.info.flags & rtg.boards.RTGBF_POINTER != 0;
+    const wb = arm(sys, dl, millis) orelse return dos.RETURN_FAIL;
+    defer wb.DisarmWatchdog();
+    const still = Still.begin(dl, rb, board) orelse return dos.RETURN_FAIL;
+    const picture = still.picture;
+    const flat = rb.AllocBitMap(board, picture.width, picture.height, @intFromEnum(picture.format), rtg.bitmaps.RTGBMF_DISPLAYABLE);
+    const reference = rb.AllocBitMap(board, picture.width, picture.height, @intFromEnum(picture.format), rtg.bitmaps.RTGBMF_DISPLAYABLE);
+    if (flat == null or reference == null or picture.format != .bgra32) {
+        still.end();
+        if (flat) |one| rb.FreeBitMap(one);
+        if (reference) |one| rb.FreeBitMap(one);
+        _ = Printf(dl, "No room for two more pictures in bgra32\n", .{});
+        return dos.RETURN_FAIL;
+    }
+    _ = rb.ShowBoardPointer(board, false);
+    var tally: VideoTally = .{};
+    const run: VideoRun = .{ .sys = sys, .dl = dl, .rb = rb, .board = board, .wb = wb, .mode_id = still.mode_id, .picture = picture, .flat = flat.?, .reference = reference.?, .film = &film, .pointer = pointer, .engine = engine, .blender = blender };
+    run.under(&tally);
+    run.over(&tally);
+    _ = rb.MirrorBoard(board, board_info.mirror_x != 0, board_info.mirror_y != 0);
+    rb.MoveBoardPointer(board, was_x, was_y);
+    _ = rb.ShowBoardPointer(board, was_shown);
+    wb.FeedWatchdog();
+    still.end();
+    rb.FreeBitMap(flat.?);
+    rb.FreeBitMap(reference.?);
+    _ = Printf(dl, "%u of %u the same\n", .{ tally.same, tally.compared });
+    return if (tally.compared != 0 and tally.same == tally.compared) dos.RETURN_OK else dos.RETURN_WARN;
+}
+
+/// What VIDEO's steps share.
+const VideoRun = struct {
+    sys: *ExecBase,
+    dl: *DosBase,
+    rb: *RtgBase,
+    board: *rtg.RtgBoard,
+    wb: *WatchdogBase,
+    mode_id: u32,
+    /// The picture the board lays the film on, the program's drawing of
+    /// what that shows before it is mirrored, and that drawing mirrored.
+    picture: *rtg.RtgBitMap,
+    flat: *rtg.RtgBitMap,
+    reference: *rtg.RtgBitMap,
+    film: *Film,
+    pointer: *const rtg.RtgPointerImage,
+    engine: Display,
+    blender: Display,
+
+    const whole = rtg.RtgRect{ .width = Film.width, .height = Film.height };
+
+    fn open(run: VideoRun, below: bool) ?*rtg.RtgVideoLayer {
+        const asked = [_]TagItem{ .{ .tag = rtg.RTGVA_Under, .data = @intFromBool(below) }, .{} };
+        const layer = run.rb.OpenVideoLayer(run.board, &asked) orelse {
+            _ = Printf(run.dl, "The board handed out no video layer %s the picture\n", .{@as([*:0]const u8, if (below) "under" else "over")});
+            return null;
+        };
+        _ = Printf(run.dl, "A layer %s the picture: flags %u, key %06x, frames up to %ux%u, %u times larger to a %uth\n", .{
+            @as([*:0]const u8, if (layer.flags & rtg.RTGVLF_UNDER != 0) "under" else "over"),
+            layer.flags,
+            layer.key,
+            layer.max_width,
+            layer.max_height,
+            layer.max_up,
+            layer.max_down,
+        });
+        return layer;
+    }
+
+    /// The picture shown with its background, and the key colour in
+    /// `key` where there is one.
+    fn showPicture(run: VideoRun, key: ?rtg.RtgRect) void {
+        fillRect(run.picture, .{ .width = @intCast(run.picture.width), .height = @intCast(run.picture.height) }, video_background);
+        if (key) |rect| fillRect(run.picture, rect, video_key);
+        _ = run.rb.RefreshRect(run.picture, null);
+        const band = [_]rtg.RtgBand{.{ .bitmap = run.picture }};
+        _ = run.rb.ShowBoard(run.board, run.mode_id, &band, band.len);
+    }
+
+    /// The program's drawing - `flat`, drawn by the caller - shown
+    /// mirrored as the board is to be, with nothing on the layer, and its
+    /// checksum, or each of `windows`' into `into`.
+    fn drawn(run: VideoRun, layer: *rtg.RtgVideoLayer, x: bool, y: bool, windows: []const rtg.tags.RtgAmdCrc, into: []?[3]u32) void {
+        _ = run.rb.ShowVideoFrame(layer, null, null);
+        turned(run.reference, run.flat, x, y);
+        _ = run.rb.RefreshRect(run.reference, null);
+        _ = run.rb.MirrorBoard(run.board, false, false);
+        const band = [_]rtg.RtgBand{.{ .bitmap = run.reference }};
+        _ = run.rb.ShowBoard(run.board, run.mode_id, &band, band.len);
+        run.wb.FeedWatchdog();
+        for (windows, into) |window, *sum| sum.* = steadyWindow(run.dl, run.rb, run.board, window);
+        run.wb.FeedWatchdog();
+    }
+
+    /// The film's `part` shown at `place` on the picture - shown by the
+    /// caller - mirrored as asked; false, said, where the board refused.
+    fn laid(run: VideoRun, layer: *rtg.RtgVideoLayer, part: rtg.RtgRect, place: rtg.RtgRect, x: bool, y: bool) bool {
+        _ = run.rb.MirrorBoard(run.board, x, y);
+        const moved = run.rb.MoveVideoLayer(layer, &place);
+        const shown = run.rb.ShowVideoFrame(layer, &run.film.picture, &part);
+        run.wb.FeedWatchdog();
+        if (moved != rtg.errors.RTGERR_OK or shown != rtg.errors.RTGERR_OK) {
+            _ = Printf(run.dl, "        the board refused: move %ld, show %ld\n", .{ @as(i64, moved), @as(i64, shown) });
+            return false;
+        }
+        return true;
+    }
+
+    /// The board's checksum, or each of `windows`'.
+    fn sums(run: VideoRun, windows: []const rtg.tags.RtgAmdCrc, into: []?[3]u32) void {
+        for (windows, into) |window, *sum| sum.* = steadyWindow(run.dl, run.rb, run.board, window);
+        run.wb.FeedWatchdog();
+    }
+
+    /// Under the picture: the colours, the frame as it is in every place
+    /// and turn, moved, keyed in part, with the pointer, scaled, and
+    /// nothing shown.
+    fn under(run: VideoRun, tally: *VideoTally) void {
+        const layer = run.open(true) orelse return;
+        run.colours(layer, tally);
+        run.film.blocks();
+        const width: i32 = @intCast(run.picture.width);
+        const height: i32 = @intCast(run.picture.height);
+        const Case = struct { part: rtg.RtgRect, place: rtg.RtgRect, name: [*:0]const u8 };
+        const cases = [_]Case{
+            .{ .part = whole, .place = .{ .x = 400, .y = 300, .width = Film.width, .height = Film.height }, .name = "whole" },
+            .{ .part = whole, .place = .{ .x = -50, .y = -30, .width = Film.width, .height = Film.height }, .name = "off the top left" },
+            .{ .part = whole, .place = .{ .x = width - 270, .y = height - 150, .width = Film.width, .height = Film.height }, .name = "off the bottom right" },
+            .{ .part = .{ .x = 40, .y = 20, .width = 200, .height = 120 }, .place = .{ .x = 600, .y = 500, .width = 200, .height = 120 }, .name = "a part" },
+        };
+        const ways = [_][2]bool{ .{ false, false }, .{ true, false }, .{ false, true }, .{ true, true } };
+        const names = [_][*:0]const u8{ "none", "x", "y", "x and y" };
+        var said_tree = false;
+        var buffer: [96]u8 = undefined;
+        for (ways, names) |way, name| {
+            for (cases) |case| {
+                var drawn_sum: [1]?[3]u32 = .{null};
+                fillRect(run.flat, .{ .width = width, .height = height }, video_background);
+                drawFilm(run.flat, case.part, case.place);
+                run.drawn(layer, way[0], way[1], &.{.{}}, &drawn_sum);
+                run.showPicture(case.place);
+                var laid_sum: [1]?[3]u32 = .{null};
+                if (run.laid(layer, case.part, case.place, way[0], way[1])) run.sums(&.{.{}}, &laid_sum);
+                if (!said_tree) {
+                    said_tree = true;
+                    sayTree(run.dl, run.engine, run.blender);
+                }
+                videoCompare(run.dl, label(&buffer, "under, mirrored ", name, ", ", case.name), drawn_sum[0], laid_sum[0], tally);
+            }
+        }
+        const place: rtg.RtgRect = .{ .x = 600, .y = 300, .width = Film.width, .height = Film.height };
+
+        // Moved while it is shown: lit at one place, then the key colour
+        // and the layer moved to another.
+        {
+            var drawn_sum: [1]?[3]u32 = .{null};
+            const moved_to: rtg.RtgRect = .{ .x = 900, .y = 200, .width = Film.width, .height = Film.height };
+            fillRect(run.flat, .{ .width = width, .height = height }, video_background);
+            drawFilm(run.flat, whole, moved_to);
+            run.drawn(layer, false, false, &.{.{}}, &drawn_sum);
+            run.showPicture(place);
+            var laid_sum: [1]?[3]u32 = .{null};
+            if (run.laid(layer, whole, place, false, false)) {
+                run.showPicture(moved_to);
+                const moved = run.rb.MoveVideoLayer(layer, &moved_to);
+                if (moved == rtg.errors.RTGERR_OK) run.sums(&.{.{}}, &laid_sum);
+            }
+            videoCompare(run.dl, "under, moved while shown", drawn_sum[0], laid_sum[0], tally);
+        }
+
+        // The key colour over part of the place, its shades, and colours
+        // next to it, which hide the film.
+        {
+            const left_half: rtg.RtgRect = .{ .x = place.x, .y = place.y, .width = place.width / 2, .height = place.height };
+            var drawn_sum: [1]?[3]u32 = .{null};
+            fillRect(run.flat, .{ .width = width, .height = height }, video_background);
+            drawFilm(run.flat, whole, place);
+            fillRect(run.flat, .{ .x = place.x + place.width / 2, .y = place.y, .width = place.width / 2, .height = place.height }, video_background);
+            for (video_unkeyed, 0..) |colour, index| fillRect(run.flat, .{ .x = place.x + @as(i32, @intCast(index)) * 20, .y = place.y + 40, .width = 20, .height = 40 }, colour);
+            run.drawn(layer, false, false, &.{.{}}, &drawn_sum);
+            run.showPicture(left_half);
+            for (video_unkeyed, 0..) |colour, index| fillRect(run.picture, .{ .x = place.x + @as(i32, @intCast(index)) * 20, .y = place.y + 40, .width = 20, .height = 40 }, colour);
+            _ = run.rb.RefreshRect(run.picture, null);
+            var laid_sum: [1]?[3]u32 = .{null};
+            if (run.laid(layer, whole, place, false, false)) run.sums(&.{.{}}, &laid_sum);
+            videoCompare(run.dl, "under, keyed over half the place, two colours next to the key", drawn_sum[0], laid_sum[0], tally);
+
+            fillRect(run.flat, .{ .width = width, .height = height }, video_background);
+            drawFilm(run.flat, whole, place);
+            run.drawn(layer, false, false, &.{.{}}, &drawn_sum);
+            run.showPicture(place);
+            for (video_shades, 0..) |colour, index| fillRect(run.picture, .{ .x = place.x + 200 + @as(i32, @intCast(index)) * 40, .y = place.y, .width = 40, .height = place.height }, colour);
+            _ = run.rb.RefreshRect(run.picture, null);
+            if (run.laid(layer, whole, place, false, false)) run.sums(&.{.{}}, &laid_sum);
+            videoCompare(run.dl, "under, the key's shades", drawn_sum[0], laid_sum[0], tally);
+        }
+
+        // The pointer over the film and across its edge.
+        const pointer_places = [_][2]i32{ .{ place.x + 100, place.y + 50 }, .{ place.x - 5, place.y - 5 } };
+        for (pointer_places) |at| {
+            var drawn_sum: [1]?[3]u32 = .{null};
+            fillRect(run.flat, .{ .width = width, .height = height }, video_background);
+            drawFilm(run.flat, whole, place);
+            drawPointer(run.flat, run.pointer, at[0] - @as(i32, @intCast(run.pointer.hot_x)), at[1] - @as(i32, @intCast(run.pointer.hot_y)), false, false);
+            run.drawn(layer, false, false, &.{.{}}, &drawn_sum);
+            run.showPicture(place);
+            var laid_sum: [1]?[3]u32 = .{null};
+            if (run.laid(layer, whole, place, false, false)) {
+                run.rb.MoveBoardPointer(run.board, at[0], at[1]);
+                _ = run.rb.ShowBoardPointer(run.board, true);
+                run.sums(&.{.{}}, &laid_sum);
+                _ = run.rb.ShowBoardPointer(run.board, false);
+            }
+            videoCompare(run.dl, if (at[0] > place.x) "under, the pointer over the film" else "under, the pointer across its edge", drawn_sum[0], laid_sum[0], tally);
+        }
+
+        // The monitor asleep, the board shown in another mode and back
+        // meanwhile, and woken: the film laid again where it was.
+        {
+            var drawn_sum: [1]?[3]u32 = .{null};
+            fillRect(run.flat, .{ .width = width, .height = height }, video_background);
+            drawFilm(run.flat, whole, place);
+            run.drawn(layer, false, false, &.{.{}}, &drawn_sum);
+            run.showPicture(place);
+            var laid_sum: [1]?[3]u32 = .{null};
+            if (run.laid(layer, whole, place, false, false)) {
+                const slept = run.rb.SetBoardPower(run.board, rtg.boards.RTGPWR_ASLEEP);
+                run.wb.FeedWatchdog();
+                hold(run.dl, run.wb, 2);
+                const moved = anotherMode(run.dl, run.rb, run.board, run.wb);
+                const woken = run.rb.SetBoardPower(run.board, rtg.boards.RTGPWR_ON);
+                run.wb.FeedWatchdog();
+                _ = Printf(run.dl, "        asleep: %s, awake: %s\n", .{ powerAnswer(run.rb, slept), powerAnswer(run.rb, woken) });
+                if (moved and woken == @as(i32, @intCast(rtg.boards.RTGPWR_ON))) run.sums(&.{.{}}, &laid_sum);
+            }
+            videoCompare(run.dl, "under, after the monitor slept, shown in another mode and back meanwhile", drawn_sum[0], laid_sum[0], tally);
+        }
+
+        run.scaled(layer, tally);
+
+        // Nothing shown, an empty place, a place off the glass: the
+        // picture as it is, its key colour and all.
+        run.showPicture(place);
+        _ = run.laid(layer, whole, place, false, false);
+        _ = run.rb.ShowVideoFrame(layer, null, null);
+        var nothing: [1]?[3]u32 = .{null};
+        run.sums(&.{.{}}, &nothing);
+        _ = run.laid(layer, whole, place, false, false);
+        const empty: rtg.RtgRect = .{ .x = place.x, .y = place.y };
+        const emptied = run.rb.MoveVideoLayer(layer, &empty);
+        var no_place: [1]?[3]u32 = .{null};
+        run.sums(&.{.{}}, &no_place);
+        const off: rtg.RtgRect = .{ .x = width + 10, .y = 0, .width = Film.width, .height = Film.height };
+        const moved_off = run.rb.MoveVideoLayer(layer, &off);
+        var off_glass: [1]?[3]u32 = .{null};
+        run.sums(&.{.{}}, &off_glass);
+        run.rb.CloseVideoLayer(layer);
+        var closed: [1]?[3]u32 = .{null};
+        run.sums(&.{.{}}, &closed);
+        videoCompare(run.dl, "under, nothing shown, against no layer", closed[0], nothing[0], tally);
+        if (emptied != rtg.errors.RTGERR_OK) _ = Printf(run.dl, "        an empty place: %ld\n", .{@as(i64, emptied)});
+        videoCompare(run.dl, "under, an empty place, against no layer", closed[0], no_place[0], tally);
+        if (moved_off != rtg.errors.RTGERR_OK) _ = Printf(run.dl, "        a place off the glass: %ld\n", .{@as(i64, moved_off)});
+        videoCompare(run.dl, "under, a place off the glass, against no layer", closed[0], off_glass[0], tally);
+    }
+
+    /// The frame's colours as the board shows them, each read as a window
+    /// of the glass inside the place: black and white as the blocks have
+    /// them, and a red, a green and a blue each a little past the primary,
+    /// so that the engine makes each channel exactly nothing or all of it,
+    /// against the same colours drawn beside the place; then video's
+    /// black, said as the greys it matches, channel by channel.
+    fn colours(run: VideoRun, layer: *rtg.RtgVideoLayer, tally: *VideoTally) void {
+        const place: rtg.RtgRect = .{ .x = 1000, .y = 600, .width = Film.width, .height = Film.height };
+        const Colour = struct { y: u8, cb: u8, cr: u8, drawn: u32, name: [*:0]const u8 };
+        const exact = [_]Colour{
+            .{ .y = 15, .cb = 128, .cr = 128, .drawn = 0xFF00_0000, .name = "under, the frame's black" },
+            .{ .y = 235, .cb = 128, .cr = 128, .drawn = 0xFFFF_FFFF, .name = "under, the frame's white" },
+            .{ .y = 63, .cb = 100, .cr = 245, .drawn = 0xFFFF_0000, .name = "under, the frame's red" },
+            .{ .y = 173, .cb = 38, .cr = 22, .drawn = 0xFF00_FF00, .name = "under, the frame's green" },
+            .{ .y = 28, .cb = 248, .cr = 114, .drawn = 0xFF00_00FF, .name = "under, the frame's blue" },
+        };
+        const greys = [_]u32{ 0, 1, 2, 3 };
+        run.showPicture(place);
+        for (exact, 0..) |colour, index| fillRect(run.picture, .{ .x = 100 + @as(i32, @intCast(index)) * 64, .y = 100, .width = 48, .height = 48 }, colour.drawn);
+        for (greys, 0..) |grey, index| fillRect(run.picture, .{ .x = 100 + @as(i32, @intCast(exact.len + index)) * 64, .y = 100, .width = 48, .height = 48 }, 0xFF00_0000 | grey * 0x01_0101);
+        _ = run.rb.RefreshRect(run.picture, null);
+        run.wb.FeedWatchdog();
+        var drawn_sums: [exact.len + greys.len]?[3]u32 = undefined;
+        for (&drawn_sums, 0..) |*sum, index| {
+            sum.* = steadyWindow(run.dl, run.rb, run.board, .{ .x = 108 + @as(u32, @intCast(index)) * 64, .y = 108, .width = 32, .height = 32 });
+        }
+        run.wb.FeedWatchdog();
+        const inside: rtg.tags.RtgAmdCrc = .{ .x = 1100, .y = 650, .width = 32, .height = 32 };
+        for (exact, drawn_sums[0..exact.len]) |colour, drawn_sum| {
+            run.film.fill(colour.y, colour.cb, colour.cr);
+            var laid_sum: [1]?[3]u32 = .{null};
+            if (run.laid(layer, whole, place, false, false)) run.sums(&.{inside}, &laid_sum);
+            videoCompare(run.dl, colour.name, drawn_sum, laid_sum[0], tally);
+        }
+        run.film.fill(16, 128, 128);
+        if (run.laid(layer, whole, place, false, false)) {
+            const sum = steadyWindow(run.dl, run.rb, run.board, inside) orelse return;
+            var found: [3]i32 = .{ -1, -1, -1 };
+            for (0..3) |channel| {
+                for (greys, drawn_sums[exact.len..]) |grey, maybe| {
+                    const one = maybe orelse continue;
+                    if (one[channel] == sum[channel]) found[channel] = @intCast(grey);
+                }
+            }
+            _ = Printf(run.dl, "Video's black, Y 16, shown as red %ld, green %ld, blue %ld (-1: none of 0 to 3)\n", .{ @as(i64, found[0]), @as(i64, found[1]), @as(i64, found[2]) });
+        }
+        run.wb.FeedWatchdog();
+    }
+
+    /// Made larger, smaller and by a ratio that is no whole number: windows
+    /// inside blocks, a block's edges left out where the scaler's taps mix
+    /// the pixels on either side, against the blocks drawn that size.
+    fn scaled(run: VideoRun, layer: *rtg.RtgVideoLayer, tally: *VideoTally) void {
+        const width: i32 = @intCast(run.picture.width);
+        const height: i32 = @intCast(run.picture.height);
+        const Case = struct { place: rtg.RtgRect, name: [*:0]const u8 };
+        const cases = [_]Case{
+            .{ .place = .{ .x = 800, .y = 400, .width = 2 * Film.width, .height = 2 * Film.height }, .name = "twice the size" },
+            .{ .place = .{ .x = 800, .y = 400, .width = Film.width / 2, .height = Film.height / 2 }, .name = "half the size" },
+            .{ .place = .{ .x = 800, .y = 400, .width = 500, .height = 300 }, .name = "500 by 300" },
+        };
+        const blocks = [_][2]u32{ .{ 0, 0 }, .{ 1, 0 }, .{ 3, 1 }, .{ 5, 2 }, .{ 7, 4 }, .{ 2, 3 } };
+        var buffer: [96]u8 = undefined;
+        for (cases) |case| {
+            var windows: [blocks.len]rtg.tags.RtgAmdCrc = undefined;
+            for (blocks, &windows) |at, *window| window.* = blockWindow(case.place, at[0], at[1]);
+            var drawn_sums: [blocks.len]?[3]u32 = undefined;
+            fillRect(run.flat, .{ .width = width, .height = height }, video_background);
+            drawFilm(run.flat, whole, case.place);
+            run.drawn(layer, false, false, &windows, &drawn_sums);
+            run.showPicture(case.place);
+            var laid_sums: [blocks.len]?[3]u32 = @splat(null);
+            if (run.laid(layer, whole, case.place, false, false)) run.sums(&windows, &laid_sums);
+            for (blocks, drawn_sums, laid_sums) |at, drawn_sum, laid_sum| {
+                var number_buffer: [32]u8 = undefined;
+                const where = blockName(&number_buffer, at[0], at[1]);
+                videoCompare(run.dl, label(&buffer, "under, ", case.name, ", inside ", where), drawn_sum, laid_sum, tally);
+            }
+        }
+    }
+
+    /// Over the picture: the frame as it is, unmirrored and mirrored both
+    /// ways, and the pointer over it.
+    fn over(run: VideoRun, tally: *VideoTally) void {
+        const layer = run.open(false) orelse return;
+        defer run.rb.CloseVideoLayer(layer);
+        run.film.blocks();
+        const width: i32 = @intCast(run.picture.width);
+        const height: i32 = @intCast(run.picture.height);
+        const place: rtg.RtgRect = .{ .x = 600, .y = 300, .width = Film.width, .height = Film.height };
+        const ways = [_][2]bool{ .{ false, false }, .{ true, true } };
+        const names = [_][*:0]const u8{ "over, mirrored none", "over, mirrored x and y" };
+        var said_tree = false;
+        for (ways, names) |way, name| {
+            var drawn_sum: [1]?[3]u32 = .{null};
+            fillRect(run.flat, .{ .width = width, .height = height }, video_background);
+            drawFilm(run.flat, whole, place);
+            run.drawn(layer, way[0], way[1], &.{.{}}, &drawn_sum);
+            run.showPicture(null);
+            var laid_sum: [1]?[3]u32 = .{null};
+            if (run.laid(layer, whole, place, way[0], way[1])) run.sums(&.{.{}}, &laid_sum);
+            if (!said_tree) {
+                said_tree = true;
+                sayTree(run.dl, run.engine, run.blender);
+            }
+            videoCompare(run.dl, name, drawn_sum[0], laid_sum[0], tally);
+        }
+        // The pointer over it is laid by the picture's pipe, under the
+        // film: the same as the film alone.
+        var drawn_sum: [1]?[3]u32 = .{null};
+        fillRect(run.flat, .{ .width = width, .height = height }, video_background);
+        drawFilm(run.flat, whole, place);
+        run.drawn(layer, false, false, &.{.{}}, &drawn_sum);
+        run.showPicture(null);
+        var laid_sum: [1]?[3]u32 = .{null};
+        if (run.laid(layer, whole, place, false, false)) {
+            run.rb.MoveBoardPointer(run.board, place.x + 100, place.y + 50);
+            _ = run.rb.ShowBoardPointer(run.board, true);
+            run.sums(&.{.{}}, &laid_sum);
+            _ = run.rb.ShowBoardPointer(run.board, false);
+        }
+        videoCompare(run.dl, "over, the pointer over the film, against the film alone", drawn_sum[0], laid_sum[0], tally);
+    }
+};
+
+/// The window inside block (`column`, `row`) of the frame shown at
+/// `place`: the block's part of the place, less 8 pixels at each edge
+/// where the scaler's taps reach the next block's pixels, its left on
+/// four pixels and its width a whole number of four.
+fn blockWindow(place: rtg.RtgRect, column: u32, row: u32) rtg.tags.RtgAmdCrc {
+    const margin = 8;
+    const across_from = @divFloor(@as(i64, column) * Film.block_width * place.width + Film.width - 1, Film.width) + place.x + margin;
+    const across_to = @divFloor(@as(i64, column + 1) * Film.block_width * place.width, Film.width) + place.x - margin;
+    const down_from = @divFloor(@as(i64, row) * Film.block_height * place.height + Film.height - 1, Film.height) + place.y + margin;
+    const down_to = @divFloor(@as(i64, row + 1) * Film.block_height * place.height, Film.height) + place.y - margin;
+    const left: i64 = @divFloor(across_from + 3, 4) * 4;
+    const span: i64 = @max(4, @divFloor(across_to - left, 4) * 4);
+    return .{
+        .x = @intCast(left),
+        .y = @intCast(down_from),
+        .width = @intCast(span),
+        .height = @intCast(@max(1, down_to - down_from)),
+    };
+}
+
+/// "block c,r" in `buffer`.
+fn blockName(buffer: []u8, column: u32, row: u32) [*:0]const u8 {
+    const text = "block ";
+    @memcpy(buffer[0..text.len], text);
+    var at: usize = text.len;
+    at += decimal(buffer[at..], column);
+    buffer[at] = ',';
+    at += 1;
+    at += decimal(buffer[at..], row);
+    buffer[at] = 0;
+    return @ptrCast(buffer.ptr);
+}
+
+fn decimal(into: []u8, value: u32) usize {
+    var digits: [10]u8 = undefined;
+    var count: usize = 0;
+    var left = value;
+    while (true) {
+        digits[count] = @intCast('0' + left % 10);
+        count += 1;
+        left /= 10;
+        if (left == 0) break;
+    }
+    for (0..count) |index| into[index] = digits[count - 1 - index];
+    return count;
+}
+
+/// The four parts joined in `buffer`, cut to fit it.
+fn label(buffer: []u8, first: [*:0]const u8, second: [*:0]const u8, third: [*:0]const u8, fourth: [*:0]const u8) [*:0]const u8 {
+    var at: usize = 0;
+    for ([_][*:0]const u8{ first, second, third, fourth }) |part| {
+        var index: usize = 0;
+        while (part[index] != 0 and at + 1 < buffer.len) : (index += 1) {
+            buffer[at] = part[index];
+            at += 1;
+        }
+    }
+    buffer[at] = 0;
+    return @ptrCast(buffer.ptr);
+}
+
 /// Which pipe the blender lays over output 0's picture at the top of
 /// its tree, and below it, and whether each of the first two fetchers is
 /// blanked: the overlay as a plane, where the top is not the picture's.
@@ -2161,10 +2814,16 @@ fn sameSum(one: [3]u32, other: [3]u32) bool {
 /// The picture's checksum once it is steady: read until two reads 60 ms
 /// apart agree, at most five times; null where it does not settle.
 fn steadyChecksum(dl: *DosBase, rb: *RtgBase, board: *rtg.RtgBoard) ?[3]u32 {
+    return steadyWindow(dl, rb, board, .{});
+}
+
+/// The same for the window of the glass `window` names (its `x`, `y`,
+/// `width` and `height`), all of the picture for none.
+fn steadyWindow(dl: *DosBase, rb: *RtgBase, board: *rtg.RtgBoard, window: rtg.tags.RtgAmdCrc) ?[3]u32 {
     dl.Delay(8);
     var last: ?[3]u32 = null;
     for (0..5) |_| {
-        var crc: rtg.tags.RtgAmdCrc = .{};
+        var crc: rtg.tags.RtgAmdCrc = .{ .x = window.x, .y = window.y, .width = window.width, .height = window.height };
         if (rb.BoardControl(board, rtg.tags.RTGCTRL_AMD_CRC, @bitCast(@intFromPtr(&crc))) != rtg.errors.RTGERR_OK) return null;
         const sum = [3]u32{ crc.red, crc.green, crc.blue };
         if (last) |before| {

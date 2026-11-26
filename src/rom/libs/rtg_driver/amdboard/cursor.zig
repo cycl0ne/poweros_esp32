@@ -246,6 +246,13 @@ pub fn write(engine: dcn.Engine, fetcher: u32, output: u32, cursor: Cursor, view
     scaler.* = scaler_control;
 }
 
+/// The cursor of the hub `fetcher` and its scaler off: the pipe lays
+/// none, as a film's pipe does - the vendor's for a frame of video.
+pub fn off(engine: dcn.Engine, fetcher: u32) void {
+    at(engine, fetcher * fetcher_stride + cursor_control).* &= ~cursor_on;
+    at(engine, fetcher * scaler_stride + scaler_cursor_control).* &= ~scaler_on;
+}
+
 // --- tests (host: ./zig build test) -----------------------------------------
 
 const testing = @import("std").testing;

@@ -192,10 +192,14 @@ pub const RTGCTRL_AMD_CONTROLLER: u32 = RTGCTRL_DRIVER + 34;
 pub const RTGCTRL_AMD_START_CONTROLLER: u32 = RTGCTRL_DRIVER + 35;
 /// `value` an `*RtgAmdCrc`: the checksum the board's timing generator
 /// computes over each frame it sends - each colour's 16-bit CRC over the
-/// whole picture. A test tool: the same checksum before and after a step
-/// says the step left the picture as it was. The first ask switches the
-/// sum on (`started` 1) and waits three frames; it stays on. RTGERR_OK,
-/// RTGERR_NO_DISPLAY where the board drives no picture.
+/// whole picture, or over the window the ask names. A test tool: the
+/// same checksum before and after a step says the step left the picture
+/// as it was, and a window of one colour sums the same wherever it lies.
+/// The first ask switches the sum on (`started` 1) and waits three
+/// frames, as an ask for another window than the last does; it stays
+/// on. RTGERR_OK, RTGERR_BAD_ARG for a window off the picture or with a
+/// left not on four pixels, RTGERR_NO_DISPLAY where the board drives no
+/// picture.
 pub const RTGCTRL_AMD_CRC: u32 = RTGCTRL_DRIVER + 36;
 
 /// `value` an `*RtgAmdEvents`: what the display engine's hot-plug lines
@@ -426,13 +430,19 @@ pub const RTG_AMD_UNDERFLOW_FETCHER: u32 = 1 << 0;
 pub const RTG_AMD_UNDERFLOW_OUTPUT: u32 = 1 << 1;
 
 /// What RTGCTRL_AMD_CRC fills in: the pipe summed, each colour's CRC,
-/// and whether this ask switched the sum on.
+/// and whether this ask switched the sum on (or moved its window); and
+/// what it is asked: the window summed, on the glass - its left on four
+/// pixels - all of the picture for a width or height of 0.
 pub const RtgAmdCrc = extern struct {
     pipe: u32 = 0,
     red: u32 = 0,
     green: u32 = 0,
     blue: u32 = 0,
     started: u32 = 0,
+    x: u32 = 0,
+    y: u32 = 0,
+    width: u32 = 0,
+    height: u32 = 0,
 };
 
 /// How far RTGCTRL_AMD_START_CONTROLLER got: nothing done, the files

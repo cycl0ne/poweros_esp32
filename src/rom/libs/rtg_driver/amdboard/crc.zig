@@ -6,10 +6,13 @@
 //!
 //! The generator sums each colour of every pixel of a window into a
 //! 16-bit CRC per frame. The window is the whole picture (its visible
-//! width and height, made the new one's by a mode set), the sum taken
-//! every frame once switched on, and left on: reading it again only
-//! reads. The first read switches it on
-//! and lets three frames pass, so that the sum read is a whole frame's.
+//! width and height, made the new one's by a mode set) unless the ask
+//! names one - a part of the glass, its left on the four pixels the
+//! generator sums at a time - the sum taken every frame once switched
+//! on, and left on: reading it again only reads. The first read switches
+//! it on and lets three frames pass, so that the sum read is a whole
+//! frame's; so does a read of another window, which switches the sum off
+//! while the window is moved.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -50,18 +53,34 @@ pub fn window(end: u32) u32 {
     return (end & window_mask) << window_end_shift;
 }
 
-/// The checksum of the picture the board's pipe sends now, into `into`:
-/// RTGERR_OK, or RTGERR_NO_DISPLAY where the board drives no picture.
+/// The window's register for `size` pixels from `start` of a side
+/// `length` long - all of it for a size of 0: null where it does not lie
+/// on the side.
+fn spanOf(start: u32, size: u32, length: u32) ?u32 {
+    if (size == 0) return window(length);
+    if (@as(u64, start) + size > length) return null;
+    return (start & window_mask) | window(start + size);
+}
+
+/// The checksum of the picture the board's pipe sends now, or of the
+/// window `into` names, into `into`: RTGERR_OK, RTGERR_BAD_ARG for a
+/// window off the picture or with a left not on four pixels, or
+/// RTGERR_NO_DISPLAY where the board drives no picture.
 pub fn read(engine: dcn.Engine, into: *tags.RtgAmdCrc) isize {
-    into.* = .{};
+    const asked = into.*;
+    into.* = .{ .x = asked.x, .y = asked.y, .width = asked.width, .height = asked.height };
     if (engine.width == 0 or engine.height == 0) return err.RTGERR_NO_DISPLAY;
-    if (at(engine, crc_control).* & crc_on == 0) {
-        at(engine, crc_control).* = 0;
-        at(engine, window_a_x).* = window(engine.width);
-        at(engine, window_a_y).* = window(engine.height);
-        at(engine, window_b_x).* = window(engine.width);
-        at(engine, window_b_y).* = window(engine.height);
-        at(engine, crc_control).* = crc_every_frame | crc_on;
+    if (asked.width != 0 and asked.x % 4 != 0) return err.RTGERR_BAD_ARG;
+    const across = spanOf(asked.x, asked.width, engine.width) orelse return err.RTGERR_BAD_ARG;
+    const down = spanOf(asked.y, asked.height, engine.height) orelse return err.RTGERR_BAD_ARG;
+    const control = at(engine, crc_control);
+    if (control.* & crc_on == 0 or at(engine, window_a_x).* != across or at(engine, window_a_y).* != down) {
+        control.* = 0;
+        at(engine, window_a_x).* = across;
+        at(engine, window_a_y).* = down;
+        at(engine, window_b_x).* = across;
+        at(engine, window_b_y).* = down;
+        control.* = crc_every_frame | crc_on;
         pause(engine.sys, settle_us);
         into.started = 1;
     }
@@ -90,9 +109,13 @@ fn pause(sys: *ExecBase, us: u64) void {
     _ = sys.WaitForAny(&list, 1, us);
 }
 
-test "the window runs from 0 to the picture's edge" {
+test "the window runs from 0 to the picture's edge, or over the part asked" {
     const testing = @import("std").testing;
     try testing.expectEqual(@as(u32, 2560 << 16), window(2560));
     try testing.expectEqual(@as(u32, 1440 << 16), window(1440));
     try testing.expectEqual(@as(u32, 0x7fff << 16), window(0xffff));
+    try testing.expectEqual(@as(u32, 2560 << 16), spanOf(100, 0, 2560).?);
+    try testing.expectEqual(@as(u32, 400 | 464 << 16), spanOf(400, 64, 2560).?);
+    try testing.expectEqual(@as(u32, 2496 | 2560 << 16), spanOf(2496, 64, 2560).?);
+    try testing.expect(spanOf(2500, 64, 2560) == null);
 }
