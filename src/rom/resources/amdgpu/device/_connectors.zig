@@ -7,9 +7,11 @@
 //! connector the board has, each naming the connector's kind and number,
 //! the encoder that drives it - which of the engine's PHYs - and a list
 //! of records about it, among them the I2C line its monitor's DDC is on
-//! and the pin its hot-plug line comes in on. Read once, as the resource
-//! starts, into the base; GetGPUConnector answers from there. Nothing is
-//! written to the device.
+//! and the pin its hot-plug line comes in on. Those two are ids, which
+//! the table of GPIO pins - another data table - turns into where the
+//! pins are: the register of the DDC's pin pair, and the hot-plug pin's
+//! register and bit. Read once, as the resource starts, into the base;
+//! GetGPUConnector answers from there. Nothing is written to the device.
 //!
 //! Every offset is checked against the image's length before it is read,
 //! and a table of a version this does not know is passed over: the
@@ -42,7 +44,19 @@ const atom_data_tables_at = 0x20;
 /// In the list of data tables, after its own four bytes: which of its
 /// 16-bit offsets is the display object table.
 const data_tables_first = 4;
+const gpio_pins_index = 12;
 const display_objects_index = 22;
+
+/// The table of GPIO pins: its size and version, then a pin per 8 bytes -
+/// its register (of which the low 16 bits are taken), its bit, and its
+/// id, which the records name.
+const pins_size_at = 0;
+const pins_content_at = 3;
+const pins_first = 4;
+const pin_bytes = 8;
+const pin_register_at = 0;
+const pin_bit_at = 4;
+const pin_id_at = 6;
 
 /// The display object table: its version, how many paths, the paths, and
 /// each path's size in either version this reads (1.4 and 1.5), which
@@ -129,7 +143,33 @@ pub fn read(image: []const u8) Read {
         found.list[found.count] = connector;
         found.count += 1;
     }
+    const pins: usize = half(image, @as(usize, data_tables) + data_tables_first + gpio_pins_index * 2) orelse return found;
+    if (pins != 0) {
+        for (found.list[0..found.count]) |*connector| findPins(image, pins, connector);
+    }
     return found;
+}
+
+/// The pins of a connector's DDC and hot-plug ids, from the table of
+/// GPIO pins at `table`: the pin whose id is the record's. A table of
+/// another version, or one too short for a single pin, names none.
+fn findPins(image: []const u8, table: usize, connector: *amdgpu.GPUConnector) void {
+    const size = half(image, table + pins_size_at) orelse return;
+    const content = byte(image, table + pins_content_at) orelse return;
+    if (content != 1 or size < pins_first + pin_bytes) return;
+    if (table + size > image.len) return;
+    const count = (size - pins_first) / pin_bytes;
+    var index: usize = 0;
+    while (index < count) : (index += 1) {
+        const pin = table + pins_first + index * pin_bytes;
+        const id = image[pin + pin_id_at];
+        const register: u32 = half(image, pin + pin_register_at).?;
+        if (id == connector.ddc) connector.ddc_pin = register;
+        if (id == connector.hpd) {
+            connector.hpd_pin = register;
+            connector.hpd_pin_bit = image[pin + pin_bit_at];
+        }
+    }
 }
 
 /// What the records from `at` name: the DDC's I2C line and the hot-plug
@@ -206,13 +246,16 @@ fn tell(sys: *sdk.interface.exec.ExecBase, found: *const Read) void {
         owner, @as(u32, found.major), @as(u32, found.minor), found.count,
     });
     for (found.list[0..found.count]) |connector| {
-        exec.kprintf(sys, "%s:   %s %d on PHY %c, DDC line %x, hot plug %x (object %x, encoder %x)\n", .{
+        exec.kprintf(sys, "%s:   %s %d on PHY %c, DDC line %x (pins at %x), hot plug %x (pin %x bit %d) (object %x, encoder %x)\n", .{
             owner,
             kindName(connector.kind),
             connector.number,
             if (connector.phy == amdgpu.GPULINE_NONE) @as(u32, '?') else 'A' + connector.phy,
             connector.ddc,
+            connector.ddc_pin,
             connector.hpd,
+            connector.hpd_pin,
+            connector.hpd_pin_bit,
             connector.object,
             connector.encoder,
         });
@@ -270,6 +313,19 @@ fn makeImage(room: []u8) void {
     room[records + 5] = 4;
     room[records + 6] = 3;
     room[records + 8] = record_end;
+    // The pins: a generic one, the hot-plug pin 3, the DDC pair 0x92.
+    const pins = 0x380;
+    put16(room, data_tables + data_tables_first + gpio_pins_index * 2, pins);
+    put16(room, pins + pins_size_at, pins_first + 3 * pin_bytes);
+    room[pins + pins_content_at] = 1;
+    const pin = pins + pins_first;
+    put16(room, pin + pin_register_at, 0x5DB0);
+    room[pin + pin_id_at] = 7;
+    put16(room, pin + pin_bytes + pin_register_at, 0x5DB5);
+    room[pin + pin_bytes + pin_bit_at] = 16;
+    room[pin + pin_bytes + pin_id_at] = 3;
+    put16(room, pin + 2 * pin_bytes + pin_register_at, 0x5D99);
+    room[pin + 2 * pin_bytes + pin_id_at] = 0x92;
 }
 
 test "the connectors are read with their PHYs, DDC lines and hot-plug pins" {
@@ -286,6 +342,21 @@ test "the connectors are read with their PHYs, DDC lines and hot-plug pins" {
     try testing.expectEqual(amdgpu.GPUCONNECTOR_DISPLAYPORT, found.list[1].kind);
     try testing.expectEqual(@as(u32, 2), found.list[1].phy);
     try testing.expectEqual(amdgpu.GPULINE_NONE, found.list[1].ddc);
+}
+
+test "a connector's lines are found in the table of GPIO pins" {
+    var room: [1024]u8 = undefined;
+    makeImage(&room);
+    const found = read(&room);
+    try testing.expectEqual(@as(u32, 0x5D99), found.list[0].ddc_pin);
+    try testing.expectEqual(@as(u32, 0x5DB5), found.list[0].hpd_pin);
+    try testing.expectEqual(@as(u32, 16), found.list[0].hpd_pin_bit);
+    // No lines, no pins.
+    try testing.expectEqual(@as(u32, 0), found.list[1].ddc_pin);
+    try testing.expectEqual(@as(u32, 0), found.list[1].hpd_pin);
+    // A table of another version names none.
+    room[0x380 + pins_content_at] = 2;
+    try testing.expectEqual(@as(u32, 0), read(&room).list[0].ddc_pin);
 }
 
 test "an image without the tables' mark, or a table of another version, names no connectors" {

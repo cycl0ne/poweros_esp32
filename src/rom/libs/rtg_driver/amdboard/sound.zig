@@ -490,7 +490,7 @@ pub fn soundUp(engine: dcn.Engine) bool {
 
 /// The link the firmware lit: the one whose front takes the pipe that is
 /// scanning and whose clock is running.
-fn litLink(engine: dcn.Engine) ?u32 {
+pub fn litLink(engine: dcn.Engine) ?u32 {
     var which: u32 = 0;
     while (which < links) : (which += 1) {
         const front = readLink(engine, which, dig_front);

@@ -198,25 +198,35 @@ pub const RTGCTRL_AMD_START_CONTROLLER: u32 = RTGCTRL_DRIVER + 35;
 pub const RTGCTRL_AMD_CRC: u32 = RTGCTRL_DRIVER + 36;
 
 /// `value` an `*RtgAmdEvents`: what the display engine's hot-plug lines
-/// and its controller's notifications have done. The first ask listens
-/// to them - each hot-plug line switched on and its interrupt hooked,
-/// and, where the controller runs, its outbox's interrupt hooked and the
-/// controller told to notify - and they are listened to from then on:
-/// later asks only read. With `poke` a line's number (1 to 5), that line
+/// and its controller's notifications have done. The lines are listened
+/// to from the board's start - each switched on and its interrupt hooked;
+/// the first ask once the controller runs has its outbox's interrupt
+/// hooked and the controller told to notify, and it is listened to from
+/// then on: later asks only read. With `poke` a line's number (1 to 5), that line
 /// is first told to wait for what it already senses, so that it raises
 /// its interrupt at once: a test of the whole path, counted as one
 /// change of the line. RTGERR_OK, RTGERR_BAD_ARG for no such line.
 pub const RTGCTRL_AMD_EVENTS: u32 = RTGCTRL_DRIVER + 37;
 /// `value` an `*RtgAmdAux`: one AUX transaction on a DisplayPort
-/// socket, through the display controller, which must run
-/// (RTGCTRL_AMD_START_CONTROLLER) - it is listened to first, as
-/// RTGCTRL_AMD_EVENTS does. RTGERR_OK once a reply was had, whose
-/// `result` says whether the sink answered; RTGERR_NOT_SUPPORTED where
-/// the controller does not run, RTGERR_TIMEOUT where no reply came,
-/// RTGERR_BAD_ARG for more than 16 bytes, RTGERR_IN_USE for a channel
-/// with no AUX engine or one the controller holds. The channel's pad is
-/// put into AUX mode and its engine switched on first.
+/// socket's channel, by the channel's own AUX engine - its pad put into
+/// AUX mode, the engine switched on and taken, the transaction sent and
+/// waited for - or, `through` RTG_AMD_AUX_BY_CONTROLLER, through the
+/// display controller, which must run (RTGCTRL_AMD_START_CONTROLLER) and
+/// is listened to first, as RTGCTRL_AMD_EVENTS does. RTGERR_OK once the
+/// transaction ended, whose `result` says whether the sink answered;
+/// RTGERR_NOT_SUPPORTED where the controller does not run,
+/// RTGERR_TIMEOUT where its reply did not come, RTGERR_BAD_ARG for more
+/// than 16 bytes or a channel with no AUX engine, RTGERR_IN_USE for one
+/// the controller holds.
 pub const RTGCTRL_AMD_AUX: u32 = RTGCTRL_DRIVER + 38;
+/// `value` an `*RtgAmdEdid`: the EDID of the monitor on a connector, read
+/// over its DDC line by the engine's I2C engine on HDMI and DVI, by I2C
+/// over its AUX channel on DisplayPort, with whether its hot-plug line
+/// senses one - what the board's `detect` reads, asked for any
+/// connector. RTGERR_OK once it was asked, whose `result` says how the
+/// read went; RTGERR_BAD_ARG for no such connector, RTGERR_NOT_SUPPORTED
+/// for one of another kind or whose DDC line has no engine.
+pub const RTGCTRL_AMD_EDID: u32 = RTGCTRL_DRIVER + 39;
 
 /// How many hot-plug lines RtgAmdEvents holds.
 pub const RTG_AMD_HOT_PLUG_LINES = 5;
@@ -227,7 +237,8 @@ pub const RTG_AMD_HOT_PLUG_LINES = 5;
 /// changes, status register (bit 1 senses a monitor, bit 4 the same past
 /// the line's filter) and control register (bit 28 on); the controller's
 /// interrupts and notifications - all, the AUX replies, the hot plugs it
-/// saw, the others.
+/// saw, the others; how many times the library has looked at the board's
+/// connector (`detect`).
 pub const RtgAmdEvents = extern struct {
     poke: u32 = 0,
     lines_heard: u32 = 0,
@@ -241,12 +252,18 @@ pub const RtgAmdEvents = extern struct {
     aux_replies: u32 = 0,
     hot_plug_notes: u32 = 0,
     other_notes: u32 = 0,
+    connector_looks: u32 = 0,
 };
 
 /// An RtgAmdAux's kinds: the sink's own registers (DPCD), or its I2C
 /// bus over AUX - the monitor's EDID among what is on it.
 pub const RTG_AMD_AUX_DPCD: u32 = 0;
 pub const RTG_AMD_AUX_I2C: u32 = 1;
+
+/// An RtgAmdAux's `through`: the channel's own AUX engine, or the
+/// display controller.
+pub const RTG_AMD_AUX_BY_ENGINE: u32 = 0;
+pub const RTG_AMD_AUX_BY_CONTROLLER: u32 = 1;
 
 /// An RtgAmdAux's `result`: the sink replied; else why it did not - no
 /// reply that could be read, none in time, nothing plugged into the
@@ -263,10 +280,11 @@ pub const RTG_AMD_AUX_PROTOCOL: u32 = 7;
 /// One AUX transaction for RTGCTRL_AMD_AUX: the socket's AUX channel (its
 /// DDC line's number, GetGPUConnector's `ddc` & 0xF), the kind, a write
 /// of `data` or a read into it, I2C's middle-of-transaction, the address
-/// and the bytes (16 at most) - and, filled in, the `result`, the sink's
-/// reply code (0 an ACK) and how many bytes it sent; `found` and `after`
-/// the channel's engine's control, arbitration, status and receive
-/// registers as they read before it was made ready and after the reply.
+/// and the bytes (16 at most), which way it goes - and, filled in, the
+/// `result`, the sink's reply code (0 an ACK) and how many bytes it sent;
+/// `found` and `after` the channel's engine's control, arbitration,
+/// status and receive registers as they read before it was made ready and
+/// after the reply.
 pub const RtgAmdAux = extern struct {
     instance: u32 = 0,
     kind: u32 = RTG_AMD_AUX_DPCD,
@@ -280,6 +298,49 @@ pub const RtgAmdAux = extern struct {
     data: [16]u8 = @splat(0),
     found: [4]u32 = @splat(0),
     after: [4]u32 = @splat(0),
+    through: u32 = RTG_AMD_AUX_BY_ENGINE,
+};
+
+/// An RtgAmdEdid's `connector` for the board's own: the one whose PHY
+/// drives the link the board shows on.
+pub const RTG_AMD_BOARDS_CONNECTOR: u32 = 0xFFFF_FFFF;
+
+/// An RtgAmdEdid's `result`: read; else why not - the I2C engine taken
+/// by the hardware or the display controller, nothing answering at the
+/// EDID's address, no end in time, the engine giving up, more than its
+/// buffer holds.
+pub const RTG_AMD_DDC_OK: u32 = 0;
+pub const RTG_AMD_DDC_BUSY: u32 = 1;
+pub const RTG_AMD_DDC_NO_ANSWER: u32 = 2;
+pub const RTG_AMD_DDC_TIMEOUT: u32 = 3;
+pub const RTG_AMD_DDC_FAILED: u32 = 4;
+pub const RTG_AMD_DDC_TOO_LONG: u32 = 5;
+
+/// How many bytes of EDID an RtgAmdEdid holds: four blocks.
+pub const RTG_AMD_EDID_BYTES = 512;
+
+/// One connector's monitor for RTGCTRL_AMD_EDID: the connector (its index
+/// as GetGPUConnector counts them, or RTG_AMD_BOARDS_CONNECTOR) and,
+/// filled in, its kind (GPUCONNECTOR_*), its DDC and hot-plug lines (0
+/// for the first, 0xFF for none), whether the line senses a monitor, how
+/// the read went - an RTG_AMD_DDC_* over I2C, an RTG_AMD_AUX_* over AUX
+/// with the sink's last `answer` - how many bytes it read, whole blocks,
+/// and the EDID; `found` and `after` the I2C engine's control,
+/// arbitration and status, the line's status, speed and setup, the
+/// reference's divider and the line's pads before and after - over AUX,
+/// the AUX engine's control, arbitration, status and receive registers.
+pub const RtgAmdEdid = extern struct {
+    connector: u32 = RTG_AMD_BOARDS_CONNECTOR,
+    kind: u32 = 0,
+    ddc_line: u32 = 0xFF,
+    hpd_line: u32 = 0xFF,
+    present: u32 = 0,
+    result: u32 = RTG_AMD_DDC_OK,
+    bytes: u32 = 0,
+    answer: u32 = 0,
+    found: [8]u32 = @splat(0),
+    after: [8]u32 = @splat(0),
+    edid: [RTG_AMD_EDID_BYTES]u8 = @splat(0),
 };
 
 /// What RTGCTRL_AMD_CRC fills in: the pipe summed, each colour's CRC,

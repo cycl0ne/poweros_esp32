@@ -13,7 +13,8 @@
 //! the others are switched on here, so that every socket is heard.
 //!
 //! What a line has done is counted beside the board (`Lines`), for
-//! RTGCTRL_AMD_EVENTS to answer.
+//! RTGCTRL_AMD_EVENTS to answer; a change of the board's own connector's
+//! line has the library look at it again.
 
 const sdk = @import("sdk");
 const amdgpu = sdk.resources.amdgpu;
@@ -43,6 +44,11 @@ const int_polarity: u32 = 1 << 8;
 const int_enable: u32 = 1 << 16;
 pub const control_enable: u32 = 1 << 28;
 
+/// Where the BIOS's table of pins names the lines: one GPIO register for
+/// all, a line per bit.
+const pins_register = 0x28f5;
+const pin_bits = [count]u32{ 0, 8, 16, 24, 26 };
+
 /// What the lines have done since they were first listened to.
 pub const Lines = struct {
     listening: bool = false,
@@ -52,6 +58,27 @@ pub const Lines = struct {
 
 fn at(engine: dcn.Engine, line: u32, offset: u32) *volatile u32 {
     return reg(engine.registers + (@as(usize, engine.block) + offset + line * stride) * 4);
+}
+
+/// The line a connector's hot-plug pin is (0 for the first): null where
+/// the BIOS names none, or one past the engine's lines.
+pub fn lineOf(engine: dcn.Engine, connector: amdgpu.GPUConnector) ?u32 {
+    if (connector.hpd_pin < engine.block) return null;
+    return lineOfPin(connector.hpd_pin - engine.block, connector.hpd_pin_bit);
+}
+
+pub fn lineOfPin(register: u32, bit: u32) ?u32 {
+    if (register != pins_register) return null;
+    for (pin_bits, 0..) |line_bit, line| {
+        if (line_bit == bit) return @intCast(line);
+    }
+    return null;
+}
+
+/// Whether line `line` senses a monitor, past its filter.
+pub fn senses(engine: dcn.Engine, line: u32) bool {
+    if (line >= count) return false;
+    return at(engine, line, status_at).* & status_sense_delayed != 0;
 }
 
 /// Each line's status and control registers into `into`.
@@ -120,17 +147,31 @@ pub fn poke(engine: dcn.Engine, lines: *Lines, line: u32) bool {
 }
 
 /// In the server: each line that raised its interrupt counted,
-/// acknowledged and turned to wait for the opposite.
-pub fn take(engine: dcn.Engine, lines: *Lines) void {
+/// acknowledged and turned to wait for the opposite. Which lines did, a
+/// bit each from the first.
+pub fn take(engine: dcn.Engine, lines: *Lines) u32 {
     lines.interrupts +%= 1;
+    var raised: u32 = 0;
     for (0..count) |index| {
         const line: u32 = @intCast(index);
         const status = at(engine, line, status_at).*;
         if (status & status_raised == 0) continue;
         lines.changes[index] +%= 1;
+        raised |= @as(u32, 1) << @intCast(line);
         const int_control = at(engine, line, int_control_at);
         int_control.* = int_control.* & ~int_polarity | polarityFor(status) | int_ack;
     }
+    return raised;
+}
+
+test "a pin's bit names its line" {
+    const testing = @import("std").testing;
+    try testing.expectEqual(@as(?u32, 0), lineOfPin(0x28f5, 0));
+    try testing.expectEqual(@as(?u32, 1), lineOfPin(0x28f5, 8));
+    try testing.expectEqual(@as(?u32, 4), lineOfPin(0x28f5, 26));
+    // The sixth has no line here, and another register none at all.
+    try testing.expectEqual(@as(?u32, null), lineOfPin(0x28f5, 28));
+    try testing.expectEqual(@as(?u32, null), lineOfPin(0x28d1, 0));
 }
 
 test "a line waits for the opposite of what it senses" {

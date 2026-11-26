@@ -30,7 +30,12 @@
 //! on the log.
 //!
 //! The display has one mode, the firmware's, and no cursor plane: the
-//! pointer and the overlay are laid in the pictures by the library.
+//! pointer and the overlay are laid in the pictures by the library. Its
+//! connector - the one whose PHY drives the lit link - is looked at by
+//! the library (`detect`, `monitor.zig`): whether its hot-plug line
+//! senses a monitor, and that monitor's EDID over its DDC line
+//! (`i2c.zig`); of the timings the monitor names, `check_mode` takes the
+//! firmware's alone.
 //!
 //! The pipe's update is the frame: through the device's interrupt ring,
 //! its server says it to the library (`FrameDone`), and a flip and
@@ -52,9 +57,11 @@
 //! (`dmub.zig`): the memory it runs with stays the board's once given.
 //! The picture's checksum, as the timing generator sums it, is a test
 //! tool asked for the same way (`crc.zig`). The engine's hot-plug lines
-//! (`hpd.zig`) and the controller's notifications are listened to from
-//! the first ask for them on, each through a server on the device's
-//! interrupt ring, and AUX transactions go through the controller.
+//! (`hpd.zig`) are listened to from the board's start, the controller's
+//! notifications from the first ask for them once it runs, each through
+//! a server on the device's interrupt ring; a change of the connector's
+//! line has the library look at it again. AUX transactions go through
+//! the controller.
 //!
 //! The buffers drawn in are the machine's RAM, taken by the library as
 //! each is allocated (RTGRF_SYSTEM_MEMORY, RTGRF_DMA_MEMORY).
@@ -83,11 +90,12 @@ const dmub = @import("dmub.zig");
 const crc = @import("crc.zig");
 const hpd = @import("hpd.zig");
 const aux = @import("aux.zig");
+const monitor = @import("monitor.zig");
 
 const MODULE_NAME = "rtg-amd";
 const DRIVER_NAME = "amd";
 const VERSION = 1;
-const REVISION = 8;
+const REVISION = 9;
 const BUILD_DATE = "26.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -155,6 +163,12 @@ const Screen = struct {
     lines: hpd.Lines = .{},
     hot_plug_int: exec.Interrupt = .{},
     outbox_int: exec.Interrupt = .{},
+    /// The board's connector, and the lock that keeps one reader at a
+    /// time at the I2C engine.
+    connector: monitor.Connector = .{},
+    ddc_lock: exec.SignalSemaphore = .{},
+    /// How many times the library has looked at it.
+    looks: u32 = 0,
 };
 
 /// Wait for `frames` frames, as the library waits (WaitVBlank): for the
@@ -182,7 +196,12 @@ fn frameServer(data: ?*anyopaque, int_number: u32) callconv(.c) i32 {
 fn hotPlugServer(data: ?*anyopaque, int_number: u32) callconv(.c) i32 {
     _ = int_number;
     const screen: *Screen = @ptrCast(@alignCast(data.?));
-    hpd.take(screen.dcn, &screen.lines);
+    const raised = hpd.take(screen.dcn, &screen.lines);
+    // The board's own connector's line: the library looks at it again.
+    const line = screen.connector.hpd_line;
+    if (line != monitor.no_line and raised & @as(u32, 1) << @intCast(line) != 0) {
+        drivers(screen).MonitorChanged(screen.board);
+    }
     return 1;
 }
 
@@ -458,6 +477,12 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, device_tags: ?[*]const
     };
     sys.InitSemaphore(&screen.smu_lock);
     sys.InitSemaphore(&screen.controller_lock);
+    sys.InitSemaphore(&screen.ddc_lock);
+    screen.connector = monitor.boards(found);
+    tellConnector(screen);
+    // Its hot-plug lines listened to from the start, so a monitor that
+    // comes or goes has the library look at the connector again.
+    listen(screen);
     // The board's buffers start, and their rows are rounded, as its tags
     // say; whole cache lines where they say nothing.
     const asked_alignment: u32 = @truncate(rb.GetRtgTagData(tags.RTGA_Alignment, 0, tag_list));
@@ -495,6 +520,22 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, device_tags: ?[*]const
     board.info.buffers = screen.buffers;
     device.driver_data = screen;
     return err.RTGERR_OK;
+}
+
+/// The board's connector on the boot's lines.
+fn tellConnector(screen: *const Screen) void {
+    const on = screen.connector;
+    if (!on.found) {
+        exec.kprintf(screen.sys, "%s: no connector the video BIOS lists drives the lit link\n", .{dcn.owner});
+        return;
+    }
+    exec.kprintf(screen.sys, "%s: the board's connector is the BIOS's %d (kind %d), DDC line %d, hot-plug line %d (0 for none)\n", .{
+        dcn.owner,
+        on.index,
+        on.kind,
+        if (on.ddc_line == monitor.no_line) @as(u32, 0) else on.ddc_line + 1,
+        if (on.hpd_line == monitor.no_line) @as(u32, 0) else on.hpd_line + 1,
+    });
 }
 
 /// The display put back on the firmware's framebuffer, where it reads
@@ -551,6 +592,24 @@ fn showOp(board: *rtg.RtgBoard, what: *const rtg.RtgShow) callconv(.c) i32 {
     screen.scanning = 0;
     scanFrom(screen, start);
     return err.RTGERR_OK;
+}
+
+/// What is on the connector (`monitor.detect`), one reader at a time at
+/// the I2C engine.
+fn detectOp(board: *rtg.RtgBoard, into: *rtg.modes.RtgDetect) callconv(.c) i32 {
+    const screen = screenOf(board);
+    screen.sys.ObtainSemaphore(&screen.ddc_lock);
+    defer screen.sys.ReleaseSemaphore(&screen.ddc_lock);
+    screen.looks +%= 1;
+    return monitor.detect(screen.dcn, screen.connector, into);
+}
+
+/// The one timing the board makes: the one the firmware lit, whose
+/// picture and whose line and frame the pipe has. Every other a monitor
+/// names is refused, so the board stays in the firmware's mode.
+fn checkModeOp(board: *rtg.RtgBoard, timings: *const rtg.RtgTimings) callconv(.c) i32 {
+    const engine = screenOf(board).dcn;
+    return if (monitor.isLit(engine, timings.*)) err.RTGERR_OK else err.RTGERR_BAD_MODE;
 }
 
 fn stats(board: *rtg.RtgBoard, into: *rtg.RtgBoardStats) callconv(.c) void {
@@ -611,11 +670,13 @@ fn control(board: *rtg.RtgBoard, what: u32, value: isize) callconv(.c) isize {
             into.line_changes = screen.lines.changes;
             hpd.read(screen.dcn, into);
             dmub.counts(&screen.controller, into);
+            into.connector_looks = screen.looks;
             return err.RTGERR_OK;
         },
         rtg.tags.RTGCTRL_AMD_AUX => {
             if (value == 0) return err.RTGERR_BAD_ARG;
             const request: *rtg.tags.RtgAmdAux = @ptrFromInt(@as(usize, @bitCast(value)));
+            if (request.through == rtg.tags.RTG_AMD_AUX_BY_ENGINE) return auxByEngine(screen, request);
             screen.sys.ObtainSemaphore(&screen.controller_lock);
             defer screen.sys.ReleaseSemaphore(&screen.controller_lock);
             listen(screen);
@@ -626,6 +687,13 @@ fn control(board: *rtg.RtgBoard, what: u32, value: isize) callconv(.c) isize {
             aux.read(screen.dcn, request.instance, &request.after);
             return result;
         },
+        rtg.tags.RTGCTRL_AMD_EDID => {
+            if (value == 0) return err.RTGERR_BAD_ARG;
+            const into: *rtg.tags.RtgAmdEdid = @ptrFromInt(@as(usize, @bitCast(value)));
+            screen.sys.ObtainSemaphore(&screen.ddc_lock);
+            defer screen.sys.ReleaseSemaphore(&screen.ddc_lock);
+            return monitor.edid(screen.dcn, screen.connector, into);
+        },
         rtg.tags.RTGCTRL_AMD_CRC => {
             if (value == 0) return err.RTGERR_BAD_ARG;
             const into: *rtg.tags.RtgAmdCrc = @ptrFromInt(@as(usize, @bitCast(value)));
@@ -633,6 +701,23 @@ fn control(board: *rtg.RtgBoard, what: u32, value: isize) callconv(.c) isize {
         },
         else => return err.RTGERR_NOT_SUPPORTED,
     }
+}
+
+/// One AUX transaction by the channel's own engine, as RTGCTRL_AMD_AUX
+/// asks, one at a time with the board's looks at its connector.
+fn auxByEngine(screen: *Screen, request: *rtg.tags.RtgAmdAux) isize {
+    if (request.length > request.data.len) return err.RTGERR_BAD_ARG;
+    if (request.instance >= aux.lines) return err.RTGERR_BAD_ARG;
+    screen.sys.ObtainSemaphore(&screen.ddc_lock);
+    defer screen.sys.ReleaseSemaphore(&screen.ddc_lock);
+    aux.read(screen.dcn, request.instance, &request.found);
+    const reply = aux.transfer(screen.dcn, request.instance, dmub.auxAction(request), request.address, request.data[0..request.length]);
+    aux.read(screen.dcn, request.instance, &request.after);
+    if (reply.result == rtg.tags.RTG_AMD_AUX_BUSY) return err.RTGERR_IN_USE;
+    request.result = reply.result;
+    request.reply = reply.answer;
+    request.replied = reply.bytes;
+    return err.RTGERR_OK;
 }
 
 /// Flipped, between frames of its own, which are written and never
@@ -645,6 +730,8 @@ const ops = rtg.boards.RtgBoardOps{
     .frames = &framesOp,
     .stats = &stats,
     .control = &control,
+    .detect = &detectOp,
+    .check_mode = &checkModeOp,
 };
 
 const driver_ops = rtg.RtgDriverOps{ .attach = &attach, .detach = &detach };

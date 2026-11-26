@@ -89,9 +89,9 @@ const engine_minor = 1;
 const engine_revision = 4;
 
 /// How far, in 32-bit words, the registers read and written here reach
-/// from where the display block's are counted - the last link's sound is
+/// from where the display block's are counted - the DDC lines' pads are
 /// the furthest - and from where the clocks' are.
-const display_reach: u64 = 0x2800;
+const display_reach: u64 = 0x2a00;
 const clocks_reach: u64 = 0x100;
 
 // --- the registers, counted in 32-bit words from the block -------------------------
@@ -313,6 +313,13 @@ pub fn find(sys: *ExecBase, fb: uefi.Framebuffer) ?Engine {
 }
 
 // --- the frames the fetcher is flipped between -------------------------------------
+
+/// `us` microseconds let pass, the task waiting.
+pub fn pause(sys: *ExecBase, us: u64) void {
+    var never: exec.Waitable = .{};
+    const list = [_]*exec.Waitable{&never};
+    _ = sys.WaitForAny(&list, 1, us);
+}
 
 /// `bytes` of the device's own memory for a frame, from a page on; null
 /// where there is no room.

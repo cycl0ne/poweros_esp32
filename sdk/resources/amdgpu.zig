@@ -181,6 +181,12 @@ pub const GPUCONNECTORS_MAX = 8;
 /// is on and the pin its hot-plug line comes in on, as the BIOS numbers
 /// them - each GPULINE_NONE where the BIOS names none - and the
 /// connector's and its encoder's object ids as the BIOS gives them.
+/// Then where those two lines' pins are, from the BIOS's table of GPIO
+/// pins: the register of the DDC's pin pair and the hot-plug pin's
+/// register and bit, in 32-bit words from the start of the device's
+/// registers - 0 where the table names no pin for the line. Which of the
+/// display engine's DDC and hot-plug lines a register is, is the
+/// engine's own layout's to say.
 pub const GPUConnector = extern struct {
     kind: u32 = GPUCONNECTOR_OTHER,
     number: u32 = 0,
@@ -189,6 +195,9 @@ pub const GPUConnector = extern struct {
     hpd: u32 = GPULINE_NONE,
     object: u32 = 0,
     encoder: u32 = 0,
+    ddc_pin: u32 = 0,
+    hpd_pin: u32 = 0,
+    hpd_pin_bit: u32 = 0,
 };
 
 pub const AMDGPUBase = @import("../interface/amdgpu.zig").AMDGPUBase;

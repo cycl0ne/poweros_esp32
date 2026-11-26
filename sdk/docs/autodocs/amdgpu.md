@@ -399,16 +399,21 @@ fn GetGPUConnector(ab: *AMDGPUBase, index: u32, connector: *GPUConnector) bool
 True with `connector` filled in: its kind (GPUCONNECTOR_HDMI,
 GPUCONNECTOR_DISPLAYPORT, ...) and its number among those of its kind,
 the PHY that drives it, the I2C line of its monitor's DDC and the pin
-of its hot-plug line, and its and its encoder's object ids. False for
-an `index` past the last connector, or where the device's video BIOS
-lists none, with `connector` left alone.
+of its hot-plug line, its and its encoder's object ids, and where the
+two lines' pins are: the register of the DDC's pin pair, and the
+hot-plug pin's register and bit (since 1.8). False for an `index`
+past the last connector, or where the device's video BIOS lists none,
+with `connector` left alone.
 
 **BEHAVIOR**
 
 The list was read once, as the resource started, from the display
 object table of the device's video BIOS image (GetGPUBios): a path per
 connector the board wires, in the order the table gives them, those
-without an encoder left out. A table of a version the resource does
+without an encoder left out. The pins are those of the BIOS's table
+of GPIO pins whose ids the connector's records name; a register is
+counted in 32-bit words from the start of the device's registers. A
+table of a version the resource does
 not read lists nothing. At most GPUCONNECTORS_MAX are kept.
 
 **CONTEXT**
@@ -427,6 +432,9 @@ not read lists nothing. At most GPUCONNECTORS_MAX are kept.
 A PHY, a DDC line or a hot-plug pin the table names none of is
 GPULINE_NONE. The lines are numbered as the BIOS numbers them: the
 DDC line as the BIOS's I2C id, the hot-plug pin as its GPIO pin id.
+A pin the table of GPIO pins does not hold is 0. Which of the display
+engine's lines a pin's register is, is the engine's layout to say: its
+driver holds the register against the engine's own GPIO registers.
 
 **BUGS**
 

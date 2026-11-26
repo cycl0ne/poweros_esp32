@@ -2,12 +2,13 @@
 //! Gpu: an AMD graphics device tried a part at a time, each step said:
 //! its video BIOS read, the display's clocks asked for, the display
 //! controller read or started, its hot-plug lines and notifications
-//! counted, an AUX read through it, the picture's checksum read, its security
+//! counted, an AUX read through it, a monitor's EDID read over its DDC
+//! line, the picture's checksum read, its security
 //! processor started and the video decoder's firmware loaded by it, the
 //! display's interrupt at each frame counted, or one flip of the picture
 //! the display reads. Built against the SDK only.
 //!
-//!   Gpu TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,PIPE/K/N,FETCHER/K/N,WATCHDOG/K/N
+//!   Gpu TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,WATCHDOG/K/N
 //!
 //! BIOS prints the device's video BIOS image (GetGPUBios): where it is
 //! and how long, its tables' header's version, the version of each data
@@ -45,8 +46,9 @@
 //! EVENTS prints what the display engine's hot-plug lines and its
 //! controller's notifications have done (RTGCTRL_AMD_EVENTS): each
 //! line's changes, whether it senses a monitor and whether it is on, and
-//! the controller's notifications by kind. The first time it has them
-//! listened to, so the watchdog is armed for it; a cable pulled and put
+//! the controller's notifications by kind. The first time after the
+//! controller started it has the controller's notifications listened
+//! to, so the watchdog is armed for it; a cable pulled and put
 //! back between two EVENTS shows as a line's changes. With LINE the
 //! line of that number is first made to raise its interrupt once, by
 //! waiting for what it already senses - the path tested without a hand
@@ -54,12 +56,22 @@
 //!
 //! AUX reads LENGTH bytes (16 unless given, at most 16) at ADDRESS (0
 //! unless given) through the socket's AUX channel AUX - its DDC line's
-//! number - by the display controller (RTGCTRL_AMD_AUX), which DMCUB
-//! START must have started: the sink's own registers, or with I2C its
-//! I2C bus. Printed are the controller's result, the sink's reply and
-//! the bytes. The watchdog is armed for it.
+//! number - by the channel's own AUX engine (RTGCTRL_AMD_AUX), or with
+//! CONTROLLER by the display controller, which DMCUB START must have
+//! started: the sink's own registers, or with I2C its I2C bus. Printed
+//! are the result, the sink's reply, the bytes and the channel's
+//! registers before and after. The watchdog is armed for it.
 //!
-//! Without BIOS, CLOCKS, DMCUB, CRC, EVENTS, AUX, FRAMES or FLIP the two files are read from
+//! EDID reads the EDID of the monitor on the board's connector, or on
+//! connector CONNECTOR as BIOS numbers them, as the board's own look at
+//! its connector does (RTGCTRL_AMD_EDID): over its DDC line by the
+//! display engine's I2C engine on HDMI and DVI, by I2C over its AUX
+//! channel on DisplayPort. Printed are the connector's lines, whether its
+//! hot-plug line senses a monitor, how the read went, the engine's
+//! registers before and after, what the EDID says of the monitor and its
+//! bytes. The watchdog is armed for it.
+//!
+//! Without BIOS, CLOCKS, DMCUB, CRC, EVENTS, AUX, EDID, FRAMES or FLIP the two files are read from
 //! DEVS:firmware/amdgpu/, named for the blocks that use them as the
 //! device's table gives their versions - psp_13_0_4_toc.bin for the
 //! security processor 13.0.4, vcn_4_0_2.bin for the video decoder 4.0.2 -
@@ -113,10 +125,10 @@ const rtg = sdk.rtg;
 const RtgBase = sdk.interface.rtg.RtgBase;
 
 pub const COMMAND_NAME = "Gpu";
-const VERSION_STRING = "\x00$VER: Gpu 1.6 (26.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Gpu 1.7 (26.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,PIPE/K/N,FETCHER/K/N,WATCHDOG/K/N";
+const template = "TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,WATCHDOG/K/N";
 const arg_toc = 0;
 const arg_firmware = 1;
 const arg_frames = 2;
@@ -132,10 +144,13 @@ const arg_aux = 11;
 const arg_address = 12;
 const arg_length = 13;
 const arg_i2c = 14;
-const arg_pipe = 15;
-const arg_fetcher = 16;
-const arg_watchdog = 17;
-const arg_count = 18;
+const arg_controller = 15;
+const arg_edid = 16;
+const arg_connector = 17;
+const arg_pipe = 18;
+const arg_fetcher = 19;
+const arg_watchdog = 20;
+const arg_count = 21;
 
 /// Where the files are.
 const directory = "DEVS:firmware/amdgpu/";
@@ -455,7 +470,7 @@ fn printCrc(dl: *DosBase, name: [*:0]const u8, result: isize, found: *const rtg.
         return;
     }
     _ = Printf(dl, "%s: pipe %u red %04x green %04x blue %04x%s\n", .{
-        name, found.pipe, found.red, found.green, found.blue,
+        name,                                                                         found.pipe, found.red, found.green, found.blue,
         @as([*:0]const u8, if (found.started != 0) " (summing switched on)" else ""),
     });
 }
@@ -492,6 +507,7 @@ fn events(sys: *ExecBase, dl: *DosBase, millis: u32, line: u32) i32 {
             @as(u64, found.line_control[index]),
         });
     }
+    _ = Printf(dl, "The board's connector looked at %u times\n", .{found.connector_looks});
     if (found.controller_heard == 0) {
         _ = Printf(dl, "The controller is not listened to: it does not run (DMCUB START)\n", .{});
     } else {
@@ -540,6 +556,75 @@ fn auxRead(sys: *ExecBase, dl: *DosBase, millis: u32, request: *rtg.tags.RtgAmdA
         @as(u64, request.after[0]), @as(u64, request.after[1]), @as(u64, request.after[2]), @as(u64, request.after[3]),
     });
     return if (request.result == rtg.tags.RTG_AMD_AUX_OK) dos.RETURN_OK else dos.RETURN_WARN;
+}
+
+/// A monitor's EDID read with the watchdog armed, and printed.
+fn edidRead(sys: *ExecBase, dl: *DosBase, millis: u32, request: *rtg.tags.RtgAmdEdid) i32 {
+    const base = sys.OpenLibrary(rtg.RTGNAME, rtg.RTG_VERSION) orelse {
+        _ = Printf(dl, "No %s\n", .{rtg.RTGNAME});
+        return dos.RETURN_FAIL;
+    };
+    defer sys.CloseLibrary(base);
+    const rb: *RtgBase = @ptrCast(base);
+    const board = amdBoard(dl, rb) orelse return dos.RETURN_WARN;
+    const wb = arm(sys, dl, millis) orelse return dos.RETURN_FAIL;
+    const result = rb.BoardControl(board, rtg.tags.RTGCTRL_AMD_EDID, @bitCast(@intFromPtr(request)));
+    wb.DisarmWatchdog();
+    if (result == rtg.errors.RTGERR_BAD_ARG) {
+        _ = Printf(dl, "No connector %u\n", .{request.connector});
+        return dos.RETURN_ERROR;
+    }
+    _ = Printf(dl, "Connector: kind %u, DDC line %u, hot-plug line %u (0 for none), %s\n", .{
+        request.kind,
+        if (request.ddc_line == 0xFF) @as(u32, 0) else request.ddc_line + 1,
+        if (request.hpd_line == 0xFF) @as(u32, 0) else request.hpd_line + 1,
+        @as([*:0]const u8, if (request.present != 0) "a monitor sensed" else "no monitor sensed"),
+    });
+    if (result == rtg.errors.RTGERR_NOT_SUPPORTED) {
+        _ = Printf(dl, "Its monitor is not read here: a connector of another kind, or no engine for its DDC line\n", .{});
+        return dos.RETURN_WARN;
+    }
+    if (result != rtg.errors.RTGERR_OK) {
+        _ = Printf(dl, "No read: error %ld\n", .{@as(i64, result)});
+        return dos.RETURN_ERROR;
+    }
+    const read_ok = if (request.kind == amdgpu.GPUCONNECTOR_DISPLAYPORT) request.result == rtg.tags.RTG_AMD_AUX_OK and request.answer == 0 else request.result == rtg.tags.RTG_AMD_DDC_OK;
+    if (request.kind == amdgpu.GPUCONNECTOR_DISPLAYPORT) {
+        const results = [_][*:0]const u8{ "read", "an unknown failure", "a reply that could not be read", "no reply in time", "nothing plugged in", "the channel busy", "refused", "a broken reply" };
+        _ = Printf(dl, "EDID over AUX: %s, answer %x, %u bytes\n", .{ results[@min(request.result, results.len - 1)], request.answer, request.bytes });
+        const names = [_][*:0]const u8{ "control", "arbitration", "status", "receive" };
+        for (names, 0..) |name, index| {
+            _ = Printf(dl, "  %-12s %08lx -> %08lx\n", .{ name, @as(u64, request.found[index]), @as(u64, request.after[index]) });
+        }
+    } else {
+        const results = [_][*:0]const u8{ "read", "the engine taken", "no answer", "no end in time", "the engine gave up", "too long for the engine" };
+        _ = Printf(dl, "EDID: %s, %u bytes\n", .{ results[@min(request.result, results.len - 1)], request.bytes });
+        const names = [_][*:0]const u8{ "control", "arbitration", "status", "line status", "speed", "setup", "time base", "pads" };
+        for (names, 0..) |name, index| {
+            _ = Printf(dl, "  %-12s %08lx -> %08lx\n", .{ name, @as(u64, request.found[index]), @as(u64, request.after[index]) });
+        }
+    }
+    if (request.bytes < 128) return if (read_ok) dos.RETURN_OK else dos.RETURN_WARN;
+    const edid = request.edid[0..request.bytes];
+    // The maker's three letters, five bits each from 'A' less one; the
+    // product's number, little-endian; the year from 1990.
+    const maker: u16 = @as(u16, edid[8]) << 8 | edid[9];
+    const letters = [4]u8{ @intCast('@' + (maker >> 10 & 0x1f)), @intCast('@' + (maker >> 5 & 0x1f)), @intCast('@' + (maker & 0x1f)), 0 };
+    _ = Printf(dl, "Monitor %s %04x, made %u, EDID %u.%u, %u extension(s)\n", .{
+        @as([*:0]const u8, @ptrCast(&letters)),
+        @as(u32, edid[10]) | @as(u32, edid[11]) << 8,
+        @as(u32, edid[17]) + 1990,
+        @as(u32, edid[18]),
+        @as(u32, edid[19]),
+        @as(u32, edid[126]),
+    });
+    var row: usize = 0;
+    while (row < edid.len) : (row += 16) {
+        _ = Printf(dl, "  %03x:", .{@as(u32, @intCast(row))});
+        for (edid[row..][0..16]) |byte| _ = Printf(dl, " %02x", .{@as(u32, byte)});
+        _ = Printf(dl, "\n", .{});
+    }
+    return if (read_ok) dos.RETURN_OK else dos.RETURN_WARN;
 }
 
 /// The picture's checksum read with the watchdog armed, and printed.
@@ -617,8 +702,14 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
             .kind = if (argv[arg_i2c] != 0) rtg.tags.RTG_AMD_AUX_I2C else rtg.tags.RTG_AMD_AUX_DPCD,
             .address = number(argv[arg_address]),
             .length = if (argv[arg_length] != 0) number(argv[arg_length]) else 16,
+            .through = if (argv[arg_controller] != 0) rtg.tags.RTG_AMD_AUX_BY_CONTROLLER else rtg.tags.RTG_AMD_AUX_BY_ENGINE,
         };
         return auxRead(sys, dl, millis, &request);
+    }
+    if (argv[arg_edid] != 0) {
+        var request: rtg.tags.RtgAmdEdid = .{};
+        if (argv[arg_connector] != 0) request.connector = number(argv[arg_connector]);
+        return edidRead(sys, dl, millis, &request);
     }
     if (argv[arg_frames] != 0 or argv[arg_flip] != 0) {
         const pipe = number(argv[arg_pipe]);

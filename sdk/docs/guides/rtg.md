@@ -819,16 +819,26 @@ first ask switches the sum on. `C:test/Gpu DMCUB START` and `CRC` do
 these with the watchdog armed, the start with the checksum before and
 after. `RTGCTRL_AMD_EVENTS` fills an `RtgAmdEvents` with what the
 engine's five hot-plug lines and the controller's notifications have
-done; its first ask has them listened to - each line switched on, its
-interrupt waiting for the opposite of what it senses and turned at each
-change, and, where the controller runs, its outbox's interrupt hooked
-and the controller told to notify - and they stay listened to. `poke`
+done. The lines are listened to from the board's start - each switched
+on, its interrupt waiting for the opposite of what it senses and turned
+at each change; the controller's outbox from the first ask once the
+controller runs - its interrupt hooked and the controller told to
+notify - and it stays listened to. `poke`
 makes one line raise its interrupt at once, a test of the path without
-a hand at the cable. `RTGCTRL_AMD_AUX` sends one AUX transaction through
-the controller and waits for its reply notification (`RtgAmdAux`); the
+a hand at the cable. `RTGCTRL_AMD_AUX` sends one AUX transaction
+(`RtgAmdAux`) by the socket's channel's own AUX engine - its pad in AUX
+mode, the engine taken at its arbitration register, the reply waited for
+2.4 ms at the most; a socket with nothing on it answers
+`RTG_AMD_AUX_UNPLUGGED` - or, `through` `RTG_AMD_AUX_BY_CONTROLLER`,
+through the controller, waiting for its reply notification; the
 controller serves the USB4 tunnels' channels, and answers a socket's own
-channel with `RTG_AMD_AUX_REFUSED` - those are the engine's AUX
-registers' to drive. `C:test/Gpu EVENTS [LINE n]` and `AUX n` do these.
+channel with `RTG_AMD_AUX_REFUSED`. `C:test/Gpu EVENTS [LINE n]` and
+`AUX n [CONTROLLER]` do these.
+`RTGCTRL_AMD_EDID` reads a connector's monitor as the board's `detect`
+does (`RtgAmdEdid`): whether its hot-plug line senses one, and its EDID
+- over its DDC line by the engine's I2C engine on HDMI and DVI, by I2C
+over its AUX channel on DisplayPort - with the engine's registers before
+and after; `C:test/Gpu EDID [CONNECTOR n]`.
 
 The numbers say a lot about a picture that misbehaves. A part of the glass
 that is out of date while `refreshes` stands still was never handed on; one
@@ -1642,6 +1652,18 @@ reading it is one it knows, and declines elsewhere, leaving the picture
 with `fw`. Once it has its board, `fw.0` is gone, the framebuffer is
 `amd.0`'s first frame, intuition moves the screens over, and
 audio.device moves the sound to the display's link.
+
+`amd.0` has a connector: the one the video BIOS lists whose PHY drives
+the link the firmware lit, its DDC and hot-plug lines found through the
+BIOS's table of GPIO pins. Its `detect` reads whether the hot-plug line
+senses a monitor and its EDID - on HDMI and DVI over the DDC line by
+the display engine's I2C engine, on DisplayPort by I2C over the line's
+AUX channel, 16 bytes at a time - so `C:Rtg` and
+`GetBoardMonitor` name the monitor; a monitor plugged in or pulled out
+raises the line's interrupt, which has the library look again. The
+board makes one timing, the firmware's: of the timings the monitor names,
+`check_mode` takes the one with the picture, line and frame the pipe
+scans, and the board stays in it.
 
 **Video layers.** On the VisionFive 2 the layer is the DC8200's first
 overlay: NV12 and I420, BT.601 and BT.709, video's range and the whole
