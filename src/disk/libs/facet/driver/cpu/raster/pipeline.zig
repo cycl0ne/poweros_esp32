@@ -285,10 +285,10 @@ pub fn Pipeline(comptime config: Config) type {
                     .right = made.right,
                     .bottom = made.bottom,
                     .edges = made.edges,
-                    .prepass = if (config.prepass and target.attachments.depth.used) &two_passes else null,
+                    .prepass = if (config.prepass and testsTarget(target)) &two_passes else null,
                 },
                 .pixel = color,
-                .depth = if (tests_depth) .of(&made, &projected) else {},
+                .depth = if (tests_depth) .of(&made, &projected, setup.Depth.units16) else {},
                 .planes = if (shaded) planesOf(&made, &projected, &corners) else .{},
                 .least_inverse_w = if (shaded) @min(projected[0].inverse_w, projected[1].inverse_w, projected[2].inverse_w) else {},
                 .texture = texture,
@@ -313,10 +313,20 @@ pub fn Pipeline(comptime config: Config) type {
             return planes;
         }
 
+        /// Whether the target has a depth this pipeline tests: one of 16
+        /// bits, which every target an SDK program makes has. Of a frame
+        /// that keeps 24 (`Attachments.Depth.bits`, since 1.223), which
+        /// only a facet render pass makes and which batched.zig draws
+        /// into, the pipeline tests none rather than reading 32-bit words
+        /// as 16.
+        inline fn testsTarget(target: *const Target) bool {
+            return target.attachments.depth.used and target.attachments.depth.bits == 16;
+        }
+
         /// How the tiles draw the triangles, with the target's depth or
         /// without.
         fn rasterFor(target: *const Target) *const fn (tile: *const Tile, header: *const Header) void {
-            const depth = tests_depth and target.attachments.depth.used;
+            const depth = tests_depth and testsTarget(target);
             return if (shaded)
                 (if (depth) &rasterShadedDepth else &rasterShaded)
             else if (depth) &rasterDepth else &rasterFlat;
@@ -361,7 +371,7 @@ pub fn Pipeline(comptime config: Config) type {
             inline fn run(tested: Tested, y: u32, left: u32, right: u32) void {
                 const tile = tested.tile;
                 var z = tested.depth.at(tile.x + left, tile.y + y);
-                for (tile.depthRow(y)[left..right], tile.row(y)[left..right]) |*kept, *pixel| {
+                for (tile.depthRow(u16, y)[left..right], tile.row(y)[left..right]) |*kept, *pixel| {
                     const near = @as(u64, @bitCast(z)) >> setup.Depth.fraction;
                     z +%= tested.depth.step;
                     const late = if (config.early_depth) {} else tested.color();
@@ -403,7 +413,7 @@ pub fn Pipeline(comptime config: Config) type {
             walk.quads(1, tile, header, Shaded(.second).of(tile, triangle), Shaded(.second).run);
         }
 
-        const two_passes = bins.Prepass{ .depth = &prepass.DepthOnly(Triangle).raster, .shade = &rasterShadedSecond };
+        const two_passes = bins.Prepass{ .depth = &prepass.DepthOnly(Triangle, u16).raster, .shade = &rasterShadedSecond };
 
         /// How a triangle's quads are tested against the tile's depth.
         const Testing = enum {
@@ -489,7 +499,7 @@ pub fn Pipeline(comptime config: Config) type {
                     var z_upper: i64 = if (tested) context.rowDepth(upper, x, y) else 0;
                     var z_lower: i64 = if (tested) context.rowDepth(lower, x, y + 1) else 0;
                     const colors = tile.row(y);
-                    const depths = tile.depthRow(y);
+                    const depths = tile.depthRow(u16, y);
                     while (x < end) : ({
                         x += 2;
                         across += 2;

@@ -675,7 +675,7 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, part
         .load = has_color and (!clears or !whole),
         .clear_inside = clears and !whole,
         .depth = command.parts[part].tests_depth,
-        .clear_depth = @as(f32, @floatFromInt(command.clear_depth)) / 65535,
+        .clear_depth = @as(f32, @floatFromInt(command.clear_depth)) / @as(f32, @floatFromInt(_render.depthUnits(command.parts[part].depth_bits))),
         .stencil = command.parts[part].tests_stencil,
         .clear_stencil = command.clear_stencil,
         .kept = kept: {

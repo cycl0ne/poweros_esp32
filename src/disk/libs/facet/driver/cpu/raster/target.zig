@@ -26,6 +26,14 @@
 //! each pixel's depth and stencil beside each other, which the planes'
 //! `stride` says.
 //!
+//! The depth is kept at its attachment's own width, as llvmpipe tests a
+//! depth in its format's own bits (lp_bld_depth.c:1067-1095): 16 bits a
+//! pixel for D16_UNORM and D16_UNORM_S8_UINT, and since 1.223 32 for
+//! X8_D24_UNORM_PACK32 and D24_UNORM_S8_UINT, the 24 bits of depth in the
+//! low ones of the tile's word (`Attachments.Depth.bits`). The buffer has
+//! room for the wider; a depth of 16 bits touches the first half of it,
+//! so the cache it takes is what it was.
+//!
 //! A frame of four samples a pixel keeps sample 0 of each in the buffer,
 //! as a frame of one does, and samples 1 to 3 in planes of their own
 //! beside it: of every colour attachment since 1.103, and of the depth
@@ -71,9 +79,9 @@ const Header = bins.Header;
 pub const tile_size = 64;
 const tile_pixels = tile_size * tile_size;
 
-/// The words of a plane of depth in a tile, 16 bits a pixel, and of one
-/// of stencil, a byte. (Since 1.105.)
-const depth_plane_words = tile_pixels / 2;
+/// The words of a plane of depth in a tile, room for 32 bits a pixel
+/// (16 until 1.223), and of one of stencil, a byte. (Since 1.105.)
+const depth_plane_words = tile_pixels;
 const stencil_plane_words = tile_pixels / 4;
 
 /// The most parts a frame's tiles are shared between: a buffer each.
@@ -93,12 +101,12 @@ pub const most_colors = 4;
 pub const batch_color_words = 64 * 4;
 
 /// The words a batch of quads' depths take at four samples a pixel,
-/// held for a fragment function that may drop pixels: sixteen 16-bit
-/// depths a quad, as many quads as a batch holds (`batched.batch_quads`,
+/// held for a fragment function that may drop pixels: sixteen 32-bit
+/// depths a quad (16-bit until 1.223), as many quads as a batch holds (`batched.batch_quads`,
 /// which a comptime check there holds to this). A tile hands out its
 /// part's own, as it does the colours of several attachments, rather
 /// than the worker's stack growing by them. (Since 1.105.)
-pub const batch_depth_words = 64 * 16 / 2;
+pub const batch_depth_words = 64 * 16;
 
 /// The cache line a tile's rows start on.
 const line_bytes = 64;
@@ -298,18 +306,39 @@ fn resolveRows(comptime Pixel: type, comptime average: fn ([4]u32) u32, from: Su
 }
 
 /// A rectangle of a depth plane set to `depth`, as `storeDepth` leaves a
-/// tile cleared to it: the 16 bits low byte first, wherever the plane's
-/// stride puts them. The caller cuts the rectangle to the plane, and of a
-/// multisampled image fills each sample's (since 1.104).
-pub fn fillDepth(plane: Attachments.Plane, area: Rect, depth: u16) void {
+/// tile cleared to it: of `bits` 16, the 16 bits low byte first, wherever
+/// the plane's stride puts them; of 24 (since 1.223), the top three bytes
+/// of the pixel's word, its low byte - a stencil, or nothing - left as it
+/// is. The caller cuts the rectangle to the plane, and of a multisampled
+/// image fills each sample's (since 1.104).
+pub fn fillDepth(plane: Attachments.Plane, area: Rect, depth: u32, bits: u32) void {
     for (area.y..area.y + area.height) |y| {
         const row = plane.pixels + y * plane.pitch;
         for (area.x..area.x + area.width) |x| {
             const at = row + x * plane.stride;
-            at[0] = @truncate(depth);
-            at[1] = @truncate(depth >> 8);
+            if (bits == 24) {
+                putDepth24(at, depth);
+            } else {
+                at[0] = @truncate(depth);
+                at[1] = @truncate(depth >> 8);
+            }
         }
     }
+}
+
+/// A depth of 24 bits into the top three bytes of the pixel at `at`, as
+/// the V3D and this library keep X8_D24_UNORM_PACK32 and
+/// D24_UNORM_S8_UINT ("X low, D high", v3d_packet.xml:357): the low byte,
+/// the stencil or nothing, left as it is. (Since 1.223.)
+inline fn putDepth24(at: [*]u8, depth: u32) void {
+    at[1] = @truncate(depth);
+    at[2] = @truncate(depth >> 8);
+    at[3] = @truncate(depth >> 16);
+}
+
+/// The same read: the word's top 24 bits. (Since 1.223.)
+inline fn depth24At(at: [*]const u8) u32 {
+    return @as(u32, at[1]) | @as(u32, at[2]) << 8 | @as(u32, at[3]) << 16;
 }
 
 /// A rectangle of a stencil plane set to `stencil`, as `storeStencil`
@@ -452,14 +481,22 @@ pub const Attachments = struct {
     };
 
     pub const Depth = struct {
-        /// Whether triangles are tested against a depth: 16 bits a pixel,
+        /// Whether triangles are tested against a depth: `bits` a pixel,
         /// a sample's at four samples a pixel (since 1.105), 0 nearest,
         /// set to `clear` as each tile starts.
         used: bool = false,
-        clear: u16 = 0xFFFF,
+        /// In the depth's own units: 0 to 65535, or to 16777215 at 24
+        /// bits (since 1.223; a u16 until then).
+        clear: u32 = 0xFFFF,
+        /// The depth's bits: 16, or 24 for X8_D24_UNORM_PACK32 and
+        /// D24_UNORM_S8_UINT (since 1.223). The tile keeps a depth of 16
+        /// bits in 16 and one of 24 in 32 (`Tile.depthRow`), and the
+        /// draws test it in those units (`setup.Depth.units`).
+        bits: u32 = 16,
         /// Where the depth outlives the frame: the image's rows, 16 bits a
-        /// pixel. Null for a depth that lives in the tiles alone, which is
-        /// every frame until a pass asks for it to be kept.
+        /// pixel, or the top 24 of a word at 24 bits. Null for a depth that
+        /// lives in the tiles alone, which is every frame until a pass asks
+        /// for it to be kept.
         plane: ?Plane = null,
         /// Cleared as each tile starts, or read from the plane.
         load: Load = .clear,
@@ -473,7 +510,10 @@ pub const Attachments = struct {
     /// own bytes, `pitch` the bytes from one row to the next and `stride`
     /// those from one pixel to the next - 2 for a plane of depth alone, 1
     /// for one of stencil alone, and 4 for either of a format that holds
-    /// both, the depth of a pixel first and its stencil after.
+    /// both, the depth of a pixel first and its stencil after - and 4 for
+    /// a depth of 24 bits, `pixels` the word's first byte and the depth
+    /// its top three, with a stencil in the first where there is one
+    /// (since 1.223).
     pub const Plane = struct {
         pixels: [*]u8,
         pitch: u32,
@@ -557,10 +597,12 @@ const TileState = struct {
 /// (`Target.extras`), and so do the samples past the first of a frame
 /// of four, of the colours (since 1.103) and of the depth and the
 /// stencil (since 1.105): the one colour a frame usually draws keeps
-/// the buffer the 24 KiB it was, and the cache with it.
+/// the buffer the 24 KiB it was, and the cache with it. The depth has
+/// room for 32 bits a pixel since 1.223, of which one of 16 bits takes
+/// the first half (`Tile.depthRow`).
 const Buffer = extern struct {
     color: [tile_pixels]u32 align(line_bytes),
-    depth: [tile_pixels]u16,
+    depth: [tile_pixels]u32,
     shaded: [tile_size]u64,
     stencil: [tile_pixels]u8,
 };
@@ -589,16 +631,18 @@ pub const Tile = struct {
     /// 1.103.)
     sample_planes: ?[*]u32 = null,
     samples: u32 = 1,
-    /// The planes of samples 1 to `samples` - 1 of the depth, 16 bits a
-    /// pixel, and of the stencil, a byte, `tile_pixels` of them each;
-    /// null at one sample a pixel. (Since 1.105.)
-    depth_planes: ?[*]u16 = null,
+    /// The planes of samples 1 to `samples` - 1 of the depth, with room
+    /// for 32 bits a pixel (`depthPlane`), and of the stencil, a byte,
+    /// `tile_pixels` of them each; null at one sample a pixel. (Since
+    /// 1.105.)
+    depth_planes: ?[*]u32 = null,
     stencil_planes: ?[*]u8 = null,
     /// A batch's depths at more than one sample a pixel, held for a
     /// fragment function that may drop pixels (`batch_depth_words`):
-    /// sample s of a quad's pixel i at 4s + i. Null at one, whose batch
-    /// holds its own. (Since 1.105.)
-    batch_depths: ?[*][16]u16 = null,
+    /// sample s of a quad's pixel i at 4s + i, in the depth's units (32
+    /// bits each since 1.223). Null at one, whose batch holds its own.
+    /// (Since 1.105.)
+    batch_depths: ?[*][16]u32 = null,
     /// The grid square's number, row by row.
     index: u32,
     /// The grid square's top left on the surface.
@@ -658,9 +702,10 @@ pub const Tile = struct {
         return tile.plane(output) + y * tile_size;
     }
 
-    /// Row `y` of the tile's depth, from its left.
-    pub inline fn depthRow(tile: *const Tile, y: u32) [*]u16 {
-        return tile.buffer.depth[y * tile_size ..].ptr;
+    /// Row `y` of the tile's depth, from its left, as a depth of
+    /// `Kept` is held: `u16` for 16 bits, `u32` for 24 (since 1.223).
+    pub inline fn depthRow(tile: *const Tile, comptime Kept: type, y: u32) [*]Kept {
+        return tile.depthPlane(Kept, 0) + y * tile_size;
     }
 
     /// Row `y` of the tile's stencil, from its left.
@@ -668,11 +713,13 @@ pub const Tile = struct {
         return tile.buffer.stencil[y * tile_size ..].ptr;
     }
 
-    /// Sample `sample`'s plane of the depth, 64 x 64: the buffer's own
-    /// for 0, one of `depth_planes` for the others. (Since 1.105.)
-    pub inline fn depthPlane(tile: *const Tile, sample: u32) [*]u16 {
-        if (sample == 0) return &tile.buffer.depth;
-        return tile.depth_planes.? + (sample - 1) * tile_pixels;
+    /// Sample `sample`'s plane of the depth, 64 x 64 of `Kept`: the
+    /// buffer's own for 0, one of `depth_planes` for the others. (Since
+    /// 1.105; of `Kept` since 1.223.)
+    pub inline fn depthPlane(tile: *const Tile, comptime Kept: type, sample: u32) [*]Kept {
+        comptime if (Kept != u16 and Kept != u32) @compileError("a depth is kept in 16 bits or 32");
+        if (sample == 0) return @ptrCast(&tile.buffer.depth);
+        return @ptrCast(tile.depth_planes.? + (sample - 1) * tile_pixels);
     }
 
     /// The same of the stencil. (Since 1.105.)
@@ -682,8 +729,8 @@ pub const Tile = struct {
     }
 
     /// Row `y` of sample `sample`'s depth, from its left. (Since 1.105.)
-    pub inline fn depthRowOf(tile: *const Tile, sample: u32, y: u32) [*]u16 {
-        return tile.depthPlane(sample) + y * tile_size;
+    pub inline fn depthRowOf(tile: *const Tile, comptime Kept: type, sample: u32, y: u32) [*]Kept {
+        return tile.depthPlane(Kept, sample) + y * tile_size;
     }
 
     /// Row `y` of sample `sample`'s stencil, from its left. (Since
@@ -1073,7 +1120,7 @@ pub const Target = struct {
         if (depth.used) {
             var sample: u32 = 0;
             while (sample < tile.samples) : (sample += 1) switch (depth.load) {
-                .clear => @memset(tile.depthPlane(sample)[0..tile_pixels], depth.clear),
+                .clear => clearDepth(tile, sample, depth.clear, depth.bits),
                 .keep => target.loadDepth(tile, sample),
             };
         }
@@ -1167,15 +1214,21 @@ pub const Target = struct {
     /// depth attachment loads starts from. Sample `sample`'s of each
     /// (since 1.105).
     fn loadDepth(target: *Target, tile: *const Tile, sample: u32) void {
-        const plane = target.attachments.depth.plane orelse {
-            @memset(tile.depthPlane(sample)[0..tile_pixels], target.attachments.depth.clear);
-            return;
-        };
+        const depth = &target.attachments.depth;
+        const plane = depth.plane orelse return clearDepth(tile, sample, depth.clear, depth.bits);
         var row = tile.top;
+        if (depth.bits == 24) {
+            while (row < tile.bottom) : (row += 1) {
+                const from = pixelOf(plane, sample, tile.x + tile.left, tile.y + row);
+                const into = tile.depthRowOf(u32, sample, row) + tile.left;
+                for (0..tile.right - tile.left) |k| into[k] = depth24At(from + k * plane.stride);
+            }
+            return;
+        }
         while (row < tile.bottom) : (row += 1) {
             const count = tile.right - tile.left;
             const from = pixelOf(plane, sample, tile.x + tile.left, tile.y + row);
-            const into = tile.depthRowOf(sample, row) + tile.left;
+            const into = tile.depthRowOf(u16, sample, row) + tile.left;
             // Depth alone lies as the tile's own does, so a row is one
             // copy; beside a stencil it is every other pixel.
             if (plane.stride == 2) {
@@ -1192,10 +1245,20 @@ pub const Target = struct {
     fn storeDepth(target: *Target, tile: *const Tile, sample: u32) void {
         const plane = target.attachments.depth.plane orelse return;
         var row = tile.top;
+        // A depth of 24 bits into its word's top three bytes, the stencil
+        // or nothing in the low one left for `storeStencil` (since 1.223).
+        if (target.attachments.depth.bits == 24) {
+            while (row < tile.bottom) : (row += 1) {
+                const into = pixelOf(plane, sample, tile.x + tile.left, tile.y + row);
+                const from = tile.depthRowOf(u32, sample, row) + tile.left;
+                for (0..tile.right - tile.left) |k| putDepth24(into + k * plane.stride, from[k]);
+            }
+            return;
+        }
         while (row < tile.bottom) : (row += 1) {
             const count = tile.right - tile.left;
             const into = pixelOf(plane, sample, tile.x + tile.left, tile.y + row);
-            const from = tile.depthRowOf(sample, row) + tile.left;
+            const from = tile.depthRowOf(u16, sample, row) + tile.left;
             if (plane.stride == 2) {
                 @memcpy(into[0 .. count * 2], @as([*]const u8, @ptrCast(from))[0 .. count * 2]);
             } else for (0..count) |k| {
@@ -1204,6 +1267,14 @@ pub const Target = struct {
                 at[1] = @truncate(from[k] >> 8);
             }
         }
+    }
+
+    /// Sample `sample`'s plane of the tile's depth set to `clear`, at the
+    /// width a depth of `bits` is kept in (since 1.223).
+    fn clearDepth(tile: *const Tile, sample: u32, clear: u32, bits: u32) void {
+        if (bits == 24) {
+            @memset(tile.depthPlane(u32, sample)[0..tile_pixels], clear);
+        } else @memset(tile.depthPlane(u16, sample)[0..tile_pixels], @truncate(clear));
     }
 
     /// The stencil plane under the tile, into its buffer: a byte a pixel,
@@ -1339,7 +1410,7 @@ test "a part's block holds everything a tile is handed past its buffer, and noth
             const handed = [_]struct { ?usize, usize }{
                 .{ Memory.addressOf(tile.extras), planes * tile_pixels * 4 },
                 .{ Memory.addressOf(tile.sample_planes), (planes + 1) * room * tile_pixels * 4 },
-                .{ Memory.addressOf(tile.depth_planes), room * tile_pixels * 2 },
+                .{ Memory.addressOf(tile.depth_planes), room * tile_pixels * 4 },
                 .{ Memory.addressOf(tile.stencil_planes), room * tile_pixels },
                 .{ Memory.addressOf(tile.batch_depths), batch_depth_words * 4 },
                 .{ Memory.addressOf(tile.extra_colors), (planes + 1) * batch_color_words * 4 },

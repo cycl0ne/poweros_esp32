@@ -183,21 +183,25 @@ fn describe(can: *const _instance.Capabilities, format: facet.Format) facet.Form
         // D24S8 (`texture.Format.d24`). Copied by aspect, cleared, sampled
         // where the device samples a depth and the one of the two with a
         // stencil where it samples that too, and the one without blitted
-        // as D16_UNORM is. Not drawn into yet, which both Mesa drivers do
-        // (v3dvx_formats.c:206, :209; lavapipe's every depth format,
-        // lvp_formats.c:93-104): the cores' tiles hold 16 bits of depth
-        // and the V3D's frames are set up for 16, so neither says
-        // DEPTH_STENCIL_ATTACHMENT, and CreateImage and CreateRenderPass
-        // hold an attachment to that.
+        // as D16_UNORM is. Depth attachments where the device draws a
+        // depth of 24 bits (`Capabilities.depth24`, since 1.223), as both
+        // Mesa drivers have them (v3dvx_formats.c:206, :209; lavapipe's
+        // every depth format, lvp_formats.c:93-104): the cores, keeping
+        // one in their tiles at 32 bits a pixel. The V3D's frames are set
+        // up for 16 bits of depth, so it says no DEPTH_STENCIL_ATTACHMENT,
+        // and CreateImage and CreateRenderPass hold an attachment to that.
         .x8_d24_unorm_pack32 => .{
             .linear_tiling_features = 0,
             .optimal_tiling_features = transfer | facet.FORMAT_FEATURE_BLIT_SRC | facet.FORMAT_FEATURE_BLIT_DST |
+                (if (can.depth24) facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT else 0) |
                 if (can.sampled_depth) depth_sampled else 0,
             .buffer_features = 0,
         },
         .d24_unorm_s8_uint => .{
             .linear_tiling_features = 0,
-            .optimal_tiling_features = transfer | (if (stencil_sampled) depth_sampled else 0),
+            .optimal_tiling_features = transfer |
+                (if (can.depth24) facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT else 0) |
+                (if (stencil_sampled) depth_sampled else 0),
             .buffer_features = 0,
         },
         // Compressed: sampled and written, and read back as well where the
@@ -371,6 +375,7 @@ const keeping = _instance.Capabilities{
     .filtered_depth = true,
     .stored_stencil = true,
     .stored_both = true,
+    .depth24 = true,
 };
 
 /// The V3D since 1.142: a depth of its own sampled, unfiltered, and no
@@ -384,6 +389,21 @@ const depth_alone = _instance.Capabilities{
     .stored_stencil = true,
     .stored_both = false,
 };
+
+test "a depth of 24 bits is an attachment only where the device draws one (since 1.223)" {
+    const attachment = facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT;
+    for ([_]facet.Format{ .x8_d24_unorm_pack32, .d24_unorm_s8_uint }) |format| {
+        // The cores keep one in their tiles at 32 bits a pixel.
+        try testing.expectEqual(attachment, describe(&keeping, format).optimal_tiling_features & attachment);
+        // The V3D's frames are set up for 16 bits of depth: neither, as
+        // it has had neither since 1.222, while the transfers stand.
+        for ([_]*const _instance.Capabilities{ &unpacking, &depth_alone }) |can| {
+            const features = describe(can, format).optimal_tiling_features;
+            try testing.expectEqual(@as(u32, 0), features & attachment);
+            try testing.expect(features & facet.FORMAT_FEATURE_TRANSFER_DST != 0);
+        }
+    }
+}
 
 test "a depth format says it is sampled only where the device samples one" {
     const sampled = facet.FORMAT_FEATURE_SAMPLED_IMAGE | facet.FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR;

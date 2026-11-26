@@ -36,8 +36,9 @@ const tile_size = target_zig.tile_size;
 
 /// The first pass for a pipeline whose triangles are `Triangle`s, each
 /// with a `header` and a `depth`: the depth written where it is nearer -
-/// with either test, the nearest is what is left - and nothing else.
-pub fn DepthOnly(comptime Triangle: type) type {
+/// with either test, the nearest is what is left - and nothing else, into
+/// a tile that keeps its depth as `Kept`, `u16` or `u32` (since 1.223).
+pub fn DepthOnly(comptime Triangle: type, comptime Kept: type) type {
     return struct {
         pub fn raster(tile: *const Tile, header: *const Header) void {
             const triangle: *const Triangle = @alignCast(@fieldParentPtr("header", header));
@@ -54,7 +55,7 @@ pub fn DepthOnly(comptime Triangle: type) type {
                 @setRuntimeSafety(false);
                 const tile = runs.tile;
                 var z = runs.depth.at(tile.x + left, tile.y + y);
-                for (tile.depthRow(y)[left..right]) |*kept| {
+                for (tile.depthRow(Kept, y)[left..right]) |*kept| {
                     const near = @as(u64, @bitCast(z)) >> setup.Depth.fraction;
                     z +%= runs.depth.step;
                     kept.* = @intCast(@min(near, kept.*));
@@ -68,7 +69,7 @@ pub fn DepthOnly(comptime Triangle: type) type {
 /// `y + 1`, at depths `near`, those the second pass shades: where the
 /// first pass left their depth, and - tested `less`, not `or_equal` -
 /// where none has been shaded before them. They are marked shaded.
-pub inline fn keep(tile: *const Tile, comptime or_equal: bool, x: u32, y: u32, covered: u4, near: [4]u64, depths: [*]const u16) u4 {
+pub inline fn keep(tile: *const Tile, comptime or_equal: bool, x: u32, y: u32, covered: u4, near: [4]u64, depths: anytype) u4 {
     @setRuntimeSafety(false);
     const marks = &tile.buffer.shaded;
     const shift: u6 = @intCast(x);

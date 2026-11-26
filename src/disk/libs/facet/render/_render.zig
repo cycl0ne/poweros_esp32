@@ -48,6 +48,10 @@ pub const Part = struct {
     color_count: u32 = 1,
     /// The depth attachment's place, if there is one.
     depth: ?u32,
+    /// Its depth's bits, 16 or 24 (`_image.depthBits`; 16 for a stencil
+    /// alone, and for no attachment): what a clear value's depth is
+    /// taken to (`depthOfBits`), and how the tiles keep it (since 1.223).
+    depth_bits: u32 = 16,
     /// What that attachment has of the two.
     tests_depth: bool,
     tests_stencil: bool,
@@ -148,6 +152,12 @@ pub fn colorOf(value: facet.ClearColorValue) u32 {
 pub fn depthOf(value: facet.ClearDepthStencilValue) u16 {
     const depth = if (value.depth >= 0) @min(value.depth, 1) else 0; // a NaN as well
     return @intFromFloat(@round(depth * 65535));
+}
+
+/// The most a depth of `bits` holds, the furthest: 65535 for 16, and
+/// 16777215 for 24 (since 1.223).
+pub fn depthUnits(bits: u32) u32 {
+    return if (bits == 24) 0xFF_FFFF else 0xFFFF;
 }
 
 /// The same as a depth of `bits` holds it: 0 to 65535 for 16, and 0 to

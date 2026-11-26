@@ -252,7 +252,9 @@ pub const BeginRenderPass = extern struct {
     part_count: u32,
     area: facet.Rect2D,
     /// 0xAARRGGBB for each colour attachment of the subpass, in the
-    /// order the parts draw them, and the depth buffer's 0 to 65535.
+    /// order the parts draw them, and the depth buffer's 0 to 65535, or
+    /// to 16777215 for a depth of 24 bits (`Part.depth_bits`, since
+    /// 1.223).
     clear_colors: [_render.most_colors]u32,
     clear_depth: u32,
     clear_stencil: u32,
@@ -270,7 +272,7 @@ pub fn beginSubpass(made: *CommandBuffer, number: u32) void {
         .part_count = subpass.part_count,
         .area = made.area,
         .clear_colors = @splat(0xFF00_0000),
-        .clear_depth = if (first.depth) |depth| (if (depth < clears.len) _render.depthOf(clears[depth].depth_stencil) else 0xFFFF) else 0xFFFF,
+        .clear_depth = if (first.depth) |depth| (if (depth < clears.len) _render.depthOfBits(clears[depth].depth_stencil, first.depth_bits) else _render.depthUnits(first.depth_bits)) else 0xFFFF,
         .clear_stencil = if (first.depth) |depth| (if (depth < clears.len) clears[depth].depth_stencil.stencil & 0xFF else 0) else 0,
     };
     // The subpass's colour attachments in the order its parts draw

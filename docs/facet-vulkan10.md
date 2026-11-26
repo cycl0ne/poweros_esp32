@@ -1380,14 +1380,28 @@ a reference three quarters of a step nearer passing and one a quarter
 further not. On the CM5 (package f227) it is 947 of 947, the V3D's
 DEPTH24_X8 among them, and FacetBoth's 316 cases are each as at 1.221.
 
+**Step 2, in 1.223: the cores draw them.** Both are depth attachments
+where the device says `Capabilities.depth24`, the cores, tested, stored
+and loaded at all 24 bits, as llvmpipe takes a fragment's z to its
+format's own width before testing it (`lp_build_depth_stencil_test`,
+lp_bld_depth.c:1067-1095). The tile keeps a depth at its attachment's
+width (`Attachments.Depth.bits`): a D16 one in 16 bits as before and a
+D24 one in 32, the buffer having room for the wider so that a D16 frame
+touches the cache it did. `setup.Depth` carries its buffer's units,
+65535 or 16777215, and the bias's unit, the clamp and the bounds are in
+those, llvmpipe's unit being 1 / (2^bits - 1) of the format's bits
+(`util_get_depth_format_mrd`, u_format.c:387-412). The walk is made at
+compile time for either width (`batched.Rasterize`'s `Kept`). A store
+writes a word's top three bytes and leaves its stencil byte; a clear
+value, a framebuffer's later layers and CmdClearAttachments past the
+first layer keep a depth at its width (`_render.Part.depth_bits`,
+`raster.fillDepth`), and an input attachment reads one as
+`shader.TexelFormat.d24`. Three host tests are new and four grew to the
+two formats (four samples a pixel with a cut-out, the depth pre-pass,
+the depth input attachment). FacetProbe 1.51 draws an X8_D24 on the
+cores, reads it back and samples it at all 24 bits.
+
 Still left out. Each is marked *facet-wide* or *V3D-only*:
-- **No device draws a depth of 24 bits.** The cores' tile holds 16 bits
-  of depth (`raster/target.zig` Buffer.depth), with the bias's smallest
-  difference, the clamp and the bounds in 65535ths (`raster/setup.zig`,
-  `batched.zig`); llvmpipe keeps a depth tile at the format's own width.
-  CreateRenderPass refuses such an attachment for every device until its
-  driver says DEPTH_STENCIL_ATTACHMENT, a Radeon's too. Step 2.
-  *Facet-wide*.
 - **The V3D draws neither.** Its frames are set up for `depth_16`
   (`cl.renderingCommon`), and it stores and loads OUTPUT_D16 and
   OUTPUT_S8 alone; v3dv uses `depth_24` (v3dvx_formats.c:560-575) and the
