@@ -206,11 +206,19 @@ pub fn copyImage(into: [*]u8, image: *const rtg.RtgPointerImage, reversed: Rever
     return .{ .width = width, .height = height };
 }
 
+/// The part of a pipe's surface its cursor is laid over: from (`x`, `y`)
+/// on, `width` by `height` - the picture's whole surface, or the part of
+/// a plane's surface on the glass, the cursor's place then from that
+/// part's top left.
+pub const View = struct { x: u32 = 0, y: u32 = 0, width: u32, height: u32 };
+
 /// The cursor of the hub `fetcher` and its scaler, laid over output
-/// `output`'s picture `width` by `height`, told `cursor`.
-pub fn write(engine: dcn.Engine, fetcher: u32, output: u32, cursor: Cursor, width: u32, height: u32) void {
+/// `output`'s picture where the pipe shows `view`, told `cursor`: its
+/// place worked out on the part shown, and the viewport's start added,
+/// the cursor's place being in the surface's coordinates.
+pub fn write(engine: dcn.Engine, fetcher: u32, output: u32, cursor: Cursor, view: View) void {
     if (!reached(engine)) return;
-    const place = placeOf(cursor, width, height);
+    const place = placeOf(cursor, view.width, view.height);
     const shown = place.seen and cursor.address != 0;
     const lock = blenderAt(engine, cursor_lock + output * cursor_lock_stride);
     lock.* = 1;
@@ -228,7 +236,7 @@ pub fn write(engine: dcn.Engine, fetcher: u32, output: u32, cursor: Cursor, widt
     hub_control |= premultiplied << mode_shift | pitch_64 | chunkOf(cursor.width) << chunk_shift;
     if (shown) hub_control |= cursor_on;
     control.* = hub_control;
-    at(engine, hub + cursor_position).* = place.position;
+    at(engine, hub + cursor_position).* = place.position + (view.x << 16 | view.y);
     at(engine, hub + cursor_hot_spot).* = place.hot_spot;
     at(engine, hub + cursor_fetch_start).* = place.fetch_start;
     const scaler = at(engine, fetcher * scaler_stride + scaler_cursor_control);

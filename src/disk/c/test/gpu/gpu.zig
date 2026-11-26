@@ -11,7 +11,7 @@
 //! the display reads. Built against the SDK only.
 //!
 //!   Gpu TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,
-//!       SLEEP/K/N,RANGE/S,POINTER/S,MIRROR/S,WATCHDOG/K/N
+//!       SLEEP/K/N,RANGE/S,POINTER/S,MIRROR/S,OVERLAY/S,WATCHDOG/K/N
 //!
 //! BIOS prints the device's video BIOS image (GetGPUBios): where it is
 //! and how long, its tables' header's version, the version of each of
@@ -144,6 +144,17 @@
 //! board's mirror, its pointer and its picture are put back as they
 //! were. The watchdog is armed for it.
 //!
+//! OVERLAY does the same with the board's overlay: an image of 120 by 80
+//! with clear squares in it, at a place on the picture, one partly off
+//! its top left and one partly off its bottom right, each with the
+//! pointer hidden, over the overlay and across its edge - drawn by this
+//! program, overlay under pointer, into the picture it mirrors itself,
+//! against the board mirroring the picture and laying both. It says
+//! which of the engine's pipes the overlay is a plane on, where it is
+//! one. The board's overlay is taken off after, and its mirror, its
+//! pointer and its picture are put back as they were. The watchdog is
+//! armed for it.
+//!
 //! DUMP prints LENGTH (16 unless given, at most 512) of the display
 //! engine's registers from DUMP on, in 32-bit words from the engine's
 //! address SEGMENT (2 unless given: the one its pipes, links and
@@ -152,7 +163,7 @@
 //! is armed for it.
 //!
 //! Without BIOS, CLOCKS, DMCUB, CRC, EVENTS, AUX, EDID, CYCLE, MODES,
-//! SLEEP, RANGE, POINTER, MIRROR, DUMP, FRAMES or FLIP the two files are read from
+//! SLEEP, RANGE, POINTER, MIRROR, OVERLAY, DUMP, FRAMES or FLIP the two files are read from
 //! DEVS:firmware/amdgpu/, named for the blocks that use them as the
 //! device's table gives their versions - psp_13_0_4_toc.bin for the
 //! security processor 13.0.4, vcn_4_0_2.bin for the video decoder 4.0.2 -
@@ -206,10 +217,10 @@ const rtg = sdk.rtg;
 const RtgBase = sdk.interface.rtg.RtgBase;
 
 pub const COMMAND_NAME = "Gpu";
-const VERSION_STRING = "\x00$VER: Gpu 1.15 (26.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Gpu 1.16 (26.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,SLEEP/K/N,RANGE/S,POINTER/S,MIRROR/S,WATCHDOG/K/N";
+const template = "TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,SLEEP/K/N,RANGE/S,POINTER/S,MIRROR/S,OVERLAY/S,WATCHDOG/K/N";
 const arg_toc = 0;
 const arg_firmware = 1;
 const arg_frames = 2;
@@ -239,8 +250,9 @@ const arg_sleep = 25;
 const arg_range = 26;
 const arg_pointer = 27;
 const arg_mirror = 28;
-const arg_watchdog = 29;
-const arg_count = 30;
+const arg_overlay = 29;
+const arg_watchdog = 30;
+const arg_count = 31;
 
 /// Where the files are.
 const directory = "DEVS:firmware/amdgpu/";
@@ -1075,6 +1087,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     if (argv[arg_range] != 0) return rangeCheck(sys, dl, millis);
     if (argv[arg_pointer] != 0) return pointerCheck(sys, dl, ab, info, millis);
     if (argv[arg_mirror] != 0) return mirrorCheck(sys, dl, millis);
+    if (argv[arg_overlay] != 0) return overlayCheck(sys, dl, ab, info, millis);
     if (argv[arg_sleep] != 0) return asleepFor(sys, dl, ab, info, millis, number(argv[arg_sleep]), argv[arg_modes] != 0);
     if (argv[arg_dump] != 0) {
         const length = if (argv[arg_length] != 0) number(argv[arg_length]) else 16;
@@ -1546,6 +1559,168 @@ fn mirrorCheck(sys: *ExecBase, dl: *DosBase, millis: u32) i32 {
     rb.FreeBitMap(reference);
     return if (differ == 0) dos.RETURN_OK else dos.RETURN_WARN;
 }
+
+/// OVERLAY: for each way of mirroring and each place of the overlay, the
+/// checksum of the picture, the overlay and the pointer as this program
+/// mirrors them, and as the board does.
+fn overlayCheck(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUInfo, millis: u32) i32 {
+    var block: amdgpu.GPUBlock = .{};
+    if (!ab.FindGPUBlock(amdgpu.GPUBLOCK_DISPLAY, 0, &block) or block.count < 4) {
+        _ = Printf(dl, "The device %04x:%04x names no display engine with a blender\n", .{ info.vendor, info.device });
+        return dos.RETURN_FAIL;
+    }
+    const engine = Display{ .registers = @intCast(info.registers), .segment = block.addresses[2], .pipe = 0, .fetcher = 0 };
+    const blender = Display{ .registers = @intCast(info.registers), .segment = block.addresses[3], .pipe = 0, .fetcher = 0 };
+    const base = sys.OpenLibrary(rtg.RTGNAME, rtg.RTG_VERSION) orelse {
+        _ = Printf(dl, "No %s\n", .{rtg.RTGNAME});
+        return dos.RETURN_FAIL;
+    };
+    defer sys.CloseLibrary(base);
+    const rb: *RtgBase = @ptrCast(base);
+    const board = amdBoard(dl, rb) orelse return dos.RETURN_WARN;
+    var info_board: rtg.RtgBoardInfo = .{};
+    _ = rb.GetBoardInfo(board, &info_board, @sizeOf(rtg.RtgBoardInfo));
+    const pointer = board.pointer orelse {
+        _ = Printf(dl, "The board has no pointer image\n", .{});
+        return dos.RETURN_WARN;
+    };
+    if (pointer.format != .bgra32) {
+        _ = Printf(dl, "The board's pointer is not in bgra32\n", .{});
+        return dos.RETURN_WARN;
+    }
+    // The overlay's image: shades across and down, clear squares in it.
+    const overlay_width = 120;
+    const overlay_height = 80;
+    const pixels = sys.AllocVec(overlay_width * overlay_height * 4, exec.MEMF_CLEAR) orelse {
+        _ = Printf(dl, "No room for the overlay's image\n", .{});
+        return dos.RETURN_FAIL;
+    };
+    defer sys.FreeVec(pixels);
+    const words: [*]u32 = @ptrCast(@alignCast(pixels));
+    for (0..overlay_height) |row| {
+        for (0..overlay_width) |column| {
+            const clear = (row / 10 + column / 10) % 3 == 0;
+            words[row * overlay_width + column] = if (clear) 0 else 0xFF00_0000 | @as(u32, @intCast(column * 2)) << 16 | @as(u32, @intCast(row * 3)) << 8 | 0x40;
+        }
+    }
+    const surface = rtg.Surface{ .pixels = @ptrCast(pixels), .width = overlay_width, .height = overlay_height, .pitch = overlay_width * 4, .size_bytes = overlay_width * overlay_height * 4, .format = .bgra32 };
+    const was_x = board.pointer_x;
+    const was_y = board.pointer_y;
+    const was_shown = board.info.flags & rtg.boards.RTGBF_POINTER != 0;
+    const wb = arm(sys, dl, millis) orelse return dos.RETURN_FAIL;
+    defer wb.DisarmWatchdog();
+    if (rb.SetBoardOverlay(board, &surface, 0, 0) != rtg.errors.RTGERR_OK) {
+        _ = Printf(dl, "The board took no overlay\n", .{});
+        return dos.RETURN_WARN;
+    }
+    const overlay = board.overlay orelse {
+        _ = Printf(dl, "The board keeps no overlay image\n", .{});
+        return dos.RETURN_WARN;
+    };
+    const still = Still.begin(dl, rb, board) orelse {
+        _ = rb.SetBoardOverlay(board, null, 0, 0);
+        return dos.RETURN_FAIL;
+    };
+    const picture = still.picture;
+    marker(picture);
+    _ = rb.RefreshRect(picture, null);
+    const reference = rb.AllocBitMap(board, picture.width, picture.height, @intFromEnum(picture.format), rtg.bitmaps.RTGBMF_DISPLAYABLE) orelse {
+        still.end();
+        _ = rb.SetBoardOverlay(board, null, 0, 0);
+        _ = Printf(dl, "No room for a second picture\n", .{});
+        return dos.RETURN_FAIL;
+    };
+    const picture_band = [_]rtg.RtgBand{.{ .bitmap = picture }};
+    const reference_band = [_]rtg.RtgBand{.{ .bitmap = reference }};
+    const ways = [_][2]bool{ .{ false, false }, .{ true, false }, .{ false, true }, .{ true, true } };
+    const names = [_][*:0]const u8{ "none", "x", "y", "x and y" };
+    const width: i32 = @intCast(picture.width);
+    const height: i32 = @intCast(picture.height);
+    // Each place of the overlay, with the pointer over it and across its
+    // edge.
+    const Case = struct { overlay: [2]i32, inside: [2]i32, edge: [2]i32 };
+    const cases = [_]Case{
+        .{ .overlay = .{ 400, 300 }, .inside = .{ 450, 320 }, .edge = .{ 395, 295 } },
+        .{ .overlay = .{ -30, -20 }, .inside = .{ 20, 15 }, .edge = .{ 85, 30 } },
+        .{ .overlay = .{ width - 50, height - 40 }, .inside = .{ width - 30, height - 25 }, .edge = .{ width - 55, height - 30 } },
+    };
+    var differ: u32 = 0;
+    var said_plane = false;
+    for (ways, names) |way, name| {
+        for (cases) |case| {
+            const pointers = [_]?[2]i32{ null, case.inside, case.edge };
+            for (pointers) |maybe_pointer| {
+                turned(reference, picture, way[0], way[1]);
+                drawPointer(reference, overlay, case.overlay[0], case.overlay[1], way[0], way[1]);
+                if (maybe_pointer) |place| drawPointer(reference, pointer, place[0] - @as(i32, @intCast(pointer.hot_x)), place[1] - @as(i32, @intCast(pointer.hot_y)), way[0], way[1]);
+                _ = rb.RefreshRect(reference, null);
+                // The board's own laid off the glass while its drawing is read.
+                rb.MoveBoardOverlay(board, -10_000, -10_000);
+                _ = rb.MirrorBoard(board, false, false);
+                _ = rb.ShowBoardPointer(board, false);
+                _ = rb.ShowBoard(board, still.mode_id, &reference_band, reference_band.len);
+                wb.FeedWatchdog();
+                const drawn = steadyChecksum(dl, rb, board);
+                _ = rb.ShowBoard(board, still.mode_id, &picture_band, picture_band.len);
+                _ = rb.MirrorBoard(board, way[0], way[1]);
+                rb.MoveBoardOverlay(board, case.overlay[0], case.overlay[1]);
+                if (maybe_pointer) |place| {
+                    rb.MoveBoardPointer(board, place[0], place[1]);
+                    _ = rb.ShowBoardPointer(board, true);
+                }
+                wb.FeedWatchdog();
+                const laid = steadyChecksum(dl, rb, board);
+                if (!said_plane) {
+                    said_plane = true;
+                    sayPlane(dl, engine, blender);
+                }
+                const same = drawn != null and laid != null and sameSum(drawn.?, laid.?);
+                if (!same) differ += 1;
+                const place = maybe_pointer orelse [2]i32{ 0, 0 };
+                _ = Printf(dl, "%-8s overlay %d,%d pointer %-6s %d,%d: drawn %04x %04x %04x, the board's %04x %04x %04x%s\n", .{
+                    name,                                                          case.overlay[0],               case.overlay[1],                @as([*:0]const u8, if (maybe_pointer == null) "hidden" else "at"),
+                    place[0],                                                      place[1],                      if (drawn) |sum| sum[0] else 0, if (drawn) |sum| sum[1] else 0,
+                    if (drawn) |sum| sum[2] else 0,                                if (laid) |sum| sum[0] else 0, if (laid) |sum| sum[1] else 0,  if (laid) |sum| sum[2] else 0,
+                    @as([*:0]const u8, if (same) ", the same" else ", DIFFERENT"),
+                });
+            }
+        }
+    }
+    _ = rb.SetBoardOverlay(board, null, 0, 0);
+    _ = rb.MirrorBoard(board, info_board.mirror_x != 0, info_board.mirror_y != 0);
+    rb.MoveBoardPointer(board, was_x, was_y);
+    _ = rb.ShowBoardPointer(board, was_shown);
+    wb.FeedWatchdog();
+    dl.Delay(5);
+    sayPlane(dl, engine, blender);
+    still.end();
+    rb.FreeBitMap(reference);
+    return if (differ == 0) dos.RETURN_OK else dos.RETURN_WARN;
+}
+
+/// Which pipe the blender lays over output 0's picture at the top of
+/// its tree, and below it, and whether each of the first two fetchers is
+/// blanked: the overlay as a plane, where the top is not the picture's.
+fn sayPlane(dl: *DosBase, engine: Display, blender: Display) void {
+    const top = blender.at(mpc_out_mux).* & 0xf;
+    const below = if (top < 4) blender.at(top * mpcc_stride + mpcc_bottom_select).* & 0xf else 0xf;
+    const blanked_0 = engine.at(dchubp_control).* & 1 != 0;
+    const blanked_1 = engine.at(dchubp_control + dcn.HUBP_STRIDE).* & 1 != 0;
+    _ = Printf(dl, "        blender: output 0 from stage %u, below it %u; fetcher 0 %s, fetcher 1 %s\n", .{
+        top,
+        below,
+        @as([*:0]const u8, if (blanked_0) "blanked" else "fetching"),
+        @as([*:0]const u8, if (blanked_1) "blanked" else "fetching"),
+    });
+}
+
+/// The registers sayPlane reads: a fetcher's control, its lowest bit
+/// blanking it; and the blender's output 0's top stage, and a stage's
+/// below, a stage's stride apart.
+const dchubp_control = 0x05f3;
+const mpc_out_mux = 0x0580;
+const mpcc_bottom_select = 0x0001;
+const mpcc_stride = 0x20;
 
 /// A grey block in the picture's top left quarter, so that it differs
 /// mirrored about either axis.

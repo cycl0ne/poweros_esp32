@@ -31,15 +31,30 @@
 //!
 //! The picture is mirrored about either axis by the fetcher that reads
 //! it (`mode.writeTurn`): its horizontal mirror, half a turn, or both -
-//! the frames and the firmware's framebuffer alike - and the pointer is
-//! turned with it.
+//! the frames and the firmware's framebuffer alike - and the pointer and
+//! the overlay are turned with it. The firmware's picture is put where
+//! it belongs as the board takes the pipe: its scaler in its bypass
+//! (`mode.passThrough`), where the firmware leaves it laying the picture
+//! a pixel or two right of and below its place.
 //!
 //! The pointer is the pipe's own cursor (`cursor.zig`), on a board in
 //! `bgra32` whose engine's blender is reached: the library's image
 //! copied into one of two of the device's memory, and the cursor told
 //! to read it, where it is and whether it is shown - so the pictures
 //! never hold it, and a move rewrites nothing but the cursor's place.
-//! The overlay is laid in the pictures by the library. Its connector - the one whose
+//!
+//! The overlay is a plane of its own (`plane.zig`) where the pointer is
+//! the cursor: a free pipe of the engine lit on the picture's timing
+//! generator, reading one of two images of the device's memory that take
+//! turns - the library's image copied into the one not read, once the
+//! plane has taken the one before - and laid over the picture by the
+//! blender with its pixels' alpha. Only the part of it on the glass is
+//! fetched, and with the picture mirrored the plane is mirrored with it,
+//! its place on the glass mirrored too. Its pipe's cursor is the pointer
+//! too, so the pointer stays above it. It goes down with the pipe - for
+//! a mode set, the monitor's sleep - and is lit again after; its schedule
+//! is worked out for its width at the display's clocks held at their
+//! top. Its connector - the one whose
 //! PHY drives the lit link - is looked at by the library (`detect`,
 //! `monitor.zig`): whether its hot-plug line senses a monitor, and that
 //! monitor's EDID over its DDC line (`i2c.zig`). Of the timings the
@@ -146,13 +161,14 @@ const monitor = @import("monitor.zig");
 const i2c = @import("i2c.zig");
 const colours = @import("colours.zig");
 const cursor = @import("cursor.zig");
+const plane = @import("plane.zig");
 const pipe = @import("pipe.zig");
 const mode = @import("mode.zig");
 
 const MODULE_NAME = "rtg-amd";
 const DRIVER_NAME = "amd";
 const VERSION = 1;
-const REVISION = 18;
+const REVISION = 19;
 const BUILD_DATE = "26.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -260,7 +276,48 @@ const Screen = struct {
     cursor_turn: u32 = 0,
     cursor_told: cursor.Cursor = .{},
     cursor_lock: exec.SignalSemaphore = .{},
+    /// The overlay's plane as its pipe's cursor is laid over it: the
+    /// pipe, the part of the overlay on the glass, and where that part's
+    /// top left is on the picture, before any turn. Null while no plane
+    /// is lit. Under `cursor_lock`, written holding `pipe_lock` too.
+    cursor_plane: ?CursorPlane = null,
+    /// The overlay as a plane of its own: the device's memory of its two
+    /// images, null on a board whose library lays the overlay; the
+    /// library's image, kept until its next `set`; which of the two the
+    /// plane reads; the image's top left on the picture; and the pipe the
+    /// plane is lit on, null while it is not. Under `pipe_lock`.
+    overlay_memory: ?sdk.resources.amdgpu.GPUMemory = null,
+    overlay_image: ?*const rtg.RtgPointerImage = null,
+    overlay_turn: u32 = 0,
+    overlay_left: i32 = 0,
+    overlay_top: i32 = 0,
+    overlay_pipe: ?u32 = null,
+    /// Whether the log has said the overlay could not be lit, since it
+    /// last was: said once, not at every move.
+    overlay_refused: bool = false,
+    /// How the picture is mirrored (`mirrorOp`), which a plane is too.
+    /// Under `pipe_lock`.
+    turn_x: bool = false,
+    turn_y: bool = false,
+    /// The display clock and the pipes' clock once held at their top -
+    /// by a mode set, or for a plane - as they then run, in kHz: what a
+    /// plane is worked out at. 0 before.
+    held_display_khz: u32 = 0,
+    held_pipes_khz: u32 = 0,
 };
+
+/// A plane the cursor is laid over too (`Screen.cursor_plane`).
+const CursorPlane = struct { index: u32, view: cursor.View, left: i32, top: i32 };
+
+/// The overlay's two images in the device's memory: rows of the largest
+/// overlay, rounded up to the 256 bytes a linear surface's rows are, and
+/// the room each takes; the engine's pipes, which planes are lit on.
+const overlay_pitch: u32 = 192;
+const overlay_image_bytes: usize = @as(usize, overlay_pitch) * rtg.boards.RTG_OVERLAY_MAX * 4;
+const pipe_count: u32 = 4;
+/// How long a new overlay image waits for the plane to take the one
+/// before, in microseconds: two frames at 24 Hz.
+const flip_wait_us: u64 = 84_000;
 
 /// Wait for `frames` frames, as the library waits (WaitVBlank): for the
 /// display's frame interrupt to come that many times, where it comes, so
@@ -561,9 +618,14 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, device_tags: ?[*]const
     // The pointer the pipe's cursor, where the cursor can be had: room
     // for its two images in the device's memory.
     const cursor_memory = cursorMemory(found, format);
+    // The overlay a plane of its own, where planes can be lit: room for
+    // its two images.
+    // The pointer is then the pipes' cursor too: a pointer laid into the
+    // picture would be under the plane.
+    const overlay_memory = if (cursor_memory != null) overlayMemory(found, format) else null;
 
     const board = rb.CreateBoard(driver, device, &.{
-        .ops = if (cursor_memory != null) &ops_with_cursor else &ops,
+        .ops = opsFor(cursor_memory != null, overlay_memory != null),
         .instance_size = @sizeOf(Screen),
         // The display runs as the firmware lit it: its mode is kept.
         .flags = rtg.boards.RTGBF_ADOPTED,
@@ -587,6 +649,7 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, device_tags: ?[*]const
         .board = board,
         .smu = smu.find(found),
         .cursor_memory = cursor_memory,
+        .overlay_memory = overlay_memory,
     };
     sys.InitSemaphore(&screen.smu_lock);
     sys.InitSemaphore(&screen.cursor_lock);
@@ -616,6 +679,10 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, device_tags: ?[*]const
     // the device's own memory.
     hookFrames(screen);
     takeAmdFrame(screen);
+    // The firmware's picture laid where it belongs: its scaler in its
+    // bypass, where the firmware leaves it shifting the picture by a
+    // pixel or two.
+    mode.passThrough(found, found.fetcher);
 
     // At most as many pictures of the mode as the board asks for, each
     // taken by the library as it is allocated. Not cleared: each is
@@ -677,6 +744,13 @@ fn tellConnector(screen: *const Screen) void {
 /// the server, which giving it back waits by. The device is
 /// amdgpu.resource's, which is never given back.
 fn halt(screen: *Screen) void {
+    if (screen.overlay_memory) |*memory| {
+        screen.sys.ObtainSemaphore(&screen.pipe_lock);
+        dropOverlay(screen);
+        screen.overlay_memory = null;
+        screen.sys.ReleaseSemaphore(&screen.pipe_lock);
+        dcn.freeFrame(screen.dcn, memory);
+    }
     if (screen.cursor_memory) |*memory| {
         screen.sys.ObtainSemaphore(&screen.cursor_lock);
         screen.cursor_told = .{};
@@ -757,6 +831,13 @@ fn showOp(board: *rtg.RtgBoard, what: *const rtg.RtgShow) callconv(.c) i32 {
         writeCursor(screen);
         screen.sys.ReleaseSemaphore(&screen.cursor_lock);
     }
+    // The overlay's plane worked out for the mode, and lit again where a
+    // set took it down.
+    if (screen.overlay_memory != null) {
+        screen.sys.ObtainSemaphore(&screen.pipe_lock);
+        showOverlay(screen);
+        screen.sys.ReleaseSemaphore(&screen.pipe_lock);
+    }
     return err.RTGERR_OK;
 }
 
@@ -777,7 +858,15 @@ fn cursorMemory(engine: dcn.Engine, format: rtg.PixelFormat) ?sdk.resources.amdg
 fn writeCursor(screen: *Screen) void {
     const engine = screen.dcn;
     screen.cursor_told.pixel_hz = screen.timings.pixel_clock_hz;
-    cursor.write(engine, engine.fetcher, mode.outputOf(engine, engine.pipe), screen.cursor_told, screen.width, screen.height);
+    const output = mode.outputOf(engine, engine.pipe);
+    cursor.write(engine, engine.fetcher, output, screen.cursor_told, .{ .width = screen.width, .height = screen.height });
+    // Over the overlay's plane, whose stage is above the picture's, its
+    // own pipe's cursor: its place from the part of the overlay shown.
+    const over = screen.cursor_plane orelse return;
+    var on_plane = screen.cursor_told;
+    on_plane.left -= over.left;
+    on_plane.top -= over.top;
+    cursor.write(engine, over.index, output, on_plane, over.view);
 }
 
 /// A new image, or none: copied into the image the cursor does not read,
@@ -819,12 +908,16 @@ fn cursorImage(screen: *Screen) void {
 }
 
 /// The picture mirrored about each axis by the fetcher (`mode.writeTurn`)
-/// from the pipe's next update on, and the pointer turned with it.
+/// from the pipe's next update on, and the pointer and the overlay's
+/// plane turned with it.
 fn mirrorOp(board: *rtg.RtgBoard, x: bool, y: bool) callconv(.c) i32 {
     const screen = screenOf(board);
     const sys = screen.sys;
     sys.ObtainSemaphore(&screen.pipe_lock);
     mode.writeTurn(screen.dcn, screen.dcn.fetcher, x, y);
+    screen.turn_x = x;
+    screen.turn_y = y;
+    showOverlay(screen);
     sys.ReleaseSemaphore(&screen.pipe_lock);
     sys.ObtainSemaphore(&screen.cursor_lock);
     defer sys.ReleaseSemaphore(&screen.cursor_lock);
@@ -851,6 +944,165 @@ fn showPointer(board: *rtg.RtgBoard, show: bool) callconv(.c) i32 {
     screen.cursor_told.shown = show;
     writeCursor(screen);
     return err.RTGERR_OK;
+}
+
+// --- the overlay, as a plane of its own -------------------------------------------
+
+/// The device's memory for the overlay's two images, on a board in
+/// `bgra32` - the plane's format - whose blender is reached; null where
+/// not, or where there is no room, and the library lays the overlay.
+fn overlayMemory(engine: dcn.Engine, format: rtg.PixelFormat) ?sdk.resources.amdgpu.GPUMemory {
+    if (format != .bgra32 or !plane.reached(engine)) return null;
+    return dcn.newFrame(engine, 2 * overlay_image_bytes);
+}
+
+/// A new image, or none: copied into the image the plane does not read,
+/// and the plane lit, or told to read that one, from the pipe's next
+/// update; none takes the plane down.
+fn setOverlay(board: *rtg.RtgBoard, image: ?*const rtg.RtgPointerImage) callconv(.c) i32 {
+    const screen = screenOf(board);
+    if (image) |one| {
+        if (one.format != .bgra32) return err.RTGERR_BAD_FORMAT;
+        if (one.width > rtg.boards.RTG_OVERLAY_MAX or one.height > rtg.boards.RTG_OVERLAY_MAX) return err.RTGERR_BAD_ARG;
+    }
+    const memory = screen.overlay_memory orelse return err.RTGERR_NOT_SUPPORTED;
+    screen.sys.ObtainSemaphore(&screen.pipe_lock);
+    defer screen.sys.ReleaseSemaphore(&screen.pipe_lock);
+    screen.overlay_image = image;
+    if (image) |one| {
+        // The image the plane read before: it may still read it until
+        // its next update.
+        if (screen.overlay_pipe) |index| {
+            const deadline = screen.sys.UptimeUs() + flip_wait_us;
+            while (!plane.taken(screen.dcn, index) and screen.sys.UptimeUs() < deadline) dcn.pause(screen.sys, 200);
+        }
+        const turn = screen.overlay_turn ^ 1;
+        const into: [*]u8 = @ptrFromInt(@as(usize, @intCast(memory.cpu)) + turn * overlay_image_bytes);
+        copyOverlay(into, one);
+        screen.overlay_turn = turn;
+    }
+    showOverlay(screen);
+    return err.RTGERR_OK;
+}
+
+/// The overlay's image put with its top left at (`left`, `top`) of the
+/// picture.
+fn moveOverlay(board: *rtg.RtgBoard, left: i32, top: i32) callconv(.c) void {
+    const screen = screenOf(board);
+    screen.sys.ObtainSemaphore(&screen.pipe_lock);
+    defer screen.sys.ReleaseSemaphore(&screen.pipe_lock);
+    screen.overlay_left = left;
+    screen.overlay_top = top;
+    if (screen.overlay_image != null) showOverlay(screen);
+}
+
+/// The library's image copied as it is - its pixels are ARGB as a plane
+/// takes them, each either covering fully or clear - in rows the plane's
+/// apart, and fenced: the device's memory is reached write-combining.
+fn copyOverlay(into: [*]u8, image: *const rtg.RtgPointerImage) void {
+    const row_bytes = @as(usize, image.width) * 4;
+    var row: usize = 0;
+    while (row < image.height) : (row += 1) {
+        @memcpy(into[row * overlay_pitch * 4 ..][0..row_bytes], image.pixels[row * image.pitch ..][0..row_bytes]);
+    }
+    sdk.hardware.barrier.full();
+}
+
+/// The overlay's plane where the overlay is now, reading the image last
+/// copied: lit on a free pipe where it is not, moved where it is, taken
+/// down where there is no image or none of it is on the glass. Holding
+/// `pipe_lock`; nothing while the pipe is asleep, which took it down.
+fn showOverlay(screen: *Screen) void {
+    const engine = screen.dcn;
+    const memory = screen.overlay_memory orelse return;
+    if (screen.asleep) return;
+    const one = screen.overlay_image orelse return dropOverlay(screen);
+    var where = plane.placeOf(screen.overlay_left, screen.overlay_top, one.width, one.height, screen.width, screen.height, screen.turn_x, screen.turn_y) orelse return dropOverlay(screen);
+    where.address = memory.device + @as(u64, screen.overlay_turn) * overlay_image_bytes;
+    where.pitch = overlay_pitch;
+    const held = planeHeld(screen) orelse return dropOverlay(screen);
+    const schedule = mode.planeSchedule(screen.timings, where.width, held, mode.vstartupOf(engine, engine.pipe)) orelse return dropOverlay(screen);
+    const view: cursor.View = .{ .x = where.view_x, .y = where.view_y, .width = where.width, .height = where.height };
+    const left = screen.overlay_left + @as(i32, @intCast(where.view_x));
+    const top = screen.overlay_top + @as(i32, @intCast(where.view_y));
+    if (screen.overlay_pipe) |index| {
+        plane.move(engine, index, engine.pipe, &schedule, &where);
+        planeCursor(screen, .{ .index = index, .view = view, .left = left, .top = top });
+        return;
+    }
+    const index = freePipe(engine) orelse {
+        if (!screen.overlay_refused) exec.kprintf(screen.sys, "%s: no pipe is free for the overlay, which is not shown\n", .{MODULE_NAME});
+        screen.overlay_refused = true;
+        return;
+    };
+    const output = mode.outputOf(engine, engine.pipe);
+    if (!plane.light(engine, index, engine.pipe, output, engine.fetcher, screen.width | screen.height << 16, &schedule, &where)) {
+        plane.darken(engine, index, engine.pipe, output);
+        if (!screen.overlay_refused) exec.kprintf(screen.sys, "%s: the hub gave pipe %d no buffer, so the overlay is not shown\n", .{ MODULE_NAME, index });
+        screen.overlay_refused = true;
+        return;
+    }
+    screen.overlay_pipe = index;
+    screen.overlay_refused = false;
+    planeCursor(screen, .{ .index = index, .view = view, .left = left, .top = top });
+}
+
+/// The cursor laid over the overlay's plane `over` as well from now on,
+/// or no longer for null - written off on the plane before it goes down.
+/// Holding `pipe_lock`.
+fn planeCursor(screen: *Screen, over: ?CursorPlane) void {
+    if (screen.cursor_memory == null) return;
+    screen.sys.ObtainSemaphore(&screen.cursor_lock);
+    defer screen.sys.ReleaseSemaphore(&screen.cursor_lock);
+    if (over == null) if (screen.cursor_plane) |was| {
+        var off = screen.cursor_told;
+        off.shown = false;
+        cursor.write(screen.dcn, was.index, mode.outputOf(screen.dcn, screen.dcn.pipe), off, was.view);
+    };
+    screen.cursor_plane = over;
+    writeCursor(screen);
+}
+
+/// The overlay's plane taken down, where it is lit. Holding `pipe_lock`.
+fn dropOverlay(screen: *Screen) void {
+    const index = screen.overlay_pipe orelse return;
+    const engine = screen.dcn;
+    planeCursor(screen, null);
+    plane.darken(engine, index, engine.pipe, mode.outputOf(engine, engine.pipe));
+    screen.overlay_pipe = null;
+}
+
+/// The first pipe free for a plane, other than the picture's.
+fn freePipe(engine: dcn.Engine) ?u32 {
+    var index: u32 = 0;
+    while (index < pipe_count) : (index += 1) {
+        if (index != engine.fetcher and plane.isFree(engine, index)) return index;
+    }
+    return null;
+}
+
+/// What a plane is worked out at: the display's clocks held at their
+/// top - the first time, one asker at a time at the mailbox, as a mode
+/// set holds them - as they then run, the hub's watermarks and the
+/// overlay's rows; at the top of the clocks' levels where they cannot be
+/// held. Null where neither can be read.
+fn planeHeld(screen: *Screen) ?mode.Held {
+    if (screen.held_display_khz == 0) {
+        screen.sys.ObtainSemaphore(&screen.smu_lock);
+        var clocks: rtg.tags.RtgAmdClocks = .{};
+        const hold = smu.holdTop(screen.dcn, screen.smu, &clocks);
+        screen.sys.ReleaseSemaphore(&screen.smu_lock);
+        if (hold == err.RTGERR_OK and clocks.disp_khz != 0 and clocks.dpp_khz != 0) {
+            screen.held_display_khz = clocks.disp_khz;
+            screen.held_pipes_khz = clocks.dpp_khz;
+        }
+    }
+    var held = if (screen.held_display_khz != 0)
+        mode.heldOf(screen.dcn, screen.dcn.fetcher, screen.held_display_khz, screen.held_pipes_khz)
+    else
+        topHeld(screen) orelse return null;
+    held.pitch = overlay_pitch;
+    return held;
 }
 
 /// What is on the connector (`monitor.detect`), one reader at a time at
@@ -1082,6 +1334,7 @@ fn ddcTransfer(hook: *utility.Hook, _: ?*anyopaque, message: ?*anyopaque) callco
 /// that fails has the pipe brought up again.
 fn sleepLink(screen: *Screen, pixel_hz: u32) i32 {
     if (screen.asleep) return err.RTGERR_OK;
+    dropOverlay(screen);
     sound.soundDown(screen.dcn);
     var stage: u32 = 0;
     const started = screen.sys.UptimeUs();
@@ -1093,6 +1346,7 @@ fn sleepLink(screen: *Screen, pixel_hz: u32) i32 {
             _ = pipe.wake(screen.dcn, &screen.controller, &screen.sleeping, &back);
         }
         soundFor(screen);
+        showOverlay(screen);
         return code;
     }
     screen.asleep = true;
@@ -1116,6 +1370,7 @@ fn wakeLink(screen: *Screen) i32 {
         return code;
     }
     screen.asleep = false;
+    showOverlay(screen);
     exec.kprintf(screen.sys, "%s: the monitor is sent its stream again after %d us, the PHY %s\n", .{
         MODULE_NAME,
         @as(u32, @intCast(@min(screen.sys.UptimeUs() - started, 0xffff_ffff))),
@@ -1157,7 +1412,11 @@ fn setMode(screen: *Screen, timings: *const rtg.RtgTimings) i32 {
     }
     // Worked out at the clocks as they run now, where they read.
     var running = at_top;
-    if (clocks.disp_khz != 0 and clocks.dpp_khz != 0) running = mode.heldOf(screen.dcn, screen.dcn.fetcher, clocks.disp_khz, clocks.dpp_khz);
+    if (clocks.disp_khz != 0 and clocks.dpp_khz != 0) {
+        running = mode.heldOf(screen.dcn, screen.dcn.fetcher, clocks.disp_khz, clocks.dpp_khz);
+        screen.held_display_khz = clocks.disp_khz;
+        screen.held_pipes_khz = clocks.dpp_khz;
+    }
     const new = mode.of(timings.*, screen.fb.width, screen.fb.height, running) orelse return err.RTGERR_BAD_MODE;
 
     sys.ObtainSemaphore(&screen.pipe_lock);
@@ -1173,6 +1432,8 @@ fn setMode(screen: *Screen, timings: *const rtg.RtgTimings) i32 {
     defer if (was_asleep) {
         _ = sleepLink(screen, sleep_at);
     };
+    // A plane goes down with the pipe; the show lights it again.
+    dropOverlay(screen);
     const code = pipe.set(screen.dcn, &screen.controller, screen.connector, &new, hdmi, if (sends_avi) &avi else null, screen.pixel_clock_hz, &screen.last_set);
     const done = &screen.last_set;
     if (code != err.RTGERR_OK) {
@@ -1344,14 +1605,23 @@ const ops = rtg.boards.RtgBoardOps{
     .mirror = &mirrorOp,
 };
 
-/// The same, with the pointer the pipe's cursor.
-const ops_with_cursor = with: {
-    var with = ops;
-    with.pointer = &pointer_ops;
-    break :with with;
+/// The same with the pointer the pipe's cursor, the overlay a plane, or
+/// both, by `opsFor`.
+const op_tables = tables: {
+    var tables: [4]rtg.boards.RtgBoardOps = .{ ops, ops, ops, ops };
+    tables[1].pointer = &pointer_ops;
+    tables[2].overlay = &overlay_ops;
+    tables[3].pointer = &pointer_ops;
+    tables[3].overlay = &overlay_ops;
+    break :tables tables;
 };
 
+fn opsFor(with_cursor: bool, with_overlay: bool) *const rtg.boards.RtgBoardOps {
+    return &op_tables[@as(usize, @intFromBool(with_cursor)) | @as(usize, @intFromBool(with_overlay)) << 1];
+}
+
 const pointer_ops = rtg.RtgPointerOps{ .set = &setPointer, .move = &movePointer, .show = &showPointer };
+const overlay_ops = rtg.RtgOverlayOps{ .set = &setOverlay, .move = &moveOverlay };
 
 const driver_ops = rtg.RtgDriverOps{ .attach = &attach, .detach = &detach };
 

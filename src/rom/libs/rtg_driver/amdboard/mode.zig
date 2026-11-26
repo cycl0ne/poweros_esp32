@@ -48,8 +48,11 @@
 //!
 //! **The scaler** passes the picture through at its own size: its
 //! output rectangle, its size into the blender and the blanking it is
-//! told are the mode's, its filter the one it has. **The output's**
-//! pattern generator is told the picture's size.
+//! told are the mode's, and it is in its bypass (`passThrough`), as the
+//! vendor's driver puts a scaler that scales neither way. The firmware
+//! leaves it scaling by 1 with its filters' first phase at 0, which lays
+//! the picture a pixel or two right of and below where it belongs.
+//! **The output's** pattern generator is told the picture's size.
 //!
 //! What a mode needs that this does not: an interlaced timing, a picture
 //! larger than the frames, a line longer than the counters hold, a
@@ -121,6 +124,10 @@ const dscl_v_blank = 0x0d10;
 const dscl_recout_start = 0x0d11;
 const dscl_recout_size = 0x0d12;
 const dscl_mpc_size = 0x0d13;
+/// Its mode, in the low three bits: 0 passes the picture through as it
+/// is (DSCL_MODE_SCALING_444_BYPASS).
+const dscl_mode = 0x0cfb;
+const dscl_mode_mask: u32 = 0x7;
 const dpp_stride = 0x16b;
 
 /// An output's pattern generator's size, one per output a stride apart;
@@ -263,7 +270,7 @@ pub fn of(timings: rtg.RtgTimings, frame_width: u32, frame_height: u32, held: He
     if (timings.h_sync == 0 or timings.v_sync == 0 or timings.v_front == 0) return null;
     const lengths = lengthsOf(timings);
     if (lengths.h_total > counter_most + 1 or lengths.v_total > counter_most + 1) return null;
-    const schedule = scheduleOf(timings, lengths, held) orelse return null;
+    const schedule = scheduleOf(timings, lengths, held, timings.h_active, null) orelse return null;
 
     const h_blank_start = lengths.h_blank_end + timings.h_active;
     const v_blank_start = lengths.v_blank_end + timings.v_active;
@@ -339,10 +346,23 @@ fn wholeUp(fixed: u64) u64 {
     return (fixed + fraction_one - 1) >> fraction_bits;
 }
 
-/// The schedule for one plane at `timings` (the module's header says how
-/// it is worked out): null where no start leaves the prefetch its lines,
-/// or a register would not hold its part.
-fn scheduleOf(timings: rtg.RtgTimings, lengths: Lengths, held: Held) ?Schedule {
+/// The schedule of a plane `width` pixels across, unscaled, at `timings`
+/// beside the picture: its fetcher's registers for the timing generator's
+/// start `vstartup` as it runs (`vstartupOf`) - the timing generator's
+/// own are left as they are. Null as `scheduleOf`, and for a start the
+/// blank has no room for.
+pub fn planeSchedule(timings: rtg.RtgTimings, width: u32, held: Held, vstartup: u32) ?Schedule {
+    if (width == 0 or width > side_most) return null;
+    if (timings.pixel_clock_hz == 0 or timings.h_active == 0 or timings.v_active == 0) return null;
+    return scheduleOf(timings, lengthsOf(timings), held, width, vstartup);
+}
+
+/// The schedule for one plane `width` pixels across at `timings` (the
+/// module's header says how it is worked out), from the timing
+/// generator's start `started` where it runs already, else from the one
+/// worked out: null where no start leaves the prefetch its lines, or a
+/// register would not hold its part.
+fn scheduleOf(timings: rtg.RtgTimings, lengths: Lengths, held: Held, width: u32, started: ?u32) ?Schedule {
     const pixel_hz: u64 = timings.pixel_clock_hz;
     const display_hz: u64 = @as(u64, held.display_khz) * 1000;
     const pipes_hz: u64 = @as(u64, held.pipes_khz) * 1000;
@@ -354,8 +374,8 @@ fn scheduleOf(timings: rtg.RtgTimings, lengths: Lengths, held: Held) ?Schedule {
     const nominal_lines: u64 = (nominal_blank_us * pixel_hz + h_total * 1_000_000 - 1) / (h_total * 1_000_000);
     var nominal: u32 = @intCast(@min(@as(u64, v_blank), nominal_lines));
     nominal = @min(@max(nominal, lengths.v_blank_end + 2), vstartup_most);
-    const vstartup = @min(@min(v_blank, nominal) - 1, vstartup_most);
-    if (vstartup < vstartup_least) return null;
+    const vstartup = started orelse @min(@min(v_blank, nominal) - 1, vstartup_most);
+    if (vstartup < vstartup_least or vstartup >= v_blank or vstartup > vstartup_most) return null;
 
     // The registers taken, and the fetcher ready: the controller's deep
     // sleep clock is the slowest.
@@ -369,7 +389,7 @@ fn scheduleOf(timings: rtg.RtgTimings, lengths: Lengths, held: Held) ?Schedule {
 
     // The prefetch's lines, in quarters: the table's and the rows' at the
     // scan's rate, or what the time left allows.
-    const swath: u64 = (timings.h_active + request_pixels - 1) / request_pixels * request_pixels;
+    const swath: u64 = (width + request_pixels - 1) / request_pixels * request_pixels;
     const row_quarters: u32 = @intCast(@max(4, (8 * swath + @max(h_total, swath) - 1) / @max(h_total, swath)));
     const at_once_quarters = prefetch_table_quarters + row_quarters;
     const calculate = pixelsOf(24, deep_sleep_hz, pixel_hz);
@@ -399,14 +419,14 @@ fn scheduleOf(timings: rtg.RtgTimings, lengths: Lengths, held: Held) ?Schedule {
     if (h_blank_end > 0x1fff or per_line > 0x1fffff or delay_cycles > 0x1fff or delay_lines > 7 or reference_to_pixel > 0x1fffff) return null;
     // A row's requests: the picture's width less one rounded up to a
     // request and one more, or the frames' row where that is shorter.
-    var row_pixels: u64 = (timings.h_active - 1 + request_pixels - 1) / request_pixels * request_pixels + request_pixels;
-    if (row_pixels > held.pitch and held.pitch >= timings.h_active) row_pixels = held.pitch;
+    var row_pixels: u64 = (width - 1 + request_pixels - 1) / request_pixels * request_pixels + request_pixels;
+    if (row_pixels > held.pitch and held.pitch >= width) row_pixels = held.pitch;
     const requests = row_pixels / request_pixels;
-    const line_delivery = timings.h_active * reference_hz / pixel_hz;
-    const request_delivery = timings.h_active * reference_hz * 1024 / (pixel_hz * requests);
+    const line_delivery = width * reference_hz / pixel_hz;
+    const request_delivery = width * reference_hz * 1024 / (pixel_hz * requests);
     const faster = ratio > ratio_one;
     const line_delivery_prefetch = if (faster) reference_hz * row_pixels / (2 * pipes_hz) else line_delivery;
-    const request_delivery_prefetch = if (faster) timings.h_active * reference_hz * 1024 / (2 * pipes_hz * requests) else request_delivery;
+    const request_delivery_prefetch = if (faster) width * reference_hz * 1024 / (2 * pipes_hz * requests) else request_delivery;
     const high_level = 4 * h_total * reference_hz / pixel_hz;
     const next_start: u64 = (2 * @as(u64, lengths.v_total) - timings.v_front - timings.v_active - vstartup + setup / h_total) * 4;
     if (line_delivery > 0x1fff or line_delivery_prefetch > 0x1fff or high_level > 0x3fff or next_start > 0x3ffff) return null;
@@ -484,6 +504,33 @@ pub fn writePlane(engine: dcn.Engine, fetcher: u32, output: u32, mode: *const Mo
     const schedule = mode.schedule;
     const control = at(engine, hubp + hubp_control);
     control.* = (control.* & ~hubp_ready_after_sync) | (if (schedule.ready_after_sync) hubp_ready_after_sync else 0);
+    writeSchedule(engine, fetcher, &schedule);
+
+    const dpp = fetcher * dpp_stride;
+    at(engine, dpp + dscl_h_blank).* = scalerBlank(mode.h_blank);
+    at(engine, dpp + dscl_v_blank).* = scalerBlank(mode.v_blank);
+    at(engine, dpp + dscl_recout_start).* = 0;
+    at(engine, dpp + dscl_recout_size).* = mode.size;
+    at(engine, dpp + dscl_mpc_size).* = mode.size;
+    passThrough(engine, fetcher);
+
+    at(engine, output * opp_stride + dpg_dimensions).* = mode.pattern_size;
+}
+
+/// The scaler of the pipe `fetcher` in its bypass from the pipe's next
+/// update on: each pixel where the fetcher read it, the vendor's mode for
+/// a picture scaled neither way (dpp1_dscl_get_dscl_mode).
+pub fn passThrough(engine: dcn.Engine, fetcher: u32) void {
+    const scaling = at(engine, fetcher * dpp_stride + dscl_mode);
+    scaling.* &= ~dscl_mode_mask;
+}
+
+/// The fetcher `fetcher` told its pace (`Schedule`): when it starts in
+/// the blank, its prefetch - the chroma's at a ratio of 1, as a plane
+/// without one is told - and the time it has for its requests. Its ready
+/// is the caller's, which knows whether the timing generator's is its own.
+pub fn writeSchedule(engine: dcn.Engine, fetcher: u32, schedule: *const Schedule) void {
+    const hubp = fetcher * hubp_stride;
     at(engine, hubp + hubp_blank_offset).* = schedule.blank_offset;
     at(engine, hubp + hubp_next_start).* = schedule.next_start;
     at(engine, hubp + hubp_dst_dimensions).* = schedule.dst_dimensions;
@@ -498,15 +545,12 @@ pub fn writePlane(engine: dcn.Engine, fetcher: u32, output: u32, mode: *const Mo
     at(engine, hubp + hubp_global_ttu).* = schedule.global_ttu;
     at(engine, hubp + hubp_surface_ttu).* = schedule.surface_ttu;
     at(engine, hubp + hubp_surface_ttu_prefetch).* = schedule.surface_ttu_prefetch;
+}
 
-    const dpp = fetcher * dpp_stride;
-    at(engine, dpp + dscl_h_blank).* = scalerBlank(mode.h_blank);
-    at(engine, dpp + dscl_v_blank).* = scalerBlank(mode.v_blank);
-    at(engine, dpp + dscl_recout_start).* = 0;
-    at(engine, dpp + dscl_recout_size).* = mode.size;
-    at(engine, dpp + dscl_mpc_size).* = mode.size;
-
-    at(engine, output * opp_stride + dpg_dimensions).* = mode.pattern_size;
+/// The lines before the picture timing generator `pipe` starts its
+/// fetchers at, as it runs.
+pub fn vstartupOf(engine: dcn.Engine, pipe: u32) u32 {
+    return at(engine, pipe * otg_stride + otg_vstartup).* & vstartup_most;
 }
 
 /// The fetcher's turn of its surface: its rotation - none or half a

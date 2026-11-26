@@ -1657,9 +1657,10 @@ plane's buffer, place and configuration together while the controller's
 shadow registers are held - a new place is taken only with the
 configuration written after it. The two buffers take turns, so the one
 the plane reads is never the one written. The overlay goes into the
-pictures the library makes, and on the Compute Module 5 is a plane of
-its own under the cursor's. The virtio GPU's pointer is the emulator's
-cursor; everywhere else the library lays it in the pictures it makes.
+pictures the library makes, and on the Compute Module 5 and an AMD
+display is a plane of its own under the cursor's. The virtio GPU's
+pointer is the emulator's cursor; everywhere else the library lays it
+in the pictures it makes.
 The Compute Module 5's display mirrors in its planes, an AMD display in
 the fetcher that reads its picture.
 
@@ -1751,7 +1752,25 @@ nothing but the cursor's place. Partly off the picture's top left, the
 cursor stays at its edge with its hot spot moved in by as much.
 `C:test/Gpu POINTER` shows a still picture and prints its checksum with
 the pointer hidden, at three places and hidden again, and what the
-cursor is told at each. The overlay is laid by the library.
+cursor is told at each.
+
+The overlay is a plane of its own where the pointer is the cursor: a
+free pipe of the engine lit on the picture's timing generator, reading
+one of two images of the device's memory that take turns, and laid over
+the picture by the blender with its pixels' alpha. Only the part of it
+on the glass is fetched; with the picture mirrored the plane is
+mirrored with it. The pointer is that pipe's cursor too, so it stays
+above the overlay. The plane goes down for a mode set and while the
+monitor sleeps, and is lit again after. The picture itself goes through
+its scaler's bypass, a pixel where the fetcher read it, so a plane's
+pixels and the picture's meet where they belong. `C:test/Gpu OVERLAY`
+checks it: for each way of mirroring, an overlay at a place on the
+picture, partly off its top left and partly off its bottom right, with
+the pointer hidden, over it and across its edge - the program drawing
+picture, overlay and pointer itself, against the board laying them; all
+thirty-six are the same. Where a pointer's pixel is partly clear over a
+clear pixel of the overlay, both pipes' cursors lay it, so it is
+blended twice there.
 
 The picture is mirrored about either axis by the fetcher
 (`RTGBC_MIRROR_X`, `RTGBC_MIRROR_Y`, `Rtg amd.0 SET MIRROR=X`): its
