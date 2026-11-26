@@ -312,6 +312,10 @@ pub fn CreateImageView(base: *FacetBase, device: *facet.Device, info: *const fac
     // Of another format than the image's (since 1.131): the same texels
     // at the same places, read the view's way.
     if (info.format != image.given_format and _image.hasTexels(image)) made.texels = _image.readAs(made.texels, image, info.format);
+    // On a device whose images lie in a layout of their own (the V3D),
+    // where that device keeps them: what a function of the program's run
+    // on the cores reads and writes (since 1.217).
+    if (_image.hasTexels(image)) _image.deviceTexels(made);
     // What a sample, a fetch and a read of the texels give back, swizzled
     // as the view says (since 1.120), and of a depth or a stencil read
     // (D, 0, 0, 1) whatever it says (since 1.121). An input attachment's

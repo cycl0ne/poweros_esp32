@@ -11569,6 +11569,100 @@ test "a device of the V3D's layout lays an attachment a later subpass reads out 
     try testing.expect(pass == null);
 }
 
+test "a function run on the cores beside a device of the V3D's layout reads a texture and writes a storage image where that device keeps them (item 57, step 1)" {
+    const Moved = struct {
+        /// Each group reads texel (x, y) of the sampled view at binding 0
+        /// and writes it into the storage view at binding 1, its red and
+        /// blue swapped: R8G8B8A8's bytes made into B8G8R8A8's, so what a
+        /// copy reads back of the one is what a copy put into the other.
+        fn run(groups: *const shader.Groups) callconv(.c) void {
+            const from = groups.resources.sampled(0, 0, 0) orelse return;
+            const into = groups.resources.written(0, 1, 0) orelse return;
+            const x = groups.group[0];
+            const y = groups.group[1];
+            const color = from.colorAt(0, 0, x, y);
+            into.setColor(0, 0, x, y, color & 0xFF00_FF00 | (color >> 16 & 0xFF) | (color & 0xFF) << 16);
+        }
+        const entries = [_]shader.Entry{shader.compute("main", &run)};
+        const code = shader.Code{ .entry_count = entries.len, .entries = &entries };
+    };
+    var bench = try Bench.on(&QuadLayout.ops);
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    const _image = @import("../image/_image.zig");
+    const ImageView = _image.ImageView;
+    // Two levels of two layers each, and a view of the second level of
+    // the second layer: 32 x 20 there, which the device lays out in its
+    // own tiles and pads, where the library's blocks would lie otherwise.
+    const extent = facet.Extent3D{ .width = 64, .height = 40, .depth = 1 };
+    const range = facet.ImageSubresourceRange{ .base_mip_level = 1, .level_count = 1, .base_array_layer = 1, .layer_count = 1 };
+    const source = try bench.bareImage(.{ .format = .r8g8b8a8_unorm, .extent = extent, .mip_levels = 2, .array_layers = 2, .usage = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST }, false);
+    const target = try bench.bareImage(.{ .format = .b8g8r8a8_unorm, .extent = extent, .mip_levels = 2, .array_layers = 2, .usage = facet.IMAGE_USAGE_STORAGE | facet.IMAGE_USAGE_TRANSFER_SRC }, false);
+    const read = try bench.viewOf(.{ .image = source, .format = .r8g8b8a8_unorm, .subresource_range = range });
+    const written = try bench.viewOf(.{ .image = target, .format = .b8g8r8a8_unorm, .subresource_range = range });
+    // Each view's texels where the device keeps them, in its format's
+    // bytes as they lie.
+    for ([2]*facet.ImageView{ read, written }) |view| {
+        const made = _objects.of(ImageView, view);
+        try testing.expect(_image.deviceLaid(made.image));
+        try testing.expect(made.texels.place != null);
+    }
+    try testing.expectEqual(texture_zig.Format.rgba8, _objects.of(ImageView, read).texels.format);
+    try testing.expectEqual(texture_zig.Format.argb8888, _objects.of(ImageView, written).texels.format);
+
+    const bindings = [2]facet.DescriptorSetLayoutBinding{
+        .{ .binding = 0, .descriptor_type = .sampled_image, .stage_flags = facet.SHADER_STAGE_COMPUTE },
+        .{ .binding = 1, .descriptor_type = .storage_image, .stage_flags = facet.SHADER_STAGE_COMPUTE },
+    };
+    var set_layout: ?*facet.DescriptorSetLayout = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 2, .bindings = &bindings }, &set_layout));
+    defer fb.DestroyDescriptorSetLayout(device, set_layout);
+    const layout = try pipelineLayout(&bench, &.{set_layout.?}, 0);
+    defer fb.DestroyPipelineLayout(device, layout);
+    var pool: ?*facet.DescriptorPool = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorPool(device, &.{ .max_sets = 1 }, &pool));
+    defer fb.DestroyDescriptorPool(device, pool);
+    var sets: [1]?*facet.DescriptorSet = undefined;
+    try testing.expectEqual(facet.Result.success, fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&set_layout) }, &sets));
+    const infos = [2]facet.DescriptorImageInfo{ .{ .image_view = read, .image_layout = .shader_read_only_optimal }, .{ .image_view = written, .image_layout = .general } };
+    const writes = [2]facet.WriteDescriptorSet{
+        .{ .dst_set = sets[0].?, .dst_binding = 0, .descriptor_type = .sampled_image, .image_info = @ptrCast(&infos[0]) },
+        .{ .dst_set = sets[0].?, .dst_binding = 1, .descriptor_type = .storage_image, .image_info = @ptrCast(&infos[1]) },
+    };
+    fb.UpdateDescriptorSets(device, 2, &writes, 0, null);
+    const module_made = try module(&bench, &Moved.code);
+    defer fb.DestroyShaderModule(device, module_made);
+    var computes: [1]?*facet.Pipeline = undefined;
+    const compute_info = facet.ComputePipelineCreateInfo{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module_made }, .layout = layout };
+    try testing.expectEqual(facet.Result.success, fb.CreateComputePipelines(device, null, 1, @ptrCast(&compute_info), &computes));
+    defer fb.DestroyPipeline(device, computes[0]);
+
+    // A texel of each place its own: x, y and a constant, opaque.
+    const width = 32;
+    const height = 20;
+    const bytes = width * height * 4;
+    const given, const given_bytes = try bench.buffer(bytes, facet.BUFFER_USAGE_TRANSFER_SRC);
+    for (0..height) |y| for (0..width) |x| {
+        const at = (y * width + x) * 4;
+        given_bytes[at..][0..4].* = .{ @intCast(x * 4), @intCast(y * 8), 0x5A, 0xFF };
+    };
+    const back, const back_bytes = try bench.buffer(bytes, facet.BUFFER_USAGE_TRANSFER_DST);
+    @memset(back_bytes[0..bytes], 0);
+    const region = facet.BufferImageCopy{ .image_subresource = .{ .mip_level = 1, .base_array_layer = 1 }, .image_extent = .{ .width = width, .height = height } };
+    const commands = try bench.record();
+    fb.CmdCopyBufferToImage(commands, given, source, .transfer_dst_optimal, 1, @ptrCast(&region));
+    fb.CmdBindPipeline(commands, .compute, computes[0].?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdDispatch(commands, width, height, 1);
+    fb.CmdCopyImageToBuffer(commands, target, .general, back, 1, @ptrCast(&region));
+    try bench.submit();
+    // The copy put the texels where the device keeps them, the function
+    // read and wrote them there, and the copy back read them there: the
+    // bytes come back as they went in.
+    try testing.expectEqualSlices(u8, given_bytes[0..bytes], back_bytes[0..bytes]);
+}
+
 test "a device of the V3D's layout keeps an image drawn into and sampled as it keeps a texture, each layer one of its own and each level in its tiling, where a copy, a clear and a resolve reach it (item 48's V3D half)" {
     var bench = try Bench.on(&QuadLayout.ops);
     defer bench.down();

@@ -760,6 +760,23 @@ pub const Texture = struct {
     /// depth's or a stencil's view, whose green and blue read 0 and whose
     /// alpha reads 1 whatever the view says (since 1.121).
     swizzle: Swizzle = .{},
+    /// Where texel (x, y) of a level of a layer lies, in bytes from
+    /// `memory`, on a device that lays its textures out its own way: the
+    /// V3D's, whose TMU reads a texture in its tiles (since 1.217). Every
+    /// read and write of a texel one at a time asks it - `colorAt`,
+    /// `partsAt`, `wholesAt`, `setColor` and the rest, and so a sample
+    /// through `sampleLayer` - so a function of the program's run on the
+    /// cores reads and writes a texture where that device keeps it, as
+    /// Mesa's v3d driver moves a mapped texture's texels through
+    /// v3d_tiling.c's places (src/broadcom/common/v3d_tiling.c). Null, the
+    /// library's own blocks or rows, for every other texture; the fast
+    /// samplers a fragment function of the cores draws with (`sample`,
+    /// `sampleAt`) read those alone, and no such function draws on a
+    /// device of its own layout.
+    place: ?*const fn (texture: *const Texture, layer: u32, lod: u32, x: u32, y: u32) callconv(.c) usize = null,
+    /// What `place` finds the texture's image by: the library's own, and
+    /// nothing a program reads.
+    owner: ?*const anyopaque = null,
 
     pub const Error = error{BadSize};
 
@@ -904,6 +921,8 @@ pub const Texture = struct {
     /// texture's memory: its row and column for one kept in rows, and the
     /// level's own spread places for one kept in blocks.
     inline fn placeOf(texture: *const Texture, layer: u32, lod: u32, x: u32, y: u32) usize {
+        // Where a device lays the texture out its own way, it says.
+        if (texture.place) |own| return own(texture, layer, lod, x, y);
         if (texture.pitch != 0) {
             const apart = if (texture.stride != 0) texture.stride else texture.format.bytes();
             // The level's own rows, after the levels before it inside the

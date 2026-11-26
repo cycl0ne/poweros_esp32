@@ -7142,4 +7142,41 @@ pub const LIBRARY_VERSION = 1;
 /// attachment of four fails the two that say more. FacetBoth 1.75's
 /// "shipped input attachment" draws it for the board. Read from the code
 /// and the host's tests: not yet on a board, the CM5 being off.
-pub const LIBRARY_REVISION = 216;
+///
+/// 217: **Storage images on the V3D, through the cores
+/// (docs/facet-vulkan10.md item 57, step 1).** `can.storage_images` is true
+/// there, so a set layout with a storage image is made.
+/// maxPerStageDescriptorStorageImages is v3dv's MAX_STORAGE_IMAGES, 4
+/// (v3dv_limits.h:51; v3dv_device.c:1091). maxDescriptorSetStorageImages
+/// is Vulkan's 24, where v3dv says its four stages' 4 apiece
+/// (v3dv_device.c:1105-1106), 16, under what Vulkan 1.0 asks.
+/// storageImageSampleCounts is 1 (v3dv_device.c:1188), where it said 0.
+///
+/// What the cores read and write of such a device's texture is where the
+/// device keeps it. `texture.Texture` has a `place`, which every read and
+/// write of a texel one at a time asks first. A view of an image laid out
+/// as the device's textures are points it at the driver's `texture_offset`
+/// (`_image.deviceTexels`), the op a copy has reached the V3D's tiles
+/// through since 1.141, as Mesa's v3d driver moves a mapped texture
+/// through v3d_tiling.c's places. Its format is the image's bytes as they
+/// lie (`_image.lyingFormat`). So a compute function or a vertex function
+/// run on the cores beside the V3D reads a texture where its TMU reads it,
+/// and writes a storage image where its TMU will. Until now such a view's
+/// texture was the library's own blocks over the device's tiles: it read
+/// the wrong texels, and past the image where those blocks are larger.
+/// After a dispatch whose function ran on the cores, the V3D sends what it
+/// wrote through a storage image out of the CPU's caches, as after a copy
+/// (`_play.onCores`). No QPU program reads or writes a storage image yet
+/// (steps 2 and 3): `spirv.look` refuses its type, so a compute shader
+/// that uses one runs its function on the cores.
+///
+/// One host test is new, on a device of the V3D's layout: a compute
+/// function reads a level of a layer of a texture and writes it into the
+/// same of a storage image, and what a copy put into the one a copy reads
+/// back out of the other, byte for byte. One changed, the V3D's sample
+/// counts. Taken out, the place in `placeOf`, the view's place, its format
+/// as it lies, the view's level and layer, and where its texture starts
+/// each fail the new test. The caches are the board's to see: FacetBoth
+/// 1.76's "stored by a function" draws such a texture. Read from the code
+/// and the host's tests: not yet on a board, the CM5 being off.
+pub const LIBRARY_REVISION = 217;

@@ -1136,18 +1136,44 @@ fn lost(player: *const Player, sys: *ExecBase, finished: v3d.Engine.Finished, wh
 /// (v3dv_cmd_buffer.c:4434-4445), carved from the chunks with the
 /// uniforms; where there is no memory for it the function runs on the
 /// cores (since 1.203).
+/// A dispatch's function on the cores (`_compute.dispatch`), and what it
+/// wrote through a storage image sent out of the CPU's caches after it, as
+/// what a copy or a clear wrote is (`texturesToGpu`): a function there
+/// writes a texture of this device's where its TMU reads it
+/// (`_image.deviceTexels`), and the TMU reads memory (since 1.217).
+fn onCores(queue: *Queue, pipeline: *const Pipeline, count: [3]u32) void {
+    const player = playerOf(queue);
+    _compute.dispatch(queue.device.sys, pipeline, &player.compute_resources, count, &_query.none);
+    writtenToGpu(queue, &player.compute_resources);
+}
+
+/// Every image `resources` holds as a storage image, out of the CPU's
+/// caches: a slot written through that is no texel buffer holds a view's
+/// texture (`UpdateDescriptorSets`).
+fn writtenToGpu(queue: *Queue, resources: *const shader.Resources) void {
+    for (resources.sets) |bound| {
+        const set = bound orelse continue;
+        for (set.slots[0..set.first[set.binding_count]]) |slot| {
+            if (!slot.writable or slot.texels != .none) continue;
+            const texels: *const facet.texture.Texture = @ptrCast(@alignCast(slot.pointer orelse continue));
+            const view: *const _image.ImageView = @fieldParentPtr("texels", texels);
+            texturesToGpu(queue, view.image);
+        }
+    }
+}
+
 fn dispatch(queue: *Queue, count: [3]u32) void {
     const player = playerOf(queue);
     const sys = queue.device.sys;
     const pipeline = player.compute_pipeline orelse return;
     const hardware = player.hardware;
     const made: *const driver.ComputeShader = @ptrCast(@alignCast(pipeline.driver orelse
-        return _compute.dispatch(sys, pipeline, &player.compute_resources, count, &_query.none)));
+        return onCores(queue, pipeline, count)));
     if (hardware.broken) return;
     if (count[0] == 0 or count[1] == 0 or count[2] == 0) return;
     player.computing = true;
     defer player.computing = false;
-    if (!buffersBound(queue, made.stream())) return _compute.dispatch(sys, pipeline, &player.compute_resources, count, &_query.none);
+    if (!buffersBound(queue, made.stream())) return onCores(queue, pipeline, count);
     // No frame is being made, so its memory is free to use.
     for (player.chunks[0..player.chunk_count]) |*chunk| chunk.used = 0;
     player.chunk_at = 0;
@@ -1159,16 +1185,16 @@ fn dispatch(queue: *Queue, count: [3]u32) void {
     if (program.shared_size != 0) {
         const groups = @as(u64, count[0]) * count[1] * count[2];
         const bytes = std.math.cast(u32, groups * program.shared_size) orelse
-            return _compute.dispatch(sys, pipeline, &player.compute_resources, count, &_query.none);
+            return onCores(queue, pipeline, count);
         const place = carve(queue, bytes, shared_alignment) orelse {
             exec.kprintf(sys, "v3d: no memory for a dispatch's shared memory: its function runs on the cores\n", .{});
-            return _compute.dispatch(sys, pipeline, &player.compute_resources, count, &_query.none);
+            return onCores(queue, pipeline, count);
         };
         player.shared_address = place.address;
     }
     const uniforms = streamOf(queue, made.stream(), &.{}, null, 0, made.spillWords()) orelse {
         exec.kprintf(sys, "v3d: no memory for a dispatch's uniforms: its function runs on the cores\n", .{});
-        return _compute.dispatch(sys, pipeline, &player.compute_resources, count, &_query.none);
+        return onCores(queue, pipeline, count);
     };
     // A count the CSD cannot take, which an indirect dispatch can give:
     // on the cores, which take any.
@@ -1184,7 +1210,7 @@ fn dispatch(queue: *Queue, count: [3]u32) void {
         .revision = hardware.revision,
         .has_tsy_barrier = program.has_control_barrier,
         .qpus = hardware.qpus,
-    }) orelse return _compute.dispatch(sys, pipeline, &player.compute_resources, count, &_query.none);
+    }) orelse return onCores(queue, pipeline, count);
     const space = &hardware.space;
     for (player.chunks[0..player.chunk_count]) |*chunk| {
         if (chunk.used != 0) space.rangeToGpu(chunk.block.cpu, chunk.used);

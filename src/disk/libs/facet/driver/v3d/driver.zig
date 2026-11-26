@@ -153,12 +153,17 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
             said.mipmap_precision_bits = 8;
             // A texture a unit: as many as the samplers (since 1.173).
             said.max_per_stage_descriptor_sampled_images = compile.most_samplers;
-            // No storage image here (`can.storage_images`). Input
+            // Storage images since 1.217 (`can.storage_images`): v3dv's
+            // MAX_STORAGE_IMAGES a stage (v3dv_limits.h:51;
+            // v3dv_device.c:1091), and Vulkan's 24 a set, where v3dv says
+            // its four stages' 4 apiece (v3dv_device.c:1105-1106), 16,
+            // under the 24 Vulkan 1.0 asks. A set's descriptors are the
+            // library's to hold, so the set takes what Vulkan asks. Input
             // attachments as v3dv has them, MAX_INPUT_ATTACHMENTS a stage
             // and a set (v3dv_limits.h:52; v3dv_device.c:1092, :1107;
             // since 1.216): each a unit of the TMU's, as a texture is.
-            said.max_per_stage_descriptor_storage_images = 0;
-            said.max_descriptor_set_storage_images = 0;
+            said.max_per_stage_descriptor_storage_images = 4;
+            said.max_descriptor_set_storage_images = 24;
             said.max_per_stage_descriptor_input_attachments = 4;
             // A QPU fragment program writes one colour: the forms that
             // write several are refused here and drawn on the cores
@@ -173,14 +178,16 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
             // stored it, in the pixel's quad (item 61's V7), as v3dv
             // reports 1 and 4 on this same V3D (`supported_sample_counts`,
             // v3dv_device.c:1024-1027, :1179-1189). No whole-number format
-            // (`can.whole_textures`), no stencil, no storage image. A mask
-            // of no bits says the device samples no image of that kind at
-            // all, which is what Vulkan means by it.
+            // (`can.whole_textures`) and no stencil. A mask of no bits
+            // says the device samples no image of that kind at all, which
+            // is what Vulkan means by it. A storage image is of one sample,
+            // the library's table (since 1.217), as v3dv's is
+            // (v3dv_device.c:1188), shaderStorageImageMultisample being
+            // false.
             said.sampled_image_color_sample_counts = facet.SAMPLE_COUNT_1 | facet.SAMPLE_COUNT_4;
             said.sampled_image_depth_sample_counts = facet.SAMPLE_COUNT_1 | facet.SAMPLE_COUNT_4;
             said.sampled_image_integer_sample_counts = 0;
             said.sampled_image_stencil_sample_counts = 0;
-            said.storage_image_sample_counts = 0;
             // The rasterizer places an edge in 1/64 of a pixel, not 1/256,
             // and a point's or a line's width is told apart that finely
             // with it.
@@ -351,10 +358,14 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // their own (`cl.depthBounds`, since 1.47).
         .depth_clamp = true,
         .depth_bounds = true,
-        // A V3D texture lies the way its TMU reads it, which is not the
-        // layout the library writes (`texture_offset`), so a storage image
-        // is refused on this device and the set layout says so.
-        .storage_images = false,
+        // A V3D texture lies the way its TMU reads it, and since 1.217 a
+        // function of the program's run on the cores reads and writes a
+        // view's texels there (`_image.deviceTexels`, through
+        // `texture_offset`): a storage image is written through as it is
+        // on the cores. No QPU program reads or writes one yet
+        // (docs/facet-vulkan10.md item 57): a compute shader that does
+        // runs its function on the cores.
+        .storage_images = true,
         // A texel buffer is a buffer's bytes and a format: nothing of a
         // device's own layout is in it, so every device takes one. What
         // reads it is a function of the program's, which on a device
