@@ -393,3 +393,32 @@ pub fn amdRampSet(rate: u8) u20 {
     return 0x7_7000 | @as(u20, rate);
 }
 pub const amd_ramp_sound: u8 = 180;
+
+/// What the display engine told a pin of the far end, a field at a time:
+/// that codec holds no block of the far end's own. First the speakers it
+/// names, as its speaker allocation block's first byte - the same verb a
+/// converter answers its ramp to. Then its description of a kind of
+/// sound, the kind's number written in bits 3 to 6 and the description
+/// read as one word: the channels less one, the rates and the third byte
+/// as the far end's own descriptor holds them, and for uncompressed sound
+/// the rates two channels take in the top byte.
+pub const amd_far_speakers_get: u20 = 0xf_7000;
+pub const amd_far_speakers_mask: u32 = 0x7f;
+pub fn amdFarSoundSet(kind: u4) u20 {
+    return 0x7_7600 | @as(u20, kind) << 3;
+}
+pub const amd_far_sound_get: u20 = 0xf_7600;
+pub const amd_far_channels_mask: u32 = 0x7;
+pub const amd_far_rates_shift = 8;
+pub const amd_far_stereo_rates_shift = 24;
+
+/// Who the far end is, on a codec of the third revision on: a field
+/// chosen and then read - the length of its name, and from the fifth
+/// field on the name, a letter a field, at most eighteen.
+pub fn amdFarInfoSet(field: u8) u20 {
+    return 0x7_8000 | @as(u20, field);
+}
+pub const amd_far_info_get: u20 = 0xf_8100;
+pub const amd_far_name_length: u8 = 2;
+pub const amd_far_name: u8 = 5;
+pub const amd_far_name_most = 18;

@@ -64,6 +64,7 @@ test {
     _ = @import("libs/rtg_driver/amdboard/monitor.zig");
     _ = @import("libs/rtg_driver/amdboard/pipe.zig");
     _ = @import("libs/rtg_driver/amdboard/mode.zig");
+    _ = @import("libs/rtg_driver/amdboard/sound.zig");
     _ = @import("libs/rtg_driver/bcm2712board/ddc.zig");
     _ = @import("libs/rtg_driver/bcm2712board/sound.zig");
     _ = @import("libs/rtg_driver/bcm2712board/list.zig");

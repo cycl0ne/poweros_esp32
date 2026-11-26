@@ -28,7 +28,10 @@
 //! monitor the sound is going to, and to refuse a rate the far end has
 //! said it does not take - and a link that describes nothing is played
 //! through all the same, since a monitor that answers nothing is still a
-//! monitor.
+//! monitor. The vendor's codec with verbs of its own holds no such block:
+//! what its display engine was told of the far end - the speakers, a
+//! description of each kind of sound, the name - is read a field at a
+//! time instead.
 //!
 //! **A pin with nothing plugged into it is not played through.** A
 //! machine has a display socket for every link its chip has, and most of
@@ -89,7 +92,11 @@ pub fn look(c: *Controller, codec: *codec_file.Codec, output: *const codec_file.
     });
     var far: Far = .{ .present = sense & verbs.pin_sense_present != 0 };
     if (sense & verbs.pin_sense_described == 0) return far;
-    describe(c, codec, output, &far);
+    if (codec.vendor == verbs.vendor_amd) {
+        describeAmd(c, codec, output, &far);
+    } else {
+        describe(c, codec, output, &far);
+    }
     return far;
 }
 
@@ -150,8 +157,49 @@ fn describe(c: *Controller, codec: *codec_file.Codec, output: *const codec_file.
     }
 }
 
+/// The far end's description as the codec of the vendor with verbs of
+/// its own gives it, a field at a time out of what the display engine was
+/// told: the speakers, the description of uncompressed sound, and from
+/// the third revision on the name. Nothing is described where the engine
+/// named no speakers or no rate of uncompressed sound. The rates are the
+/// ones its most channels take and the ones two channels take: a stream
+/// played here is two channels.
+fn describeAmd(c: *Controller, codec: *codec_file.Codec, output: *const codec_file.Output, far: *Far) void {
+    const address = codec.address;
+    const speakers = ask(c, address, output.pin, verbs.amd_far_speakers_get) orelse return;
+    if (speakers & verbs.amd_far_speakers_mask == 0) return;
+    _ = ask(c, address, output.pin, verbs.amdFarSoundSet(sound_lpcm));
+    const lpcm = ask(c, address, output.pin, verbs.amd_far_sound_get) orelse return;
+    const rates: u8 = @truncate(lpcm >> verbs.amd_far_rates_shift);
+    sdk.exec.klog(c.sys, exec.LOG_DEBUG, "rta-hda: pin %d: speakers %x, uncompressed sound %x\n", .{
+        @as(u32, output.pin), speakers, lpcm,
+    });
+    if (rates == 0) return;
+    far.described = true;
+    far.channels = @as(u8, @truncate(lpcm & verbs.amd_far_channels_mask)) + 1;
+    far.rates = ratesOf(rates) | ratesOf(@truncate(lpcm >> verbs.amd_far_stereo_rates_shift));
+    if (!thirdRevision(codec)) return;
+    _ = ask(c, address, output.pin, verbs.amdFarInfoSet(verbs.amd_far_name_length));
+    const told = (ask(c, address, output.pin, verbs.amd_far_info_get) orelse 0) & 0xff;
+    const length = @min(told, verbs.amd_far_name_most, max_name - 1);
+    var which: u32 = 0;
+    while (which < length) : (which += 1) {
+        _ = ask(c, address, output.pin, verbs.amdFarInfoSet(@intCast(verbs.amd_far_name + which)));
+        const byte: u8 = @truncate(ask(c, address, output.pin, verbs.amd_far_info_get) orelse ' ');
+        far.name[which] = if (byte >= ' ' and byte < 0x7f) byte else ' ';
+    }
+    far.name[which] = 0;
+}
+
+/// Whether the vendor's codec is the device that takes the slots one at
+/// a time and names the far end: that device from revision 3 on.
+fn thirdRevision(codec: *const codec_file.Codec) bool {
+    return codec.device == verbs.amd_single_device and
+        codec.revision & verbs.amd_revision_mask >= verbs.amd_single_revision;
+}
+
 /// What a descriptor calls uncompressed sound.
-const sound_lpcm: u8 = 1;
+const sound_lpcm: u4 = 1;
 
 /// The rates a descriptor's bits stand for, as the codec's own rate
 /// bits, so that the two can be held against each other.
@@ -229,8 +277,7 @@ fn infoframe(c: *Controller, codec: *codec_file.Codec, output: *const codec_file
 /// verb for every other slot, the pair's first channel naming both.
 fn prepareAmd(c: *Controller, codec: *codec_file.Codec, output: *const codec_file.Output, channels: u8) void {
     const address = codec.address;
-    const single = codec.device == verbs.amd_single_device and
-        codec.revision & verbs.amd_revision_mask >= verbs.amd_single_revision;
+    const single = thirdRevision(codec);
     _ = ask(c, address, output.pin, verbs.amdDownmixSet(0));
     var slot: u4 = 0;
     if (single) {

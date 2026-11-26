@@ -220,6 +220,11 @@ fn describe(state: *State, present: bool, size: u32) void {
     if (sink.scdc) state.info.flags |= monitors.RTGMON_SCDC;
     if (sink.forum) state.info.flags |= monitors.RTGMON_HDMI2;
     state.info.max_tmds_khz = sink.max_tmds_khz;
+    state.info.audio_channels = sink.lpcm_channels;
+    state.info.audio_rates = sink.lpcm_rates;
+    state.info.audio_stereo_rates = sink.lpcm_stereo_rates;
+    state.info.audio_sizes = sink.lpcm_sizes;
+    state.info.speakers = sink.speakers;
 }
 
 /// Whether the board has a mode of the monitor's of that picture at that
@@ -614,6 +619,10 @@ test "a monitor's modes: made of its EDID as the board joins the list, the one i
     try testing.expectEqual(@as(u32, 350), said.width_mm);
     try testing.expectEqual(@as(u16, 2024), said.year);
     try testing.expectEqual(@as(u32, 300_000), said.max_tmds_khz);
+    try testing.expectEqual(@as(u8, 2), said.audio_channels);
+    try testing.expectEqual(@as(u8, 0x7F), said.audio_rates);
+    try testing.expectEqual(@as(u8, 0x07), said.audio_sizes);
+    try testing.expectEqual(m.RTGSPEAKER_FRONT, said.speakers);
     try testing.expectEqual(@as(u32, 256), said.edid_size);
     try testing.expectEqual(@as(u32, 256), fixture.base(rb).ReadBoardEDID(board, null, 0));
     var bytes: [rtg.modes.RTG_EDID_MAX]u8 = @splat(0xEE);

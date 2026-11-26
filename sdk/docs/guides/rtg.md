@@ -262,8 +262,14 @@ its description was read (`RTGMON_EDID`) the maker's letters, the
 product and serial numbers, its name, the picture's size in
 millimetres, when it was made, and what it takes - HDMI's packets
 (`RTGMON_HDMI`), sound (`RTGMON_AUDIO`), a choice of its RGB range,
-scrambling, its fastest clock. `ReadBoardEDID` copies out the EDID's
-bytes.
+scrambling, its fastest clock. The sound is described as its audio and
+speaker allocation blocks name it: the most channels of uncompressed
+sound (`audio_channels`), the rates and sample sizes at that many
+(`audio_rates`, `RTGAUDIO_RATE_*`; `audio_sizes`, `RTGAUDIO_BITS_*`),
+the rates two channels take (`audio_stereo_rates`) and the speakers
+(`speakers`, `RTGSPEAKER_*`); a monitor that plays sound and names none
+of it plays two channels at 32, 44.1 and 48 kHz in 16 bits to the front
+pair. `ReadBoardEDID` copies out the EDID's bytes.
 
 ```zig
 var monitor: rtg.RtgMonitorInfo = .{};
@@ -568,8 +574,8 @@ a sample (`RtgAudio`) - and `SetBoardAudio(board, null)` none.
 `RTGERR_NO_MODE` says the link is not up, `RTGERR_NOT_SUPPORTED` that
 it does not carry that format, or that the monitor is sent no packets.
 The driver keeps the format and sets its side up again when the mode
-changes while the sound plays. Whether the monitor plays sound is in
-`GetBoardMonitor` (`RTGMON_AUDIO`).
+changes while the sound plays. Whether the monitor plays sound, and
+what of it, is in `GetBoardMonitor` (`RTGMON_AUDIO`, `audio_channels`).
 
 ## The engine
 
@@ -1716,6 +1722,16 @@ is not offered. The firmware's picture stays until the board is first
 shown in another mode: the mode its settings' line names
 (`Rtg amd.0 SET MODE=1920x1080@60 SAVE`), else the one the monitor
 prefers.
+
+The link's sound is set each time the board is put in a mode: the
+sample clock and the numbers the monitor rebuilds it from at the mode's
+pixel clock, the channels the monitor's speakers take, and the codec's
+endpoint told what the monitor plays as its EDID says - its channels,
+rates and sample sizes of uncompressed sound, less the rates the mode's
+blanking has no room for, its speakers, maker, product and name - which
+the audio driver reads from the codec when a stream starts. A monitor
+that plays no sound, and a link driven as DVI, carry none: the endpoint
+says nothing is there, and the machine plays elsewhere.
 
 **Video layers.** On the VisionFive 2 the layer is the DC8200's first
 overlay: NV12 and I420, BT.601 and BT.709, video's range and the whole

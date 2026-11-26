@@ -79,8 +79,8 @@ const err = rta.errors;
 const MODULE_NAME = "rta-hda";
 const DRIVER_NAME = "hda";
 const VERSION = 1;
-const REVISION = 7;
-const BUILD_DATE = "09.11.2026";
+const REVISION = 8;
+const BUILD_DATE = "26.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ VERSION, REVISION }) ++

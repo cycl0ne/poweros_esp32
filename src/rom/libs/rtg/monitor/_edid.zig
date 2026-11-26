@@ -381,6 +381,18 @@ pub const Sink = struct {
     /// CEA's numbers above 64 in the AVI infoframe - HDMI 1.4's 4K modes
     /// among them, which an older one takes in HDMI's vendor infoframe.
     forum: bool = false,
+    /// The uncompressed sound it plays, as its audio block's descriptors
+    /// name it: the most channels one names, that one's rates and sample
+    /// sizes, and every rate any of them names, which two channels take.
+    /// Basic audio's where it plays sound and names none: two channels at
+    /// 32, 44.1 and 48 kHz, 16 bits a sample. All 0 where it plays none.
+    lpcm_channels: u8 = 0,
+    lpcm_rates: u8 = 0,
+    lpcm_stereo_rates: u8 = 0,
+    lpcm_sizes: u8 = 0,
+    /// Its speakers, as the speaker allocation block's first byte; the
+    /// front pair where it plays sound and names none.
+    speakers: u8 = 0,
 
     /// The fastest pixel clock it takes at eight bits a colour, in kHz:
     /// past 340 MHz only scrambled, which wants SCDC; else no more than
@@ -420,6 +432,12 @@ pub fn sinkOf(extension: ?*const Block) Sink {
         if (at + 1 + length > 127) break;
         const block = cea[at..][0 .. 1 + length];
         switch (tag) {
+            // The audio block: a descriptor of three bytes a format.
+            1 => lpcmOf(&sink, block[1..]),
+            // The speaker allocation block: the speakers in its first byte.
+            4 => if (length >= 1) {
+                sink.speakers = block[1] & speakers_named;
+            },
             // A vendor's block: HDMI's, its fastest TMDS clock in its
             // eighth byte, 5 MHz a step; the Forum's, in its sixth, and
             // its flags in the seventh.
@@ -440,8 +458,50 @@ pub fn sinkOf(extension: ?*const Block) Sink {
         }
         at += 1 + length;
     }
+    if (sink.audio or sink.lpcm_channels != 0) {
+        sink.audio = true;
+        if (sink.lpcm_channels == 0) {
+            sink.lpcm_channels = 2;
+            sink.lpcm_rates = basic_rates;
+            sink.lpcm_stereo_rates = basic_rates;
+            sink.lpcm_sizes = basic_sizes;
+        }
+        if (sink.speakers == 0) sink.speakers = speakers_front;
+    }
     return sink;
 }
+
+/// The descriptors of uncompressed sound in an audio block's `bytes`:
+/// its format in the first byte's bits 3 to 6, its channels less one in
+/// bits 0 to 2, its rates in the second byte and its sample sizes in the
+/// third. Of several, the one that names the most channels is the
+/// description; every one's rates are rates two channels take.
+fn lpcmOf(sink: *Sink, bytes: []const u8) void {
+    var at: usize = 0;
+    while (at + 3 <= bytes.len) : (at += 3) {
+        const descriptor = bytes[at..][0..3];
+        if ((descriptor[0] >> 3) & 0xF != format_lpcm) continue;
+        const channels: u8 = (descriptor[0] & 0x7) + 1;
+        const rates = descriptor[1] & rates_named;
+        sink.lpcm_stereo_rates |= rates;
+        if (channels <= sink.lpcm_channels) continue;
+        sink.lpcm_channels = channels;
+        sink.lpcm_rates = rates;
+        sink.lpcm_sizes = descriptor[2] & sizes_named;
+    }
+}
+
+/// What an audio block's descriptor calls uncompressed sound, and the
+/// bits of its rates, its sizes and the speaker allocation's first byte
+/// that name anything.
+const format_lpcm: u8 = 1;
+const rates_named: u8 = 0x7F;
+const sizes_named: u8 = 0x07;
+const speakers_named: u8 = 0x7F;
+/// Basic audio: 32, 44.1 and 48 kHz, 16 bits, to the front pair.
+const basic_rates: u8 = 0x07;
+const basic_sizes: u8 = 0x01;
+const speakers_front: u8 = 0x01;
 
 /// Whether a vendor's data block is that maker's: its second to fourth
 /// byte the IEEE's number, low byte first.
@@ -566,10 +626,58 @@ test "the portable monitor is an HDMI sink with sound, to 300 MHz" {
     try testing.expect(!sink.scdc);
     try testing.expectEqual(@as(u32, 300_000), sink.max_tmds_khz);
     try testing.expectEqual(@as(u32, 300_000), sink.mostKhz());
+    // Two channels at every rate from 32 to 192 kHz, 16, 20 and 24 bits,
+    // to the front pair.
+    try testing.expectEqual(@as(u8, 2), sink.lpcm_channels);
+    try testing.expectEqual(@as(u8, 0x7F), sink.lpcm_rates);
+    try testing.expectEqual(@as(u8, 0x7F), sink.lpcm_stereo_rates);
+    try testing.expectEqual(@as(u8, 0x07), sink.lpcm_sizes);
+    try testing.expectEqual(@as(u8, 0x01), sink.speakers);
     // Without an extension, a DVI monitor, to HDMI 1.4's clock.
     const dvi = sinkOf(null);
     try testing.expect(!dvi.hdmi and !dvi.audio);
+    try testing.expectEqual(@as(u8, 0), dvi.lpcm_channels);
+    try testing.expectEqual(@as(u8, 0), dvi.speakers);
     try testing.expectEqual(hdmi14_khz, dvi.mostKhz());
+}
+
+test "of several descriptors the most channels describe the sound, and two channels take every rate" {
+    // A television's blocks: AC-3, eight channels at 32 to 48 kHz in 16
+    // and 24 bits, two at 32 to 192 kHz in 16 bits; its speakers 7.1's.
+    const blocks = [_]u8{ 0x29, 0x15, 0x07, 0x50, 0x0F, 0x07, 0x05, 0x09, 0x7F, 0x01, 0x83, 0x4F, 0x00, 0x00 };
+    var cea: Block = @splat(0);
+    cea[0] = 0x02;
+    cea[1] = 0x03;
+    cea[2] = 4 + blocks.len;
+    cea[3] = 0x40;
+    @memcpy(cea[4..][0..blocks.len], &blocks);
+    const sink = sinkOf(&cea);
+    try testing.expect(sink.audio);
+    try testing.expectEqual(@as(u8, 8), sink.lpcm_channels);
+    try testing.expectEqual(@as(u8, 0x07), sink.lpcm_rates);
+    try testing.expectEqual(@as(u8, 0x05), sink.lpcm_sizes);
+    try testing.expectEqual(@as(u8, 0x7F), sink.lpcm_stereo_rates);
+    try testing.expectEqual(@as(u8, 0x4F), sink.speakers);
+}
+
+test "a monitor that plays sound and names nothing of it plays basic audio" {
+    var cea: Block = @splat(0);
+    cea[0] = 0x02;
+    cea[1] = 0x03;
+    cea[2] = 4;
+    cea[3] = 0x40;
+    const sink = sinkOf(&cea);
+    try testing.expect(sink.audio);
+    try testing.expectEqual(@as(u8, 2), sink.lpcm_channels);
+    try testing.expectEqual(@as(u8, 0x07), sink.lpcm_rates);
+    try testing.expectEqual(@as(u8, 0x07), sink.lpcm_stereo_rates);
+    try testing.expectEqual(@as(u8, 0x01), sink.lpcm_sizes);
+    try testing.expectEqual(@as(u8, 0x01), sink.speakers);
+    // One that names neither plays none.
+    cea[3] = 0;
+    const quiet = sinkOf(&cea);
+    try testing.expect(!quiet.audio);
+    try testing.expectEqual(@as(u8, 0), quiet.lpcm_channels);
 }
 
 test "an HDMI 2.0 monitor's Forum block: 600 MHz, scrambled" {

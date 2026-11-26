@@ -34,7 +34,12 @@ const _monitor = @import("_monitor.zig");
 /// maker's letters, the product and serial numbers, the name, the
 /// picture's size in millimetres and when it was made are from it, as is
 /// what it takes: HDMI's packets (`RTGMON_HDMI`), sound (`RTGMON_AUDIO`),
-/// a choice of its RGB range, scrambling, and its fastest clock. A panel
+/// a choice of its RGB range, scrambling, and its fastest clock. Since
+/// 1.43 the sound is described: the most channels, the rates and sample
+/// sizes of uncompressed sound its audio data block names, the rates two
+/// channels take, and its speakers - basic audio's two channels at 32,
+/// 44.1 and 48 kHz in 16 bits to the front pair where it plays sound and
+/// names none of it. A panel
 /// is a monitor that is always there (`RTGMON_PANEL`), called what its
 /// part is called. A board whose device has gone says what it last had.
 ///

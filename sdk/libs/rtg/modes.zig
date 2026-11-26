@@ -169,7 +169,47 @@ pub const RtgMonitorInfo = extern struct {
     /// The fastest TMDS clock the monitor says it takes, in kHz; 0 where
     /// it does not say.
     max_tmds_khz: u32 = 0,
+    /// The uncompressed sound it plays (`RTGMON_AUDIO`), as its audio
+    /// data block says: the most channels a descriptor names, the rates
+    /// (RTGAUDIO_RATE_*) and sample sizes (RTGAUDIO_BITS_*) of that
+    /// descriptor, and the rates any descriptor names, which two channels
+    /// take. A monitor that names no descriptor plays two channels at 32,
+    /// 44.1 and 48 kHz, 16 bits a sample. All 0 where it plays no sound.
+    audio_channels: u8 = 0,
+    audio_rates: u8 = 0,
+    audio_stereo_rates: u8 = 0,
+    audio_sizes: u8 = 0,
+    /// Its speakers (RTGSPEAKER_*), as its speaker allocation block says;
+    /// the front pair where it says nothing and plays sound, 0 where it
+    /// plays none.
+    speakers: u32 = 0,
 };
+
+/// RtgMonitorInfo.audio_rates and audio_stereo_rates: as an audio data
+/// block's descriptor holds them.
+pub const RTGAUDIO_RATE_32000: u8 = 1 << 0;
+pub const RTGAUDIO_RATE_44100: u8 = 1 << 1;
+pub const RTGAUDIO_RATE_48000: u8 = 1 << 2;
+pub const RTGAUDIO_RATE_88200: u8 = 1 << 3;
+pub const RTGAUDIO_RATE_96000: u8 = 1 << 4;
+pub const RTGAUDIO_RATE_176400: u8 = 1 << 5;
+pub const RTGAUDIO_RATE_192000: u8 = 1 << 6;
+/// RtgMonitorInfo.audio_sizes: as the descriptor of uncompressed sound
+/// holds them.
+pub const RTGAUDIO_BITS_16: u8 = 1 << 0;
+pub const RTGAUDIO_BITS_20: u8 = 1 << 1;
+pub const RTGAUDIO_BITS_24: u8 = 1 << 2;
+/// RtgMonitorInfo.speakers: as the speaker allocation block's first byte
+/// holds them - the front left and right, the low frequencies, the front
+/// centre, the rear left and right, the rear centre, the front left and
+/// right of centre, the rear left and right of centre.
+pub const RTGSPEAKER_FRONT: u32 = 1 << 0;
+pub const RTGSPEAKER_LFE: u32 = 1 << 1;
+pub const RTGSPEAKER_CENTRE: u32 = 1 << 2;
+pub const RTGSPEAKER_REAR: u32 = 1 << 3;
+pub const RTGSPEAKER_REAR_CENTRE: u32 = 1 << 4;
+pub const RTGSPEAKER_FRONT_CENTRES: u32 = 1 << 5;
+pub const RTGSPEAKER_REAR_CENTRES: u32 = 1 << 6;
 
 /// RtgMonitorInfo.flags
 /// A monitor is there. A panel always is.

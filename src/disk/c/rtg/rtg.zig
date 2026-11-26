@@ -10,8 +10,8 @@
 //! on rtg.library's list, the devices the machine has for them - a panel
 //! of the board, a display function on PCI - each with the driver that
 //! took it, and the boards the drivers made. Name a board and it prints
-//! that board in full - what it is, what is on its connector, what it can
-//! be asked to do, the modes it has, what its display memory has been cut
+//! that board in full - what it is, what is on its connector and the
+//! sound it plays, what it can be asked to do, the modes it has, what its display memory has been cut
 //! into and, for a display that refreshes itself, how the stream is
 //! doing.
 //!
@@ -59,7 +59,7 @@ const rtg = sdk.rtg;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Rtg";
-const VERSION_STRING = "\x00$VER: Rtg 1.13 (17.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Rtg 1.14 (26.11.2026)\r\n";
 
 const template = "BOARD,DRIVERS/S,DEVICES/S,BOARDS/S,MODES/S,MEMORY/S,STATS/S,FULL/S," ++
     "SET/S,CLEAR/S,MODE/K,MIRROR/K,BRIGHTNESS/K/N,RANGE/K,FIRST/K,DEVICE/K,DRIVER/K,SAVE/S,RETRY/S,TRIED/S";
@@ -671,7 +671,8 @@ const modes_listed = 32;
 /// connector with nothing on it.
 fn printMonitor(dl: *DosBase, rb: *RtgBase, board: *rtg.RtgBoard) void {
     var monitor: rtg.RtgMonitorInfo = .{};
-    if (rb.GetBoardMonitor(board, &monitor, @sizeOf(rtg.RtgMonitorInfo)) == 0) return;
+    const written = rb.GetBoardMonitor(board, &monitor, @sizeOf(rtg.RtgMonitorInfo));
+    if (written == 0) return;
     const m = rtg.modes;
     const called: [*:0]const u8 = @ptrCast(&monitor.name);
     if (monitor.flags & m.RTGMON_PANEL != 0) {
@@ -696,6 +697,39 @@ fn printMonitor(dl: *DosBase, rb: *RtgBase, board: *rtg.RtgBoard) void {
         monitor.height_mm,
     });
     printWords(dl, monitor.flags, &monitor_words, "DVI");
+    // A library older than the description of the sound leaves it out.
+    if (written >= @offsetOf(rtg.RtgMonitorInfo, "speakers") + @sizeOf(u32) and monitor.audio_channels != 0) {
+        printSound(dl, &monitor);
+    }
+}
+
+/// The monitor's sound: how many channels at which rates and in which
+/// sizes of a sample, the rates two channels take where there are more
+/// of them, and the speakers.
+fn printSound(dl: *DosBase, monitor: *const rtg.RtgMonitorInfo) void {
+    _ = Printf(dl, "%-12s %d channel(s) at ", .{ "Sound", @as(u32, monitor.audio_channels) });
+    printList(dl, monitor.audio_rates, &rate_words);
+    _ = dl.PutStr(" kHz in ");
+    printList(dl, monitor.audio_sizes, &size_words);
+    _ = dl.PutStr(" bits");
+    if (monitor.audio_channels > 2 and monitor.audio_stereo_rates & ~monitor.audio_rates != 0) {
+        _ = dl.PutStr(", two at ");
+        printList(dl, monitor.audio_stereo_rates, &rate_words);
+        _ = dl.PutStr(" kHz");
+    }
+    _ = dl.PutStr(", to ");
+    printWords(dl, monitor.speakers, &speaker_words, "speakers it does not name");
+}
+
+/// The words of `bits` one after the other, without a line's end.
+fn printList(dl: *DosBase, bits: u32, words: []const Named) void {
+    var printed = false;
+    for (words) |w| {
+        if (bits & w.bit == 0) continue;
+        _ = Printf(dl, "%s%s", .{ if (printed) " " else "", w.word });
+        printed = true;
+    }
+    if (!printed) _ = dl.PutStr("-");
 }
 
 fn printModes(dl: *DosBase, rb: *RtgBase, board: *rtg.RtgBoard) void {
@@ -811,6 +845,32 @@ const monitor_words = [_]Named{
     .{ .bit = rtg.modes.RTGMON_AUDIO, .word = "sound" },
     .{ .bit = rtg.modes.RTGMON_RANGE_SELECTABLE, .word = "range-selectable" },
     .{ .bit = rtg.modes.RTGMON_SCDC, .word = "scrambling" },
+};
+
+const rate_words = [_]Named{
+    .{ .bit = rtg.modes.RTGAUDIO_RATE_32000, .word = "32" },
+    .{ .bit = rtg.modes.RTGAUDIO_RATE_44100, .word = "44.1" },
+    .{ .bit = rtg.modes.RTGAUDIO_RATE_48000, .word = "48" },
+    .{ .bit = rtg.modes.RTGAUDIO_RATE_88200, .word = "88.2" },
+    .{ .bit = rtg.modes.RTGAUDIO_RATE_96000, .word = "96" },
+    .{ .bit = rtg.modes.RTGAUDIO_RATE_176400, .word = "176.4" },
+    .{ .bit = rtg.modes.RTGAUDIO_RATE_192000, .word = "192" },
+};
+
+const size_words = [_]Named{
+    .{ .bit = rtg.modes.RTGAUDIO_BITS_16, .word = "16" },
+    .{ .bit = rtg.modes.RTGAUDIO_BITS_20, .word = "20" },
+    .{ .bit = rtg.modes.RTGAUDIO_BITS_24, .word = "24" },
+};
+
+const speaker_words = [_]Named{
+    .{ .bit = rtg.modes.RTGSPEAKER_FRONT, .word = "front" },
+    .{ .bit = rtg.modes.RTGSPEAKER_LFE, .word = "LFE" },
+    .{ .bit = rtg.modes.RTGSPEAKER_CENTRE, .word = "centre" },
+    .{ .bit = rtg.modes.RTGSPEAKER_REAR, .word = "rear" },
+    .{ .bit = rtg.modes.RTGSPEAKER_REAR_CENTRE, .word = "rear-centre" },
+    .{ .bit = rtg.modes.RTGSPEAKER_FRONT_CENTRES, .word = "front-centres" },
+    .{ .bit = rtg.modes.RTGSPEAKER_REAR_CENTRES, .word = "rear-centres" },
 };
 
 const mode_words = [_]Named{

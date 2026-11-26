@@ -49,10 +49,12 @@
 //! waits as long as a frame takes.
 //!
 //! The sound the link it lit can carry, which the firmware leaves
-//! switched off and which no other driver can reach, is switched on as
-//! the board is made: the machine's audio driver has its sinks already
-//! and asks the codec what is at the far end of a link when a sink is
-//! started.
+//! switched off and which no other driver can reach, is set each time
+//! the board is put in a mode (`sound.soundUp`): at the mode's pixel
+//! clock, the codec's endpoint told what the monitor plays as its EDID
+//! says - none where it plays none, or the link is DVI. The machine's
+//! audio driver has its sinks already and asks the codec what is at the
+//! far end of a link when a sink is started.
 //!
 //! The display's clocks are asked of the device's power manager through
 //! the display's own mailbox, and read from the engine (`smu.zig`) - on
@@ -112,7 +114,7 @@ const mode = @import("mode.zig");
 const MODULE_NAME = "rtg-amd";
 const DRIVER_NAME = "amd";
 const VERSION = 1;
-const REVISION = 12;
+const REVISION = 13;
 const BUILD_DATE = "26.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -529,9 +531,6 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, device_tags: ?[*]const
         return err.RTGERR_NO_MEMORY;
     }
     screen.pitch = rowBytes(screen, width);
-    // The sound the link can carry, switched on: all that is wanted of
-    // this side.
-    _ = sound.soundUp(found);
     // Its frames counted by the pipe's interrupt, and the second of them
     // the device's own memory.
     hookFrames(screen);
@@ -641,6 +640,12 @@ fn showOp(board: *rtg.RtgBoard, what: *const rtg.RtgShow) callconv(.c) i32 {
         const code = setMode(screen, what.timings);
         if (code != err.RTGERR_OK) return code;
     }
+    // The link's sound for the mode: its clock and the numbers the
+    // monitor rebuilds it from at the mode's pixel clock, and what the
+    // monitor plays.
+    var said: rtg.RtgMonitorInfo = .{};
+    _ = screen.rtg_base.GetBoardMonitor(screen.board, &said, @sizeOf(rtg.RtgMonitorInfo));
+    _ = sound.soundUp(screen.dcn, what.timings, &said);
     screen.mode_id = shown.id;
     screen.pixel_clock_hz = shown.pixel_clock_hz;
     screen.width = shown.width;

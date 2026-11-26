@@ -148,8 +148,11 @@ pub const LIBRARY_VERSION = 1;
 /// system's memory: the board keeps it, and it was counted as the memory
 /// of whichever task last changed the pointer - left behind when that
 /// task ended.
-pub const LIBRARY_REVISION = 42;
-const BUILD_DATE = "21.11.2026";
+/// 43: GetBoardMonitor describes the monitor's sound - its channels,
+/// rates, sample sizes and speakers, from its audio and speaker
+/// allocation blocks.
+pub const LIBRARY_REVISION = 43;
+const BUILD_DATE = "26.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++
