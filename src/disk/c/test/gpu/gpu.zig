@@ -11,7 +11,7 @@
 //! the display reads. Built against the SDK only.
 //!
 //!   Gpu TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,
-//!       SLEEP/K/N,RANGE/S,POINTER/S,MIRROR/S,OVERLAY/S,WATCHDOG/K/N
+//!       SLEEP/K/N,RANGE/S,POINTER/S,MIRROR/S,OVERLAY/S,DIRECT/S,WATCHDOG/K/N
 //!
 //! BIOS prints the device's video BIOS image (GetGPUBios): where it is
 //! and how long, its tables' header's version, the version of each of
@@ -155,6 +155,18 @@
 //! pointer and its picture are put back as they were. The watchdog is
 //! armed for it.
 //!
+//! DIRECT shows two pictures in turn on a board that reads a program's
+//! buffers in place of a frame, each drawn while the other is shown -
+//! in the mode the board is in, and in another of another row length
+//! where the board lists one: the first made in a frame, the next ones
+//! read by the display themselves; then the one shown written in, which
+//! has the next pictures made in frames again; then one drawn anew and
+//! shown at once, read as it is, and written in. Each picture's
+//! checksum against the same picture made in a frame, the address the
+//! board's fetcher reads and whether that is a buffer's, through the
+//! engine's page table, and how long each show took. The board's
+//! picture is put back after. The watchdog is armed for it.
+//!
 //! DUMP prints LENGTH (16 unless given, at most 512) of the display
 //! engine's registers from DUMP on, in 32-bit words from the engine's
 //! address SEGMENT (2 unless given: the one its pipes, links and
@@ -163,7 +175,7 @@
 //! is armed for it.
 //!
 //! Without BIOS, CLOCKS, DMCUB, CRC, EVENTS, AUX, EDID, CYCLE, MODES,
-//! SLEEP, RANGE, POINTER, MIRROR, OVERLAY, DUMP, FRAMES or FLIP the two files are read from
+//! SLEEP, RANGE, POINTER, MIRROR, OVERLAY, DIRECT, DUMP, FRAMES or FLIP the two files are read from
 //! DEVS:firmware/amdgpu/, named for the blocks that use them as the
 //! device's table gives their versions - psp_13_0_4_toc.bin for the
 //! security processor 13.0.4, vcn_4_0_2.bin for the video decoder 4.0.2 -
@@ -217,10 +229,10 @@ const rtg = sdk.rtg;
 const RtgBase = sdk.interface.rtg.RtgBase;
 
 pub const COMMAND_NAME = "Gpu";
-const VERSION_STRING = "\x00$VER: Gpu 1.16 (26.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Gpu 1.17 (26.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,SLEEP/K/N,RANGE/S,POINTER/S,MIRROR/S,OVERLAY/S,WATCHDOG/K/N";
+const template = "TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,SLEEP/K/N,RANGE/S,POINTER/S,MIRROR/S,OVERLAY/S,DIRECT/S,WATCHDOG/K/N";
 const arg_toc = 0;
 const arg_firmware = 1;
 const arg_frames = 2;
@@ -251,8 +263,9 @@ const arg_range = 26;
 const arg_pointer = 27;
 const arg_mirror = 28;
 const arg_overlay = 29;
-const arg_watchdog = 30;
-const arg_count = 31;
+const arg_direct = 30;
+const arg_watchdog = 31;
+const arg_count = 32;
 
 /// Where the files are.
 const directory = "DEVS:firmware/amdgpu/";
@@ -1088,6 +1101,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     if (argv[arg_pointer] != 0) return pointerCheck(sys, dl, ab, info, millis);
     if (argv[arg_mirror] != 0) return mirrorCheck(sys, dl, millis);
     if (argv[arg_overlay] != 0) return overlayCheck(sys, dl, ab, info, millis);
+    if (argv[arg_direct] != 0) return directCheck(sys, dl, ab, info, millis);
     if (argv[arg_sleep] != 0) return asleepFor(sys, dl, ab, info, millis, number(argv[arg_sleep]), argv[arg_modes] != 0);
     if (argv[arg_dump] != 0) {
         const length = if (argv[arg_length] != 0) number(argv[arg_length]) else 16;
@@ -1774,6 +1788,175 @@ fn drawPointer(into: *rtg.RtgBitMap, image: *const rtg.RtgPointerImage, left: i3
             const glass_y: usize = @intCast(if (y) height - 1 - at_y else at_y);
             const to: [*]u32 = @ptrCast(@alignCast(target + glass_y * into.pitch));
             to[glass_x] = pixel;
+        }
+    }
+}
+
+/// Where the board's engine's page table maps a program's buffers: the
+/// top 512 MiB of the device's 48-bit addresses.
+const direct_window: u64 = 0xFFFF_E000_0000;
+
+/// DIRECT: two pictures shown in turn in the board's mode and in another
+/// of another row length, read by the display in place of a frame, each
+/// against the same picture made in a frame.
+fn directCheck(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUInfo, millis: u32) i32 {
+    var block: amdgpu.GPUBlock = .{};
+    if (!ab.FindGPUBlock(amdgpu.GPUBLOCK_DISPLAY, 0, &block) or block.count < 3) {
+        _ = Printf(dl, "The device %04x:%04x names no display engine\n", .{ info.vendor, info.device });
+        return dos.RETURN_FAIL;
+    }
+    const engine = Display{ .registers = @intCast(info.registers), .segment = block.addresses[2], .pipe = 0, .fetcher = 0 };
+    const base = sys.OpenLibrary(rtg.RTGNAME, rtg.RTG_VERSION) orelse {
+        _ = Printf(dl, "No %s\n", .{rtg.RTGNAME});
+        return dos.RETURN_FAIL;
+    };
+    defer sys.CloseLibrary(base);
+    const rb: *RtgBase = @ptrCast(base);
+    const board = amdBoard(dl, rb) orelse return dos.RETURN_WARN;
+    var board_info: rtg.RtgBoardInfo = .{};
+    _ = rb.GetBoardInfo(board, &board_info, @sizeOf(rtg.RtgBoardInfo));
+    if (board_info.flags & rtg.boards.RTGBF_DIRECT_FLIP == 0) {
+        _ = Printf(dl, "The board reads no buffer in place of a frame\n", .{});
+        return dos.RETURN_WARN;
+    }
+    var list: [modes_most]rtg.RtgMode = undefined;
+    const count = @min(rb.GetBoardModes(board, &list, modes_most), modes_most);
+    var current: ?*const rtg.RtgMode = null;
+    for (list[0..count]) |*one| {
+        if (one.flags & rtg.modes.RTGMF_CURRENT != 0) current = one;
+    }
+    const shown = current orelse {
+        _ = Printf(dl, "The board is in no mode\n", .{});
+        return dos.RETURN_FAIL;
+    };
+    // Another mode whose rows are of another length: 1920x1080 where
+    // there is one.
+    var second: ?*const rtg.RtgMode = null;
+    for (list[0..count]) |*one| {
+        if (one.pitch == shown.pitch or one.format != shown.format) continue;
+        if (second == null or (one.width == 1920 and one.height == 1080)) second = one;
+    }
+    const before = rb.BoardDisplayBitMap(board) orelse {
+        _ = Printf(dl, "The board shows no picture\n", .{});
+        return dos.RETURN_FAIL;
+    };
+    const wb = arm(sys, dl, millis) orelse return dos.RETURN_FAIL;
+    defer wb.DisarmWatchdog();
+    var made: [4]?*rtg.RtgBitMap = @splat(null);
+    var tally = Tally{};
+    directIn(sys, dl, rb, board, engine, wb, shown, made[0..2], &tally);
+    if (second) |other| directIn(sys, dl, rb, board, engine, wb, other, made[2..4], &tally);
+    const band = [_]rtg.RtgBand{.{ .bitmap = before }};
+    if (rb.ShowBoard(board, shown.id, &band, band.len) == rtg.errors.RTGERR_OK) {
+        for (made) |maybe| {
+            if (maybe) |one| rb.FreeBitMap(one);
+        }
+    }
+    _ = Printf(dl, "%u of %u the same as made in a frame, %u of %u read in place of a frame as they should be\n", .{ tally.same, tally.compared, tally.direct_right, tally.shows });
+    return if (tally.same == tally.compared and tally.direct_right == tally.shows) dos.RETURN_OK else dos.RETURN_WARN;
+}
+
+const Tally = struct { same: u32 = 0, compared: u32 = 0, direct_right: u32 = 0, shows: u32 = 0 };
+
+/// DIRECT's pictures in the mode `shown`, the two allocated kept in
+/// `made` to be freed once the board shows another.
+fn directIn(sys: *ExecBase, dl: *DosBase, rb: *RtgBase, board: *rtg.RtgBoard, engine: Display, wb: *WatchdogBase, shown: *const rtg.RtgMode, made: *[2]?*rtg.RtgBitMap, tally: *Tally) void {
+    const displayable = rtg.bitmaps.RTGBMF_DISPLAYABLE;
+    const one = rb.AllocBitMap(board, shown.width, shown.height, @intFromEnum(shown.format), displayable) orelse {
+        _ = Printf(dl, "No room for a picture of %ux%u\n", .{ shown.width, shown.height });
+        return;
+    };
+    made[0] = one;
+    const other = rb.AllocBitMap(board, shown.width, shown.height, @intFromEnum(shown.format), displayable) orelse {
+        _ = Printf(dl, "No room for a picture of %ux%u\n", .{ shown.width, shown.height });
+        return;
+    };
+    made[1] = other;
+    _ = Printf(dl, "%ux%u, rows %u bytes:\n", .{ shown.width, shown.height, shown.pitch });
+    pattern(one, 0);
+    pattern(other, 1);
+    const first = directShow(sys, dl, rb, board, engine, shown.id, one, false, "first, in a frame", tally) orelse return;
+    wb.FeedWatchdog();
+    const other_direct = directShow(sys, dl, rb, board, engine, shown.id, other, true, "second, read as it is", tally) orelse return;
+    wb.FeedWatchdog();
+    const again = directShow(sys, dl, rb, board, engine, shown.id, one, true, "first, read as it is", tally) orelse return;
+    compare(dl, first, again, tally);
+    wb.FeedWatchdog();
+    // Written in while it is shown: the pictures are made in frames again.
+    _ = rb.RefreshRect(one, null);
+    const written = directSum(sys, dl, rb, board, engine, false, 0, "first, written in", tally) orelse return;
+    compare(dl, first, written, tally);
+    wb.FeedWatchdog();
+    const other_frame = directShow(sys, dl, rb, board, engine, shown.id, other, false, "second, in a frame", tally) orelse return;
+    compare(dl, other_direct, other_frame, tally);
+    wb.FeedWatchdog();
+    // Drawn anew and shown at once: read as the CPU's caches hold it.
+    pattern(one, 2);
+    const fresh = directShow(sys, dl, rb, board, engine, shown.id, one, true, "third, drawn and read", tally) orelse return;
+    wb.FeedWatchdog();
+    _ = rb.RefreshRect(one, null);
+    const fresh_frame = directSum(sys, dl, rb, board, engine, false, 0, "third, written in", tally) orelse return;
+    compare(dl, fresh, fresh_frame, tally);
+    wb.FeedWatchdog();
+}
+
+/// `picture` shown in the mode `mode_id` and its checksum read once
+/// steady; said with where the fetcher reads, against `direct` - whether
+/// it is to read the buffer itself.
+fn directShow(sys: *ExecBase, dl: *DosBase, rb: *RtgBase, board: *rtg.RtgBoard, engine: Display, mode_id: u32, picture: *rtg.RtgBitMap, direct: bool, what: [*:0]const u8, tally: *Tally) ?[3]u32 {
+    const band = [_]rtg.RtgBand{.{ .bitmap = picture }};
+    const started = sys.UptimeUs();
+    if (rb.ShowBoard(board, mode_id, &band, band.len) != rtg.errors.RTGERR_OK) {
+        _ = Printf(dl, "  %-24s not shown\n", .{what});
+        return null;
+    }
+    return directSum(sys, dl, rb, board, engine, direct, sys.UptimeUs() - started, what, tally);
+}
+
+fn directSum(sys: *ExecBase, dl: *DosBase, rb: *RtgBase, board: *rtg.RtgBoard, engine: Display, direct: bool, took_us: u64, what: [*:0]const u8, tally: *Tally) ?[3]u32 {
+    _ = sys;
+    const sum = steadyChecksum(dl, rb, board) orelse {
+        _ = Printf(dl, "  %-24s no steady checksum\n", .{what});
+        return null;
+    };
+    const address = @as(u64, engine.at(0x060b).* & 0xffff) << 32 | engine.at(0x060a).*;
+    const read_direct = address >= direct_window;
+    tally.shows += 1;
+    if (read_direct == direct) tally.direct_right += 1;
+    _ = Printf(dl, "  %-24s %04x %04x %04x, the fetcher at %lx: %s%s", .{
+        what,                                                                            sum[0],
+        sum[1],                                                                          sum[2],
+        address,                                                                         @as([*:0]const u8, if (read_direct) "the buffer" else "a frame"),
+        @as([*:0]const u8, if (read_direct == direct) "" else " - NOT AS IT SHOULD BE"),
+    });
+    if (took_us != 0) _ = Printf(dl, ", shown in %lu us", .{took_us});
+    _ = Printf(dl, "\n", .{});
+    return sum;
+}
+
+fn compare(dl: *DosBase, made: [3]u32, read: [3]u32, tally: *Tally) void {
+    tally.compared += 1;
+    if (sameSum(made, read)) {
+        tally.same += 1;
+        return;
+    }
+    _ = Printf(dl, "  DIFFERENT from %04x %04x %04x\n", .{ made[0], made[1], made[2] });
+}
+
+/// One of DIRECT's pictures: the bars (0), the bars the other way round
+/// (1), or eight bands of colour down it (2). In 32 bits a pixel only.
+fn pattern(picture: *rtg.RtgBitMap, kind: u32) void {
+    if (kind == 0) return bars(picture);
+    if (picture.format != .bgra32) return;
+    const colours = [_]u32{ 0xFFFFFF, 0xFFFF00, 0x00FFFF, 0x00FF00, 0xFF00FF, 0xFF0000, 0x0000FF, 0x202020 };
+    const pixels = picture.pixels orelse return;
+    var row: u32 = 0;
+    while (row < picture.height) : (row += 1) {
+        const line: [*]u32 = @ptrCast(@alignCast(pixels + @as(usize, row) * picture.pitch));
+        var column: u32 = 0;
+        while (column < picture.width) : (column += 1) {
+            const index = if (kind == 1) colours.len - 1 - @as(usize, column) * colours.len / picture.width else @as(usize, row) * colours.len / picture.height;
+            line[column] = 0xFF000000 | colours[index];
         }
     }
 }

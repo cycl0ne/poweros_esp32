@@ -130,7 +130,15 @@
 //! waits while it is down.
 //!
 //! The buffers drawn in are the machine's RAM, taken by the library as
-//! each is allocated (RTGRF_SYSTEM_MEMORY, RTGRF_DMA_MEMORY).
+//! each is allocated (RTGRF_SYSTEM_MEMORY, RTGRF_DMA_MEMORY), their rows
+//! and starts on the 256 bytes a fetcher reads a linear surface by. The
+//! engine reads them through a page table of its own (`gart.zig`),
+//! whose reads see the CPU's caches: so a program that draws a picture
+//! in one buffer while it shows another, and then shows that one, has
+//! the display flipped to that buffer itself (`RTGBF_DIRECT_FLIP`), and
+//! nothing is copied - its rows, where they are of another length than
+//! the frames', told to the fetcher with its address at the same
+//! update.
 //!
 //! The module keeps nothing of its own: a ROM image is read only, so what
 //! changes is the library's to allocate - a `Screen` beside the board -
@@ -164,19 +172,21 @@ const cursor = @import("cursor.zig");
 const plane = @import("plane.zig");
 const pipe = @import("pipe.zig");
 const mode = @import("mode.zig");
+const gart = @import("gart.zig");
 
 const MODULE_NAME = "rtg-amd";
 const DRIVER_NAME = "amd";
 const VERSION = 1;
-const REVISION = 19;
+const REVISION = 20;
 const BUILD_DATE = "26.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ VERSION, REVISION }) ++
     " (" ++ BUILD_DATE ++ ")\r\n";
 
-/// What every row and every buffer starts on: whole cache lines.
-const row_alignment = 128;
+/// What every row and every buffer starts on: the 256 bytes a fetcher
+/// reads a linear surface's rows and its start by, whole cache lines.
+const row_alignment = 256;
 /// The most pixels a side of the picture has: what fourteen bits hold,
 /// which every size here is kept in.
 const largest_side = 0x3FFF;
@@ -199,6 +209,14 @@ const Screen = struct {
     amd_frame: ?sdk.resources.amdgpu.GPUMemory = null,
     amd_flipping: bool = false,
     flip_wanted: u64 = 0,
+    /// The engine's page table onto the machine's memory, through which a
+    /// buffer of the library's is read in place of a frame; null where
+    /// there is none and the display reads the frames alone. Under
+    /// `pipe_lock`.
+    gart: ?gart.Table = null,
+    /// How far apart the rows the fetcher is told to read are, in bytes:
+    /// the frames', or a buffer's read in place of one.
+    scan_pitch: u32 = 0,
     amd_frames: [2]rtg.RtgBitMap = .{ .{}, .{} },
     /// The picture: its size and format, rows `pitch` bytes apart in a
     /// buffer drawn in, `bytes` a pixel.
@@ -421,21 +439,68 @@ fn drivers(screen: *const Screen) *RtgDriverBase {
 /// The display flipped to `picture`, from the pipe's next update on
 /// (`dcn.flip`), named by the device's own address of it: the
 /// framebuffer's the fetcher read at start, the frame's the resource
-/// gave with it. The frame is not in the window the framebuffer is in -
-/// on a machine whose device memory is part of its RAM the CPU reaches
-/// it there - so its address in the machine says nothing of the
-/// device's. Where flipping was given up, the frames are that
-/// framebuffer and nothing tells the display to read elsewhere. So of
-/// the picture it is handed, this takes which of its two frames it is.
-fn scanFrom(screen: *Screen, picture: *const rtg.RtgBitMap) void {
-    const address = @intFromPtr(picture.pixels orelse return);
-    if (address == screen.scanning) return;
+/// gave with it, a buffer's in the engine's page table (`bufferAddress`).
+/// The frame is not in the window the framebuffer is in - on a machine
+/// whose device memory is part of its RAM the CPU reaches it there - so
+/// its address in the machine says nothing of the device's. Where
+/// flipping was given up, the frames are that framebuffer and nothing
+/// tells the display to read elsewhere. False for a buffer the display
+/// cannot read, and the display reads what it read.
+fn scanFrom(screen: *Screen, picture: *const rtg.RtgBitMap) bool {
+    const address = @intFromPtr(picture.pixels orelse return false);
+    if (address == screen.scanning) return true;
     if (screen.amd_flipping) {
         const frame = screen.amd_frame.?;
-        screen.flip_wanted = if (address == @as(usize, @intCast(frame.cpu))) frame.device else screen.dcn.surface;
-        dcn.flip(screen.dcn, screen.flip_wanted, false);
+        const wanted = if (address == @as(usize, @intCast(frame.cpu)))
+            frame.device
+        else if (address == screen.fb.pixels)
+            screen.dcn.surface
+        else
+            bufferAddress(screen, picture) orelse return false;
+        screen.flip_wanted = wanted;
+        tell(screen, wanted, picture.pitch, false);
+    } else if (address != screen.fb.pixels) {
+        return false;
     }
     screen.scanning = address;
+    return true;
+}
+
+/// The device's address of a buffer of the library's the display is to
+/// read in place of a frame: the rows the fetcher reads of it mapped in
+/// the engine's page table, by the machine's address exec names for it.
+/// Null for a buffer of another format than the picture's, smaller than
+/// the mode, or with rows or a start off the 256 bytes a fetcher reads
+/// them by - and where the table cannot map it.
+fn bufferAddress(screen: *Screen, picture: *const rtg.RtgBitMap) ?u64 {
+    const table = if (screen.gart) |*one| one else return null;
+    const pixels = picture.pixels orelse return null;
+    if (picture.format != screen.format or picture.width < screen.width or picture.height < screen.height) return null;
+    if (picture.pitch % row_alignment != 0 or @intFromPtr(pixels) % row_alignment != 0) return null;
+    const rows = @as(u64, picture.pitch) * screen.height;
+    if (rows > 0xffff_ffff) return null;
+    var bytes: u32 = @intCast(rows);
+    const machine = @intFromPtr(screen.sys.CachePreDMA(@ptrCast(pixels), &bytes, exec.DMAF_ReadFromRAM));
+    // The buffer read until now keeps its pages.
+    const busy = [_]u64{screen.flip_wanted};
+    return gart.map(table, machine, bytes, &busy);
+}
+
+/// The fetcher told to read the device's `address`, its rows `pitch`
+/// bytes apart, from the pipe's next update on - or, `now`, at once. Rows
+/// of another length than it reads now go with the address under the
+/// timing generator's update lock, so the pipe takes both at one update.
+fn tell(screen: *Screen, address: u64, pitch: u32, now: bool) void {
+    const engine = screen.dcn;
+    if (pitch == screen.scan_pitch) {
+        dcn.flip(engine, address, now);
+        return;
+    }
+    plane.lock(engine, engine.pipe);
+    dcn.setPitch(engine, pitch / screen.bytes);
+    dcn.flip(engine, address, now);
+    plane.unlock(engine, engine.pipe);
+    screen.scan_pitch = pitch;
 }
 
 /// The display told to read `frame` from its next frame on: one of the
@@ -451,8 +516,8 @@ fn flipOp(board: *rtg.RtgBoard, frame: *rtg.RtgBitMap) callconv(.c) i32 {
     // the fetcher reads once it runs again, and taken a frame on, by the
     // library's clock.
     if (screen.asleep) {
+        if (!scanFrom(screen, frame)) return err.RTGERR_NOT_SUPPORTED;
         screen.updates +%= 1;
-        scanFrom(screen, frame);
         pace(screen, 1);
         return rtg.boards.RTGFLIP_TAKEN;
     }
@@ -471,11 +536,18 @@ fn flipOp(board: *rtg.RtgBoard, frame: *rtg.RtgBitMap) callconv(.c) i32 {
 ///
 /// Where the frames are that one framebuffer already, the picture is in
 /// what the display reads: nothing is flipped, and the library waits a
-/// frame, so that no more than a picture a frame is made.
+/// frame, so that no more than a picture a frame is made. A buffer the
+/// display cannot read in place of a frame (`scanFrom`) is
+/// RTGERR_NOT_SUPPORTED, upon which the library makes the picture in a
+/// frame.
 fn flipAmd(screen: *Screen, frame: *const rtg.RtgBitMap) i32 {
+    if (!screen.amd_flipping) {
+        if (@intFromPtr(frame.pixels) != screen.fb.pixels) return err.RTGERR_NOT_SUPPORTED;
+        screen.updates +%= 1;
+        return err.RTGERR_OK;
+    }
+    if (!scanFrom(screen, frame)) return err.RTGERR_NOT_SUPPORTED;
     screen.updates +%= 1;
-    if (!screen.amd_flipping) return err.RTGERR_OK;
-    scanFrom(screen, frame);
     pace(screen, 1);
     const found = screen.dcn;
     var looks: u32 = 0;
@@ -491,13 +563,15 @@ fn flipAmd(screen: *Screen, frame: *const rtg.RtgBitMap) i32 {
 
 /// The AMD display's flips given up, once one was not taken: the fetcher
 /// told to read the firmware's framebuffer again at once, and both
-/// frames that framebuffer from now on - each picture made in it. Said
-/// once on the log. The device's frame is kept: the fetcher might still
-/// read it.
+/// frames that framebuffer from now on - each picture made in it, none
+/// read in place of a frame. Said once on the log. The device's frame
+/// and the page table are kept: the fetcher might still read through
+/// them.
 fn giveUpFlipping(screen: *Screen) void {
     const found = screen.dcn;
     screen.amd_flipping = false;
-    dcn.flip(found, found.surface, true);
+    screen.board.info.flags &= ~rtg.boards.RTGBF_DIRECT_FLIP;
+    tell(screen, found.surface, screen.fb.pitch, true);
     exec.kprintf(screen.sys, "%s: the display did not take the flip to 0x%lx, so the picture goes into the firmware's framebuffer again\n", .{ MODULE_NAME, screen.flip_wanted });
     screen.scanning = screen.fb.pixels;
 }
@@ -551,8 +625,9 @@ fn giveAmdFrame(screen: *Screen) void {
     var frame = screen.amd_frame orelse return;
     screen.amd_frame = null;
     screen.amd_flipping = false;
+    screen.board.info.flags &= ~rtg.boards.RTGBF_DIRECT_FLIP;
     const found = screen.dcn;
-    dcn.flip(found, found.surface, true);
+    tell(screen, found.surface, screen.fb.pitch, true);
     var looks: u32 = 0;
     while (!dcn.flipTaken(found, found.surface)) : (looks += 1) {
         if (looks == 3) return;
@@ -647,6 +722,7 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, device_tags: ?[*]const
         .format = format,
         .bytes = bytes,
         .board = board,
+        .scan_pitch = fb.pitch,
         .smu = smu.find(found),
         .cursor_memory = cursor_memory,
         .overlay_memory = overlay_memory,
@@ -683,6 +759,9 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, device_tags: ?[*]const
     // bypass, where the firmware leaves it shifting the picture by a
     // pixel or two.
     mode.passThrough(found, found.fetcher);
+    // A program's buffer read in place of a frame, through the engine's
+    // page table, where the display is flipped.
+    if (screen.amd_flipping) readBuffers(screen);
 
     // At most as many pictures of the mode as the board asks for, each
     // taken by the library as it is allocated. Not cleared: each is
@@ -702,6 +781,22 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, device_tags: ?[*]const
     board.info.buffers = screen.buffers;
     device.driver_data = screen;
     return err.RTGERR_OK;
+}
+
+/// The engine's page table made, the fetcher told to read through it
+/// past the device's memory, and the board said to read a program's
+/// buffers in place of a frame (`RTGBF_DIRECT_FLIP`); where there is no
+/// room for the table, the display reads the frames alone, and the log
+/// says so.
+fn readBuffers(screen: *Screen) void {
+    const found = screen.dcn;
+    screen.gart = gart.open(found) orelse {
+        exec.kprintf(screen.sys, "%s: no room in the device's memory for a page table, so every picture is made in a frame\n", .{MODULE_NAME});
+        return;
+    };
+    gart.reach(found, found.fetcher);
+    screen.board.info.flags |= rtg.boards.RTGBF_DIRECT_FLIP;
+    exec.kprintf(screen.sys, "%s: the display reads a program's buffers through a page table at 0x%lx in the machine\n", .{ MODULE_NAME, screen.gart.?.machine });
 }
 
 /// The display controller started with its firmware as the board is
@@ -762,6 +857,14 @@ fn halt(screen: *Screen) void {
         dcn.freeFrame(screen.dcn, memory);
     }
     giveAmdFrame(screen);
+    // The page table given back once the fetcher reads the firmware's
+    // framebuffer: kept where it might still read through it.
+    if (screen.amd_frame == null) {
+        if (screen.gart) |*table| {
+            gart.close(screen.dcn, table);
+            screen.gart = null;
+        }
+    }
     unhookFrames(screen);
     hpd.unlisten(screen.dcn, &screen.lines, &screen.hot_plug_int);
     dmub.unlisten(screen.dcn, &screen.controller, &screen.outbox_int);
@@ -823,7 +926,7 @@ fn showOp(board: *rtg.RtgBoard, what: *const rtg.RtgShow) callconv(.c) i32 {
     board.region.size = @as(usize, screen.buffers) * @as(usize, shown.pitch) * shown.height;
     // What it read until now says nothing about the new mode.
     screen.scanning = 0;
-    scanFrom(screen, start);
+    _ = scanFrom(screen, start);
     // The cursor's fetch timed by the mode's pixel clock, and kept on
     // its picture.
     if (screen.cursor_memory != null) {
@@ -1447,6 +1550,7 @@ fn setMode(screen: *Screen, timings: *const rtg.RtgTimings) i32 {
     screen.avi_sent = if (sends_avi) avi else null;
     sleep_at = timings.pixel_clock_hz;
     crc.fit(screen.dcn);
+    if (screen.gart != null) gart.reach(screen.dcn, screen.dcn.fetcher);
     exec.kprintf(sys, "%s: the display set to %dx%d at %d kHz on %s, display clock %d kHz, down for %d us%s\n", .{
         MODULE_NAME,
         new.width,

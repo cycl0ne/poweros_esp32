@@ -376,6 +376,13 @@ pub fn flip(engine: Engine, address: u64, now: bool) void {
     fetcherRegister(engine, regs.DCSURF_PRIMARY_SURFACE_ADDRESS).* = @truncate(address);
 }
 
+/// The fetcher's rows `pixels` apart, from the pipe's next update on:
+/// what a buffer of another row length than the frames' is read with.
+pub fn setPitch(engine: Engine, pixels: u32) void {
+    const pitch = fetcherRegister(engine, hubp_pitch);
+    pitch.* = (pitch.* & ~pitch_mask) | ((pixels - 1) & pitch_mask);
+}
+
 /// Whether the flip to `address` has been taken: none is pending, and
 /// the fetcher reads it.
 pub fn flipTaken(engine: Engine, address: u64) bool {

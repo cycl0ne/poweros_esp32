@@ -1365,7 +1365,18 @@ the same, and the display then reads the frame the pictures are made
 in. A board that says `RTGBF_DIRECT_FLIP` reads a whole buffer in place
 of a frame: where a program shows one buffer after another and draws in
 none while it is shown, with nothing of the library's over the picture,
-`flip` is handed the buffer itself and nothing is copied. A board whose
+`flip` is handed the buffer itself and nothing is copied. An AMD display
+reads it through a page table of the display engine's own in the
+device's memory: the buffer's pages mapped as it is first flipped to,
+each entry snooped, so the engine sees what the CPU's caches hold and
+nothing is written back before; rows of another length than the
+frames' are told to the fetcher with the buffer's address at the same
+update. `C:test/Gpu DIRECT` shows two pictures in turn in the board's
+mode and in another of another row length, each against the same
+picture made in a frame; on the NucBox at 2560x1440 and 1920x1080 all
+eight are the same, the fetcher reading the buffers themselves in all
+the shows it should, and again after the monitor slept through two
+mode sets. A board whose
 planes scale says `RTGBF_SCALES`, and is handed bands whose buffers are
 not the mode's size.
 
@@ -1488,7 +1499,7 @@ hardware.
 | VisionFive 2 on HDMI, the monitor's mode | `jh7110` | the JH7110's display controller reads RAM every frame and sends it through the chip's HDMI transmitter; the driver switches on the display's power domain, its clocks and resets, reads the monitor's EDID over the transmitter's DDC, and sets the transmitter's PHY and the controller for the mode | composed by rtg.library into one of two frames, which the controller is flipped between |
 | Compute Module 5 on its first HDMI port, the monitor's mode | `bcm2712` | the BCM2712's video scaler reads RAM every frame wherever its display list says the picture is, and sends it out through the pixel valve and the HDMI controller | composed by rtg.library into one of two frames, which the scaler is flipped between |
 | Compute Module 4 on its first HDMI port, the firmware's mode | `bcm2711` | the BCM2711's video scaler reads RAM every frame through a display list of the driver's own on the channel the firmware feeds the port from; the pixel valve and the HDMI controller stay as the firmware set them | as the Compute Module 5's |
-| a PC with an AMD display, the firmware's mode, and every mode the monitor names once its display controller runs | `amd` | the display engine that reads the framebuffer the firmware lit, flipped between that buffer and a frame of the device's own memory, both written through write-combining | composed by rtg.library into those two frames |
+| a PC with an AMD display, the firmware's mode, and every mode the monitor names once its display controller runs | `amd` | the display engine that reads the framebuffer the firmware lit, flipped between that buffer and a frame of the device's own memory, both written through write-combining, or to a buffer of the machine's RAM through the engine's own page table | one whole buffer shown after another read by the engine itself; else composed by rtg.library into those two frames |
 | a PC's firmware framebuffer, QEMU's q35 | `fw` | the framebuffer the UEFI firmware lit, which reads the one buffer it was given | composed by rtg.library straight into it, at the firmware's row length |
 | QEMU's virt machines with `-device ramfb` | `fw` | the emulator reads the shown buffer out of RAM at every refresh of its window; the buffer's address, size, pitch and format are written to the file `etc/ramfb` of the machine's firmware configuration device | one whole buffer read by the emulator; else composed by rtg.library into a frame of the driver's |
 | QEMU's virtio GPU, on a memory-mapped transport or on PCI | `virtio` | each picture is copied into the emulator's copy of a frame, and the window is told which frame to show | composed by rtg.library into one of two frames |
