@@ -83,6 +83,7 @@ const vtg_control = 0x052d;
 
 /// A fetcher's viewports, its control, its surface's row length, and its
 /// schedule's registers.
+const hubp_surface_config = 0x05e5;
 const hubp_viewport_start = 0x05e9;
 const hubp_viewport = 0x05ea;
 const hubp_second_viewport_start = 0x05ed;
@@ -506,6 +507,35 @@ pub fn writePlane(engine: dcn.Engine, fetcher: u32, output: u32, mode: *const Mo
     at(engine, dpp + dscl_mpc_size).* = mode.size;
 
     at(engine, output * opp_stride + dpg_dimensions).* = mode.pattern_size;
+}
+
+/// The fetcher's turn of its surface: its rotation - none or half a
+/// turn - and its horizontal mirror, as `turnOf` says them.
+const rotation_shift = 8;
+const rotation_mask: u32 = 0x3 << rotation_shift;
+const half_turn: u32 = 2;
+const h_mirror: u32 = 1 << 10;
+
+/// How the fetcher reads its surface for a picture mirrored about each
+/// axis (hubp2_program_rotation, get_vp_scan_direction): half a turn
+/// reverses both of its scans and the mirror the horizontal one again,
+/// so left to right is the mirror alone, top to bottom half a turn and
+/// the mirror, and both half a turn.
+pub const Turn = struct { half_turn: bool, mirror: bool };
+
+pub fn turnOf(x: bool, y: bool) Turn {
+    return .{ .half_turn = y, .mirror = x != y };
+}
+
+/// The fetcher `fetcher` told to read its surface mirrored about each
+/// axis, from the pipe's next update on.
+pub fn writeTurn(engine: dcn.Engine, fetcher: u32, x: bool, y: bool) void {
+    const turn = turnOf(x, y);
+    const config = at(engine, fetcher * hubp_stride + hubp_surface_config);
+    var value = config.* & ~(rotation_mask | h_mirror);
+    if (turn.half_turn) value |= half_turn << rotation_shift;
+    if (turn.mirror) value |= h_mirror;
+    config.* = value;
 }
 
 /// A timing generator's blank as the scaler holds it: each end in 14

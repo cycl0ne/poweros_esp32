@@ -20,6 +20,20 @@
 //! cycles into a line as the image's left is pixels into it
 //! (hubp2_cursor_set_position, dcn10_build_cursor_pos_update_params).
 //!
+//! **A mirrored picture** (`mode.writeTurn`) has the pointer turned with
+//! it, as the library would lay it into the picture. The cursor's place
+//! is in the surface's order and goes with the fetcher's turn as a pixel
+//! of the picture does - on an axis mirrored, at the picture's length
+//! less one less itself - while its image is laid on the glass as it is,
+//! rightwards and down from there, its hot spot taken off on the glass:
+//! as this engine shows it, a place's image found on the glass by its
+//! checksum (`C:test/Gpu MIRROR`). So on each axis mirrored the image is
+//! copied reversed, and the place is where its far edge lies in the
+//! surface, on the glass its first pixel; where that is off the glass,
+//! at the glass's edge with its hot spot moved in by as much. Where the
+//! picture is mirrored left to right, its rows are fetched from the
+//! line's start.
+//!
 //! What the cursor is told is written with the output's cursor locked
 //! (mpc1_cursor_lock), so that the pipe's next update takes all of it or
 //! none.
@@ -91,7 +105,18 @@ pub const Cursor = struct {
     top: i32 = 0,
     shown: bool = false,
     pixel_hz: u32 = 0,
+    /// How the picture is mirrored, about each axis.
+    mirror_x: bool = false,
+    mirror_y: bool = false,
 };
+
+/// The axes the image is copied reversed on: each one the picture is
+/// mirrored about, since the cursor lays it on the glass as it is.
+pub const Reversed = struct { x: bool, y: bool };
+
+pub fn reversedOf(mirror_x: bool, mirror_y: bool) Reversed {
+    return .{ .x = mirror_x, .y = mirror_y };
+}
 
 /// The registers' words for a place: the cursor's place, its hot spot,
 /// where its fetch starts in reference cycles, and whether any of it is
@@ -111,17 +136,29 @@ pub fn placeOf(cursor: Cursor, width: u32, height: u32) Place {
     const top: i64 = cursor.top;
     const seen = cursor.width != 0 and cursor.height != 0 and
         left < width and top < height and left + cursor.width > 0 and top + cursor.height > 0;
-    const x: u32 = @intCast(@max(left, 0));
-    const y: u32 = @intCast(@max(top, 0));
-    const hot_x: u32 = @intCast(@max(-left, 0));
-    const hot_y: u32 = @intCast(@max(-top, 0));
-    const fetch: u64 = if (cursor.pixel_hz == 0) 0 else @as(u64, x) * reference_hz / cursor.pixel_hz;
+    const across = axisOf(left, cursor.width, width, cursor.mirror_x);
+    const down = axisOf(top, cursor.height, height, cursor.mirror_y);
+    const from_left = @max(left, 0);
+    const fetch: u64 = if (cursor.pixel_hz == 0 or cursor.mirror_x) 0 else @as(u64, @intCast(from_left)) * reference_hz / cursor.pixel_hz;
     return .{
-        .position = (x & 0x3fff) << 16 | (y & 0x3fff),
-        .hot_spot = @as(u32, @min(hot_x, side - 1)) << 16 | @as(u32, @min(hot_y, side - 1)),
+        .position = (across.at & 0x3fff) << 16 | (down.at & 0x3fff),
+        .hot_spot = across.hot << 16 | down.hot,
         .fetch_start = @intCast(@min(fetch, 0x1fff)),
         .seen = seen and cursor.shown,
     };
+}
+
+/// The cursor's place and hot spot on one axis `length` long, for an
+/// image `size` long starting at `start` in the surface: where its first
+/// pixel on the glass is - its start, or on an axis mirrored where its
+/// far edge goes - with its hot spot 0; where that is off the glass, at
+/// the glass's edge with its hot spot moved in by as much. The place is
+/// in the surface's order, the glass's mirrored on that axis.
+fn axisOf(start: i64, size: u32, length: u32, mirrored: bool) struct { at: u32, hot: u32 } {
+    const glass = if (mirrored) @as(i64, length) - start - size else start;
+    const first = @max(glass, 0);
+    const place = if (mirrored) @as(i64, length) - 1 - first else first;
+    return .{ .at = @intCast(@max(place, 0)), .hot = @intCast(@min(@max(-glass, 0), side - 1)) };
 }
 
 /// The chunk of rows fetched at a time for an image `width` across.
@@ -144,16 +181,26 @@ pub fn reached(engine: dcn.Engine) bool {
 }
 
 /// The image `image` copied into `into` - one of the two images, of
-/// `image_bytes` - its rows 64 pixels apart and the rest clear, and the
-/// writes sent on to the device's memory: its width and height as the
-/// cursor takes them.
-pub fn copyImage(into: [*]u8, image: *const rtg.RtgPointerImage) struct { width: u32, height: u32 } {
+/// `image_bytes` - its rows 64 pixels apart and the rest clear, reversed
+/// on the axes `reversed` says, and the writes sent on to the device's
+/// memory: its width and height as the cursor takes them.
+pub fn copyImage(into: [*]u8, image: *const rtg.RtgPointerImage, reversed: Reversed) struct { width: u32, height: u32 } {
     @memset(into[0..image_bytes], 0);
     const width = @min(image.width, side);
     const height = @min(image.height, side);
     var row: u32 = 0;
     while (row < height) : (row += 1) {
-        @memcpy(into[row * side * 4 ..][0 .. width * 4], image.pixels[row * image.pitch ..][0 .. width * 4]);
+        const to_row = if (reversed.y) height - 1 - row else row;
+        const from = image.pixels[row * image.pitch ..][0 .. width * 4];
+        const to = into[to_row * side * 4 ..][0 .. width * 4];
+        if (!reversed.x) {
+            @memcpy(to, from);
+            continue;
+        }
+        var column: u32 = 0;
+        while (column < width) : (column += 1) {
+            @memcpy(to[(width - 1 - column) * 4 ..][0..4], from[column * 4 ..][0..4]);
+        }
     }
     sdk.hardware.barrier.full();
     return .{ .width = width, .height = height };
@@ -213,6 +260,26 @@ test "the cursor's place: on the picture, off its top left edge, wholly off" {
     try testing.expect(!placeOf(.{ .width = 32, .height = 32, .left = 2560, .top = 0, .shown = true }, 2560, 1440).seen);
     try testing.expect(!placeOf(.{ .width = 32, .height = 32, .left = 0, .top = 1440, .shown = true }, 2560, 1440).seen);
     try testing.expect(placeOf(.{ .width = 32, .height = 32, .left = 2559, .top = 1439, .shown = true }, 2560, 1440).seen);
+    // Mirrored left to right: its far edge, a pixel's mirror away from
+    // the glass's first, fetched from the line's start - the box's
+    // engine put a 12 wide image told 300 at 2259 on the glass.
+    const across = placeOf(.{ .width = 12, .height = 19, .left = 300 - 11, .top = 200, .shown = true, .pixel_hz = at_2560, .mirror_x = true }, 2560, 1440);
+    try testing.expectEqual(@as(u32, 300 << 16 | 200), across.position);
+    try testing.expectEqual(@as(u32, 0), across.hot_spot);
+    try testing.expectEqual(@as(u32, 0), across.fetch_start);
+    // Top to bottom, its far edge off the glass's top: at the glass's
+    // edge - the surface's last row - its hot spot moved in.
+    const down = placeOf(.{ .width = 32, .height = 32, .left = 10, .top = 1430, .shown = true, .mirror_y = true }, 2560, 1440);
+    try testing.expectEqual(@as(u32, 10 << 16 | 1439), down.position);
+    try testing.expectEqual(@as(u32, 0 << 16 | 22), down.hot_spot);
+    try testing.expect(down.seen);
+    // Both, at the surface's top left: its far corner.
+    const both = placeOf(.{ .width = 32, .height = 32, .left = -5, .top = -7, .shown = true, .mirror_x = true, .mirror_y = true }, 2560, 1440);
+    try testing.expectEqual(@as(u32, 26 << 16 | 24), both.position);
+    try testing.expectEqual(@as(u32, 0), both.hot_spot);
+    try testing.expect(both.seen);
+    try testing.expectEqual(Reversed{ .x = true, .y = false }, reversedOf(true, false));
+    try testing.expectEqual(Reversed{ .x = false, .y = true }, reversedOf(false, true));
     // Hidden, or without an image.
     try testing.expect(!placeOf(.{ .width = 32, .height = 32, .left = 10, .top = 10 }, 2560, 1440).seen);
     try testing.expect(!placeOf(.{ .left = 10, .top = 10, .shown = true }, 2560, 1440).seen);
@@ -224,7 +291,7 @@ test "the cursor's image: rows 64 pixels apart, the rest clear; its fetch's chun
     // Two pixels a row, rows 8 bytes apart, three rows.
     const image: rtg.RtgPointerImage = .{ .pixels = &pixels, .mask = &pixels, .width = 2, .height = 3, .pitch = 8, .mask_pitch = 1, .hot_x = 0, .hot_y = 0, .format = .bgra32 };
     var into: [image_bytes]u8 = @splat(0xEE);
-    const size = copyImage(&into, &image);
+    const size = copyImage(&into, &image, .{ .x = false, .y = false });
     try testing.expectEqual(@as(u32, 2), size.width);
     try testing.expectEqual(@as(u32, 3), size.height);
     try testing.expectEqualSlices(u8, pixels[0..8], into[0..8]);
@@ -232,6 +299,12 @@ test "the cursor's image: rows 64 pixels apart, the rest clear; its fetch's chun
     try testing.expectEqual(@as(u8, 0), into[8]);
     try testing.expectEqual(@as(u8, 0), into[3 * side * 4]);
     try testing.expectEqual(@as(u8, 0), into[image_bytes - 1]);
+    // Reversed both ways: the last row's last pixel first.
+    const turned = copyImage(&into, &image, .{ .x = true, .y = true });
+    try testing.expectEqual(@as(u32, 2), turned.width);
+    try testing.expectEqualSlices(u8, pixels[16 + 4 .. 16 + 8], into[0..4]);
+    try testing.expectEqualSlices(u8, pixels[16..20], into[4..8]);
+    try testing.expectEqualSlices(u8, pixels[4..8], into[2 * side * 4 ..][0..4]);
     try testing.expectEqual(chunk_16_lines, chunkOf(32));
     try testing.expectEqual(chunk_8_lines, chunkOf(33));
     try testing.expectEqual(chunk_8_lines, chunkOf(64));

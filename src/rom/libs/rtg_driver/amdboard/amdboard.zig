@@ -29,6 +29,11 @@
 //! firmware's buffer for good, each picture then made in it, and says so
 //! on the log.
 //!
+//! The picture is mirrored about either axis by the fetcher that reads
+//! it (`mode.writeTurn`): its horizontal mirror, half a turn, or both -
+//! the frames and the firmware's framebuffer alike - and the pointer is
+//! turned with it.
+//!
 //! The pointer is the pipe's own cursor (`cursor.zig`), on a board in
 //! `bgra32` whose engine's blender is reached: the library's image
 //! copied into one of two of the device's memory, and the cursor told
@@ -147,7 +152,7 @@ const mode = @import("mode.zig");
 const MODULE_NAME = "rtg-amd";
 const DRIVER_NAME = "amd";
 const VERSION = 1;
-const REVISION = 17;
+const REVISION = 18;
 const BUILD_DATE = "26.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -249,6 +254,9 @@ const Screen = struct {
     /// them the cursor was last told to read; what it was told; and the
     /// lock that keeps one writer at a time at it.
     cursor_memory: ?sdk.resources.amdgpu.GPUMemory = null,
+    /// The library's image, kept until its next `set`: copied again,
+    /// turned, when the picture is mirrored another way.
+    pointer_image: ?*const rtg.RtgPointerImage = null,
     cursor_turn: u32 = 0,
     cursor_told: cursor.Cursor = .{},
     cursor_lock: exec.SignalSemaphore = .{},
@@ -563,7 +571,7 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, device_tags: ?[*]const
         // and its colours in full or limited range where the engine's
         // blender is reached.
         .brightness_steps = 101,
-        .caps = if (colours.reached(found)) rtg.boards.RTGBC_COLOR_RANGE else 0,
+        .caps = rtg.boards.RTGBC_MIRROR_X | rtg.boards.RTGBC_MIRROR_Y | if (colours.reached(found)) rtg.boards.RTGBC_COLOR_RANGE else 0,
         .format = format,
     }) orelse return err.RTGERR_NO_MEMORY;
     const screen = screenOf(board);
@@ -781,23 +789,49 @@ fn setPointer(board: *rtg.RtgBoard, image: ?*const rtg.RtgPointerImage) callconv
     }
     screen.sys.ObtainSemaphore(&screen.cursor_lock);
     defer screen.sys.ReleaseSemaphore(&screen.cursor_lock);
-    const memory = screen.cursor_memory orelse return err.RTGERR_NOT_SUPPORTED;
+    if (screen.cursor_memory == null) return err.RTGERR_NOT_SUPPORTED;
+    screen.pointer_image = image;
+    cursorImage(screen);
+    writeCursor(screen);
+    return err.RTGERR_OK;
+}
+
+/// The library's image copied into the image the cursor does not read,
+/// turned as the picture is mirrored, and the cursor to read that one;
+/// none without an image. Holding `cursor_lock`.
+fn cursorImage(screen: *Screen) void {
     const told = &screen.cursor_told;
-    if (image) |one| {
-        const turn = screen.cursor_turn ^ 1;
-        const offset = @as(usize, turn) * cursor.image_bytes;
-        const into: [*]u8 = @ptrFromInt(@as(usize, @intCast(memory.cpu)) + offset);
-        const size = cursor.copyImage(into, one);
-        screen.cursor_turn = turn;
-        told.address = memory.device + offset;
-        told.width = size.width;
-        told.height = size.height;
-    } else {
+    const memory = screen.cursor_memory orelse return;
+    const one = screen.pointer_image orelse {
         told.address = 0;
         told.width = 0;
         told.height = 0;
-    }
-    writeCursor(screen);
+        return;
+    };
+    const turn = screen.cursor_turn ^ 1;
+    const offset = @as(usize, turn) * cursor.image_bytes;
+    const into: [*]u8 = @ptrFromInt(@as(usize, @intCast(memory.cpu)) + offset);
+    const size = cursor.copyImage(into, one, cursor.reversedOf(told.mirror_x, told.mirror_y));
+    screen.cursor_turn = turn;
+    told.address = memory.device + offset;
+    told.width = size.width;
+    told.height = size.height;
+}
+
+/// The picture mirrored about each axis by the fetcher (`mode.writeTurn`)
+/// from the pipe's next update on, and the pointer turned with it.
+fn mirrorOp(board: *rtg.RtgBoard, x: bool, y: bool) callconv(.c) i32 {
+    const screen = screenOf(board);
+    const sys = screen.sys;
+    sys.ObtainSemaphore(&screen.pipe_lock);
+    mode.writeTurn(screen.dcn, screen.dcn.fetcher, x, y);
+    sys.ReleaseSemaphore(&screen.pipe_lock);
+    sys.ObtainSemaphore(&screen.cursor_lock);
+    defer sys.ReleaseSemaphore(&screen.cursor_lock);
+    screen.cursor_told.mirror_x = x;
+    screen.cursor_told.mirror_y = y;
+    cursorImage(screen);
+    if (screen.cursor_memory != null) writeCursor(screen);
     return err.RTGERR_OK;
 }
 
@@ -1307,6 +1341,7 @@ const ops = rtg.boards.RtgBoardOps{
     .power = &powerOp,
     .set_brightness = &setBrightnessOp,
     .brightness = &brightnessOp,
+    .mirror = &mirrorOp,
 };
 
 /// The same, with the pointer the pipe's cursor.

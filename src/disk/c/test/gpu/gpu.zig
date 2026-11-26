@@ -11,7 +11,7 @@
 //! the display reads. Built against the SDK only.
 //!
 //!   Gpu TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,
-//!       SLEEP/K/N,RANGE/S,POINTER/S,WATCHDOG/K/N
+//!       SLEEP/K/N,RANGE/S,POINTER/S,MIRROR/S,WATCHDOG/K/N
 //!
 //! BIOS prints the device's video BIOS image (GetGPUBios): where it is
 //! and how long, its tables' header's version, the version of each of
@@ -131,6 +131,19 @@
 //! The pointer is put back where it was, shown or not as it was, and so
 //! is the picture. The watchdog is armed for it.
 //!
+//! MIRROR shows the still picture with a grey block in its top left, so
+//! that it differs about either axis, and for each way of mirroring it -
+//! none, left to right, top to bottom, both - reads two checksums: of a
+//! picture this program mirrors itself, with the board's pointer image
+//! drawn into it where the pointer would be, the board
+//! unmirrored and its pointer hidden - once with no pointer, then at a
+//! place on the picture, one partly off its top left and one partly off
+//! its bottom right; and of the picture as it was, the board mirroring
+//! it and laying the pointer there. Where the board
+//! mirrors and lays the pointer as it should, the two are the same. The
+//! board's mirror, its pointer and its picture are put back as they
+//! were. The watchdog is armed for it.
+//!
 //! DUMP prints LENGTH (16 unless given, at most 512) of the display
 //! engine's registers from DUMP on, in 32-bit words from the engine's
 //! address SEGMENT (2 unless given: the one its pipes, links and
@@ -139,7 +152,7 @@
 //! is armed for it.
 //!
 //! Without BIOS, CLOCKS, DMCUB, CRC, EVENTS, AUX, EDID, CYCLE, MODES,
-//! SLEEP, RANGE, POINTER, DUMP, FRAMES or FLIP the two files are read from
+//! SLEEP, RANGE, POINTER, MIRROR, DUMP, FRAMES or FLIP the two files are read from
 //! DEVS:firmware/amdgpu/, named for the blocks that use them as the
 //! device's table gives their versions - psp_13_0_4_toc.bin for the
 //! security processor 13.0.4, vcn_4_0_2.bin for the video decoder 4.0.2 -
@@ -193,10 +206,10 @@ const rtg = sdk.rtg;
 const RtgBase = sdk.interface.rtg.RtgBase;
 
 pub const COMMAND_NAME = "Gpu";
-const VERSION_STRING = "\x00$VER: Gpu 1.14 (26.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Gpu 1.15 (26.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,SLEEP/K/N,RANGE/S,POINTER/S,WATCHDOG/K/N";
+const template = "TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,SLEEP/K/N,RANGE/S,POINTER/S,MIRROR/S,WATCHDOG/K/N";
 const arg_toc = 0;
 const arg_firmware = 1;
 const arg_frames = 2;
@@ -225,8 +238,9 @@ const arg_hold = 24;
 const arg_sleep = 25;
 const arg_range = 26;
 const arg_pointer = 27;
-const arg_watchdog = 28;
-const arg_count = 29;
+const arg_mirror = 28;
+const arg_watchdog = 29;
+const arg_count = 30;
 
 /// Where the files are.
 const directory = "DEVS:firmware/amdgpu/";
@@ -1060,6 +1074,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     if (argv[arg_modes] != 0 and argv[arg_sleep] == 0) return everyMode(sys, dl, millis, if (argv[arg_hold] != 0) number(argv[arg_hold]) else 2);
     if (argv[arg_range] != 0) return rangeCheck(sys, dl, millis);
     if (argv[arg_pointer] != 0) return pointerCheck(sys, dl, ab, info, millis);
+    if (argv[arg_mirror] != 0) return mirrorCheck(sys, dl, millis);
     if (argv[arg_sleep] != 0) return asleepFor(sys, dl, ab, info, millis, number(argv[arg_sleep]), argv[arg_modes] != 0);
     if (argv[arg_dump] != 0) {
         const length = if (argv[arg_length] != 0) number(argv[arg_length]) else 16;
@@ -1452,6 +1467,162 @@ fn pointerCheck(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUI
     wb.FeedWatchdog();
     pointerAt(dl, rb, board, engine, "hidden");
     return dos.RETURN_OK;
+}
+
+/// MIRROR: for each way of mirroring, the checksum of the picture and
+/// the pointer as this program mirrors them, and as the board does.
+fn mirrorCheck(sys: *ExecBase, dl: *DosBase, millis: u32) i32 {
+    const base = sys.OpenLibrary(rtg.RTGNAME, rtg.RTG_VERSION) orelse {
+        _ = Printf(dl, "No %s\n", .{rtg.RTGNAME});
+        return dos.RETURN_FAIL;
+    };
+    defer sys.CloseLibrary(base);
+    const rb: *RtgBase = @ptrCast(base);
+    const board = amdBoard(dl, rb) orelse return dos.RETURN_WARN;
+    var info: rtg.RtgBoardInfo = .{};
+    _ = rb.GetBoardInfo(board, &info, @sizeOf(rtg.RtgBoardInfo));
+    const image = board.pointer orelse {
+        _ = Printf(dl, "The board has no pointer image\n", .{});
+        return dos.RETURN_WARN;
+    };
+    if (image.format != .bgra32) {
+        _ = Printf(dl, "The board's pointer is not in bgra32\n", .{});
+        return dos.RETURN_WARN;
+    }
+    const was_x = board.pointer_x;
+    const was_y = board.pointer_y;
+    const was_shown = board.info.flags & rtg.boards.RTGBF_POINTER != 0;
+    const wb = arm(sys, dl, millis) orelse return dos.RETURN_FAIL;
+    defer wb.DisarmWatchdog();
+    const still = Still.begin(dl, rb, board) orelse return dos.RETURN_FAIL;
+    const picture = still.picture;
+    marker(picture);
+    _ = rb.RefreshRect(picture, null);
+    const reference = rb.AllocBitMap(board, picture.width, picture.height, @intFromEnum(picture.format), rtg.bitmaps.RTGBMF_DISPLAYABLE) orelse {
+        still.end();
+        _ = Printf(dl, "No room for a second picture\n", .{});
+        return dos.RETURN_FAIL;
+    };
+    const picture_band = [_]rtg.RtgBand{.{ .bitmap = picture }};
+    const reference_band = [_]rtg.RtgBand{.{ .bitmap = reference }};
+    const ways = [_][2]bool{ .{ false, false }, .{ true, false }, .{ false, true }, .{ true, true } };
+    const names = [_][*:0]const u8{ "none", "x", "y", "x and y" };
+    const near_end_x: i32 = @intCast(picture.width - 5);
+    const near_end_y: i32 = @intCast(picture.height - 10);
+    const places = [_]?[2]i32{ null, .{ 300, 200 }, .{ -3, -4 }, .{ near_end_x, near_end_y } };
+    var differ: u32 = 0;
+    for (ways, names) |way, name| {
+        for (places) |maybe_place| {
+            turned(reference, picture, way[0], way[1]);
+            if (maybe_place) |place| drawPointer(reference, image, place[0] - @as(i32, @intCast(image.hot_x)), place[1] - @as(i32, @intCast(image.hot_y)), way[0], way[1]);
+            _ = rb.RefreshRect(reference, null);
+            _ = rb.MirrorBoard(board, false, false);
+            _ = rb.ShowBoardPointer(board, false);
+            _ = rb.ShowBoard(board, still.mode_id, &reference_band, reference_band.len);
+            wb.FeedWatchdog();
+            const drawn = steadyChecksum(dl, rb, board);
+            _ = rb.ShowBoard(board, still.mode_id, &picture_band, picture_band.len);
+            _ = rb.MirrorBoard(board, way[0], way[1]);
+            if (maybe_place) |place| {
+                rb.MoveBoardPointer(board, place[0], place[1]);
+                _ = rb.ShowBoardPointer(board, true);
+            }
+            wb.FeedWatchdog();
+            const mirrored = steadyChecksum(dl, rb, board);
+            const same = drawn != null and mirrored != null and sameSum(drawn.?, mirrored.?);
+            if (!same) differ += 1;
+            const place = maybe_place orelse [2]i32{ 0, 0 };
+            _ = Printf(dl, "%-8s pointer %-6s %d,%d: drawn %04x %04x %04x, the board's %04x %04x %04x%s\n", .{
+                name,                              @as([*:0]const u8, if (maybe_place == null) "hidden" else "at"), place[0],                                                      place[1],
+                if (drawn) |sum| sum[0] else 0,    if (drawn) |sum| sum[1] else 0,                                  if (drawn) |sum| sum[2] else 0,                                if (mirrored) |sum| sum[0] else 0,
+                if (mirrored) |sum| sum[1] else 0, if (mirrored) |sum| sum[2] else 0,                               @as([*:0]const u8, if (same) ", the same" else ", DIFFERENT"),
+            });
+        }
+    }
+    _ = rb.MirrorBoard(board, info.mirror_x != 0, info.mirror_y != 0);
+    rb.MoveBoardPointer(board, was_x, was_y);
+    _ = rb.ShowBoardPointer(board, was_shown);
+    still.end();
+    rb.FreeBitMap(reference);
+    return if (differ == 0) dos.RETURN_OK else dos.RETURN_WARN;
+}
+
+/// A grey block in the picture's top left quarter, so that it differs
+/// mirrored about either axis.
+fn marker(picture: *rtg.RtgBitMap) void {
+    const pixels = picture.pixels orelse return;
+    const rows = @min(picture.height / 4, 100);
+    const columns = @min(picture.width / 4, 200);
+    var row: u32 = 0;
+    while (row < rows) : (row += 1) {
+        const line: [*]u32 = @ptrCast(@alignCast(pixels + @as(usize, row + 40) * picture.pitch));
+        var column: u32 = 0;
+        while (column < columns) : (column += 1) line[column + 60] = 0xFF808080;
+    }
+}
+
+/// `from` copied into `into`, of the same size, mirrored about each axis.
+fn turned(into: *rtg.RtgBitMap, from: *const rtg.RtgBitMap, x: bool, y: bool) void {
+    const source = from.pixels orelse return;
+    const target = into.pixels orelse return;
+    const width = from.width;
+    const height = from.height;
+    var row: u32 = 0;
+    while (row < height) : (row += 1) {
+        const line: [*]const u32 = @ptrCast(@alignCast(source + @as(usize, row) * from.pitch));
+        const to_row = if (y) height - 1 - row else row;
+        const to: [*]u32 = @ptrCast(@alignCast(target + @as(usize, to_row) * into.pitch));
+        var column: u32 = 0;
+        while (column < width) : (column += 1) to[if (x) width - 1 - column else column] = line[column];
+    }
+}
+
+/// The pointer's image drawn into `into` with its top left at (`left`,
+/// `top`) of the picture before it is mirrored about each axis - each of
+/// its pixels that covers, where the mirrored picture has it.
+fn drawPointer(into: *rtg.RtgBitMap, image: *const rtg.RtgPointerImage, left: i32, top: i32, x: bool, y: bool) void {
+    const target = into.pixels orelse return;
+    const width: i64 = into.width;
+    const height: i64 = into.height;
+    var row: u32 = 0;
+    while (row < image.height) : (row += 1) {
+        const at_y = @as(i64, top) + row;
+        if (at_y < 0 or at_y >= height) continue;
+        const line: [*]align(1) const u32 = @ptrCast(image.pixels + @as(usize, row) * image.pitch);
+        var column: u32 = 0;
+        while (column < image.width) : (column += 1) {
+            const at_x = @as(i64, left) + column;
+            if (at_x < 0 or at_x >= width) continue;
+            const pixel = line[column];
+            if (pixel >> 24 == 0) continue;
+            const glass_x: usize = @intCast(if (x) width - 1 - at_x else at_x);
+            const glass_y: usize = @intCast(if (y) height - 1 - at_y else at_y);
+            const to: [*]u32 = @ptrCast(@alignCast(target + glass_y * into.pitch));
+            to[glass_x] = pixel;
+        }
+    }
+}
+
+fn sameSum(one: [3]u32, other: [3]u32) bool {
+    return one[0] == other[0] and one[1] == other[1] and one[2] == other[2];
+}
+
+/// The picture's checksum once it is steady: read until two reads 60 ms
+/// apart agree, at most five times; null where it does not settle.
+fn steadyChecksum(dl: *DosBase, rb: *RtgBase, board: *rtg.RtgBoard) ?[3]u32 {
+    dl.Delay(8);
+    var last: ?[3]u32 = null;
+    for (0..5) |_| {
+        var crc: rtg.tags.RtgAmdCrc = .{};
+        if (rb.BoardControl(board, rtg.tags.RTGCTRL_AMD_CRC, @bitCast(@intFromPtr(&crc))) != rtg.errors.RTGERR_OK) return null;
+        const sum = [3]u32{ crc.red, crc.green, crc.blue };
+        if (last) |before| {
+            if (sameSum(before, sum)) return sum;
+        }
+        last = sum;
+        dl.Delay(3);
+    }
+    return null;
 }
 
 /// The checksum once the pipe has taken the pointer, and what its cursor

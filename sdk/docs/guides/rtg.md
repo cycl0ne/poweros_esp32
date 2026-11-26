@@ -1660,7 +1660,8 @@ the plane reads is never the one written. The overlay goes into the
 pictures the library makes, and on the Compute Module 5 is a plane of
 its own under the cursor's. The virtio GPU's pointer is the emulator's
 cursor; everywhere else the library lays it in the pictures it makes.
-The Compute Module 5's display mirrors in its planes.
+The Compute Module 5's display mirrors in its planes, an AMD display in
+the fetcher that reads its picture.
 
 **The Compute Module 4's firmware keeps the mode.** It reads the
 monitor's EDID and lights a mode on the first HDMI port before the
@@ -1751,6 +1752,20 @@ cursor stays at its edge with its hot spot moved in by as much.
 `C:test/Gpu POINTER` shows a still picture and prints its checksum with
 the pointer hidden, at three places and hidden again, and what the
 cursor is told at each. The overlay is laid by the library.
+
+The picture is mirrored about either axis by the fetcher
+(`RTGBC_MIRROR_X`, `RTGBC_MIRROR_Y`, `Rtg amd.0 SET MIRROR=X`): its
+horizontal mirror for left to right, half a turn and the mirror for top
+to bottom, half a turn for both - the frames and the firmware's
+framebuffer alike, nothing composed again. The pointer turns with it:
+the cursor's place goes with the fetcher's turn as a pixel of the
+picture does, while its image is laid on the glass as it is, so on each
+axis mirrored the image is copied reversed and the place is its far
+edge. `C:test/Gpu MIRROR` checks it: for each way of mirroring, the
+checksum of a picture the program mirrors itself with the pointer's
+image drawn in, against the board mirroring the picture and laying its
+cursor - with the pointer hidden, in the middle, and partly off each
+corner; all sixteen are the same.
 
 The colours go out in full or limited range (`RTGBC_COLOR_RANGE`,
 `Rtg amd.0 SET RANGE=LIMITED`): the range the settings ask for, else
