@@ -266,6 +266,7 @@ pub fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_in
         .discards = pipeline.discards,
         .alpha_to_coverage = pipeline.alpha_to_coverage,
         .fragment = pipeline.fragment,
+        .written = pipeline.written,
         .resources = resources,
         // The pixels already in the tile, for a subpass that reads the
         // attachment it draws into (since 1.64).
@@ -370,6 +371,16 @@ fn clearColor(fragments: *const shader.Fragments) callconv(.c) void {
 
 const no_resources = shader.Resources{};
 
+/// The clear of an attachment the tiles keep in its own bytes: the clear's
+/// four words, from the push constants' first sixteen bytes, into every
+/// pixel as the floats they are (`shader.Written.floats`). Exact, where
+/// the corners' colour of `clearColor` is a byte a channel. (Since
+/// 1.226.)
+fn clearValues(fragments: *const shader.Fragments) callconv(.c) void {
+    const words: [4]u32 = @bitCast(fragments.resources.push[0..16].*);
+    for (fragments.values[0..fragments.count]) |*quad| quad.* = @splat(words);
+}
+
 /// A part of the attachments cleared in the middle of a pass: a rectangle
 /// drawn over the part, writing what is cleared and no more.
 pub fn clearAttachment(queue: *Queue, command: *const _command.ClearAttachment) void {
@@ -415,7 +426,19 @@ pub fn clearAttachment(queue: *Queue, command: *const _command.ClearAttachment) 
     for ([4][2]f32{ .{ -1, -1 }, .{ 1, -1 }, .{ -1, 1 }, .{ 1, 1 } }, 0..) |corner, k| {
         vertices[k * 8 ..][0..8].* = .{ corner[0], corner[1], command.depth, 1, channels[0], channels[1], channels[2], channels[3] };
     }
-    raster.batched.draw(target, &state, &vertices, 8, &[6]u32{ 0, 1, 2, 2, 1, 3 }) catch return;
+    // An attachment the tiles keep in its own bytes takes the clear's
+    // words as they were given, kept in the frame's arena for the tiles
+    // drawn after this (since 1.226).
+    var exact = state;
+    if (target.surface_count > 0 and target.surfaceAt(0).texels != .none) {
+        const held = target.arena.create(shader.Resources) orelse return;
+        held.* = .{};
+        held.push[0..16].* = @bitCast(command.words);
+        exact.fragment = &clearValues;
+        exact.written = .floats;
+        exact.resources = held;
+    }
+    raster.batched.draw(target, &exact, &vertices, 8, &[6]u32{ 0, 1, 2, 2, 1, 3 }) catch return;
 }
 
 /// `bytes` of the player's memory for a draw's vertices, aligned for a

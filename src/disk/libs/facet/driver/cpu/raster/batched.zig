@@ -96,6 +96,9 @@ comptime {
     // (`Tile.batch_depths`, since 1.105): sixteen 32-bit ones a quad
     // (16-bit until 1.223).
     if (target_zig.batch_depth_words != batch_quads * 16) @compileError("a tile's batch depths are not a batch's");
+    // And for a batch's four words a pixel of each colour attachment
+    // (`Tile.batch_values`, since 1.226): sixteen a quad.
+    if (target_zig.batch_value_words != batch_quads * 16) @compileError("a tile's batch values are not a batch's");
 }
 
 /// How a depth is compared with the one kept: the pixel passes where it
@@ -252,6 +255,10 @@ pub const State = struct {
     /// tile: a subpass that reads the attachment it draws into
     /// (`shader.Fragments.keptAt`, since 1.64).
     reads_target: bool = false,
+    /// What the fragment function writes (`shader.Written`): 0xAARRGGBB
+    /// into `Fragments.colors`, or four words a pixel into
+    /// `Fragments.values`. (Since 1.226.)
+    written: shader.Written = .colors,
     /// Where the pixels that passed the tests and were not dropped are
     /// counted - an occlusion query's samples - and where the pixels the
     /// fragment function was called for are. Null for a draw nothing is
@@ -337,6 +344,8 @@ const Shading = struct {
     /// knows that descriptor (since 1.65). Null where the part does not
     /// read what it draws.
     drawn: ?[*]const u8,
+    /// `State.written`. (Since 1.226.)
+    written: shader.Written,
 };
 
 /// A triangle set up for the tiles: its planes follow it.
@@ -513,6 +522,7 @@ fn setUpAll(target: *Target, state: *const State, vertices: []const f32, stride:
         // of that attachment points there, and the fragment function is
         // given the tile for it instead (since 1.65).
         .drawn = if (state.reads_target and target.surface_count > 0) target.surfaceAt(0).pixels else null,
+        .written = state.written,
     };
     const test_kind: Test = if (by_pixel) .stencil else if (!depth) .off else switch (compare) {
         .less => .less,
@@ -1148,6 +1158,10 @@ const Batch = struct {
         // tile keeps for its part; the one colour a draw usually writes
         // stays on the stack, where it always was. (Since 1.51.)
         if (shading.color_count > 1) batch.fragments.colors = tile.extra_colors.?;
+        // Where a function that writes floats or whole numbers writes
+        // them: the part's room for them, every attachment's after the one
+        // before (since 1.226).
+        if (tile.batch_values) |values| batch.fragments.values = values;
         // A subpass that reads the attachment it draws into is given the
         // tile's own pixels for it, where they already are: the first
         // plane, which is what the function writes as `colors`. Its rows
@@ -1155,6 +1169,26 @@ const Batch = struct {
         // on the attachment, as it is for one an earlier subpass drew.
         // (Since 1.64, through `shader.Fragments.input` since 1.65.)
         if (shading.drawn) |pixels| {
+            // One the tiles keep in its own bytes is read as those, from
+            // its own plane (since 1.226).
+            if (tile.texels[0] != .none) {
+                const bytes = tile.texels[0].bytes();
+                batch.target = .{
+                    .bytes = tile.texelPlane(0, 0),
+                    .pitch = tile_size * bytes,
+                    .width = tile_size,
+                    .height = tile_size,
+                    .format = tile.texels[0],
+                    .left = tile.x,
+                    .top = tile.y,
+                    .samples = tile.samples,
+                    .sample_bytes = target_zig.texel_plane_words * @sizeOf(u32),
+                    .others = if (tile.samples > 1) tile.texelPlane(0, 1) else null,
+                };
+                batch.fragments.drawn = pixels;
+                batch.fragments.target = &batch.target;
+                return;
+            }
             batch.target = .{
                 .bytes = @ptrCast(tile.plane(0)),
                 .pitch = tile_size * @sizeOf(u32),
@@ -1195,12 +1229,91 @@ const Batch = struct {
         // None where the frame has no colour attachment: llvmpipe's
         // blending is a loop over its colour buffers, of which there are
         // none (lp_state_fs.c:3618-3622, since 1.113).
-        if (batch.shading.color_count > 0) batch.putAt(samples, 0, batch.shading.blend, &batch.shading.mixing, written);
+        if (batch.shading.color_count > 0) batch.putOutput(samples, 0, batch.shading.blend, &batch.shading.mixing, written);
         var output: u32 = 1;
         while (output < batch.shading.color_count) : (output += 1) {
-            batch.putAt(samples, output, batch.shading.more_blends[output - 1], &batch.shading.more_mixings[output - 1], written + output * batch.count);
+            batch.putOutput(samples, output, batch.shading.more_blends[output - 1], &batch.shading.more_mixings[output - 1], written + output * batch.count);
         }
         batch.count = 0;
+    }
+
+    /// Colour attachment `output`'s colours, `colors` where the function
+    /// wrote 0xAARRGGBB, put into its plane of the tile: one the tile
+    /// keeps in its own bytes blended in floats (`putTexels`), and one it
+    /// keeps as 0xAARRGGBB given the function's floats as that where it
+    /// wrote floats. (Since 1.226; `putAt` alone until then.)
+    inline fn putOutput(batch: *Batch, comptime samples: u32, output: u32, blend: pipeline.Blend, mixing: *const pipeline.Mixing, colors: [*][4]u32) void {
+        const floats = batch.shading.written == .floats;
+        const values = batch.fragments.values + output * batch.count;
+        if (batch.tile.texels[output] != .none) return batch.putTexels(samples, output, blend, mixing, colors, values, floats);
+        if (floats) colorsOfValues(values, colors, batch.count);
+        batch.putAt(samples, output, blend, mixing, colors);
+    }
+
+    /// `count` quads' four floats a pixel as 0xAARRGGBB, each held to 0 to
+    /// 1 and rounded to the nearest of 255, as Vulkan converts a float to
+    /// an 8-bit UNORM channel ("Conversion from Floating-Point to
+    /// Normalized Fixed-Point"). (Since 1.226.)
+    fn colorsOfValues(values: [*]const [4][4]u32, colors: [*][4]u32, count: u32) void {
+        for (values[0..count], colors[0..count]) |*quad, *into| {
+            for (quad, into) |words, *color| {
+                var made: u32 = 0;
+                for (words, [4]u5{ 16, 8, 0, 24 }) |word, shift| made |= byteOf(@bitCast(word)) << shift;
+                color.* = made;
+            }
+        }
+    }
+
+    /// A float as a byte of 0 to 255, held to 0 to 1 and a NaN as 0.
+    /// (Since 1.226.)
+    inline fn byteOf(value: f32) u32 {
+        const inside = if (value >= 0) @min(value, 1) else 0;
+        return @intFromFloat(@round(inside * 255));
+    }
+
+    /// Colour attachment `output`'s pixels into its plane the tile keeps
+    /// in its own bytes (`Tile.texels`), at each of its samples: what is
+    /// there read as floats, the function's colour - its floats, or its
+    /// 0xAARRGGBB as 0 to 1 - blended against it as the mixing says, and
+    /// the result written back in the format. That is llvmpipe's blend
+    /// into a surface of its own format: the destination fetched and
+    /// converted, the blend in floats, and the result converted back and
+    /// stored under the colour mask (`generate_unswizzled_blend`,
+    /// src/gallium/drivers/llvmpipe/lp_state_fs.c), the source and the
+    /// constant held to 0 to 1 first for a format of those, and an sRGB
+    /// one blended in linear terms. (Since 1.226.)
+    fn putTexels(batch: *Batch, comptime samples: u32, output: u32, blend: pipeline.Blend, mixing: *const pipeline.Mixing, colors: [*][4]u32, values: [*][4][4]u32, floats: bool) void {
+        const tile = batch.tile;
+        const format = tile.texels[output];
+        const of_one = format.kind() != .sfloat;
+        inline for (0..samples) |sample| {
+            for (batch.quads[0..batch.count], 0..) |quad, k| {
+                const bits = batch.bitsOf(samples, sample, k);
+                if (bits == 0) continue;
+                inline for (0..4) |i| {
+                    if (bits >> i & 1 != 0) {
+                        const down: u32 = i >> 1;
+                        const across: u32 = i & 1;
+                        var row = shader.Texels{ .bytes = tile.texelRow(output, sample, @as(u32, quad.y) + down), .count = tile_size, .format = format, .writable = true };
+                        const x = @as(u32, quad.x) + across;
+                        const given = if (floats) floatsOfWords(values[k][i]) else partsOfColor(colors[k][i]);
+                        row.set(x, if (blend == .off) given else mixing.mixedFloats(given, row.at(x), of_one));
+                    }
+                }
+            }
+        }
+    }
+
+    /// Four words as the floats they hold. (Since 1.226.)
+    inline fn floatsOfWords(words: [4]u32) [4]f32 {
+        return .{ @bitCast(words[0]), @bitCast(words[1]), @bitCast(words[2]), @bitCast(words[3]) };
+    }
+
+    /// 0xAARRGGBB as red, green, blue and alpha, 0 to 1. (Since 1.226.)
+    inline fn partsOfColor(color: u32) [4]f32 {
+        var parts: [4]f32 = undefined;
+        for (&parts, [4]u5{ 16, 8, 0, 24 }) |*part, shift| part.* = @as(f32, @floatFromInt(color >> shift & 0xFF)) / 255;
+        return parts;
     }
 
     /// What a query counts of a batch: the pixels the fragment function was
@@ -1282,6 +1395,9 @@ const Batch = struct {
     fn coverByAlpha(batch: *Batch, comptime samples: u32) void {
         @setRuntimeSafety(false);
         const colors = batch.fragments.colors;
+        // Or of the floats a function wrote, as the byte they come to
+        // (since 1.226).
+        const floats = batch.shading.written == .floats;
         for (batch.quads[0..batch.count], 0..) |*quad, k| {
             // A quad's column on the surface is even - the grid's left is
             // on a cache line (target.zig, `Grid.over`) - and its row is
@@ -1289,7 +1405,7 @@ const Batch = struct {
             const row = batch.fragments.y + quad.y;
             var keep: u16 = 0;
             inline for (0..4) |i| {
-                const alpha = colors[k][i] >> 24;
+                const alpha = if (floats) byteOf(@bitCast(batch.fragments.values[k][i][3])) else colors[k][i] >> 24;
                 const parity = (i & 1) | ((row + (i >> 1)) & 1) << 1;
                 inline for (0..samples) |sample| {
                     if (8 * samples * alpha > 255 * dither[parity] + 2040 * sample) keep |= @as(u16, 1) << (4 * sample + i);

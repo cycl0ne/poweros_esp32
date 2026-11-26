@@ -274,6 +274,9 @@ pub const Pipeline = struct {
     /// for one drawing a subpass whose attachments go together
     /// (SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER).
     outputs: u32 = 1,
+    /// What the fragment function writes for each of them
+    /// (`shader.Written`, since 1.226): 0xAARRGGBB, or four words a pixel.
+    written: facet.shader.Written = .colors,
     /// The viewport and the scissor, or null where commands set them.
     viewport: ?facet.Viewport,
     scissor: ?facet.Rect2D,

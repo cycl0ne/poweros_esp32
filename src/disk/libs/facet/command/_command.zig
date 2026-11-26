@@ -256,6 +256,11 @@ pub const BeginRenderPass = extern struct {
     /// to 16777215 for a depth of 24 bits (`Part.depth_bits`, since
     /// 1.223).
     clear_colors: [_render.most_colors]u32,
+    /// The same clear values as they were given, a `ClearColorValue`'s
+    /// four words each, for an attachment the tiles keep in its own bytes
+    /// (`_image.targetTexels`): its floats, or its whole numbers, rather
+    /// than a byte a channel. (Since 1.226.)
+    clear_values: [_render.most_colors][4]u32,
     clear_depth: u32,
     clear_stencil: u32,
 };
@@ -272,6 +277,7 @@ pub fn beginSubpass(made: *CommandBuffer, number: u32) void {
         .part_count = subpass.part_count,
         .area = made.area,
         .clear_colors = @splat(0xFF00_0000),
+        .clear_values = @splat(.{ 0, 0, 0, @bitCast(@as(f32, 1)) }),
         .clear_depth = if (first.depth) |depth| (if (depth < clears.len) _render.depthOfBits(clears[depth].depth_stencil, first.depth_bits) else _render.depthUnits(first.depth_bits)) else 0xFFFF,
         .clear_stencil = if (first.depth) |depth| (if (depth < clears.len) clears[depth].depth_stencil.stencil & 0xFF else 0) else 0,
     };
@@ -282,7 +288,10 @@ pub fn beginSubpass(made: *CommandBuffer, number: u32) void {
     for (pass.parts[subpass.first_part..][0..subpass.part_count]) |part| {
         for (part.colors[0..part.color_count]) |index| {
             if (at == _render.most_colors) break;
-            if (index < clears.len) command.clear_colors[at] = _render.colorOf(clears[index].color);
+            if (index < clears.len) {
+                command.clear_colors[at] = _render.colorOf(clears[index].color);
+                command.clear_values[at] = clears[index].color.uint32;
+            }
             at += 1;
         }
     }
@@ -337,6 +346,9 @@ pub const ClearAttachment = extern struct {
     rect: facet.Rect2D,
     /// 0xAARRGGBB, the depth 0 to 1, and the stencil.
     color: u32,
+    /// The colour's four words as they were given, for an attachment the
+    /// tiles keep in its own bytes (since 1.226).
+    words: [4]u32 = .{ 0, 0, 0, 0 },
     depth: f32,
     stencil: u32,
     /// Which of the subpass's colour attachments the colour is for.

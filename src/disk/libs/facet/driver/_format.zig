@@ -81,6 +81,13 @@ fn describe(can: *const _instance.Capabilities, format: facet.Format) facet.Form
     // storage one is written through as well (CreateBufferView).
     const texels = facet.FORMAT_FEATURE_UNIFORM_TEXEL_BUFFER | facet.FORMAT_FEATURE_STORAGE_TEXEL_BUFFER;
     const vertices = facet.FORMAT_FEATURE_VERTEX_BUFFER;
+    // A colour attachment the tiles keep in its own bytes, on a device
+    // that draws one (`Capabilities.texel_targets`, since 1.226,
+    // docs/facet-vulkan10.md item 36): drawn into and blended, as lavapipe
+    // has every render target format be both but those of whole numbers
+    // (lvp_formats.c:176-181), a blit's destination, and copied both ways,
+    // its rows being its own bytes (`_image.targetTexels`).
+    const target: u32 = if (can.texel_targets) attachment | transfer else 0;
     return switch (format) {
         // STORAGE_IMAGE in the linear features says the rows of this
         // format may be written through by a function, which is what a
@@ -112,7 +119,9 @@ fn describe(can: *const _instance.Capabilities, format: facet.Format) facet.Form
         // lvp_formats.c:214-223).
         .r8_unorm => .{
             .linear_tiling_features = 0,
-            .optimal_tiling_features = transfer | sampled | storage | facet.FORMAT_FEATURE_BLIT_DST,
+            // And an attachment where the tiles keep its byte (since
+            // 1.226).
+            .optimal_tiling_features = transfer | sampled | storage | facet.FORMAT_FEATURE_BLIT_DST | target,
             // And a texel buffer of one byte a texel, since 1.54.
             .buffer_features = texels,
         },
@@ -226,9 +235,16 @@ fn describe(can: *const _instance.Capabilities, format: facet.Format) facet.Form
         // its texture unit reading the words (v3dvx_formats.c:187, :190),
         // which no sampler of this library does; A1R5G5B5's attachment
         // half is to come with the other colour attachments.
-        .b4g4r4a4_unorm_pack16, .a1r5g5b5_unorm_pack16 => .{
+        .b4g4r4a4_unorm_pack16 => .{
             .linear_tiling_features = 0,
             .optimal_tiling_features = sampled,
+            .buffer_features = 0,
+        },
+        // A1R5G5B5 an attachment as well where the tiles keep it in its
+        // 16 bits (since 1.226), as v3dv draws it (v3dvx_formats.c:190).
+        .a1r5g5b5_unorm_pack16 => .{
+            .linear_tiling_features = 0,
+            .optimal_tiling_features = sampled | target,
             .buffer_features = 0,
         },
         // Float: sampled, and written through by a function since 1.57
@@ -247,13 +263,13 @@ fn describe(can: *const _instance.Capabilities, format: facet.Format) facet.Form
         // The same, and a texel buffer of half-floats as well since 1.54.
         .r16g16b16a16_sfloat => .{
             .linear_tiling_features = 0,
-            .optimal_tiling_features = sampled | float_storage | facet.FORMAT_FEATURE_TRANSFER_DST |
+            .optimal_tiling_features = sampled | float_storage | facet.FORMAT_FEATURE_TRANSFER_DST | target |
                 if (can.kept_floats) facet.FORMAT_FEATURE_TRANSFER_SRC else 0,
             .buffer_features = texels,
         },
         .r32g32b32a32_sfloat => .{
             .linear_tiling_features = 0,
-            .optimal_tiling_features = sampled | float_storage | facet.FORMAT_FEATURE_TRANSFER_DST |
+            .optimal_tiling_features = sampled | float_storage | facet.FORMAT_FEATURE_TRANSFER_DST | target |
                 if (can.kept_floats) facet.FORMAT_FEATURE_TRANSFER_SRC else 0,
             .buffer_features = vertices | texels,
         },
@@ -264,11 +280,14 @@ fn describe(can: *const _instance.Capabilities, format: facet.Format) facet.Form
         // through, where it does not.
         .r32_sfloat => .{
             .linear_tiling_features = 0,
-            .optimal_tiling_features = sampled | float_storage | facet.FORMAT_FEATURE_TRANSFER_DST |
+            .optimal_tiling_features = sampled | float_storage | facet.FORMAT_FEATURE_TRANSFER_DST | target |
                 if (can.kept_floats) facet.FORMAT_FEATURE_TRANSFER_SRC else 0,
             .buffer_features = vertices | texels,
         },
-        .r32g32_sfloat, .r32g32b32_sfloat => .{ .linear_tiling_features = 0, .optimal_tiling_features = 0, .buffer_features = vertices | texels },
+        // R32G32_SFLOAT an attachment where the tiles keep its floats
+        // (since 1.226), and nothing else of an image yet.
+        .r32g32_sfloat => .{ .linear_tiling_features = 0, .optimal_tiling_features = target, .buffer_features = vertices | texels },
+        .r32g32b32_sfloat => .{ .linear_tiling_features = 0, .optimal_tiling_features = 0, .buffer_features = vertices | texels },
         // A texel buffer and nothing else, since 1.54: no image is kept
         // in these, and no vertex attribute is read in one. The grid is
         // one channel, two or four, of 8, 16 or 32 bits, as 0 to 1, as
@@ -281,7 +300,11 @@ fn describe(can: *const _instance.Capabilities, format: facet.Format) facet.Form
         // and CreateImage refuses such an image there.
         .r8g8_unorm, .r16_unorm, .r16g16_unorm, .r16g16b16a16_unorm => .{
             .linear_tiling_features = 0,
-            .optimal_tiling_features = if (can.wide_channels) sampled | storage | transfer else 0,
+            .optimal_tiling_features = (if (can.wide_channels) sampled | storage | transfer else 0) |
+                // R8G8_UNORM an attachment as well where the tiles keep
+                // its two bytes (since 1.226). The three of 16 bits are no
+                // colour attachment Vulkan asks for.
+                if (format == .r8g8_unorm) target else 0,
             .buffer_features = texels,
         },
         // The whole numbers of 1.70, where the device keeps what it was
@@ -316,8 +339,19 @@ fn describe(can: *const _instance.Capabilities, format: facet.Format) facet.Form
             .optimal_tiling_features = if (can.whole_textures) nearest | storage | transfer else 0,
             .buffer_features = texels,
         },
+        // The two half-float formats of one channel and two, and the
+        // sRGB words, A8B8G8R8_UNORM_PACK32 and A2B10G10R10_UNORM_PACK32:
+        // a texel buffer since 1.68, and an attachment where the tiles
+        // keep them in their own bytes (since 1.226). No sampler reads one
+        // yet (items 34 and 37).
         .r16_sfloat,
         .r16g16_sfloat,
+        .r8g8b8a8_srgb,
+        .b8g8r8a8_srgb,
+        .a8b8g8r8_unorm_pack32,
+        .a8b8g8r8_srgb_pack32,
+        .a2b10g10r10_unorm_pack32,
+        => .{ .linear_tiling_features = 0, .optimal_tiling_features = target, .buffer_features = texels },
         // The rest of them since 1.68: `_snorm` read as -1 to 1, `_srgb`
         // read through the transfer function, the words whose channels
         // are packed into them, and three channels of 32 bits. An
@@ -332,14 +366,9 @@ fn describe(can: *const _instance.Capabilities, format: facet.Format) facet.Form
         .r16g16b16a16_snorm,
         .r8_srgb,
         .r8g8_srgb,
-        .r8g8b8a8_srgb,
-        .b8g8r8a8_srgb,
-        .a8b8g8r8_unorm_pack32,
         .a8b8g8r8_snorm_pack32,
-        .a8b8g8r8_srgb_pack32,
         .a2r10g10b10_unorm_pack32,
         .a2r10g10b10_uint_pack32,
-        .a2b10g10r10_unorm_pack32,
         .a2b10g10r10_uint_pack32,
         .r32g32b32_uint,
         .r32g32b32_sint,

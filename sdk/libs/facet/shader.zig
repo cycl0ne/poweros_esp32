@@ -85,6 +85,15 @@ pub const Entry = extern struct {
         return ((entry.varyings >> 18) & 3) + 1;
     }
 
+    /// What a fragment function writes for each colour attachment
+    /// (`Written`): 0xAARRGGBB for a `shader.fragment`, a
+    /// `shader.fixedFragment` or a `shader.fragmentOutputs` entry, and
+    /// what `shader.fragmentWriting` said for one of those. (Since
+    /// 1.226.)
+    pub fn written(entry: *const Entry) Written {
+        return @enumFromInt(@as(u2, @truncate(entry.varyings >> 20)));
+    }
+
     /// An evaluation function's way of tessellating, or null where its
     /// domain or its spacing is a value this library has not: a pipeline
     /// refuses such an entry with `error_invalid_shader_nv`. (Since 1.50
@@ -197,6 +206,31 @@ pub fn fragment(name: [*:0]const u8, function: FragmentFn, varyings: u32) Entry 
 pub fn fragmentOutputs(name: [*:0]const u8, function: FragmentFn, varyings: u32, outputs: u32) Entry {
     const held: u32 = @min(@max(outputs, 1), 4) - 1;
     return .{ .name = name, .stage = facet.SHADER_STAGE_FRAGMENT, .function = function, .varyings = varyings | held << 18 };
+}
+
+/// What a fragment function writes for each of its colour attachments
+/// (since 1.226, docs/facet-vulkan10.md item 36): 0xAARRGGBB into
+/// `Fragments.colors`, which every entry wrote until then and a
+/// `fragment` entry still does; or four 32-bit words a pixel into
+/// `Fragments.values` - four floats, as a Vulkan fragment shader's
+/// `vec4` output is, or four whole numbers, signed or not, as an `ivec4`
+/// or a `uvec4` is. What is written is converted to the attachment's
+/// format, as llvmpipe converts a shader's outputs to its render target's
+/// (`generate_unswizzled_blend`, src/gallium/drivers/llvmpipe/
+/// lp_state_fs.c): a float into a format of 0 to 1 is held to 0 to 1 and
+/// rounded at the format's width, a half-float format rounds it to a
+/// half, and 0xAARRGGBB into a format of floats is each byte over 255.
+/// Whole numbers go into a format of whole numbers, and a colour or a
+/// float into one of those, or whole numbers into any other, is what
+/// Vulkan leaves undefined ("Fragment Output Interface").
+pub const Written = enum(u2) { colors, floats, sints, uints };
+
+/// An entry for a fragment function that writes `outputs` colour
+/// attachments in the one call, as `fragmentOutputs`, each as `written`
+/// says: 1 for the one a subpass draws at a time. (Since 1.226.)
+pub fn fragmentWriting(name: [*:0]const u8, function: FragmentFn, varyings: u32, outputs: u32, written: Written) Entry {
+    const made = fragmentOutputs(name, function, varyings, outputs);
+    return .{ .name = made.name, .stage = made.stage, .function = made.function, .varyings = made.varyings | @as(u32, @intFromEnum(written)) << 20 };
 }
 
 /// An entry for a tessellation control function. `own` is the floats it
@@ -622,12 +656,17 @@ pub const TexelFormat = enum(u8) {
     /// the stencil or nothing, is not read: the stencil of
     /// D24_UNORM_S8_UINT is its own plane, read as `r8u`.
     d24 = 52,
+    /// Four channels in 16 bits, since 1.226: `a1r5g5b5_unorm_pack16`,
+    /// blue in the low 5, then green and red, and the alpha the top bit.
+    /// What a colour attachment of the format is drawn in (docs/
+    /// facet-vulkan10.md item 36); no texel buffer is of it.
+    a1rgb5 = 53,
 
     /// The bytes one texel takes; 0 for `.none`.
     pub fn bytes(format: TexelFormat) u32 {
         return switch (format) {
             .none => 0,
-            .rgb565 => 2,
+            .rgb565, .a1rgb5 => 2,
             .rgba8888, .bgra8888, .r32f => 4,
             // One word, whatever its channels are (since 1.68).
             .rgba8srgb, .bgra8srgb, .rgb10a2, .bgr10a2, .rgb10a2u, .bgr10a2u, .rg11b10f, .rgb9e5 => 4,
@@ -653,7 +692,7 @@ pub const TexelFormat = enum(u8) {
             .rg8n, .rg16n, .rg8srgb => 2,
             .rg11b10f, .rgb9e5, .rgb32u, .rgb32i => 3,
             .d24 => 1,
-            .rgba8n, .rgba16n, .rgba8srgb, .bgra8srgb => 4,
+            .rgba8n, .rgba16n, .rgba8srgb, .bgra8srgb, .a1rgb5 => 4,
             .rgb10a2, .bgr10a2, .rgb10a2u, .bgr10a2u => 4,
         };
     }
@@ -664,7 +703,7 @@ pub const TexelFormat = enum(u8) {
     pub fn channelBits(format: TexelFormat) u32 {
         return switch (format) {
             .none => 0,
-            .rgb565 => 16,
+            .rgb565, .a1rgb5 => 16,
             .rgba8888, .bgra8888 => 8,
             .r8, .rg8, .r8u, .rg8u, .rgba8u, .r8i, .rg8i, .rgba8i => 8,
             .r16, .rg16, .rgba16, .r16u, .rg16u, .rgba16u, .r16i, .rg16i, .rgba16i, .r16f, .rg16f, .rgba16f => 16,
@@ -692,7 +731,7 @@ pub const TexelFormat = enum(u8) {
             // (`rg11b10f`, `rgb9e5`).
             .r8n, .rg8n, .rgba8n, .r16n, .rg16n, .rgba16n => .snorm,
             .r8srgb, .rg8srgb, .rgba8srgb, .bgra8srgb => .srgb,
-            .rgb10a2, .bgr10a2, .rgb10a2u, .bgr10a2u, .rg11b10f, .rgb9e5, .d24 => .packed_bits,
+            .rgb10a2, .bgr10a2, .rgb10a2u, .bgr10a2u, .rg11b10f, .rgb9e5, .d24, .a1rgb5 => .packed_bits,
             .rgb32u => .uint,
             .rgb32i => .sint,
         };
@@ -726,6 +765,8 @@ pub const TexelFormat = enum(u8) {
             .bgr10a2u => .{ .at = .{ 20, 10, 0, 30 }, .bits = .{ 10, 10, 10, 2 }, .whole = true },
             // The word's top 24 bits (since 1.223).
             .d24 => .{ .at = .{ 8, 0, 0, 0 }, .bits = .{ 24, 0, 0, 0 } },
+            // Blue low, the alpha the top bit (since 1.226).
+            .a1rgb5 => .{ .at = .{ 10, 5, 0, 15 }, .bits = .{ 5, 5, 5, 1 } },
             else => null,
         };
     }
@@ -1802,6 +1843,23 @@ pub const Fragments = extern struct {
     /// gives each one's colours; attachment 0's are `colors` itself, so a
     /// function that writes the one colour needs no notice of this.
     output_count: u32 = 1,
+    /// Where each quad's pixels' four words go, for a function whose entry
+    /// writes floats or whole numbers rather than 0xAARRGGBB (`Written`,
+    /// since 1.226): pixel i of quad k as `values[k][i]`, its x, y, z and
+    /// w, each a float's bits or the number itself, the pixels in the
+    /// order of `covered`'s bits. Attachment `output`'s `count` quads
+    /// after the one before, as `colors` has them: `valuesOf` is the way to
+    /// them. Not to be read or written by a function that writes
+    /// 0xAARRGGBB.
+    values: [*][4][4]u32 = undefined,
+
+    /// Where colour attachment `output`'s `count` quads of four words a
+    /// pixel go, for a function that writes them (`values`). An `output`
+    /// past `output_count` gives the last one's. (Since 1.226.)
+    pub inline fn valuesOf(fragments: *const Fragments, output: u32) [*][4][4]u32 {
+        const at = @min(output, fragments.output_count - 1);
+        return fragments.values + at * fragments.count;
+    }
 
     /// Where colour attachment `output`'s `count` colours go. Attachment
     /// 0's are `colors`; an `output` past `output_count` gives the last

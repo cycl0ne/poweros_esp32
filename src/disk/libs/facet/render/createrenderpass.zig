@@ -8,7 +8,6 @@ const _objects = @import("../_objects.zig");
 const Device = @import("../device/_device.zig").Device;
 const _render = @import("_render.zig");
 const _image = @import("../image/_image.zig");
-const _surface = @import("../surface/_surface.zig");
 
 /// A render pass: the attachments it draws into, what each starts with and what is kept of it.
 ///
@@ -363,10 +362,13 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
                 // (`Capabilities.sampled_depth`).
                 const depth_read = _image.hasDepth(read.format) or _image.hasStencil(read.format);
                 if (depth_read and !owner.physical.can.sampled_depth) return .error_feature_not_present;
-                // VUID-VkSubpassDescription-pInputAttachments-02647: the
-                // colour formats kept in rows are those `_format.describe`
-                // gives COLOR_ATTACHMENT.
-                if (!depth_read and _image.rowFormat(read.format) == .none) return .error_validation_failed;
+                // VUID-VkSubpassDescription-pInputAttachments-02647: a
+                // colour format the device's query gives COLOR_ATTACHMENT,
+                // which it keeps in rows a fragment function reads
+                // (`_image.rowFormat`). Held to the feature since 1.226,
+                // where the device keeps more formats than the three of
+                // 8 bits a channel (`Capabilities.texel_targets`).
+                if (!depth_read and !colorAttaches(owner.physical, read.format)) return .error_validation_failed;
                 // A depth another subpass drew is in that subpass's
                 // tiles, so the part that drew it last writes it into
                 // the image's rows for this one to read, the way 1.52
@@ -591,8 +593,13 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
             // pass chapter, under VkAttachmentDescription).
             for (colors[0..k]) |earlier| if (earlier.attachment == color_index) return .error_validation_failed;
             const color = attachments[color_index];
-            // VUID-VkSubpassDescription-pColorAttachments-02648.
-            if (!_surface.drawable(color.format)) return .error_validation_failed;
+            // VUID-VkSubpassDescription-pColorAttachments-02648: held to
+            // the format's COLOR_ATTACHMENT on the device since 1.226,
+            // rather than to the three of 8 bits a channel a display has
+            // (`_surface.drawable`), the cores drawing fourteen more
+            // (`Capabilities.texel_targets`, docs/facet-vulkan10.md
+            // item 36).
+            if (!colorAttaches(owner.physical, color.format)) return .error_validation_failed;
             const load: _render.ColorLoad = if (color.load_op == .clear and !drawn[color_index]) .clear else .keep;
             // Its resolve attachment: one sample, of its own format, for a
             // colour of more than one. Vulkan's resolve is at the
@@ -677,6 +684,12 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
 
 /// Whether a subpass draws into just what the one before it does, the
 /// same way round.
+/// Whether `format` is a colour attachment on `physical`, its query
+/// giving it COLOR_ATTACHMENT in optimal tiling. (Since 1.226.)
+fn colorAttaches(physical: anytype, format: facet.Format) bool {
+    return physical.ops.format_properties(physical, format).optimal_tiling_features & facet.FORMAT_FEATURE_COLOR_ATTACHMENT != 0;
+}
+
 fn sameTargets(before: facet.SubpassDescription, subpass: facet.SubpassDescription) bool {
     if (before.color_attachment_count != subpass.color_attachment_count) return false;
     // The one before resolves as it ends, which its tiles going on would
