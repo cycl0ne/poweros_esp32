@@ -51,7 +51,10 @@
 //! started with its firmware, the same way and only on request
 //! (`dmub.zig`): the memory it runs with stays the board's once given.
 //! The picture's checksum, as the timing generator sums it, is a test
-//! tool asked for the same way (`crc.zig`).
+//! tool asked for the same way (`crc.zig`). The engine's hot-plug lines
+//! (`hpd.zig`) and the controller's notifications are listened to from
+//! the first ask for them on, each through a server on the device's
+//! interrupt ring, and AUX transactions go through the controller.
 //!
 //! The buffers drawn in are the machine's RAM, taken by the library as
 //! each is allocated (RTGRF_SYSTEM_MEMORY, RTGRF_DMA_MEMORY).
@@ -78,11 +81,13 @@ const sound = @import("sound.zig");
 const smu = @import("smu.zig");
 const dmub = @import("dmub.zig");
 const crc = @import("crc.zig");
+const hpd = @import("hpd.zig");
+const aux = @import("aux.zig");
 
 const MODULE_NAME = "rtg-amd";
 const DRIVER_NAME = "amd";
 const VERSION = 1;
-const REVISION = 7;
+const REVISION = 8;
 const BUILD_DATE = "26.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -145,6 +150,11 @@ const Screen = struct {
     /// and the lock that keeps one asker at a time at it.
     controller: dmub.Controller = .{},
     controller_lock: exec.SignalSemaphore = .{},
+    /// The hot-plug lines and what they did, and the servers for them
+    /// and for the controller's outbox.
+    lines: hpd.Lines = .{},
+    hot_plug_int: exec.Interrupt = .{},
+    outbox_int: exec.Interrupt = .{},
 };
 
 /// Wait for `frames` frames, as the library waits (WaitVBlank): for the
@@ -166,6 +176,43 @@ fn frameServer(data: ?*anyopaque, int_number: u32) callconv(.c) i32 {
     dcn.takeFrame(screen.dcn);
     drivers(screen).FrameDone(screen.board);
     return 1;
+}
+
+/// A hot-plug line's change, counted.
+fn hotPlugServer(data: ?*anyopaque, int_number: u32) callconv(.c) i32 {
+    _ = int_number;
+    const screen: *Screen = @ptrCast(@alignCast(data.?));
+    hpd.take(screen.dcn, &screen.lines);
+    return 1;
+}
+
+/// The controller's notifications, read.
+fn outboxServer(data: ?*anyopaque, int_number: u32) callconv(.c) i32 {
+    _ = int_number;
+    const screen: *Screen = @ptrCast(@alignCast(data.?));
+    dmub.take(screen.dcn, &screen.controller);
+    return 1;
+}
+
+/// The hot-plug lines listened to, and the controller where it runs;
+/// under the controller's lock.
+fn listen(screen: *Screen) void {
+    if (!screen.lines.listening) {
+        screen.hot_plug_int = .{
+            .node = .{ .type = .interrupt, .pri = 0, .name = MODULE_NAME },
+            .data = screen,
+            .code = &hotPlugServer,
+        };
+        _ = hpd.listen(screen.dcn, &screen.lines, &screen.hot_plug_int);
+    }
+    if (screen.controller.running and !screen.controller.listening) {
+        screen.outbox_int = .{
+            .node = .{ .type = .interrupt, .pri = 0, .name = MODULE_NAME },
+            .data = screen,
+            .code = &outboxServer,
+        };
+        _ = dmub.listen(screen.dcn, &screen.controller, &screen.outbox_int);
+    }
 }
 
 /// The frame's server on, through the device's interrupt ring.
@@ -457,6 +504,8 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, device_tags: ?[*]const
 fn halt(screen: *Screen) void {
     giveAmdFrame(screen);
     unhookFrames(screen);
+    hpd.unlisten(screen.dcn, &screen.lines, &screen.hot_plug_int);
+    dmub.unlisten(screen.dcn, &screen.controller, &screen.outbox_int);
     screen.scanning = 0;
 }
 
@@ -509,9 +558,11 @@ fn stats(board: *rtg.RtgBoard, into: *rtg.RtgBoardStats) callconv(.c) void {
 }
 
 /// The board's own controls (RTGCTRL_AMD_*): the display's mailbox to the
-/// power manager asked, the display controller read or started, one
-/// asker at a time at each, and the picture's checksum read. Nothing else
-/// is taken.
+/// power manager asked, the display controller read, started or sent an
+/// AUX transaction, the hot-plug lines and the controller's
+/// notifications listened to and counted - one asker at a time at the
+/// mailbox and at the controller - and the picture's checksum read.
+/// Nothing else is taken.
 fn control(board: *rtg.RtgBoard, what: u32, value: isize) callconv(.c) isize {
     const screen = screenOf(board);
     switch (what) {
@@ -539,6 +590,41 @@ fn control(board: *rtg.RtgBoard, what: u32, value: isize) callconv(.c) isize {
                 return err.RTGERR_OK;
             }
             return dmub.start(screen.dcn, &screen.controller, into);
+        },
+        rtg.tags.RTGCTRL_AMD_EVENTS => {
+            if (value == 0) return err.RTGERR_BAD_ARG;
+            const into: *rtg.tags.RtgAmdEvents = @ptrFromInt(@as(usize, @bitCast(value)));
+            screen.sys.ObtainSemaphore(&screen.controller_lock);
+            defer screen.sys.ReleaseSemaphore(&screen.controller_lock);
+            listen(screen);
+            if (into.poke != 0) {
+                if (!hpd.poke(screen.dcn, &screen.lines, into.poke -% 1)) return err.RTGERR_BAD_ARG;
+                // The line's filter and the ring's way take a few
+                // milliseconds; the count is read past them.
+                var never: exec.Waitable = .{};
+                const list = [_]*exec.Waitable{&never};
+                _ = screen.sys.WaitForAny(&list, 1, 50_000);
+            }
+            into.* = .{};
+            into.lines_heard = @intFromBool(screen.lines.listening);
+            into.hot_plug_interrupts = screen.lines.interrupts;
+            into.line_changes = screen.lines.changes;
+            hpd.read(screen.dcn, into);
+            dmub.counts(&screen.controller, into);
+            return err.RTGERR_OK;
+        },
+        rtg.tags.RTGCTRL_AMD_AUX => {
+            if (value == 0) return err.RTGERR_BAD_ARG;
+            const request: *rtg.tags.RtgAmdAux = @ptrFromInt(@as(usize, @bitCast(value)));
+            screen.sys.ObtainSemaphore(&screen.controller_lock);
+            defer screen.sys.ReleaseSemaphore(&screen.controller_lock);
+            listen(screen);
+            if (!screen.controller.listening) return err.RTGERR_NOT_SUPPORTED;
+            aux.read(screen.dcn, request.instance, &request.found);
+            if (!aux.ready(screen.dcn, request.instance)) return err.RTGERR_IN_USE;
+            const result = dmub.aux(screen.dcn, &screen.controller, request);
+            aux.read(screen.dcn, request.instance, &request.after);
+            return result;
         },
         rtg.tags.RTGCTRL_AMD_CRC => {
             if (value == 0) return err.RTGERR_BAD_ARG;

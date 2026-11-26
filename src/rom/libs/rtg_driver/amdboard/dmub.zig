@@ -30,9 +30,23 @@
 //! the end of its code for drivers to read; 64 KiB each where the block
 //! is not there.
 //!
+//! **Its notifications** come the other way, through the outbox ring
+//! beside the inbox: the controller writes an entry, moves the outbox's
+//! write place and raises its interrupt through the device's ring. The
+//! board's server reads every entry up to the write place, counts it by
+//! kind - an AUX reply, a hot plug it saw, anything else - and moves the
+//! read place on. The controller sends them once told to (a command of
+//! its own), which it is again after each start.
+//!
+//! **An AUX transaction** - a read or write of a DisplayPort sink's
+//! registers (DPCD) or of its I2C bus over the AUX channel - is a
+//! command naming the socket's AUX channel by its DDC line's number; the
+//! sink's reply comes back as a notification, waited for by the asker.
+//!
 //! Nothing here runs unless asked for: the board's controls
-//! (RTGCTRL_AMD_CONTROLLER, RTGCTRL_AMD_START_CONTROLLER) ask, which
-//! `C:test/Gpu DMCUB` does - starting it with the watchdog armed.
+//! (RTGCTRL_AMD_CONTROLLER, RTGCTRL_AMD_START_CONTROLLER,
+//! RTGCTRL_AMD_EVENTS, RTGCTRL_AMD_AUX) ask, which `C:test/Gpu DMCUB`,
+//! `EVENTS` and `AUX` do - starting it with the watchdog armed.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -72,6 +86,8 @@ const outbox1_size = 0x1dd;
 const outbox1_write = 0x1de;
 const outbox1_read = 0x1df;
 const timer = 0x1fd;
+const interrupt_enable = 0x1c5;
+const interrupt_ack = 0x1c6;
 const fault_undefined = 0x1fa;
 const fault_fetch = 0x1cc;
 const fault_write = 0x1cd;
@@ -86,6 +102,7 @@ const hub_reset_controller: u32 = 1 << 8;
 const disabled_controller_present: u32 = 1 << 16;
 const window_enable: u32 = 1 << 31;
 const window_top_mask: u32 = 0x1fff_ffff;
+const outbox_ready: u32 = 1 << 8;
 
 /// The scratch registers the firmware and the driver speak through: the
 /// boot status, the answer to a stop, the boot options, the security
@@ -125,6 +142,30 @@ const ring_bytes: u32 = 64 * 128;
 const command_bytes: u32 = 64;
 /// The trace buffer's entries start past its header.
 const trace_entries_at: u32 = 16;
+
+/// The commands sent here, and their header's fields: the kind in the
+/// low byte, the answer asked for, the payload's bytes in the top byte.
+const command_query_caps: u32 = 6;
+const command_aux: u32 = 70;
+const command_notify: u32 = 71;
+const header_answer: u32 = 1 << 16;
+const header_payload_shift = 24;
+
+/// The notifications' kinds, in their header's low byte.
+const note_aux_reply: u32 = 1;
+const note_hot_plug: u32 = 2;
+
+/// An AUX transaction's action, as the controller takes it: native reads
+/// and writes of the sink's registers, I2C reads and writes over AUX,
+/// each with the middle-of-transaction bit.
+const aux_dpcd_read: u32 = 0x90;
+const aux_dpcd_write: u32 = 0x80;
+const aux_i2c_read: u32 = 0x10;
+const aux_i2c_write: u32 = 0x00;
+const aux_i2c_more: u32 = 0x40;
+
+/// How long a sink's reply is waited for, past the command being taken.
+const reply_wait_us: u64 = 100_000;
 
 /// The sizes taken where the firmware's file says none.
 const default_trace: u32 = 64 * 1024;
@@ -195,6 +236,19 @@ pub const Controller = struct {
     state_bytes: u32 = 0,
     write: u32 = 0,
     version: u32 = 0,
+    /// It runs the firmware started here and has answered.
+    running: bool = false,
+    /// Its notifications are listened to, and where the next is read.
+    listening: bool = false,
+    outbox_read: u32 = 0,
+    /// The notifications had: interrupts, entries, AUX replies, hot plugs
+    /// and others; the last AUX reply's words after its header.
+    interrupts: u32 = 0,
+    notes: u32 = 0,
+    aux_replies: u32 = 0,
+    hot_plug_notes: u32 = 0,
+    other_notes: u32 = 0,
+    aux_reply: [7]u32 = @splat(0),
 };
 
 fn at(engine: dcn.Engine, offset: u32) *volatile u32 {
@@ -338,22 +392,44 @@ pub fn start(engine: dcn.Engine, controller: *Controller, into: *tags.RtgAmdCont
         read(engine, into);
         return err.RTGERR_NOT_SUPPORTED;
     }
+    controller.running = false;
     const result = load(engine, controller, into);
     read(engine, into);
     into.firmware = controller.version;
     if (result != err.RTGERR_OK) return result;
 
     // The question: what the firmware can do, answered in its own slot.
+    var command: [16]u32 = @splat(0);
+    command[0] = command_query_caps | header_answer | 14 << header_payload_shift;
+    const answered = send(engine, controller, &command);
+    read(engine, into);
+    into.firmware = controller.version;
+    into.reply = command;
     const memory = controller.memory.?;
+    const trace: [*]volatile u32 = @ptrFromInt(@as(usize, @intCast(memory.cpu)) + controller.trace_at);
+    for (&into.trace, 0..) |*trace_word, index| trace_word.* = trace[index];
+    if (!answered) return err.RTGERR_TIMEOUT;
+    into.stage = tags.RTG_AMD_STAGE_ANSWERED;
+    controller.running = true;
+    // A controller listened to before is told again to notify.
+    if (controller.listening and !notify(engine, controller)) return err.RTGERR_TIMEOUT;
+    exec.kprintf(sys, "%s: the display controller runs its firmware %d.%d.%d\n", .{
+        dcn.owner, controller.version >> 24, controller.version >> 16 & 0xff, controller.version >> 8 & 0xff,
+    });
+    return err.RTGERR_OK;
+}
+
+/// `command` - 64 bytes - written into the inbox at the write place, the
+/// controller told, and waited for until it has taken it: whether it
+/// did, `command` then holding its slot as the controller left it, which
+/// is where a command that answers leaves its answer.
+fn send(engine: dcn.Engine, controller: *Controller, command: *[16]u32) bool {
+    const memory = controller.memory orelse return false;
     const slot: [*]volatile u32 = @ptrFromInt(@as(usize, @intCast(memory.cpu)) + controller.mailbox_at + controller.write);
-    const query_caps: u32 = 6;
-    const answers: u32 = 1 << 16;
-    const payload: u32 = 14 << 24;
-    slot[0] = query_caps | answers | payload;
-    for (1..command_bytes / 4) |index| slot[index] = 0;
+    for (command, 0..) |command_word, index| slot[index] = command_word;
     // The writes gathered so far reach the memory before the controller
     // is told: read back, and fenced.
-    for (0..command_bytes / 4) |index| _ = slot[index];
+    for (0..command.len) |index| _ = slot[index];
     sdk.hardware.barrier.full();
     controller.write = (controller.write + command_bytes) % ring_bytes;
     at(engine, inbox1_write).* = controller.write;
@@ -362,18 +438,127 @@ pub fn start(engine: dcn.Engine, controller: *Controller, into: *tags.RtgAmdCont
             return at(engine_, inbox1_read).* == at(engine_, inbox1_write).*;
         }
     }.f;
-    const answered = waitFor(engine, done);
-    read(engine, into);
-    into.firmware = controller.version;
-    for (&into.reply, 0..) |*reply_word, index| reply_word.* = slot[index];
-    const trace: [*]volatile u32 = @ptrFromInt(@as(usize, @intCast(memory.cpu)) + controller.trace_at);
-    for (&into.trace, 0..) |*trace_word, index| trace_word.* = trace[index];
-    if (!answered) return err.RTGERR_TIMEOUT;
-    into.stage = tags.RTG_AMD_STAGE_ANSWERED;
-    exec.kprintf(sys, "%s: the display controller runs its firmware %d.%d.%d\n", .{
-        dcn.owner, controller.version >> 24, controller.version >> 16 & 0xff, controller.version >> 8 & 0xff,
-    });
+    const taken = waitFor(engine, done);
+    for (command, 0..) |*command_word, index| command_word.* = slot[index];
+    return taken;
+}
+
+/// The controller told to send its notifications.
+fn notify(engine: dcn.Engine, controller: *Controller) bool {
+    var command: [16]u32 = @splat(0);
+    command[0] = command_notify | 4 << header_payload_shift;
+    command[1] = 1;
+    return send(engine, controller, &command);
+}
+
+/// The controller's notifications listened to: `server` added for its
+/// outbox's interrupt, the interrupt on, the controller told to notify.
+/// Whether it was - false where the controller does not run.
+pub fn listen(engine: dcn.Engine, controller: *Controller, server: *exec.Interrupt) bool {
+    if (!controller.running) return false;
+    if (controller.listening) return true;
+    if (!engine.gpu.AddGPUIntServer(amdgpu.GPUINT_CLIENT_DISPLAY, amdgpu.GPUINT_DISPLAY_CONTROLLER, server)) return false;
+    controller.listening = true;
+    engine.sys.Disable();
+    at(engine, interrupt_ack).* = outbox_ready;
+    at(engine, interrupt_enable).* |= outbox_ready;
+    engine.sys.Enable();
+    return notify(engine, controller);
+}
+
+/// The outbox's interrupt off and its server taken off.
+pub fn unlisten(engine: dcn.Engine, controller: *Controller, server: *exec.Interrupt) void {
+    if (!controller.listening) return;
+    engine.sys.Disable();
+    at(engine, interrupt_enable).* &= ~outbox_ready;
+    engine.sys.Enable();
+    engine.gpu.RemGPUIntServer(server);
+    controller.listening = false;
+}
+
+/// In the server: the interrupt acknowledged, every entry up to the
+/// outbox's write place counted by its kind - an AUX reply's words kept
+/// for its asker, counted after they are - and the read place moved on.
+pub fn take(engine: dcn.Engine, controller: *Controller) void {
+    controller.interrupts +%= 1;
+    at(engine, interrupt_ack).* = outbox_ready;
+    const memory = controller.memory orelse return;
+    const ring = @as(usize, @intCast(memory.cpu)) + controller.mailbox_at + ring_bytes;
+    const write = at(engine, outbox1_write).*;
+    if (write >= ring_bytes or write % command_bytes != 0) return;
+    while (controller.outbox_read != write) {
+        const entry: [*]volatile u32 = @ptrFromInt(ring + controller.outbox_read);
+        controller.notes +%= 1;
+        switch (entry[0] & 0xff) {
+            note_aux_reply => {
+                for (&controller.aux_reply, 0..) |*reply_word, index| reply_word.* = entry[1 + index];
+                @atomicStore(u32, &controller.aux_replies, controller.aux_replies +% 1, .release);
+            },
+            note_hot_plug => controller.hot_plug_notes +%= 1,
+            else => controller.other_notes +%= 1,
+        }
+        controller.outbox_read = (controller.outbox_read + command_bytes) % ring_bytes;
+    }
+    at(engine, outbox1_read).* = controller.outbox_read;
+}
+
+/// The controller's notification counts into `into`.
+pub fn counts(controller: *const Controller, into: *tags.RtgAmdEvents) void {
+    into.controller_heard = @intFromBool(controller.listening);
+    into.controller_interrupts = controller.interrupts;
+    into.notes = controller.notes;
+    into.aux_replies = controller.aux_replies;
+    into.hot_plug_notes = controller.hot_plug_notes;
+    into.other_notes = controller.other_notes;
+}
+
+/// The AUX action for `request`.
+pub fn auxAction(request: *const tags.RtgAmdAux) u32 {
+    if (request.kind == tags.RTG_AMD_AUX_I2C) {
+        const more: u32 = if (request.more != 0) aux_i2c_more else 0;
+        return (if (request.write != 0) aux_i2c_write else aux_i2c_read) | more;
+    }
+    return if (request.write != 0) aux_dpcd_write else aux_dpcd_read;
+}
+
+/// One AUX transaction through the controller, as RTGCTRL_AMD_AUX asks:
+/// RTGERR_OK once the sink's reply - or the controller's word that none
+/// came - is had, into `request`; RTGERR_TIMEOUT where the controller
+/// did not take the command or no reply came; RTGERR_BAD_ARG for more
+/// than 16 bytes. The controller runs and is listened to.
+pub fn aux(engine: dcn.Engine, controller: *Controller, request: *tags.RtgAmdAux) isize {
+    if (request.length > request.data.len) return err.RTGERR_BAD_ARG;
+    var command: [16]u32 = @splat(0);
+    command[0] = command_aux;
+    command[1] = request.instance & 0xff;
+    command[3] = 0; // its legacy channel, not a USB4 one
+    command[4] = @intFromBool(request.kind == tags.RTG_AMD_AUX_I2C) | auxAction(request) << 8 | request.length << 16;
+    command[5] = request.address;
+    if (request.write != 0) {
+        for (0..request.length) |index| {
+            command[6 + index / 4] |= @as(u32, request.data[index]) << @intCast(index % 4 * 8);
+        }
+    }
+    const before = @atomicLoad(u32, &controller.aux_replies, .acquire);
+    if (!send(engine, controller, &command)) return err.RTGERR_TIMEOUT;
+    const until = engine.sys.UptimeUs() + reply_wait_us;
+    while (@atomicLoad(u32, &controller.aux_replies, .acquire) == before) {
+        if (engine.sys.UptimeUs() > until) return err.RTGERR_TIMEOUT;
+        pause(engine.sys, 100);
+    }
+    replyInto(controller.aux_reply, request);
     return err.RTGERR_OK;
+}
+
+/// A reply's words after its header into `request`: the controller's
+/// result, the sink's reply code and its bytes.
+pub fn replyInto(reply: [7]u32, request: *tags.RtgAmdAux) void {
+    request.result = reply[1] >> 8 & 0xff;
+    request.reply = reply[2] & 0xff;
+    request.replied = @min(reply[2] >> 8 & 0xff, request.data.len);
+    if (request.write == 0) {
+        for (&request.data, 0..) |*byte, index| byte.* = @truncate(reply[3 + index / 4] >> @intCast(index % 4 * 8));
+    }
 }
 
 /// The firmware read and loaded, the controller reset, set up and let
@@ -448,6 +633,7 @@ fn load(engine: dcn.Engine, controller: *Controller, into: *tags.RtgAmdControlle
     at(engine, outbox1_base).* = sees_mailbox + ring_bytes;
     at(engine, outbox1_size).* = ring_bytes;
     controller.write = 0;
+    controller.outbox_read = 0;
     scratch(engine, scratch_options).* = boot_options;
     into.stage = tags.RTG_AMD_STAGE_SET_UP;
 
@@ -557,4 +743,27 @@ test "the windows are laid out on their boundaries, the whole in pages" {
     _ = layOut(&controller, 100, .{});
     try testing.expectEqual(@as(u32, 0x10000), controller.trace_bytes);
     try testing.expectEqual(@as(u32, 128), controller.bios_bytes);
+}
+
+test "an AUX reply is read into the request" {
+    var request: tags.RtgAmdAux = .{ .length = 4 };
+    // Handle, instance 2 with result 4 (nothing plugged in), reply 0 of
+    // no bytes.
+    replyInto(.{ 0, 2 | 4 << 8, 0, 0, 0, 0, 0 }, &request);
+    try testing.expectEqual(@as(u32, 4), request.result);
+    try testing.expectEqual(@as(u32, 0), request.replied);
+    // A DPCD read answered: reply ACK (0) with three bytes.
+    replyInto(.{ 0, 0, 3 << 8, 0x0a_84_12, 0, 0, 0 }, &request);
+    try testing.expectEqual(@as(u32, 0), request.result);
+    try testing.expectEqual(@as(u32, 3), request.replied);
+    try testing.expectEqual(@as(u8, 0x12), request.data[0]);
+    try testing.expectEqual(@as(u8, 0x84), request.data[1]);
+    try testing.expectEqual(@as(u8, 0x0a), request.data[2]);
+}
+
+test "the AUX action follows the kind and the direction" {
+    try testing.expectEqual(aux_dpcd_read, auxAction(&.{}));
+    try testing.expectEqual(aux_dpcd_write, auxAction(&.{ .write = 1 }));
+    try testing.expectEqual(aux_i2c_read | aux_i2c_more, auxAction(&.{ .kind = tags.RTG_AMD_AUX_I2C, .more = 1 }));
+    try testing.expectEqual(aux_i2c_write, auxAction(&.{ .kind = tags.RTG_AMD_AUX_I2C, .write = 1 }));
 }

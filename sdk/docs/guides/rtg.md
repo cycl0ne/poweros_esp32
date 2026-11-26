@@ -817,7 +817,18 @@ it sends, each colour's CRC over the whole picture - a test tool, the
 same before and after a step that should leave the picture alone; the
 first ask switches the sum on. `C:test/Gpu DMCUB START` and `CRC` do
 these with the watchdog armed, the start with the checksum before and
-after.
+after. `RTGCTRL_AMD_EVENTS` fills an `RtgAmdEvents` with what the
+engine's five hot-plug lines and the controller's notifications have
+done; its first ask has them listened to - each line switched on, its
+interrupt waiting for the opposite of what it senses and turned at each
+change, and, where the controller runs, its outbox's interrupt hooked
+and the controller told to notify - and they stay listened to. `poke`
+makes one line raise its interrupt at once, a test of the path without
+a hand at the cable. `RTGCTRL_AMD_AUX` sends one AUX transaction through
+the controller and waits for its reply notification (`RtgAmdAux`); the
+controller serves the USB4 tunnels' channels, and answers a socket's own
+channel with `RTG_AMD_AUX_REFUSED` - those are the engine's AUX
+registers' to drive. `C:test/Gpu EVENTS [LINE n]` and `AUX n` do these.
 
 The numbers say a lot about a picture that misbehaves. A part of the glass
 that is out of date while `refreshes` stands still was never handed on; one

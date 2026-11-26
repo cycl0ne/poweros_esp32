@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: MIT
 //! Gpu: an AMD graphics device tried a part at a time, each step said:
 //! its video BIOS read, the display's clocks asked for, the display
-//! controller read or started, the picture's checksum read, its security
+//! controller read or started, its hot-plug lines and notifications
+//! counted, an AUX read through it, the picture's checksum read, its security
 //! processor started and the video decoder's firmware loaded by it, the
 //! display's interrupt at each frame counted, or one flip of the picture
 //! the display reads. Built against the SDK only.
 //!
-//!   Gpu TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,PIPE/K/N,FETCHER/K/N,WATCHDOG/K/N
+//!   Gpu TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,PIPE/K/N,FETCHER/K/N,WATCHDOG/K/N
 //!
 //! BIOS prints the device's video BIOS image (GetGPUBios): where it is
 //! and how long, its tables' header's version, the version of each data
@@ -41,7 +42,24 @@
 //! the picture (RTGCTRL_AMD_CRC), switching it on the first time: the
 //! watchdog is armed for it.
 //!
-//! Without BIOS, CLOCKS, DMCUB, CRC, FRAMES or FLIP the two files are read from
+//! EVENTS prints what the display engine's hot-plug lines and its
+//! controller's notifications have done (RTGCTRL_AMD_EVENTS): each
+//! line's changes, whether it senses a monitor and whether it is on, and
+//! the controller's notifications by kind. The first time it has them
+//! listened to, so the watchdog is armed for it; a cable pulled and put
+//! back between two EVENTS shows as a line's changes. With LINE the
+//! line of that number is first made to raise its interrupt once, by
+//! waiting for what it already senses - the path tested without a hand
+//! at the cable.
+//!
+//! AUX reads LENGTH bytes (16 unless given, at most 16) at ADDRESS (0
+//! unless given) through the socket's AUX channel AUX - its DDC line's
+//! number - by the display controller (RTGCTRL_AMD_AUX), which DMCUB
+//! START must have started: the sink's own registers, or with I2C its
+//! I2C bus. Printed are the controller's result, the sink's reply and
+//! the bytes. The watchdog is armed for it.
+//!
+//! Without BIOS, CLOCKS, DMCUB, CRC, EVENTS, AUX, FRAMES or FLIP the two files are read from
 //! DEVS:firmware/amdgpu/, named for the blocks that use them as the
 //! device's table gives their versions - psp_13_0_4_toc.bin for the
 //! security processor 13.0.4, vcn_4_0_2.bin for the video decoder 4.0.2 -
@@ -95,10 +113,10 @@ const rtg = sdk.rtg;
 const RtgBase = sdk.interface.rtg.RtgBase;
 
 pub const COMMAND_NAME = "Gpu";
-const VERSION_STRING = "\x00$VER: Gpu 1.5 (26.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Gpu 1.6 (26.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,PIPE/K/N,FETCHER/K/N,WATCHDOG/K/N";
+const template = "TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,PIPE/K/N,FETCHER/K/N,WATCHDOG/K/N";
 const arg_toc = 0;
 const arg_firmware = 1;
 const arg_frames = 2;
@@ -108,10 +126,16 @@ const arg_clocks = 5;
 const arg_dmcub = 6;
 const arg_start = 7;
 const arg_crc = 8;
-const arg_pipe = 9;
-const arg_fetcher = 10;
-const arg_watchdog = 11;
-const arg_count = 12;
+const arg_events = 9;
+const arg_line = 10;
+const arg_aux = 11;
+const arg_address = 12;
+const arg_length = 13;
+const arg_i2c = 14;
+const arg_pipe = 15;
+const arg_fetcher = 16;
+const arg_watchdog = 17;
+const arg_count = 18;
 
 /// Where the files are.
 const directory = "DEVS:firmware/amdgpu/";
@@ -436,6 +460,88 @@ fn printCrc(dl: *DosBase, name: [*:0]const u8, result: isize, found: *const rtg.
     });
 }
 
+/// The hot-plug lines' and the controller's events, listened to the first
+/// time with the watchdog armed, and printed.
+fn events(sys: *ExecBase, dl: *DosBase, millis: u32, line: u32) i32 {
+    const base = sys.OpenLibrary(rtg.RTGNAME, rtg.RTG_VERSION) orelse {
+        _ = Printf(dl, "No %s\n", .{rtg.RTGNAME});
+        return dos.RETURN_FAIL;
+    };
+    defer sys.CloseLibrary(base);
+    const rb: *RtgBase = @ptrCast(base);
+    const board = amdBoard(dl, rb) orelse return dos.RETURN_WARN;
+    const wb = arm(sys, dl, millis) orelse return dos.RETURN_FAIL;
+    var found: rtg.tags.RtgAmdEvents = .{ .poke = line };
+    const result = rb.BoardControl(board, rtg.tags.RTGCTRL_AMD_EVENTS, @bitCast(@intFromPtr(&found)));
+    wb.DisarmWatchdog();
+    if (result != rtg.errors.RTGERR_OK) {
+        _ = Printf(dl, "No events: error %ld\n", .{@as(i64, result)});
+        return dos.RETURN_ERROR;
+    }
+    _ = Printf(dl, "Hot-plug lines %s, %u interrupts\n", .{
+        @as([*:0]const u8, if (found.lines_heard != 0) "listened to" else "not listened to"), found.hot_plug_interrupts,
+    });
+    for (0..rtg.tags.RTG_AMD_HOT_PLUG_LINES) |index| {
+        const status = found.line_status[index];
+        _ = Printf(dl, "  line %u: %s, %s, %u changes (status %08lx, control %08lx)\n", .{
+            @as(u32, @intCast(index + 1)),
+            @as([*:0]const u8, if (found.line_control[index] & 1 << 28 != 0) "on" else "off"),
+            @as([*:0]const u8, if (status & 1 << 4 != 0) "a monitor" else "nothing"),
+            found.line_changes[index],
+            @as(u64, status),
+            @as(u64, found.line_control[index]),
+        });
+    }
+    if (found.controller_heard == 0) {
+        _ = Printf(dl, "The controller is not listened to: it does not run (DMCUB START)\n", .{});
+    } else {
+        _ = Printf(dl, "Controller: %u interrupts, %u notifications - %u AUX replies, %u hot plugs, %u others\n", .{
+            found.controller_interrupts, found.notes, found.aux_replies, found.hot_plug_notes, found.other_notes,
+        });
+    }
+    return dos.RETURN_OK;
+}
+
+/// One AUX read with the watchdog armed, and printed.
+fn auxRead(sys: *ExecBase, dl: *DosBase, millis: u32, request: *rtg.tags.RtgAmdAux) i32 {
+    const base = sys.OpenLibrary(rtg.RTGNAME, rtg.RTG_VERSION) orelse {
+        _ = Printf(dl, "No %s\n", .{rtg.RTGNAME});
+        return dos.RETURN_FAIL;
+    };
+    defer sys.CloseLibrary(base);
+    const rb: *RtgBase = @ptrCast(base);
+    const board = amdBoard(dl, rb) orelse return dos.RETURN_WARN;
+    const wb = arm(sys, dl, millis) orelse return dos.RETURN_FAIL;
+    const result = rb.BoardControl(board, rtg.tags.RTGCTRL_AMD_AUX, @bitCast(@intFromPtr(request)));
+    wb.DisarmWatchdog();
+    if (result != rtg.errors.RTGERR_OK) {
+        _ = Printf(dl, "No reply: error %ld%s\n", .{
+            @as(i64, result),
+            @as([*:0]const u8, if (result == rtg.errors.RTGERR_NOT_SUPPORTED) " - the controller does not run (DMCUB START)" else ""),
+        });
+        return dos.RETURN_ERROR;
+    }
+    const results = [_][*:0]const u8{ "replied", "an unknown failure", "a reply that could not be read", "no reply in time", "nothing plugged in", "the channel busy", "refused", "a broken reply" };
+    _ = Printf(dl, "AUX %u at %lx: %s, reply %x, %u bytes\n", .{
+        request.instance,
+        @as(u64, request.address),
+        results[@min(request.result, results.len - 1)],
+        request.reply,
+        request.replied,
+    });
+    if (request.replied != 0) {
+        for (request.data[0..request.replied]) |byte| _ = Printf(dl, " %02x", .{@as(u32, byte)});
+        _ = Printf(dl, "\n", .{});
+    }
+    _ = Printf(dl, "Channel found: control %08lx arbitration %08lx status %08lx receive %08lx\n", .{
+        @as(u64, request.found[0]), @as(u64, request.found[1]), @as(u64, request.found[2]), @as(u64, request.found[3]),
+    });
+    _ = Printf(dl, "Channel after: control %08lx arbitration %08lx status %08lx receive %08lx\n", .{
+        @as(u64, request.after[0]), @as(u64, request.after[1]), @as(u64, request.after[2]), @as(u64, request.after[3]),
+    });
+    return if (request.result == rtg.tags.RTG_AMD_AUX_OK) dos.RETURN_OK else dos.RETURN_WARN;
+}
+
 /// The picture's checksum read with the watchdog armed, and printed.
 fn checksum(sys: *ExecBase, dl: *DosBase, millis: u32) i32 {
     const base = sys.OpenLibrary(rtg.RTGNAME, rtg.RTG_VERSION) orelse {
@@ -504,6 +610,16 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     if (argv[arg_clocks] != 0) return clocks(sys, dl, millis);
     if (argv[arg_dmcub] != 0) return controller(sys, dl, millis);
     if (argv[arg_crc] != 0) return checksum(sys, dl, millis);
+    if (argv[arg_events] != 0) return events(sys, dl, millis, if (argv[arg_line] != 0) number(argv[arg_line]) else 0);
+    if (argv[arg_aux] != 0) {
+        var request: rtg.tags.RtgAmdAux = .{
+            .instance = number(argv[arg_aux]),
+            .kind = if (argv[arg_i2c] != 0) rtg.tags.RTG_AMD_AUX_I2C else rtg.tags.RTG_AMD_AUX_DPCD,
+            .address = number(argv[arg_address]),
+            .length = if (argv[arg_length] != 0) number(argv[arg_length]) else 16,
+        };
+        return auxRead(sys, dl, millis, &request);
+    }
     if (argv[arg_frames] != 0 or argv[arg_flip] != 0) {
         const pipe = number(argv[arg_pipe]);
         const fetcher = number(argv[arg_fetcher]);

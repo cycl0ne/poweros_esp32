@@ -137,9 +137,13 @@ pub const GPUINT_CLIENT_DISPLAY: u32 = 4;
 /// in each frame where it takes up what its double-buffered registers
 /// were told - the address a flip names among them - whatever their lock
 /// says: the first pipe's, the next pipes' after it. Its fetchers' flip
-/// taken: the first fetcher's, the next ones' after it.
+/// taken: the first fetcher's, the next ones' after it. Any of its
+/// hot-plug lines sensing a change, the one source for all of them. Its
+/// controller's outbox holding a notification.
 pub const GPUINT_DISPLAY_UPDATE: u32 = 0x57;
 pub const GPUINT_DISPLAY_FLIP: u32 = 0x4f;
+pub const GPUINT_DISPLAY_HOT_PLUG: u32 = 0x09;
+pub const GPUINT_DISPLAY_CONTROLLER: u32 = 0x68;
 
 /// A piece of the device's own memory, from AllocGPUMemory: where the CPU
 /// reaches it, where the device's blocks reach it, and how many bytes it
