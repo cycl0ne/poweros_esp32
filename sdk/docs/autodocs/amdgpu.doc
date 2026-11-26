@@ -10,6 +10,7 @@ amdgpu.resource/GetGPUInfo
 amdgpu.resource/LoadGPUFirmware
 amdgpu.resource/RemGPUIntServer
 amdgpu.resource/SetGPUPower
+amdgpu.resource/StartGPUGraphics
 amdgpu.resource/StartGPUSecurity
 amdgpu.resource/AddGPUIntServer                amdgpu.resource/AddGPUIntServer
 
@@ -538,11 +539,15 @@ amdgpu.resource/StartGPUSecurity
 	1.1. LVO -12.
 
    INPUTS
-	- `part` - GPUPOWER_VIDEO, the video decoder, or GPUPOWER_JPEG, the
-	  JPEG decoder beside it.
+	- `part` - GPUPOWER_VIDEO, the video decoder; GPUPOWER_JPEG, the
+	  JPEG decoder beside it; or GPUPOWER_GRAPHICS (since 1.9), the
+	  graphics block.
 	- `instance` - which of them: the video block's instance for the video
-	  decoder; 0 for the JPEG decoder, of which there is one.
-	- `on` - true to power it up, false to power it down.
+	  decoder; 0 for the JPEG decoder and the graphics block, of which
+	  there is one.
+	- `on` - true to power it up, false to power it down. The graphics
+	  block is kept powered while it is up; down, the manager may switch
+	  it off whenever it is idle.
 
    RESULT
 	True once the power manager says done. False where it refused - what
@@ -554,7 +559,10 @@ amdgpu.resource/StartGPUSecurity
    BEHAVIOR
 	One message through the manager's mailbox, under the mailbox's lock.
 	Powering up what is up, or down what is down, is done again and says
-	done. The block's clocks are the manager's to run once it is up.
+	done. The block's clocks are the manager's to run once it is up. For
+	the graphics block the manager is told whether it may switch the
+	block off (its graphics-off state): up forbids it, and brings the
+	block back where it is off; down allows it again.
 
    CONTEXT
 	- Waits: yes, for the mailbox and for the manager's answer - a
@@ -569,17 +577,105 @@ amdgpu.resource/StartGPUSecurity
 
    NOTES
 	A powered-up block still has its own gating to let go of, through its
-	registers, before it runs; that is its driver's.
+	registers, before it runs; that is its driver's. The graphics block
+	runs nothing before StartGPUGraphics has started it; a driver that
+	reads its registers keeps it up meanwhile, since the registers of a
+	block switched off do not answer.
 
    BUGS
 	None known.
 
    SEE ALSO
-	`FindGPUBlock`, `AllocGPUMemory`
+	`FindGPUBlock`, `AllocGPUMemory`, `StartGPUGraphics`
 
    EXAMPLES
 	    if (!ab.SetGPUPower(amdgpu.GPUPOWER_JPEG, 0, true)) return error.NoEngine;
 	    defer _ = ab.SetGPUPower(amdgpu.GPUPOWER_JPEG, 0, false);
+amdgpu.resource/StartGPUGraphics              amdgpu.resource/StartGPUGraphics
+
+   NAME
+	StartGPUGraphics -- The graphics block's firmware loaded by the security processor, the RLC told to hand each engine its code, and the block's power controller started by the power manager.
+
+   SYNOPSIS
+	    fn StartGPUGraphics(ab: *AMDGPUBase, files: *const amdgpu.GPUGraphicsFiles) bool
+
+   SINCE
+	1.9. LVO -48.
+
+   INPUTS
+	- `files` - the block's firmware files, each the whole file as it is
+	  on the disk (DEVS:firmware/amdgpu/gc_<version>_<part>.bin,
+	  sdma_<version>.bin): the command processor's three, the RLC's, the
+	  scheduler's two pipes', the power controller's - which may be left
+	  out (`image` null), where the machine's firmware holds one - and the
+	  DMA engine's.
+
+   RESULT
+	True once every part is loaded, the RLC told to start and the power
+	controller started, and at once where an earlier call did all of it.
+	False where a file is not given, or its header is not one the
+	resource reads - the command processor's of another version than
+	the first, the RLC's of another than 2.0 to 2.3, a part outside its
+	file - which is said on the system's lines, and nothing is loaded;
+	where StartGPUSecurity has not made the processor ready, the
+	processor does not answer within five seconds, or the device's memory
+	has no room for a part's copy; where the power manager refuses to
+	start the power controller or does not answer within a second; where
+	either is one whose commands the resource does not know; and on a
+	machine without the device.
+
+   BEHAVIOR
+	Every file's parts are worked out first. Then, under the security
+	processor's lock, each part is copied into a piece of its own, which
+	the processor is given with the part's kind and which is given back
+	once it answers - the DMA engine's two threads, the command
+	processor's prefetch parser, micro engine and compute engine, the
+	scheduler's code and data for each pipe, the power controller's code
+	and data, the RLC's lists, memories and helpers where they are not
+	empty, and the RLC's own code - after which the processor is told
+	that every part is there, and - under the mailbox's lock - the power
+	manager to start the power controller, which powers the block up and
+	lets the RLC load the engines. Every status the processor answers
+	is put on the system's lines with the part's kind; one that is not 0
+	stops nothing, as the processor answers some parts so that it takes.
+
+   CONTEXT
+	- Waits: yes, for the processor - a few milliseconds a part, of some
+	  twenty, at most five seconds for one - and for the power manager,
+	  at most a second.
+	- Interrupts: no.
+	- Locks: takes the security processor's lock, and the memory lock and
+	  the mailbox's lock inside it.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The files stay the caller's; each part is copied. What the processor
+	put into its region stays there, and the block runs from it.
+
+   NOTES
+	The block says it is done in its own registers - its command
+	processor idle (CP_STAT 0) and its RLC's loading complete (the top bit
+	of RLC_RLCS_BOOTLOAD_STATUS) - which are its driver's to read; the
+	RLC takes some milliseconds after this returns. The driver keeps the
+	block powered while it reads them (SetGPUPower with
+	GPUPOWER_GRAPHICS), since a block switched off does not answer. The
+	engines' queues are their driver's to set up.
+
+   BUGS
+	A command processor of the later kind, whose files' header is of the
+	second version and names its engines' stacks as parts of their own,
+	is refused.
+
+   SEE ALSO
+	`StartGPUSecurity`, `LoadGPUFirmware`, `SetGPUPower`
+
+   EXAMPLES
+	    var files: amdgpu.GPUGraphicsFiles = .{};
+	    files.pfp = .{ .image = pfp.ptr, .bytes = @intCast(pfp.len) };
+	    // ... me, mec, rlc, mes, mes_kiq, imu, dma the same way ...
+	    if (!ab.SetGPUPower(amdgpu.GPUPOWER_GRAPHICS, 0, true)) return error.NoPower;
+	    if (!ab.StartGPUGraphics(&files)) return error.NoGraphics;
+	    // Then wait for the block's command processor and RLC to say done.
 amdgpu.resource/StartGPUSecurity              amdgpu.resource/StartGPUSecurity
 
    NAME

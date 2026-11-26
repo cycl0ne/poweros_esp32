@@ -15,12 +15,14 @@
 //! register of its own, counted in words, and is moved one frame on for
 //! each command.
 //!
-//! **Its commands** here are the three that put a block's firmware into
+//! **Its commands** here are the four that put a block's firmware into
 //! the processor's protected region: the table of contents loaded, which
 //! the processor answers with the size of the region it needs; the region
 //! set up, at its address to the device and in the machine; a firmware
-//! loaded into it, which it answers with where it put it. Every status it
-//! answers is said, since a status that is not 0 is not always a refusal.
+//! loaded into it, which it answers with where it put it; and, once every
+//! part of the graphics block's firmware is there, the graphics block's
+//! RLC started on it. Every status it answers is said, since a status
+//! that is not 0 is not always a refusal.
 //!
 //! A firmware file starts with a header of the vendor's: its length, the
 //! header's, and where in the file and how long the part is that the
@@ -87,6 +89,7 @@ pub const staging_alignment: u32 = 1024 * 1024;
 pub const COMMAND_SETUP_REGION: u32 = 0x05;
 pub const COMMAND_LOAD_FIRMWARE: u32 = 0x06;
 pub const COMMAND_LOAD_CONTENTS: u32 = 0x20;
+pub const COMMAND_START_RLC: u32 = 0x21;
 
 /// Where in the command page: the command, its arguments, and the
 /// response - its status, the address a firmware went to, the size of

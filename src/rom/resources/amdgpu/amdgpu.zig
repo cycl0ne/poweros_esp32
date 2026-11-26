@@ -14,7 +14,9 @@
 //! messages, AllocGPUMemory hands out the device's own memory
 //! (`memory/_arena.zig`) for the blocks to read and write, and
 //! StartGPUSecurity and LoadGPUFirmware have the security processor put
-//! a block's firmware into the protected region it runs from.
+//! a block's firmware into the protected region it runs from -
+//! StartGPUGraphics the graphics block's whole set, which the block's
+//! RLC then hands its engines.
 //!
 //! The device's video BIOS image - the copy the machine's firmware keeps
 //! in its tables (`device/_bios.zig`) - is the resource's to find too,
@@ -72,6 +74,7 @@ test {
     _ = @import("memory/freegpumemory.zig");
     _ = @import("security/startgpusecurity.zig");
     _ = @import("security/loadgpufirmware.zig");
+    _ = @import("security/startgpugraphics.zig");
     _ = @import("device/_bios.zig");
     _ = @import("device/getgpubios.zig");
     _ = @import("device/_connectors.zig");
@@ -107,6 +110,7 @@ test "a machine without the device has the resource, and it answers false" {
     var block: amdgpu.GPUBlock = .{};
     try testing.expect(!call(ab).FindGPUBlock(amdgpu.GPUBLOCK_DISPLAY, 0, &block));
     try testing.expect(!call(ab).SetGPUPower(amdgpu.GPUPOWER_JPEG, 0, true));
+    try testing.expect(!call(ab).SetGPUPower(amdgpu.GPUPOWER_GRAPHICS, 0, true));
     var memory: amdgpu.GPUMemory = .{ .bytes = 7 };
     try testing.expect(!call(ab).AllocGPUMemory(4096, 4096, &memory));
     try testing.expectEqual(@as(u32, 7), memory.bytes);
@@ -124,6 +128,8 @@ test "a machine without the device has the resource, and it answers false" {
     var connector: amdgpu.GPUConnector = .{ .number = 7 };
     try testing.expect(!call(ab).GetGPUConnector(0, &connector));
     try testing.expectEqual(@as(u32, 7), connector.number);
+    const graphics: amdgpu.GPUGraphicsFiles = .{ .pfp = .{ .image = &file, .bytes = file.len } };
+    try testing.expect(!call(ab).StartGPUGraphics(&graphics));
     call(ab).RemGPUIntServer(&server);
     try testing.expect(!ab.ih_running);
     try tearDown(ab);

@@ -1255,9 +1255,9 @@ pub fn addDiskImages(b: *std.Build, with: DiskImagesWith) MadeDiskImages {
         make_rv64_disk.addPrefixedFileArg("devs/firmware/wave511_dec_fw.bin=", .{ .cwd_relative = b.pathJoin(&.{ dir, "wave511_dec_fw.bin" }) });
         make_rv64_disk.addPrefixedFileArg("devs/firmware/wave511.licence=", .{ .cwd_relative = b.pathJoin(&.{ dir, "LICENSE.txt" }) });
     }
-    // DEVS:firmware/amdgpu/ - what an AMD graphics device's video decoder
-    // and display controller run and the table of contents its security
-    // processor is given first, which amdgpu.resource loads, as scripts/fetch-amdgpu.sh
+    // DEVS:firmware/amdgpu/ - what an AMD graphics device's video decoder,
+    // display controller and graphics block run and the table of contents
+    // its security processor is given first, which amdgpu.resource loads, as scripts/fetch-amdgpu.sh
     // fetched them - and AMD's licence for them beside them. On the x86-64
     // disk alone.
     if (amdgpuDir(b)) |dir| {

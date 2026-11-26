@@ -18,11 +18,15 @@ const _power = @import("_power.zig");
 /// SINCE: 1.1. LVO -12.
 ///
 /// INPUTS:
-/// - `part` - GPUPOWER_VIDEO, the video decoder, or GPUPOWER_JPEG, the
-///   JPEG decoder beside it.
+/// - `part` - GPUPOWER_VIDEO, the video decoder; GPUPOWER_JPEG, the
+///   JPEG decoder beside it; or GPUPOWER_GRAPHICS (since 1.9), the
+///   graphics block.
 /// - `instance` - which of them: the video block's instance for the video
-///   decoder; 0 for the JPEG decoder, of which there is one.
-/// - `on` - true to power it up, false to power it down.
+///   decoder; 0 for the JPEG decoder and the graphics block, of which
+///   there is one.
+/// - `on` - true to power it up, false to power it down. The graphics
+///   block is kept powered while it is up; down, the manager may switch
+///   it off whenever it is idle.
 ///
 /// RESULT:
 /// True once the power manager says done. False where it refused - what
@@ -34,7 +38,10 @@ const _power = @import("_power.zig");
 /// BEHAVIOR:
 /// One message through the manager's mailbox, under the mailbox's lock.
 /// Powering up what is up, or down what is down, is done again and says
-/// done. The block's clocks are the manager's to run once it is up.
+/// done. The block's clocks are the manager's to run once it is up. For
+/// the graphics block the manager is told whether it may switch the
+/// block off (its graphics-off state): up forbids it, and brings the
+/// block back where it is off; down allows it again.
 ///
 /// CONTEXT:
 /// - Waits: yes, for the mailbox and for the manager's answer - a
@@ -49,13 +56,16 @@ const _power = @import("_power.zig");
 ///
 /// NOTES:
 /// A powered-up block still has its own gating to let go of, through its
-/// registers, before it runs; that is its driver's.
+/// registers, before it runs; that is its driver's. The graphics block
+/// runs nothing before StartGPUGraphics has started it; a driver that
+/// reads its registers keeps it up meanwhile, since the registers of a
+/// block switched off do not answer.
 ///
 /// BUGS:
 /// None known.
 ///
 /// SEE ALSO:
-/// `FindGPUBlock`, `AllocGPUMemory`
+/// `FindGPUBlock`, `AllocGPUMemory`, `StartGPUGraphics`
 ///
 /// EXAMPLES:
 /// ```zig
@@ -74,6 +84,10 @@ pub fn SetGPUPower(ab: *AMDGPUBase, part: u32, instance: u32, on: bool) bool {
         amdgpu.GPUPOWER_JPEG => blk: {
             if (instance != 0) return false;
             break :blk .{ if (on) _power.MESSAGE_POWER_UP_JPEG else _power.MESSAGE_POWER_DOWN_JPEG, 0 };
+        },
+        amdgpu.GPUPOWER_GRAPHICS => blk: {
+            if (instance != 0) return false;
+            break :blk .{ if (on) _power.MESSAGE_DISALLOW_GRAPHICS_OFF else _power.MESSAGE_ALLOW_GRAPHICS_OFF, 0 };
         },
         else => return false,
     };

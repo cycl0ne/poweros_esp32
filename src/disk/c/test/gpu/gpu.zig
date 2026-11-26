@@ -7,11 +7,12 @@
 //! brought up again in its mode or put in each mode it offers, its
 //! monitor put to sleep and woken, its colours' range tried, its security
 //! processor started and the video decoder's firmware loaded by it, the
-//! display's interrupt at each frame counted, or one flip of the picture
-//! the display reads. Built against the SDK only.
+//! graphics block's firmware loaded and the block started, the display's
+//! interrupt at each frame counted, or one flip of the picture the
+//! display reads. Built against the SDK only.
 //!
 //!   Gpu TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,
-//!       SLEEP/K/N,RANGE/S,POINTER/S,MIRROR/S,OVERLAY/S,DIRECT/S,BANDS/S,WATCHDOG/K/N
+//!       SLEEP/K/N,RANGE/S,POINTER/S,MIRROR/S,OVERLAY/S,DIRECT/S,BANDS/S,VIDEO/S,GFX/S,BLOCK/K/N,WATCHDOG/K/N
 //!
 //! BIOS prints the device's video BIOS image (GetGPUBios): where it is
 //! and how long, its tables' header's version, the version of each of
@@ -227,13 +228,30 @@
 //! DUMP prints LENGTH (16 unless given, at most 512) of the display
 //! engine's registers from DUMP on, in 32-bit words from the engine's
 //! address SEGMENT (2 unless given: the one its pipes, links and
-//! endpoints are counted from; 1 is its clocks'). Read only, but a
+//! endpoints are counted from; 1 is its clocks'). With BLOCK, the
+//! registers of the block the device's table numbers so (11 the graphics
+//! block), from its address SEGMENT (0 unless given). Read only, but a
 //! register of a block switched off can stop the machine: the watchdog
 //! is armed for it.
 //!
+//! GFX starts the graphics block: its firmware files are read from
+//! DEVS:firmware/amdgpu/, named for the blocks' versions as the device's
+//! table gives them - gc_11_0_1_pfp.bin, _me.bin, _mec.bin, _rlc.bin,
+//! _mes_2.bin, _mes1.bin and _imu.bin for the graphics block 11.0.1, of
+//! which the last may be missing, sdma_6_0_1.bin for its DMA engine 6.0.1
+//! - and the security processor's table of contents beside them. The
+//! processor is made ready (StartGPUSecurity, at once where it is), the
+//! block kept powered (SetGPUPower), its registers printed, its firmware
+//! loaded and the block started (StartGPUGraphics), and then its command
+//! processor and RLC waited for, two seconds at most, to say the
+//! engines have their code: CP_STAT 0 and the top bit of
+//! RLC_RLCS_BOOTLOAD_STATUS. How long each took is printed, and the
+//! registers again; the block is left powered and started. The watchdog
+//! is armed for it.
+//!
 //! Without BIOS, CLOCKS, DMCUB, CRC, EVENTS, AUX, EDID, CYCLE, MODES,
-//! SLEEP, RANGE, POINTER, MIRROR, OVERLAY, DIRECT, BANDS, VIDEO, DUMP,
-//! FRAMES or FLIP the two files are read from
+//! SLEEP, RANGE, POINTER, MIRROR, OVERLAY, DIRECT, BANDS, VIDEO, GFX,
+//! DUMP, FRAMES or FLIP the two files are read from
 //! DEVS:firmware/amdgpu/, named for the blocks that use them as the
 //! device's table gives their versions - psp_13_0_4_toc.bin for the
 //! security processor 13.0.4, vcn_4_0_2.bin for the video decoder 4.0.2 -
@@ -288,10 +306,10 @@ const RtgBase = sdk.interface.rtg.RtgBase;
 const TagItem = sdk.utility.TagItem;
 
 pub const COMMAND_NAME = "Gpu";
-const VERSION_STRING = "\x00$VER: Gpu 1.21 (26.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Gpu 1.22 (26.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,SLEEP/K/N,RANGE/S,POINTER/S,MIRROR/S,OVERLAY/S,DIRECT/S,BANDS/S,VIDEO/S,WATCHDOG/K/N";
+const template = "TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,SLEEP/K/N,RANGE/S,POINTER/S,MIRROR/S,OVERLAY/S,DIRECT/S,BANDS/S,VIDEO/S,GFX/S,BLOCK/K/N,WATCHDOG/K/N";
 const arg_toc = 0;
 const arg_firmware = 1;
 const arg_frames = 2;
@@ -325,8 +343,10 @@ const arg_overlay = 29;
 const arg_direct = 30;
 const arg_bands = 31;
 const arg_video = 32;
-const arg_watchdog = 33;
-const arg_count = 34;
+const arg_gfx = 33;
+const arg_block = 34;
+const arg_watchdog = 35;
+const arg_count = 36;
 
 /// Where the files are.
 const directory = "DEVS:firmware/amdgpu/";
@@ -1126,10 +1146,10 @@ fn bars(picture: *rtg.RtgBitMap) void {
 
 /// `length` of the display engine's registers from `first` on, counted
 /// from its address `segment`, the watchdog armed; printed eight a line.
-fn dump(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUInfo, millis: u32, segment: u32, first: u32, length: u32) i32 {
+fn dump(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUInfo, millis: u32, id: u32, segment: u32, first: u32, length: u32) i32 {
     var block: amdgpu.GPUBlock = .{};
-    if (!ab.FindGPUBlock(amdgpu.GPUBLOCK_DISPLAY, 0, &block) or segment >= block.count) {
-        _ = Printf(dl, "The device has no display engine's address %u\n", .{segment});
+    if (!ab.FindGPUBlock(id, 0, &block) or segment >= block.count) {
+        _ = Printf(dl, "The device has no block %u with an address %u\n", .{ id, segment });
         return dos.RETURN_WARN;
     }
     const words = @min(length, dump_most);
@@ -1152,6 +1172,147 @@ fn dump(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUInfo, mil
 
 /// The most registers DUMP prints.
 const dump_most: u32 = 512;
+
+/// The graphics block's registers GFX prints, by the vendor's names:
+/// each one's segment and number in it.
+const GraphicsRegister = struct { name: [*:0]const u8, segment: u8, offset: u32 };
+const graphics_registers = [_]GraphicsRegister{
+    .{ .name = "GRBM_STATUS", .segment = 0, .offset = 0x0da4 },
+    .{ .name = "GRBM_STATUS2", .segment = 0, .offset = 0x0da2 },
+    .{ .name = "CP_STAT", .segment = 0, .offset = 0x0f40 },
+    .{ .name = "CP_ME_CNTL", .segment = 1, .offset = 0x0803 },
+    .{ .name = "CP_MEC_CNTL", .segment = 1, .offset = 0x0802 },
+    .{ .name = "CP_MES_CNTL", .segment = 1, .offset = 0x2807 },
+    .{ .name = "RLC_CNTL", .segment = 1, .offset = 0x4c00 },
+    .{ .name = "RLC_GPM_STAT", .segment = 1, .offset = 0x4e6b },
+    .{ .name = "RLC_RLCS_BOOTLOAD_STATUS", .segment = 1, .offset = 0x4e7e },
+    .{ .name = "GFX_IMU_CORE_STATUS", .segment = 1, .offset = 0x40b7 },
+    .{ .name = "GFX_IMU_SCRATCH_0", .segment = 1, .offset = 0x4068 },
+    .{ .name = "SDMA0_F32_CNTL", .segment = 1, .offset = 0x589a },
+};
+
+/// The command processor's status, idle at 0, and the RLC's loading
+/// status, whose top bit says every engine has its code.
+const cp_stat = graphics_registers[2];
+const rlc_bootload_status = graphics_registers[8];
+const bootload_complete: u32 = 0x8000_0000;
+
+/// How long GFX waits for the block to say it is up, in ticks of 20 ms.
+const graphics_wait_ticks: u32 = 100;
+
+fn graphicsAt(info: amdgpu.GPUInfo, block: amdgpu.GPUBlock, register: GraphicsRegister) *volatile u32 {
+    return reg(@intCast(info.registers + (@as(u64, block.addresses[register.segment]) + register.offset) * 4));
+}
+
+fn printGraphics(dl: *DosBase, info: amdgpu.GPUInfo, block: amdgpu.GPUBlock) void {
+    for (graphics_registers) |register| {
+        _ = Printf(dl, "  %-26s %08lx\n", .{ register.name, @as(u64, graphicsAt(info, block, register).*) });
+    }
+}
+
+/// The graphics block's firmware file `suffix` of the block `block`,
+/// read into `into`: false, with why said, where it cannot be - unless
+/// `may_lack`, which leaves `into` empty.
+fn graphicsFile(sys: *ExecBase, dl: *DosBase, prefix: []const u8, block: amdgpu.GPUBlock, suffix: []const u8, may_lack: bool, into: *amdgpu.GPUFile) bool {
+    const name = Name.of(prefix, block, suffix);
+    if (may_lack) {
+        var length: usize = 0;
+        const bytes = dl.ReadFile(name.string(), ~@as(usize, 0), exec.MEMF_ANY, &length) orelse {
+            _ = Printf(dl, "%s: none, the machine's own is used\n", .{name.string()});
+            return true;
+        };
+        into.* = .{ .image = bytes, .bytes = @intCast(length) };
+    } else {
+        const file = readFile(sys, dl, name.string()) orelse return false;
+        into.* = .{ .image = file.ptr, .bytes = @intCast(file.len) };
+    }
+    _ = Printf(dl, "%s: %u bytes\n", .{ name.string(), into.bytes });
+    return true;
+}
+
+/// The graphics block's firmware loaded and the block started, and waited
+/// for until its engines have their code; its registers printed before
+/// and after.
+fn graphicsStart(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUInfo, millis: u32) i32 {
+    var graphics: amdgpu.GPUBlock = .{};
+    var dma: amdgpu.GPUBlock = .{};
+    var security: amdgpu.GPUBlock = .{};
+    if (!ab.FindGPUBlock(amdgpu.GPUBLOCK_GRAPHICS, 0, &graphics) or graphics.count < 2 or
+        !ab.FindGPUBlock(amdgpu.GPUBLOCK_DMA, 0, &dma) or !ab.FindGPUBlock(amdgpu.GPUBLOCK_SECURITY, 0, &security))
+    {
+        _ = Printf(dl, "The device %04x:%04x names no graphics block, DMA engine or security processor\n", .{ info.vendor, info.device });
+        return dos.RETURN_FAIL;
+    }
+    _ = Printf(dl, "Graphics block %u.%u.%u, its DMA engine %u.%u.%u, security processor %u.%u.%u\n", .{
+        @as(u32, graphics.major), @as(u32, graphics.minor), @as(u32, graphics.revision),
+        @as(u32, dma.major),      @as(u32, dma.minor),      @as(u32, dma.revision),
+        @as(u32, security.major), @as(u32, security.minor), @as(u32, security.revision),
+    });
+
+    var files: amdgpu.GPUGraphicsFiles = .{};
+    defer for ([_]amdgpu.GPUFile{ files.pfp, files.me, files.mec, files.rlc, files.mes, files.mes_kiq, files.imu, files.dma }) |file| {
+        if (file.image) |image| sys.FreeVec(@constCast(image));
+    };
+    const read_all = graphicsFile(sys, dl, "gc_", graphics, "_pfp.bin", false, &files.pfp) and
+        graphicsFile(sys, dl, "gc_", graphics, "_me.bin", false, &files.me) and
+        graphicsFile(sys, dl, "gc_", graphics, "_mec.bin", false, &files.mec) and
+        graphicsFile(sys, dl, "gc_", graphics, "_rlc.bin", false, &files.rlc) and
+        graphicsFile(sys, dl, "gc_", graphics, "_mes_2.bin", false, &files.mes) and
+        graphicsFile(sys, dl, "gc_", graphics, "_mes1.bin", false, &files.mes_kiq) and
+        graphicsFile(sys, dl, "gc_", graphics, "_imu.bin", true, &files.imu) and
+        graphicsFile(sys, dl, "sdma_", dma, ".bin", false, &files.dma);
+    if (!read_all) return dos.RETURN_ERROR;
+    const toc_name = Name.of("psp_", security, "_toc.bin");
+    const toc = readFile(sys, dl, toc_name.string()) orelse return dos.RETURN_ERROR;
+    defer sys.FreeVec(toc.ptr);
+
+    const wb = arm(sys, dl, millis) orelse return dos.RETURN_FAIL;
+    defer wb.DisarmWatchdog();
+    if (!ab.StartGPUSecurity(toc.ptr, @intCast(toc.len))) {
+        _ = Printf(dl, "The security processor is not ready: see C:Log\n", .{});
+        return dos.RETURN_ERROR;
+    }
+    wb.FeedWatchdog();
+    if (!ab.SetGPUPower(amdgpu.GPUPOWER_GRAPHICS, 0, true)) {
+        _ = Printf(dl, "The power manager does not keep the graphics block powered: see C:Log\n", .{});
+        return dos.RETURN_ERROR;
+    }
+    wb.FeedWatchdog();
+    _ = Printf(dl, "The graphics block kept powered; its registers:\n", .{});
+    printGraphics(dl, info, graphics);
+
+    const started_at = sys.UptimeUs();
+    if (!ab.StartGPUGraphics(&files)) {
+        wb.FeedWatchdog();
+        _ = Printf(dl, "The graphics block's firmware is not loaded or the block not started: see C:Log\n", .{});
+        printGraphics(dl, info, graphics);
+        return dos.RETURN_ERROR;
+    }
+    const loaded_at = sys.UptimeUs();
+    wb.FeedWatchdog();
+    _ = Printf(dl, "Its firmware loaded and the block started in %lu ms\n", .{(loaded_at - started_at) / 1000});
+
+    var ticks: u32 = 0;
+    var up = false;
+    while (ticks < graphics_wait_ticks) : (ticks += 1) {
+        const status = graphicsAt(info, graphics, cp_stat).*;
+        const bootload = graphicsAt(info, graphics, rlc_bootload_status).*;
+        if (status == 0 and bootload & bootload_complete != 0) {
+            up = true;
+            break;
+        }
+        dl.Delay(1);
+        wb.FeedWatchdog();
+    }
+    const waited_ms = (sys.UptimeUs() - loaded_at) / 1000;
+    if (up) {
+        _ = Printf(dl, "The engines have their code %lu ms after; its registers:\n", .{waited_ms});
+    } else {
+        _ = Printf(dl, "The engines do not have their code after %lu ms; its registers:\n", .{waited_ms});
+    }
+    printGraphics(dl, info, graphics);
+    return if (up) dos.RETURN_OK else dos.RETURN_WARN;
+}
 
 /// How long CYCLE waits for a picture to change by itself and then to
 /// hold, in ticks of 20 ms.
@@ -1242,10 +1403,12 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     if (argv[arg_bands] != 0) return bandsCheck(sys, dl, ab, info, millis);
     if (argv[arg_video] != 0) return videoCheck(sys, dl, ab, info, millis);
     if (argv[arg_sleep] != 0) return asleepFor(sys, dl, ab, info, millis, number(argv[arg_sleep]), argv[arg_modes] != 0);
+    if (argv[arg_gfx] != 0) return graphicsStart(sys, dl, ab, info, millis);
     if (argv[arg_dump] != 0) {
         const length = if (argv[arg_length] != 0) number(argv[arg_length]) else 16;
-        const segment = if (argv[arg_segment] != 0) number(argv[arg_segment]) else 2;
-        return dump(sys, dl, ab, info, millis, segment, number(argv[arg_dump]), length);
+        const id = if (argv[arg_block] != 0) number(argv[arg_block]) else amdgpu.GPUBLOCK_DISPLAY;
+        const segment: u32 = if (argv[arg_segment] != 0) number(argv[arg_segment]) else if (argv[arg_block] != 0) 0 else 2;
+        return dump(sys, dl, ab, info, millis, id, segment, number(argv[arg_dump]), length);
     }
     if (argv[arg_frames] != 0 or argv[arg_flip] != 0) {
         const pipe = number(argv[arg_pipe]);

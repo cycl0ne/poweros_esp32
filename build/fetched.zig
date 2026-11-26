@@ -328,7 +328,12 @@ pub fn vpuDir(b: *std.Build) ?[]const u8 {
 
 /// The AMD graphics device's firmware files scripts/fetch-amdgpu.sh
 /// fetches, which go onto the disk.
-pub const amdgpu_firmware = [_][]const u8{ "vcn_4_0_2.bin", "psp_13_0_4_toc.bin", "dcn_3_1_4_dmcub.bin" };
+pub const amdgpu_firmware = [_][]const u8{
+    "vcn_4_0_2.bin",     "psp_13_0_4_toc.bin",  "dcn_3_1_4_dmcub.bin",
+    "gc_11_0_1_pfp.bin", "gc_11_0_1_me.bin",    "gc_11_0_1_mec.bin",
+    "gc_11_0_1_rlc.bin", "gc_11_0_1_mes_2.bin", "gc_11_0_1_mes1.bin",
+    "gc_11_0_1_imu.bin", "sdma_6_0_1.bin",
+};
 
 /// Where scripts/fetch-amdgpu.sh put an AMD graphics device's firmware,
 /// or null without it - or without a file it fetches now, from an older

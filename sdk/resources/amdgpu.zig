@@ -69,6 +69,10 @@ pub const GPUBLOCK_POWER: u32 = 1;
 /// The clock generator: the PLLs the display's clocks, among others, are
 /// divided from.
 pub const GPUBLOCK_CLOCKS: u32 = 6;
+/// The graphics block: its command processor, the RLC that starts its
+/// engines, the scheduler, the power controller (IMU) and the DMA
+/// engine, whose registers are among its own.
+pub const GPUBLOCK_GRAPHICS: u32 = 11;
 /// The video decoder and encoder, and the JPEG decoder beside them.
 pub const GPUBLOCK_VIDEO: u32 = 12;
 /// The hub the memory traffic of the video, display and security blocks
@@ -77,6 +81,9 @@ pub const GPUBLOCK_MEMORY_HUB: u32 = 34;
 /// The interrupt block, which every other block raises its interrupts
 /// through: AddGPUIntServer's.
 pub const GPUBLOCK_INTERRUPTS: u32 = 40;
+/// The graphics block's DMA engine: its version names its firmware, and
+/// its registers are among the graphics block's.
+pub const GPUBLOCK_DMA: u32 = 42;
 /// The device's side of the bus: its configuration, its memory's size.
 pub const GPUBLOCK_BUS: u32 = 108;
 /// The security processor: loads every firmware the device's processors
@@ -117,9 +124,11 @@ pub const GPUBlock = extern struct {
 };
 
 /// SetGPUPower's parts: the video decoder, one per instance of the video
-/// block, and the JPEG decoder beside it.
+/// block, the JPEG decoder beside it, and the graphics block - kept
+/// powered, or let off while it is idle.
 pub const GPUPOWER_VIDEO: u32 = 1;
 pub const GPUPOWER_JPEG: u32 = 2;
+pub const GPUPOWER_GRAPHICS: u32 = 3;
 
 /// LoadGPUFirmware's kinds, as the security processor numbers them: the
 /// video decoder's firmware, the list of register writes that starts
@@ -128,6 +137,34 @@ pub const GPUPOWER_JPEG: u32 = 2;
 pub const GPUFIRMWARE_VIDEO: u32 = 13;
 pub const GPUFIRMWARE_VIDEO_REGISTERS: u32 = 49;
 pub const GPUFIRMWARE_DISPLAY: u32 = 51;
+
+/// A firmware file as it is on the disk, whole: where it is in memory and
+/// how long it is; none where `image` is null.
+pub const GPUFile = extern struct {
+    image: ?[*]const u8 = null,
+    bytes: u32 = 0,
+};
+
+/// StartGPUGraphics's firmware files, each whole as it is on the disk -
+/// DEVS:firmware/amdgpu/, named for the block's version as the device's
+/// table gives it: gc_11_0_1_pfp.bin and so on for the graphics block
+/// 11.0.1, sdma_6_0_1.bin for its DMA engine 6.0.1. The command
+/// processor's three - its prefetch parser's (`pfp`), its micro engine's
+/// (`me`) and its compute engine's (`mec`) - the RLC's, the scheduler's
+/// two pipes' (`mes`, gc_11_0_1_mes_2.bin, and `mes_kiq`,
+/// gc_11_0_1_mes1.bin), the power controller's (`imu`), which may be
+/// left out where the machine's firmware holds one, and the DMA engine's
+/// (`dma`).
+pub const GPUGraphicsFiles = extern struct {
+    pfp: GPUFile = .{},
+    me: GPUFile = .{},
+    mec: GPUFile = .{},
+    rlc: GPUFile = .{},
+    mes: GPUFile = .{},
+    mes_kiq: GPUFile = .{},
+    imu: GPUFile = .{},
+    dma: GPUFile = .{},
+};
 
 /// AddGPUIntServer's clients - which of the device's blocks raised an
 /// interrupt - and their sources, as the interrupt block numbers them.

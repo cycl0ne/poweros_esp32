@@ -57,9 +57,10 @@ pub const AMDGPUBase = extern struct {
     /// are known; the piece its ring, command page and fence are in, and
     /// the number of the last command put on it. Whether the ring is
     /// made, whether the processor is ready to load firmware, and whether
-    /// it failed to answer - after which nothing more is asked of it.
-    /// The protected region it was given, and the lock every command is
-    /// sent under.
+    /// it failed to answer - after which nothing more is asked of it -
+    /// and whether the graphics block's firmware is loaded and the block
+    /// started (StartGPUGraphics). The protected region it was given, and
+    /// the lock every command is sent under.
     security: amdgpu.GPUBlock = .{},
     security_known: bool = false,
     security_ring: amdgpu.GPUMemory = .{},
@@ -67,6 +68,7 @@ pub const AMDGPUBase = extern struct {
     security_made: bool = false,
     security_ready: bool = false,
     security_dead: bool = false,
+    graphics_started: bool = false,
     protected: amdgpu.GPUMemory = .{},
     security_lock: exec.SignalSemaphore,
     /// The interrupt block, where it is one whose ring is known; the piece

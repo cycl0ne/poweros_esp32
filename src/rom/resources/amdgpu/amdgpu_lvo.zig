@@ -19,6 +19,7 @@ const AddGPUIntServer = @import("interrupt/addgpuintserver.zig").AddGPUIntServer
 const RemGPUIntServer = @import("interrupt/remgpuintserver.zig").RemGPUIntServer;
 const GetGPUBios = @import("device/getgpubios.zig").GetGPUBios;
 const GetGPUConnector = @import("device/getgpuconnector.zig").GetGPUConnector;
+const StartGPUGraphics = @import("security/startgpugraphics.zig").StartGPUGraphics;
 
 /// amdgpu.resource's interface, as the SDK generates it from
 /// sdk/fd/amdgpu_lib.fd.
@@ -54,6 +55,7 @@ const contract_files = [_][]const u8{
     @embedFile("interrupt/remgpuintserver.zig"),
     @embedFile("device/getgpubios.zig"),
     @embedFile("device/getgpuconnector.zig"),
+    @embedFile("security/startgpugraphics.zig"),
 };
 
 fn lvoGetGPUInfo(ab: *AMDGPUBase, info: *amdgpu.GPUInfo) callconv(.c) bool {
@@ -89,6 +91,9 @@ fn lvoGetGPUBios(ab: *AMDGPUBase, bios: *amdgpu.GPUBios) callconv(.c) bool {
 fn lvoGetGPUConnector(ab: *AMDGPUBase, index: u32, connector: *amdgpu.GPUConnector) callconv(.c) bool {
     return GetGPUConnector(ab, index, connector);
 }
+fn lvoStartGPUGraphics(ab: *AMDGPUBase, files: *const amdgpu.GPUGraphicsFiles) callconv(.c) bool {
+    return StartGPUGraphics(ab, files);
+}
 
 /// The jump table, in slot order: a resource has no standard vectors, so
 /// its first function is in the first slot.
@@ -104,4 +109,5 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoRemGPUIntServer),
     vec(lvoGetGPUBios),
     vec(lvoGetGPUConnector),
+    vec(lvoStartGPUGraphics),
 };

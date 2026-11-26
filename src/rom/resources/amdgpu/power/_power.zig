@@ -33,12 +33,19 @@ pub const ANSWER_DONE: u32 = 0x01;
 /// The messages sent, as the manager whose messages are known numbers
 /// them (`known`): its firmware's version, then each block powered down
 /// and up - the video decoder with its instance in the argument's upper
-/// half, the JPEG decoder with 0.
+/// half, the JPEG decoder with 0 - the graphics block let off while it is
+/// idle and kept powered, and its power controller (IMU) started, with
+/// the controller's own switching off of the block allowed (1), once its
+/// firmware is in the security processor's region.
 pub const MESSAGE_FIRMWARE_VERSION: u32 = 0x02;
 pub const MESSAGE_POWER_DOWN_VIDEO: u32 = 0x06;
 pub const MESSAGE_POWER_UP_VIDEO: u32 = 0x07;
+pub const MESSAGE_START_GRAPHICS_CONTROLLER: u32 = 0x16;
+pub const MESSAGE_ALLOW_GRAPHICS_OFF: u32 = 0x19;
+pub const MESSAGE_DISALLOW_GRAPHICS_OFF: u32 = 0x1A;
 pub const MESSAGE_POWER_DOWN_JPEG: u32 = 0x21;
 pub const MESSAGE_POWER_UP_JPEG: u32 = 0x22;
+pub const GRAPHICS_CONTROLLER_MAY_SWITCH_OFF: u32 = 1;
 
 /// The manager whose messages are numbered so. Another numbers them
 /// otherwise and is sent none of them but the version's, which every

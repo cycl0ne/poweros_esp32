@@ -30,6 +30,7 @@ pub const LVO = struct {
     pub const RemGPUIntServer = libraries.lvo(8);
     pub const GetGPUBios = libraries.lvo(9);
     pub const GetGPUConnector = libraries.lvo(10);
+    pub const StartGPUGraphics = libraries.lvo(11);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -46,6 +47,7 @@ pub const Fn = struct {
     pub const RemGPUIntServer = *const fn (*AMDGPUBase, *exec.Interrupt) callconv(.c) void;
     pub const GetGPUBios = *const fn (*AMDGPUBase, *amdgpu.GPUBios) callconv(.c) bool;
     pub const GetGPUConnector = *const fn (*AMDGPUBase, u32, *amdgpu.GPUConnector) callconv(.c) bool;
+    pub const StartGPUGraphics = *const fn (*AMDGPUBase, *const amdgpu.GPUGraphicsFiles) callconv(.c) bool;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -127,5 +129,14 @@ pub const AMDGPUBase = opaque {
     /// into `connector`; false past the last one, or where there is no list.
     pub fn GetGPUConnector(self: *AMDGPUBase, index: u32, connector: *amdgpu.GPUConnector) bool {
         return libraries.call(self, LVO.GetGPUConnector, Fn.GetGPUConnector, .{ index, connector });
+    }
+
+    /// The graphics block's firmware - the files `files` names, each as it is
+    /// on the disk - loaded by the security processor in the order the
+    /// block's RLC takes it, the RLC told to hand each engine its code, and
+    /// the block's power controller started by the power manager; true once
+    /// all of it is done.
+    pub fn StartGPUGraphics(self: *AMDGPUBase, files: *const amdgpu.GPUGraphicsFiles) bool {
+        return libraries.call(self, LVO.StartGPUGraphics, Fn.StartGPUGraphics, .{files});
     }
 };

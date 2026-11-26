@@ -52,4 +52,10 @@ bool GetGPUBios(*amdgpu.GPUBios bios)
 /// The device's connector `index` (from 0), as its video BIOS lists it,
 /// into `connector`; false past the last one, or where there is no list.
 bool GetGPUConnector(u32 index, *amdgpu.GPUConnector connector)
+/// The graphics block's firmware - the files `files` names, each as it is
+/// on the disk - loaded by the security processor in the order the
+/// block's RLC takes it, the RLC told to hand each engine its code, and
+/// the block's power controller started by the power manager; true once
+/// all of it is done.
+bool StartGPUGraphics(*const amdgpu.GPUGraphicsFiles files)
 ##end
