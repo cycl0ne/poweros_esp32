@@ -3271,26 +3271,45 @@ test "storage images of floats and of channels of their own: a texel written and
         for (0..4) |k| try testing.expectEqual(@as(f32, 0), out[5 + k]);
     }
 
-    // A compressed image asked for as a storage image is still unpacked
-    // to 8888: nothing writes one texel of a block. It wants SAMPLED
-    // beside it, being unpacked to be sampled.
-    const blocks = try bench.bareImage(.{
-        .format = .bc1_rgba_unorm_block,
-        .extent = .{ .width = 8, .height = 8 },
-        .usage = facet.IMAGE_USAGE_STORAGE | facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST,
-    }, false);
-    var requirements: facet.MemoryRequirements = undefined;
-    fb.GetImageMemoryRequirements(device, blocks, &requirements);
-    // 8 x 8 of 8888, spread over 64 bits a texel, against the 32 bytes of
-    // four BC1 blocks: it was unpacked.
-    try testing.expect(requirements.size >= 8 * 8 * 8);
+    // An image whose format's features have not got what its usage wants
+    // is refused, and the format query says the same (since 1.221,
+    // docs/facet-vulkan10.md item 94): a compressed one as a storage
+    // image, with SAMPLED beside it or not, nothing writing one texel of a
+    // block (until 1.221 one with SAMPLED was made, unpacked into 8888);
+    // and a float one or a compressed one as an input attachment, neither
+    // being drawn into (lvp_formats.c:430-434), where the cores kept the
+    // one in rows and the other in its blocks.
+    const Refused = struct { format: facet.Format, usage: u32 };
+    const refusals = [_]Refused{
+        .{ .format = .bc1_rgba_unorm_block, .usage = facet.IMAGE_USAGE_STORAGE | facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST },
+        .{ .format = .bc1_rgba_unorm_block, .usage = facet.IMAGE_USAGE_STORAGE | facet.IMAGE_USAGE_TRANSFER_DST },
+        .{ .format = .r16g16b16a16_sfloat, .usage = facet.IMAGE_USAGE_INPUT_ATTACHMENT | facet.IMAGE_USAGE_TRANSFER_DST },
+        .{ .format = .bc1_rgba_unorm_block, .usage = facet.IMAGE_USAGE_INPUT_ATTACHMENT | facet.IMAGE_USAGE_TRANSFER_DST },
+    };
     var denied: ?*facet.Image = null;
-    try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImage(device, &.{
-        .format = .bc1_rgba_unorm_block,
-        .extent = .{ .width = 8, .height = 8 },
-        .usage = facet.IMAGE_USAGE_STORAGE | facet.IMAGE_USAGE_TRANSFER_DST,
-    }, &denied));
-    try testing.expect(denied == null);
+    var shape: facet.ImageFormatProperties = undefined;
+    for (refusals) |each| {
+        try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImage(device, &.{ .format = each.format, .extent = .{ .width = 8, .height = 8 }, .usage = each.usage }, &denied));
+        try testing.expect(denied == null);
+        try testing.expectEqual(facet.Result.error_format_not_supported, fb.GetPhysicalDeviceImageFormatProperties(bench.physical, each.format, .@"2d", .optimal, each.usage, 0, &shape));
+    }
+    // On a device that unpacks a float image into 8888, as the V3D does,
+    // no float format says STORAGE_IMAGE (since 1.220), so a float storage
+    // image is refused there, SAMPLED beside it, where it was made
+    // unpacked until 1.221.
+    {
+        const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
+        physical.can.kept_floats = false;
+        defer physical.can.kept_floats = true;
+        const floats = facet.IMAGE_USAGE_STORAGE | facet.IMAGE_USAGE_SAMPLED;
+        try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImage(device, &.{ .format = .r32g32b32a32_sfloat, .extent = .{ .width = 8, .height = 8 }, .usage = floats }, &denied));
+        try testing.expect(denied == null);
+        try testing.expectEqual(facet.Result.error_format_not_supported, fb.GetPhysicalDeviceImageFormatProperties(bench.physical, .r32g32b32a32_sfloat, .@"2d", .optimal, floats, 0, &shape));
+        // Sampled alone, it is made, unpacked.
+        var sampled: ?*facet.Image = null;
+        try testing.expectEqual(facet.Result.success, fb.CreateImage(device, &.{ .format = .r32g32b32a32_sfloat, .extent = .{ .width = 8, .height = 8 }, .usage = facet.IMAGE_USAGE_SAMPLED }, &sampled));
+        fb.DestroyImage(device, sampled);
+    }
 
     // --- 1.69: what 16 bits a channel keeps that 8 could not ---
     // Three parts in 65535 is nothing at all in 8 bits, and a part in
