@@ -25,10 +25,17 @@
 //! manager, through the display's own mailbox, for its firmware's
 //! version and its table of clock levels, and read the clocks running
 //! now (RTGCTRL_AMD_CLOCKS): the levels of each of the display's clocks,
-//! the SoC's and the data fabric's states, then the PLL the display's
-//! clocks are divided from, the display clock and the pipes' clock. The
-//! messages change nothing, but they are written to the device: the
-//! watchdog is armed for them.
+//! the SoC's with its voltage at each of the display controller clock's
+//! levels, the data fabric's states, then the PLL the display's clocks
+//! are divided from, the display clock as the engine reads it back - the
+//! pipes' clock it does not - and each pipe's divider of the pipes'
+//! clock; what the board asked of the manager for what it shows - the
+//! display controller's least clock and its least in deep sleep, the
+//! display clock, the pipes' clock and each pipe's share, the state that
+//! serves it and whether the memory's clock may change in the active
+//! picture - and what the manager answered to each of those four; the
+//! fabric's clock now. The messages change nothing, but they are
+//! written to the device: the watchdog is armed for them.
 //!
 //! DMCUB prints the display controller - the display engine's own
 //! processor - as its registers read (RTGCTRL_AMD_CONTROLLER): whether
@@ -99,7 +106,11 @@
 //! (RTGCTRL_AMD_MODE: the link, the pixel clock, how far it got, how long
 //! the pipe was down, whether the fetcher or the output ran short of
 //! pixels) and the picture's checksum read twice, a few frames after the
-//! show and again more than a frame later, which should be the same; then it is held HOLD seconds (2 unless given) for
+//! show and again more than a frame later, which should be the same; then
+//! the display's clocks (RTGCTRL_AMD_CLOCKS): the display clock as it
+//! runs, what the board asked for it, the pipes' clock, each pipe's share
+//! and the display controller's, what the power manager answered to each,
+//! and the state that serves them; then it is held HOLD seconds (2 unless given) for
 //! a look at the monitor. Ctrl-C stops after the mode shown. The watchdog
 //! is armed for it and fed after each mode.
 //!
@@ -199,7 +210,8 @@
 //! monitor slept and the board was shown in another mode and back
 //! meanwhile, each against the same picture drawn by the program; made larger, smaller and by a
 //! ratio that is no whole number, as windows inside the blocks against
-//! the same windows of the blocks drawn the size they are shown. Then
+//! the same windows of the blocks drawn the size they are shown, with the
+//! display's clocks while each is shown, as MODES prints them. Then
 //! nothing shown, a place with nothing in it and one off the glass, each
 //! against the picture with no layer open. Over the picture: the frame
 //! unmirrored and mirrored both ways, against the program's drawing, and
@@ -271,7 +283,7 @@ const RtgBase = sdk.interface.rtg.RtgBase;
 const TagItem = sdk.utility.TagItem;
 
 pub const COMMAND_NAME = "Gpu";
-const VERSION_STRING = "\x00$VER: Gpu 1.19 (26.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Gpu 1.20 (26.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,SLEEP/K/N,RANGE/S,POINTER/S,MIRROR/S,OVERLAY/S,DIRECT/S,BANDS/S,VIDEO/S,WATCHDOG/K/N";
@@ -509,7 +521,7 @@ fn clocks(sys: *ExecBase, dl: *DosBase, millis: u32) i32 {
     const result = rb.BoardControl(board, rtg.tags.RTGCTRL_AMD_CLOCKS, @bitCast(@intFromPtr(&found)));
     wb.DisarmWatchdog();
     if (found.pll_khz != 0) {
-        _ = Printf(dl, "Running: PLL %u kHz, display clock %u kHz, pipes' clock %u kHz\n", .{ found.pll_khz, found.disp_khz, found.dpp_khz });
+        _ = Printf(dl, "Running: PLL %u kHz, display clock %u kHz (the pipes' clock is not read back)\n", .{ found.pll_khz, found.disp_khz });
     } else _ = Printf(dl, "Running: the clock generator is not known\n", .{});
     if (found.firmware != 0) {
         _ = Printf(dl, "Power manager's firmware %u.%u.%u\n", .{ found.firmware >> 16 & 0xff, found.firmware >> 8 & 0xff, found.firmware & 0xff });
@@ -522,15 +534,35 @@ fn clocks(sys: *ExecBase, dl: *DosBase, millis: u32) i32 {
     printLevels(dl, "Display (DISPCLK)", found.disp_mhz[0..found.disp_count]);
     printLevels(dl, "Pipes (DPPCLK)", found.dpp_mhz[0..found.disp_count]);
     printLevels(dl, "SoC (SOCCLK)", found.soc_mhz[0..found.soc_count]);
+    _ = Printf(dl, "SoC's voltage at each:", .{});
+    for (found.soc_voltage[0..found.dcf_count]) |voltage| _ = Printf(dl, " %u.%02u", .{ voltage / 4, voltage % 4 * 25 });
+    _ = Printf(dl, " mV\n", .{});
     for (0..found.fabric_count) |index| {
-        _ = Printf(dl, "Fabric state %u: fabric %u MHz, memory %u MHz, %u.%02u mV\n", .{
+        _ = Printf(dl, "Fabric state %u: fabric %u MHz, memory %u MHz, %u.%02u mV, WCK ratio %u\n", .{
             @as(u32, @intCast(index)),
             found.fabric_mhz[index],
             found.memory_mhz[index],
             found.fabric_voltage[index] / 4,
             found.fabric_voltage[index] % 4 * 25,
+            found.fabric_ratio[index],
         });
     }
+    _ = Printf(dl, "Pipes' dividers:", .{});
+    for (found.dividers) |divider| {
+        if (divider == 0) {
+            _ = Printf(dl, " off", .{});
+        } else _ = Printf(dl, " %u/%u", .{ divider & 0xff, divider >> 16 & 0xff });
+    }
+    _ = Printf(dl, "\n", .{});
+    if (found.asked_disp_khz != 0) {
+        _ = Printf(dl, "Asked: display controller at least %u kHz, %u kHz in deep sleep; display clock %u kHz, pipes' clock %u kHz, each pipe", .{ found.asked_dcf_khz, found.asked_deep_sleep_khz, found.asked_disp_khz, found.asked_dpp_khz });
+        for (found.asked_pipe_khz) |khz| _ = Printf(dl, " %u", .{khz});
+        _ = Printf(dl, " kHz; state %u, the memory's clock %s\n", .{ found.level, @as([*:0]const u8, if (found.change_in_active != 0) "changes in the active picture" else "changes in the blank") });
+        _ = Printf(dl, "The power manager answered: display controller %u MHz, deep sleep %u MHz, display clock %u MHz, pipes' clock %u MHz (0 for one refused)\n", .{ found.answered_dcf_mhz, found.answered_deep_sleep_mhz, found.answered_disp_mhz, found.answered_dpp_mhz });
+    } else _ = Printf(dl, "Asked: nothing yet\n", .{});
+    if (found.fabric_now_mhz != 0) {
+        _ = Printf(dl, "Fabric now: %u MHz\n", .{found.fabric_now_mhz});
+    } else _ = Printf(dl, "Fabric now: not answered\n", .{});
     return dos.RETURN_OK;
 }
 
@@ -985,6 +1017,7 @@ fn everyMode(sys: *ExecBase, dl: *DosBase, millis: u32, seconds: u32) i32 {
             _ = Printf(dl, "checksum %04x %04x %04x%s\n", .{ second.red, second.green, second.blue, @as([*:0]const u8, if (same) "" else " CHANGING") });
             if (!same) failed += 1;
         }
+        clocksLine(dl, rb, board);
         hold(dl, wb, 2 * seconds);
     }
 
@@ -997,6 +1030,27 @@ fn everyMode(sys: *ExecBase, dl: *DosBase, millis: u32, seconds: u32) i32 {
     }
     _ = Printf(dl, "%u of %u modes failed\n", .{ failed, count });
     return if (failed == 0) dos.RETURN_OK else dos.RETURN_ERROR;
+}
+
+/// The display's clocks in a line of their own: the display clock as it
+/// runs, what the board asked for it, for the pipes' clock and each pipe's
+/// share and for the display controller's, and what the power manager
+/// answered to each; the state that serves them.
+fn clocksLine(dl: *DosBase, rb: *RtgBase, board: *rtg.RtgBoard) void {
+    var found: rtg.tags.RtgAmdClocks = .{};
+    if (rb.BoardControl(board, rtg.tags.RTGCTRL_AMD_CLOCKS, @bitCast(@intFromPtr(&found))) != rtg.errors.RTGERR_OK) {
+        _ = Printf(dl, "    clocks not had\n", .{});
+        return;
+    }
+    _ = Printf(dl, "    display clock %u kHz, asked %u kHz (answered %u MHz); pipes' clock asked %u kHz (%u MHz), each pipe", .{
+        found.disp_khz,
+        found.asked_disp_khz,
+        found.answered_disp_mhz,
+        found.asked_dpp_khz,
+        found.answered_dpp_mhz,
+    });
+    for (found.asked_pipe_khz) |khz| _ = Printf(dl, " %u", .{khz});
+    _ = Printf(dl, " kHz; controller at least %u kHz (%u MHz), state %u\n", .{ found.asked_dcf_khz, found.answered_dcf_mhz, found.level });
 }
 
 /// The most modes MODES goes through.
@@ -2277,6 +2331,7 @@ const VideoRun = struct {
                 const where = blockName(&number_buffer, at[0], at[1]);
                 videoCompare(run.dl, label(&buffer, "under, ", case.name, ", inside ", where), drawn_sum, laid_sum, tally);
             }
+            clocksLine(run.dl, run.rb, run.board);
         }
     }
 

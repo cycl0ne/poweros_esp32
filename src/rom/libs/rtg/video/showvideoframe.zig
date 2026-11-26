@@ -27,7 +27,9 @@ const err = rtg.errors;
 /// `RTGERR_OK`; `RTGERR_BAD_ARG` for a picture without a part, an empty
 /// part, or one the layer cannot read - its planes where the controller
 /// does not reach, rows it cannot step, more than `max_width` by
-/// `max_height` - or scale into its place (`max_up`, `max_down`).
+/// `max_height` - or scale into its place (`max_up`, `max_down`), or not
+/// as well as what the display reads already: with no plane of its free,
+/// or no clock to spare for it.
 ///
 /// BEHAVIOR:
 /// The picture is shown from the next frame on, its part scaled into the

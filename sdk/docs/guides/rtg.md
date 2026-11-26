@@ -805,9 +805,13 @@ own, listed with the driver in `sdk/libs/rtg/tags.zig`. The AMD board's
 `RTGCTRL_AMD_FIRMWARE` answers the manager's firmware version, and
 `RTGCTRL_AMD_CLOCKS` fills an `RtgAmdClocks` with the levels the manager
 offers for the display controller's, the display's, the pipes' and the
-SoC's clocks and for the data fabric, and with the display clocks running
-now. Both send messages to the device, which `C:test/Gpu CLOCKS` does with
-the watchdog armed. `RTGCTRL_AMD_CONTROLLER` fills an `RtgAmdController`
+SoC's clocks, the SoC's voltage at each, and for the data fabric; the
+display clock running now, as the engine reads its divider back - the
+pipes' clock is not read back - and each pipe's divider of the pipes'
+clock; what the board asked of the manager for what it shows (see the
+board below) and what the manager answered to each - at least what was
+asked, though not the clock that runs; the fabric's clock now. Both send messages to the device, which
+`C:test/Gpu CLOCKS` does with the watchdog armed. `RTGCTRL_AMD_CONTROLLER` fills an `RtgAmdController`
 with the display controller's registers - the engine's own processor:
 whether it runs its firmware, its boot options, its rings, the windows it
 reaches memory through, its faults - and only reads (`C:test/Gpu DMCUB`).
@@ -1730,9 +1734,12 @@ pipe scans, and the board stays in it.
 While the controller runs, `check_mode` takes every progressive timing
 the monitor names whose picture fits the frames the board reads from,
 up to 340 MHz on HDMI and 165 MHz on DVI, and a show in another mode
-sets the pipe to it. The display's clocks are held at the top of their
-levels first, then the pipe is taken down as `RTGCTRL_AMD_PIPE` takes
-it, its fetcher blanked, and brought up in the new mode: the timing
+sets the pipe to it - where one of the power manager's states serves its
+picture (below). The display's clocks are raised first where the new
+mode's picture needs them faster, then the pipe is taken down as
+`RTGCTRL_AMD_PIPE` takes it, its fetcher blanked, and brought up in the
+new mode, and the clocks are lowered to what its picture needs once it
+runs: the timing
 generator's totals, blanking, syncs and global sync, the fetcher's
 viewport and schedule, the scaler passing the picture through at its
 own size, the output's size, and the pixel clock and the stream by the
@@ -1740,7 +1747,7 @@ video BIOS's tables. The link is HDMI where the monitor's EDID says it
 takes HDMI - so its sound goes on in any mode - with the mode's AVI
 infoframe sent each frame, DVI otherwise. The fetcher's schedule is
 worked out for one plane of 32-bit pixels, unscaled, read at the
-device's physical addresses at the clocks held: when in the blank it
+device's physical addresses at the clocks set: when in the blank it
 starts, how many lines ahead it fetches, and how its requests are paced
 in the hub's 24 MHz reference. The hub's watermarks stay as the firmware
 set them, the fetcher's time to urgency switched off as it left it. A
@@ -1750,6 +1757,29 @@ is not offered. The firmware's picture stays until the board is first
 shown in another mode: the mode its settings' line names
 (`Rtg amd.0 SET MODE=1920x1080@60 SAVE`), else the one the monitor
 prefers.
+
+The display's clocks are set for what the board's pipes read: the
+picture's fetcher, counted in the frames' rows whatever buffer it reads,
+and each plane lit beside it - the overlay counted at its largest, so it
+moves with the clocks as they are, a film by its scaling and taps. For
+them the board works out, as the vendor's model of the engine's
+bandwidth does, the display clock, the pipes' clock and each pipe's
+share of it, the display controller's clock in deep sleep, and the
+lowest of the power manager's states whose controller and fabric clocks
+and memory return what the pipes read, the memory's kind and channels as
+the video BIOS names them. The manager is asked for them before a change
+where one goes up, and once the pipes have taken it where one goes down;
+each pipe's divider of the pipes' clock is set in the engine, and the
+display controller is told them. Each lit pipe's schedule is worked out
+at them, the other pipes' anew where they change, with the timing
+generator's global sync, at one update. The hub's watermarks stay as the
+firmware wrote them, and the fetchers' time to urgency in the blank
+starts from them. A mode, or a plane, no state serves is refused. The
+board's first show sets the clocks for its picture, and the manager is
+told the display is in use, so the engine's idle optimizations and its
+deeper power states stay off while a monitor is driven.
+`C:test/Gpu CLOCKS` prints what was asked beside what the manager
+answered and what runs, and `C:test/Gpu MODES` the clocks in each mode.
 
 The link's sound is set each time the board is put in a mode: the
 sample clock and the numbers the monitor rebuilds it from at the mode's

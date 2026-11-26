@@ -168,7 +168,8 @@ pub const RTGCTRL_DCS_FORGET_ROWS: u32 = RTGCTRL_DRIVER + 17;
 /// not answer, RTGERR_IO where the manager refuses.
 pub const RTGCTRL_AMD_FIRMWARE: u32 = RTGCTRL_DRIVER + 32;
 /// `value` an `*RtgAmdClocks`, filled in: the display's clocks, what the
-/// power manager offers and what runs now. RTGERR_OK, or a negative
+/// power manager offers, what runs now, and what the board asked of the
+/// manager for what it shows and the manager answered. RTGERR_OK, or a negative
 /// RTGERR_* where the mailbox does not answer or no memory could be had
 /// for the manager's table, RTGERR_IO where the manager refused a message.
 pub const RTGCTRL_AMD_CLOCKS: u32 = RTGCTRL_DRIVER + 33;
@@ -496,19 +497,37 @@ pub const RtgAmdController = extern struct {
 /// fabric's states.
 pub const RTG_AMD_LEVELS = 8;
 pub const RTG_AMD_FABRIC_STATES = 4;
+/// The pipes RtgAmdClocks has room for.
+pub const RTG_AMD_PIPES = 4;
 
 /// What RTGCTRL_AMD_CLOCKS fills in. The levels are the power manager's
 /// table of them, in MHz, each list's first `*_count` in use: the display
 /// controller's clock (DCFCLK), the display clock (DISPCLK) and the
-/// pipes' clock (DPPCLK) - which share one count - the SoC's clock, and
-/// per state of the data fabric its clock, the memory's and the voltage
-/// (in quarters of a millivolt). The clocks running now are read from the
-/// engine, in kHz: the PLL the display's clocks are divided from, and
-/// the display clock and the pipes' clock divided from it - 0 where the
-/// generator could not be read. `message` is the last message sent for
-/// the table and `answer` what the manager answered to it: 1 done, 0xFF
+/// pipes' clock (DPPCLK) - which share one count - the SoC's clock, the
+/// SoC's voltage at each of the display controller clock's levels, and
+/// per state of the data fabric its clock, the memory's, the voltage and
+/// the memory's WCK ratio (0 for 1:1, 1 for 1:2, 2 for 1:4); voltages in
+/// quarters of a millivolt. The clocks running now are read from the
+/// engine, in kHz: the PLL the display's clocks are divided from and the
+/// display clock as its divider reads back - 0 where the generator could
+/// not be read; the pipes' clock is not read back - and each pipe's
+/// divider of the pipes' clock, its phase low and its modulo high, 0 where
+/// it is off and the pipe has the whole clock. `message` is the last message sent for the
+/// table and `answer` what the manager answered to it: 1 done, 0xFF
 /// failed, 0xFE a message it does not know, 0xFD one refused before
 /// something else is done, 0xFC one refused while it is busy.
+///
+/// What the board asked of the manager for what it shows, in kHz - 0
+/// before it asked: the least the display controller's clock runs at, and
+/// runs at in deep sleep, the display clock and the pipes' clock; each
+/// pipe's share of the pipes' clock, 0 for a pipe that reads nothing; the
+/// level of the table that serves it, and whether the memory's clock may
+/// change in the active picture. What the manager answered when each of
+/// those four was last asked, in MHz - 0 before it was asked, or where it
+/// refused: at least what was asked, though not the clock that runs - the
+/// display clock's divider reads back the clock asked, rounded up to the
+/// next divider. The fabric's clock now, in MHz, as the manager answers
+/// it, 0 where it did not.
 pub const RtgAmdClocks = extern struct {
     firmware: u32 = 0,
     message: u32 = 0,
@@ -526,7 +545,21 @@ pub const RtgAmdClocks = extern struct {
     fabric_count: u32 = 0,
     pll_khz: u32 = 0,
     disp_khz: u32 = 0,
-    dpp_khz: u32 = 0,
+    soc_voltage: [RTG_AMD_LEVELS]u32 = @splat(0),
+    fabric_ratio: [RTG_AMD_FABRIC_STATES]u32 = @splat(0),
+    dividers: [RTG_AMD_PIPES]u32 = @splat(0),
+    asked_dcf_khz: u32 = 0,
+    asked_deep_sleep_khz: u32 = 0,
+    asked_disp_khz: u32 = 0,
+    asked_dpp_khz: u32 = 0,
+    asked_pipe_khz: [RTG_AMD_PIPES]u32 = @splat(0),
+    level: u32 = 0,
+    change_in_active: u32 = 0,
+    answered_dcf_mhz: u32 = 0,
+    answered_deep_sleep_mhz: u32 = 0,
+    answered_disp_mhz: u32 = 0,
+    answered_dpp_mhz: u32 = 0,
+    fabric_now_mhz: u32 = 0,
 };
 
 // RTGA_DriverBase + 64, 64 wide, is not used.

@@ -839,7 +839,7 @@ test "a stream turned to HDMI sends its infoframe each frame, one to DVI none" {
         .v_sync = 5,
         .v_back = 33,
     };
-    const new = mode.of(own, 2560, 1440, .{ .display_khz = 1_200_000, .pipes_khz = 1_200_000, .pitch = 2560, .watermark = 0 }) orelse return error.TestUnexpectedResult;
+    const new = mode.of(own, 2560, 1440, .{ .display_khz = 1_200_000, .pipes_khz = 1_200_000, .pitch = 2560, .watermark = 0, .deep_sleep_hz = 17_357_812, .wait_ns = 32_000 }) orelse return error.TestUnexpectedResult;
     var frame: [sdk.rtg.RTG_AVI_BYTES]u8 = @splat(0);
     frame[0] = 0x82;
     var stream: Stream = .{ .deep_color = 2, .back_control = 0x10030200, .resync = resync_deep_color };
@@ -859,7 +859,7 @@ test "a stream turned to HDMI sends its infoframe each frame, one to DVI none" {
     try testing.expectEqual(err.RTGERR_NOT_SUPPORTED, retarget(&stream, &new, false, null));
     var slower = own;
     slower.pixel_clock_hz = 148_500_000;
-    const dvi = mode.of(slower, 2560, 1440, .{ .display_khz = 1_200_000, .pipes_khz = 1_200_000, .pitch = 2560, .watermark = 0 }) orelse return error.TestUnexpectedResult;
+    const dvi = mode.of(slower, 2560, 1440, .{ .display_khz = 1_200_000, .pipes_khz = 1_200_000, .pitch = 2560, .watermark = 0, .deep_sleep_hz = 17_357_812, .wait_ns = 32_000 }) orelse return error.TestUnexpectedResult;
     try testing.expectEqual(err.RTGERR_OK, retarget(&stream, &dvi, false, &frame));
     try testing.expectEqual(mode_dvi, (stream.back_control & back_mode_mask) >> back_mode_shift);
     try testing.expectEqual(@as(u32, 0x88888888), stream.kept[keptAt(hdmi_generic)]);

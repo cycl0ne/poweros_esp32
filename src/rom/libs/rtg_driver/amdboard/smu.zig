@@ -22,13 +22,26 @@
 //! **The clocks running now** are divided from one PLL of the device's
 //! clock generator, whose multiplier of a 48 MHz reference the generator
 //! holds (`CLK1_CLK_PLL_REQ`, 8 bits whole and 16 bits of fraction); the
-//! display clock and the pipes' clock are that PLL's frequency divided by
-//! the dividers the engine's own clock block holds (`DENTIST_DISPCLK_CNTL`),
-//! each named by a number that stands for a divider counted in quarters.
+//! display clock is that PLL's frequency divided by the divider the
+//! engine's own clock block reads back (`DENTIST_DISPCLK_CNTL`'s read
+//! divider), named by a number that stands for a divider counted in
+//! quarters. The manager sets the dividers itself and leaves the fields a
+//! driver writes them through at 0, and the pipes' clock's divider is not
+//! read back: what that clock runs at is what the manager answered when it
+//! was set (`clocks.zig`). The fabric's clock is the manager's to answer
+//! (GetFclkFrequency).
+//!
+//! **What the display asks** (`ask`, `clocks.zig`): the least the display
+//! controller's clock runs at, and runs at in deep sleep, the display clock
+//! and the pipes' clock, each in MHz; that it is in use, with no idle
+//! optimization, and that the engine's deeper power states are not to be
+//! entered (`useDisplay`); and the watermark sets the manager picks by the
+//! controller's clock (`sendRanges`, `TABLE_WATERMARKS`), copied from
+//! memory the device reaches as the table of levels is copied into it.
 //!
 //! Nothing here is sent unless asked for: the board's controls
 //! (RTGCTRL_AMD_*) ask, which `C:test/Gpu CLOCKS` does with the watchdog
-//! armed.
+//! armed, and the clocks are asked as the board lights its planes.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -59,13 +72,24 @@ const message_table_out: u32 = 0x10;
 /// The display clock and the pipes' clock set, and the least the display
 /// controller's clock may run at: each in MHz, answered with the clock
 /// set.
-const message_display_clock: u32 = 0x04;
-const message_pipes_clock: u32 = 0x06;
-const message_least_controller_clock: u32 = 0x07;
+pub const message_display_clock: u32 = 0x04;
+pub const message_pipes_clock: u32 = 0x06;
+pub const message_least_controller_clock: u32 = 0x07;
+/// The least the display controller's clock falls to in deep sleep, in MHz.
+pub const message_deep_sleep_clock: u32 = 0x08;
+/// The fabric's clock now, answered in MHz.
+const message_fabric_clock: u32 = 0x0a;
+/// A table copied from the memory told to the manager.
+const message_table_in: u32 = 0x11;
+/// The display's idle optimizations - none while it is in use - and which
+/// of the engine's deeper power states may be entered: none for 0.
+const message_idle: u32 = 0x12;
+const message_deeper_states: u32 = 0x15;
 
-/// The manager's table of clock levels, by its number, and what the
-/// memory it is copied into starts on: a page, as the manager's tables
-/// are handed it.
+/// The manager's tables, by their numbers - its watermark sets and its
+/// table of clock levels - and what the memory one is copied into or from
+/// starts on: a page, as the manager's tables are handed it.
+const table_watermarks: u32 = 1;
 const table_levels: u32 = 4;
 const table_alignment: u32 = 4096;
 
@@ -82,11 +106,11 @@ const reference_khz: u64 = 48_000;
 /// How far past its first address the generator's register is.
 const generator_reach: u64 = 0x240;
 
-/// The engine's dividers: the display clock's in bits 6-0, the pipes'
-/// clock's in bits 30-24.
+/// The engine's dividers: the display clock's as it runs, read back in
+/// bits 14-8.
 const dentist = 0x64;
-const disp_divider_mask: u32 = 0x7f;
-const dpp_divider_shift = 24;
+const divider_mask: u32 = 0x7f;
+const read_divider_shift = 8;
 
 /// The manager's table, as it copies it out (all little-endian): its
 /// clocks per level, then the data fabric's states, then the counts.
@@ -118,6 +142,36 @@ const Table = extern struct {
 comptime {
     // As the manager lays it out.
     if (@sizeOf(Table) != 7 * 8 * 4 + 4 * 16 + 8 + 8) @compileError("the manager's table is laid out otherwise");
+}
+
+/// The manager's watermark sets (`Watermarks_t`): for the SoC's clock and
+/// for the display controller's, four ranges each, each naming the set
+/// (`setting`, A to D) the hub reads within it - a range of the clock,
+/// and one the manager calls the memory's, which it compares with the
+/// display controller's clock in the rows for that clock - and the
+/// latency the set is for (`kind`, 0 the memory clock's change).
+const WatermarkRow = extern struct {
+    min_clock: u16,
+    max_clock: u16,
+    min_memory: u16,
+    max_memory: u16,
+    setting: u8,
+    kind: u8,
+    padding: [2]u8 = .{ 0, 0 },
+};
+
+const Watermarks = extern struct {
+    rows: [2][4]WatermarkRow,
+    padding: [7]u32 = @splat(0),
+};
+
+/// The rows by clock, and the latency a set is for.
+const rows_soc = 0;
+const rows_controller = 1;
+const kind_memory_change: u8 = 0;
+
+comptime {
+    if (@sizeOf(Watermarks) != 2 * 4 * 12 + 7 * 4) @compileError("the manager's watermark table is laid out otherwise");
 }
 
 /// Where the mailbox and the clock generator are: the register window as
@@ -195,7 +249,7 @@ pub fn version(sys: *ExecBase, mailbox: Mailbox) isize {
 pub fn clocks(engine: dcn.Engine, mailbox: Mailbox, into: *rtg.tags.RtgAmdClocks) isize {
     const sys = engine.sys;
     into.* = .{};
-    running(engine, mailbox, into);
+    readRunning(engine, mailbox, into);
     const firmware = version(sys, mailbox);
     if (firmware < 0) return firmware;
     into.firmware = @intCast(firmware);
@@ -226,38 +280,84 @@ pub fn clocks(engine: dcn.Engine, mailbox: Mailbox, into: *rtg.tags.RtgAmdClocks
     into.disp_mhz = copy.disp;
     into.dpp_mhz = copy.dpp;
     into.soc_mhz = copy.soc;
+    into.soc_voltage = copy.soc_voltage;
     for (copy.fabric, 0..) |state, index| {
         into.fabric_mhz[index] = state.fabric_mhz;
         into.memory_mhz[index] = state.memory_mhz;
         into.fabric_voltage[index] = state.voltage;
+        into.fabric_ratio[index] = state.ratio;
     }
     return err.RTGERR_OK;
 }
 
-/// The display's clocks held at their top, as a mode is set: the levels
-/// read into `into`, the display controller's clock (DCFCLK) told its
-/// top level is the least it runs at, the display clock and the pipes'
-/// clock set to their top level where they run below it, and what runs
-/// then read again. RTGERR_OK, or what `clocks` answers; RTGERR_IO for a
-/// table without levels or a message refused, `into.message` the one.
-pub fn holdTop(engine: dcn.Engine, mailbox: Mailbox, into: *rtg.tags.RtgAmdClocks) isize {
-    const read = clocks(engine, mailbox, into);
-    if (read != err.RTGERR_OK) return read;
-    if (into.dcf_count == 0 or into.disp_count == 0) return err.RTGERR_IO;
-    const steps = [_]struct { message: u32, mhz: u32, running_khz: u32 }{
-        .{ .message = message_least_controller_clock, .mhz = top(into.dcf_mhz[0..into.dcf_count]), .running_khz = 0 },
-        .{ .message = message_display_clock, .mhz = top(into.disp_mhz[0..into.disp_count]), .running_khz = into.disp_khz },
-        .{ .message = message_pipes_clock, .mhz = top(into.dpp_mhz[0..into.disp_count]), .running_khz = into.dpp_khz },
+/// The clock `message` sets asked for `khz`, in MHz rounded up, as the
+/// manager takes it: the MHz it answers it set, or null where it did not
+/// answer or refused.
+pub fn ask(sys: *ExecBase, mailbox: Mailbox, message: u32, khz: u32) ?u32 {
+    const answer = send(sys, mailbox, message, (khz + 999) / 1000) orelse return null;
+    if (answer.answer != ANSWER_DONE) return null;
+    return answer.value;
+}
+
+/// The manager told the display is in use - no idle optimization - and
+/// that the engine's deeper power states are not to be entered: whether
+/// it took both.
+pub fn useDisplay(sys: *ExecBase, mailbox: Mailbox) bool {
+    for ([_]u32{ message_idle, message_deeper_states }) |message| {
+        const answer = send(sys, mailbox, message, 0) orelse return false;
+        if (answer.answer != ANSWER_DONE) return false;
+    }
+    return true;
+}
+
+/// The watermark sets the manager picks by the display controller's clock,
+/// as the vendor's driver hands them over: set A up to the clock's first
+/// level, B above it to the second, C to the third, D above; the SoC's
+/// rows all set A. `levels` are the controller clock's first four levels,
+/// in MHz. Whether the manager took the table.
+pub fn sendRanges(engine: dcn.Engine, mailbox: Mailbox, levels: [4]u32) bool {
+    const table = rangesOf(levels);
+    var memory: amdgpu.GPUMemory = .{};
+    if (!engine.gpu.AllocGPUMemory(@sizeOf(Watermarks), table_alignment, &memory)) return false;
+    defer engine.gpu.FreeGPUMemory(&memory);
+    const into: *volatile Watermarks = @ptrFromInt(@as(usize, @intCast(memory.cpu)));
+    into.* = table;
+    sdk.hardware.barrier.full();
+    const steps = [_]struct { message: u32, argument: u32 }{
+        .{ .message = message_address_high, .argument = @truncate(memory.device >> 32) },
+        .{ .message = message_address_low, .argument = @truncate(memory.device) },
+        .{ .message = message_table_in, .argument = table_watermarks },
     };
     for (steps) |step| {
-        if (step.running_khz >= step.mhz * 1000) continue;
-        const answer = send(engine.sys, mailbox, step.message, step.mhz) orelse return err.RTGERR_TIMEOUT;
-        into.answer = answer.answer;
-        into.message = step.message;
-        if (answer.answer != ANSWER_DONE) return err.RTGERR_IO;
+        const answer = send(engine.sys, mailbox, step.message, step.argument) orelse return false;
+        if (answer.answer != ANSWER_DONE) return false;
     }
-    running(engine, mailbox, into);
-    return err.RTGERR_OK;
+    return true;
+}
+
+/// The watermark table `sendRanges` hands over.
+fn rangesOf(levels: [4]u32) Watermarks {
+    const none: WatermarkRow = .{ .min_clock = 0, .max_clock = 0, .min_memory = 0, .max_memory = 0, .setting = 0, .kind = 0 };
+    var table: Watermarks = .{ .rows = .{ @splat(none), @splat(none) } };
+    for (0..4) |set| {
+        table.rows[rows_controller][set] = .{
+            .min_clock = 0,
+            .max_clock = 0xffff,
+            .min_memory = if (set == 0) 0 else @intCast(@min(0xffff, levels[set - 1] + 1)),
+            .max_memory = if (set == 3) 0xffff else @intCast(@min(0xffff, levels[set])),
+            .setting = @intCast(set),
+            .kind = kind_memory_change,
+        };
+    }
+    table.rows[rows_soc][0] = .{ .min_clock = 0, .max_clock = 0xffff, .min_memory = 0, .max_memory = 0xffff, .setting = 0, .kind = 0 };
+    return table;
+}
+
+/// The fabric's clock now, in MHz, as the manager answers it: 0 where it
+/// did not.
+pub fn fabricNow(sys: *ExecBase, mailbox: Mailbox) u32 {
+    const answer = send(sys, mailbox, message_fabric_clock, 0) orelse return 0;
+    return if (answer.answer == ANSWER_DONE) answer.value else 0;
 }
 
 /// The highest of a clock's levels.
@@ -268,16 +368,14 @@ pub fn top(levels: []const u32) u32 {
 }
 
 /// The clocks running now into `into`: the PLL's frequency from the
-/// generator, and the display clock and the pipes' clock from the
-/// engine's dividers. Read only; nothing where the generator is not
-/// known.
-fn running(engine: dcn.Engine, mailbox: Mailbox, into: *rtg.tags.RtgAmdClocks) void {
+/// generator, and the display clock from the divider the engine reads
+/// back. Read only; nothing where the generator is not known.
+pub fn readRunning(engine: dcn.Engine, mailbox: Mailbox, into: *rtg.tags.RtgAmdClocks) void {
     if (mailbox.generator == 0) return;
     const request = reg(engine.registers + (@as(usize, mailbox.generator) + pll_request) * 4).*;
     into.pll_khz = pllKhz(request);
     const dividers = reg(engine.registers + (@as(usize, engine.clocks) + dentist) * 4).*;
-    into.disp_khz = dividedKhz(into.pll_khz, dividers & disp_divider_mask);
-    into.dpp_khz = dividedKhz(into.pll_khz, dividers >> dpp_divider_shift & disp_divider_mask);
+    into.disp_khz = dividedKhz(into.pll_khz, dividers >> read_divider_shift & divider_mask);
 }
 
 /// The PLL's frequency in kHz from its request register: the reference
@@ -337,4 +435,22 @@ test "a divider's number stands for quarters, halves and wholes by its range" {
     try testing.expectEqual(@as(u32, 28_125), dividedKhz(3_600_000, 0x7f));
     // Below the first number, the first's divider.
     try testing.expectEqual(@as(u32, 1_800_000), dividedKhz(3_600_000, 0x00));
+}
+
+test "the watermark sets the manager picks by the display controller's clock" {
+    const table = rangesOf(.{ 200, 400, 436, 533 });
+    const rows = table.rows[rows_controller];
+    try testing.expectEqual(@as(u16, 0), rows[0].min_memory);
+    try testing.expectEqual(@as(u16, 200), rows[0].max_memory);
+    try testing.expectEqual(@as(u16, 201), rows[1].min_memory);
+    try testing.expectEqual(@as(u16, 400), rows[1].max_memory);
+    try testing.expectEqual(@as(u16, 437), rows[3].min_memory);
+    try testing.expectEqual(@as(u16, 0xffff), rows[3].max_memory);
+    for (rows, 0..) |row, set| {
+        try testing.expectEqual(@as(u8, @intCast(set)), row.setting);
+        try testing.expectEqual(@as(u16, 0), row.min_clock);
+        try testing.expectEqual(@as(u16, 0xffff), row.max_clock);
+    }
+    try testing.expectEqual(@as(u16, 0xffff), table.rows[rows_soc][0].max_memory);
+    try testing.expectEqual(@as(u16, 0), table.rows[rows_soc][1].max_clock);
 }

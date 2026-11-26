@@ -38,22 +38,22 @@
 //!   line before the picture on that leaves the prefetch two lines, and
 //!   its rows no more than four times as fast as they are scanned, is
 //!   the one it is worked out for; a mode with no such start is refused.
-//!   The wait for the memory is the longer of the two kinds these chips
-//!   take (DDR5's clock change and the urgent latency, LPDDR5's
-//!   self-refresh), so either is served.
+//!   The wait for the memory is the one the prefetch mode allows for the
+//!   board's memory (`Held.wait_ns`, `bandwidth.waitOf`), the time to work
+//!   out a request 24 cycles of the controller's clock in deep sleep
+//!   (`Held.deep_sleep_hz`).
 //! - Its pace - the reference cycles a line, a request and the blank's
 //!   end take, for each plane - is counted in the hub's reference, the
 //!   48 MHz crystal halved: a plane whose lines come no faster than the
 //!   glass's at the rate its place is scanned, one whose lines come
 //!   faster at the rate its scaler takes them across. Its time to urgency
-//!   in a blank is the longest of the hub's watermarks, kept as they are
-//!   (`Held.watermark`), and the time from the start worked out to the
-//!   one the fetcher has.
+//!   in a blank is the longest of the hub's watermarks, in the sets the
+//!   firmware wrote that the hub runs on (`Held.watermark`,
+//!   `hubWatermark`), the time to work out a request, and the time from
+//!   the start worked out to the one the fetcher has.
 //!
-//! The fetcher's time-to-urgency is left switched off as the firmware
-//! left it, so the pace it is told waits for the watermarks to be worked
-//! out; its requests' sizes and its buffer stay as they are, the frames'
-//! surface being the same in every mode.
+//! The fetcher's requests' sizes and its buffer stay as they are, the
+//! frames' surface being the same in every mode.
 //!
 //! **The scaler** passes the picture through at its own size: its
 //! output rectangle, its size into the blender and the blanking it is
@@ -228,22 +228,29 @@ pub const Schedule = struct {
 };
 
 /// What a mode is worked out at besides its timings: the clocks the
-/// display runs at, the frames' row length, and the hub's watermarks.
+/// display runs at, the frames' row length, the longest watermark the
+/// blank allows, and the wait for the memory.
 pub const Held = struct {
-    /// The display clock and the pipes' clock, in kHz.
+    /// The display clock and the pipe's clock, in kHz.
     display_khz: u32,
     pipes_khz: u32,
     /// The frames' row length, in pixels.
     pitch: u32,
-    /// The longest of the hub's watermarks for urgency, self-refresh's
-    /// entry and the memory clock's change, in the hub's reference cycles.
+    /// The longest of the watermarks the blank allows - urgency,
+    /// self-refresh's entry and exit, the memory clock's change - in the
+    /// hub's reference cycles.
     watermark: u32,
+    /// The display controller's clock in deep sleep, in Hz.
+    deep_sleep_hz: u32,
+    /// The wait for the memory the prefetch allows, in nanoseconds.
+    wait_ns: u32,
 };
 
-/// What `fetcher` and the hub hold, with the clocks `display_khz` and
-/// `pipes_khz`: its surface's row length and the longest of the hub's
-/// watermarks in any of its sets.
-pub fn heldOf(engine: dcn.Engine, fetcher: u32, display_khz: u32, pipes_khz: u32) Held {
+/// The longest of the hub's watermarks in any of its sets - urgency,
+/// self-refresh's entry, the memory clock's change - in its reference
+/// cycles: what a fetcher's time to urgency in a blank starts from while
+/// the hub runs on the sets the firmware wrote.
+pub fn hubWatermark(engine: dcn.Engine) u32 {
     var watermark: u32 = 0;
     for (0..hub_sets) |set| {
         const base: u32 = @intCast(set * hub_set_stride);
@@ -251,12 +258,12 @@ pub fn heldOf(engine: dcn.Engine, fetcher: u32, display_khz: u32, pipes_khz: u32
         watermark = @max(watermark, at(engine, hub_self_refresh + base).* & self_refresh_mask);
         watermark = @max(watermark, at(engine, hub_memory_clock + base).* & memory_clock_mask);
     }
-    return .{
-        .display_khz = display_khz,
-        .pipes_khz = pipes_khz,
-        .pitch = (at(engine, fetcher * hubp_stride + hubp_pitch).* & pitch_mask) + 1,
-        .watermark = watermark,
-    };
+    return watermark;
+}
+
+/// The row length of the surface `fetcher` reads, in pixels.
+pub fn pitchOf(engine: dcn.Engine, fetcher: u32) u32 {
+    return (at(engine, fetcher * hubp_stride + hubp_pitch).* & pitch_mask) + 1;
 }
 
 /// The parts of a timing the registers are worked out from, in its own
@@ -331,8 +338,6 @@ const reference_hz: u64 = 24_000_000;
 const nominal_blank_us: u64 = 668;
 const vstartup_least: u32 = 9;
 const vstartup_most: u32 = 1023;
-/// The wait for the memory the prefetch allows for, in microseconds.
-const memory_wait_us: u64 = 32;
 /// The pipe's own delay before the blender, in cycles of the pipes'
 /// clock - its scaler's part where it passes the picture through and
 /// where it scales - and of the display clock.
@@ -340,6 +345,8 @@ const pipe_delay_cycles: u64 = 46 + 27;
 const scaler_delay_cycles: u64 = 16;
 const scaling_delay_cycles: u64 = 50;
 const display_delay_cycles: u64 = 119;
+/// The cursor's part of the pipe's delay, where the pipe lays it.
+const cursor_delay_cycles: u64 = 6;
 /// The prefetch's quarter line for the page table and half a line twice
 /// for its rows, in quarters of a line; the rows of pixels it fetches.
 const prefetch_table_quarters: u32 = 1 + 2 * 2;
@@ -369,13 +376,15 @@ fn wholeUp(fixed: u64) u64 {
 
 /// What a fetcher reads, for its schedule: the width of its place on
 /// the glass; its picture's planes - the one plane of its pixels, or a
-/// 4:2:0 picture's brightness and its colour - and whether its scaler
-/// scales, as it does a 4:2:0 picture's colour.
+/// 4:2:0 picture's brightness and its colour - whether its scaler
+/// scales, as it does a 4:2:0 picture's colour, and whether its pipe
+/// lays the cursor, as every pipe but a film's does.
 pub const Fetch = struct {
     out_width: u32,
     luma: Read,
     chroma: ?Read = null,
     scaled: bool = false,
+    cursor: bool = true,
 };
 
 /// One plane a fetcher reads: its viewport's width, the surface's width
@@ -395,7 +404,7 @@ pub const Read = struct {
 
 /// A picture of 32-bit pixels `width` across, unscaled, in rows `pitch`
 /// pixels long.
-fn pictureFetch(width: u32, pitch: u32) Fetch {
+pub fn pictureFetch(width: u32, pitch: u32) Fetch {
     return .{ .out_width = width, .luma = .{ .width = width, .surface = width, .pitch = pitch, .bytes = 4 } };
 }
 
@@ -411,6 +420,14 @@ pub fn planeSchedule(timings: rtg.RtgTimings, width: u32, held: Held, vstartup: 
 /// The schedule of what `fetch` says a fetcher reads at `timings`
 /// beside the picture, as `planeSchedule`.
 pub fn fetchSchedule(timings: rtg.RtgTimings, fetch: Fetch, held: Held, vstartup: u32) ?Schedule {
+    return scheduleFor(timings, fetch, held, vstartup);
+}
+
+/// The schedule of what `fetch` says a fetcher reads at `timings`, from
+/// the timing generator's start `vstartup` where it runs already, else
+/// from the one worked out: null as `scheduleOf`, and for what no fetcher
+/// reads.
+pub fn scheduleFor(timings: rtg.RtgTimings, fetch: Fetch, held: Held, vstartup: ?u32) ?Schedule {
     if (fetch.out_width == 0 or fetch.out_width > side_most) return null;
     if (fetch.luma.width == 0 or fetch.luma.bytes == 0 or fetch.luma.bytes > request_bytes) return null;
     if (fetch.chroma) |chroma| {
@@ -418,6 +435,19 @@ pub fn fetchSchedule(timings: rtg.RtgTimings, fetch: Fetch, held: Held, vstartup
     }
     if (timings.pixel_clock_hz == 0 or timings.h_active == 0 or timings.v_active == 0) return null;
     return scheduleOf(timings, lengthsOf(timings), held, fetch, vstartup);
+}
+
+/// The pipe's own delay before the blender, in picoseconds, at the
+/// display clock and the pipe's clock (in kHz): longer where its scaler
+/// scales, and where it lays the cursor.
+pub fn afterScalerPs(fetch: Fetch, display_khz: u32, pipes_khz: u32) u64 {
+    return pipeCycles(fetch) * 1_000_000_000 / @max(1, pipes_khz) + display_delay_cycles * 1_000_000_000 / @max(1, display_khz);
+}
+
+/// The pipe's own delay in cycles of its clock.
+fn pipeCycles(fetch: Fetch) u64 {
+    const scaler_cycles = if (fetch.scaled) scaling_delay_cycles else scaler_delay_cycles;
+    return pipe_delay_cycles + scaler_cycles + (if (fetch.cursor) cursor_delay_cycles else 0);
 }
 
 /// The rows of a plane its prefetch reads: those its taps reach before
@@ -430,7 +460,7 @@ fn sourceLines(plane: Read) u32 {
 /// The elements of a row the prefetch is counted to read: the viewport
 /// less one rounded up to a request and one more, no more than the
 /// surface rounded up to one.
-fn swathOf(plane: Read) u64 {
+pub fn swathOf(plane: Read) u64 {
     const element = request_bytes / plane.bytes;
     const surface = (@as(u64, plane.surface) + element - 1) / element * element;
     const row = (@as(u64, plane.width) - 1 + element - 1) / element * element + element;
@@ -497,7 +527,8 @@ fn scheduleOf(timings: rtg.RtgTimings, lengths: Lengths, held: Held, fetch: Fetc
 
     // The registers taken, and the fetcher ready: the controller's deep
     // sleep clock is the slowest.
-    const deep_sleep_hz = @max(8_000_000, pixel_hz * 23 / 320);
+    const deep_sleep_hz: u64 = held.deep_sleep_hz;
+    if (deep_sleep_hz == 0) return null;
     const reload = pixelsOf(16, pipes_hz, pixel_hz) + pixelsOf(24, display_hz, pixel_hz);
     const vupdate_offset = (h_total + 3) / 4;
     const vupdate_width = wholeUp(pixelsOf(14, deep_sleep_hz, pixel_hz) + pixelsOf(12, pipes_hz, pixel_hz) + reload);
@@ -520,10 +551,9 @@ fn scheduleOf(timings: rtg.RtgTimings, lengths: Lengths, held: Held, fetch: Fetc
     const scanned = (16 * row_bytes * ratio_one + scan - 1) / scan;
     const row_quarters: u32 = @intCast(@max(@min(scanned, 4 * @as(u64, rows_most)), @max(4, rows_most)));
     const at_once_quarters = prefetch_table_quarters + row_quarters;
-    const scaler_cycles = if (fetch.scaled) scaling_delay_cycles else scaler_delay_cycles;
     const calculate = pixelsOf(24, deep_sleep_hz, pixel_hz);
-    const delay = pixelsOf(pipe_delay_cycles + scaler_cycles, pipes_hz, pixel_hz) + pixelsOf(display_delay_cycles, display_hz, pixel_hz);
-    const taken = (setup << fraction_bits) + pixelsOf(memory_wait_us, 1_000_000, pixel_hz) + calculate + delay;
+    const delay = pixelsOf(pipeCycles(fetch), pipes_hz, pixel_hz) + pixelsOf(display_delay_cycles, display_hz, pixel_hz);
+    const taken = (setup << fraction_bits) + pixelsOf(held.wait_ns, 1_000_000_000, pixel_hz) + calculate + delay;
     const line_fixed = h_total * fraction_one;
     var start: u32 = vstartup_least;
     var prefetch_quarters: u32 = 0;
@@ -682,6 +712,46 @@ pub fn writeSchedule(engine: dcn.Engine, fetcher: u32, schedule: *const Schedule
     }
 }
 
+/// The timing generator's global sync for the fetchers on it, as the
+/// vendor writes it for a group of pipes (program_global_sync with
+/// calculate_vready_offset_for_group): its start and its update's window
+/// from the picture's schedule, its ready the latest any of the
+/// fetchers' is; and whether they are ready after the vertical sync, by
+/// that latest ready.
+pub const Sync = struct {
+    vstartup: u32,
+    vupdate: u32,
+    vready: u32,
+    ready_after_sync: bool,
+};
+
+pub fn syncOf(timings: rtg.RtgTimings, picture: *const Schedule, others: []const Schedule) Sync {
+    var vready = picture.vready;
+    for (others) |one| vready = @max(vready, one.vready);
+    const lengths = lengthsOf(timings);
+    const setup: i64 = (picture.vupdate & 0xffff) + (picture.vupdate >> high_shift) + vready;
+    return .{
+        .vstartup = picture.vstartup,
+        .vupdate = picture.vupdate,
+        .vready = vready,
+        .ready_after_sync = setup <= (@as(i64, lengths.v_blank_end) - picture.vstartup) * @as(i64, lengths.h_total),
+    };
+}
+
+/// The timing generator of `pipe` told `sync`, and each of `fetchers`
+/// whether it is ready after the vertical sync: taken at the pipe's next
+/// update, so written under its update lock.
+pub fn writeSync(engine: dcn.Engine, pipe: u32, fetchers: []const u32, sync: Sync) void {
+    const base = pipe * otg_stride;
+    at(engine, base + otg_vstartup).* = sync.vstartup;
+    at(engine, base + otg_vupdate).* = sync.vupdate;
+    at(engine, base + otg_vready).* = sync.vready;
+    for (fetchers) |fetcher| {
+        const control = at(engine, fetcher * hubp_stride + hubp_control);
+        control.* = (control.* & ~hubp_ready_after_sync) | (if (sync.ready_after_sync) hubp_ready_after_sync else 0);
+    }
+}
+
 /// The lines before the picture timing generator `pipe` starts its
 /// fetchers at, as it runs.
 pub fn vstartupOf(engine: dcn.Engine, pipe: u32) u32 {
@@ -768,9 +838,10 @@ const own: rtg.RtgTimings = .{
     .flags = rtg.modes.RTGTM_HSYNC_HIGH,
 };
 
-/// The clocks at their top on the box, its frames' rows and the longest
-/// of the watermarks the firmware left.
-const top: Held = .{ .display_khz = 1_200_000, .pipes_khz = 1_200_000, .pitch = 2560, .watermark = 0x69C };
+/// The clocks at their top on the box, its frames' rows, the longest of
+/// the watermarks the firmware left, the deep-sleep clock of the picture
+/// alone and a wait of 32 us.
+const top: Held = .{ .display_khz = 1_200_000, .pipes_khz = 1_200_000, .pitch = 2560, .watermark = 0x69C, .deep_sleep_hz = 17_357_812, .wait_ns = 32_000 };
 
 test "the timing generator's registers are those the firmware wrote for its mode" {
     const mode = of(own, 2560, 1440, top) orelse return error.TestUnexpectedResult;
@@ -846,7 +917,7 @@ test "a mode whose prefetch is read faster than it is scanned" {
         .v_back = 36,
         .flags = rtg.modes.RTGTM_HSYNC_HIGH | rtg.modes.RTGTM_VSYNC_HIGH,
     };
-    const held: Held = .{ .display_khz = 1_200_000, .pipes_khz = 1_200_000, .pitch = 1920, .watermark = 0x69C };
+    const held: Held = .{ .display_khz = 1_200_000, .pipes_khz = 1_200_000, .pitch = 1920, .watermark = 0x69C, .deep_sleep_hz = 10_673_437, .wait_ns = 32_000 };
     const schedule = (of(cea, 1920, 1080, held) orelse return error.TestUnexpectedResult).schedule;
     try testing.expectEqual(@as(u32, 44), schedule.vstartup);
     try testing.expectEqual(@as(u32, 0x00CA0226), schedule.vupdate);

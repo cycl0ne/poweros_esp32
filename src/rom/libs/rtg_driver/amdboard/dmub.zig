@@ -157,6 +157,10 @@ const command_query_caps: u32 = 6;
 const command_aux: u32 = 70;
 const command_notify: u32 = 71;
 const command_bios_table: u32 = 128;
+/// The clock manager's commands, and the one that tells the controller the
+/// display's clocks.
+const command_clocks: u32 = 73;
+const clocks_notify: u32 = 0;
 const header_answer: u32 = 1 << 16;
 const header_table_shift = 8;
 const header_payload_shift = 24;
@@ -486,6 +490,24 @@ fn sendWithin(engine: dcn.Engine, controller: *Controller, command: *[16]u32, li
     const taken = waitFor(engine, done, limit_us);
     for (command, 0..) |*command_word, index| command_word.* = slot[index];
     return taken;
+}
+
+/// The controller told the clocks the display runs at, in kHz, as the
+/// vendor's clock manager tells it after each change of them: the display
+/// clock, the pipes' clock, the display controller's own and the least it
+/// falls to in deep sleep - the clocks' lowest levels and the most a
+/// bypass gives left unknown, 0, and the command's payload unsized, as the
+/// vendor sends it. Whether the controller took it: false where it does
+/// not run.
+pub fn notifyClocks(engine: dcn.Engine, controller: *Controller, display_khz: u32, pipes_khz: u32, controller_khz: u32, deep_sleep_khz: u32) bool {
+    if (!controller.running) return false;
+    var command: [16]u32 = @splat(0);
+    command[0] = command_clocks | clocks_notify << header_table_shift;
+    command[1] = display_khz;
+    command[2] = pipes_khz;
+    command[3] = controller_khz;
+    command[4] = deep_sleep_khz;
+    return send(engine, controller, &command);
 }
 
 /// The controller told to send its notifications.

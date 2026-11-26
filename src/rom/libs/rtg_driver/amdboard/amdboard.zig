@@ -53,19 +53,22 @@
 //! its place on the glass mirrored too. Its pipe's cursor is the pointer
 //! too, so the pointer stays above it. It goes down with the pipe - for
 //! a mode set, the monitor's sleep - and is lit again after; its schedule
-//! is worked out for its width at the display's clocks held at their
-//! top. Its connector - the one whose
+//! is worked out for its width on the glass at the display's clocks as
+//! they are set with it counted at its largest, so it moves with the
+//! clocks as they are. Its connector - the one whose
 //! PHY drives the lit link - is looked at by the library (`detect`,
 //! `monitor.zig`): whether its hot-plug line senses a monitor, and that
 //! monitor's EDID over its DDC line (`i2c.zig`). Of the timings the
 //! monitor names, `check_mode` takes the one the pipe scans and, once the
 //! display controller runs, every other the pipe can make (`mode.zig`):
 //! progressive, no larger than the frames, up to 340 MHz on HDMI and 165
-//! MHz on DVI. `show` with another mode sets it (`pipe.set`): the
-//! display's clocks held at their top first (`smu.holdTop`), the link
-//! HDMI where the monitor's EDID says it takes HDMI, with the mode's AVI
-//! infoframe, DVI otherwise; what the set did is kept for
-//! RTGCTRL_AMD_MODE.
+//! MHz on DVI - and at the clocks one of the power manager's states
+//! serves for its picture. `show` with another mode sets it
+//! (`pipe.set`): the display's clocks raised first where its picture
+//! needs them faster, the link HDMI where the monitor's EDID says it
+//! takes HDMI, with the mode's AVI infoframe, DVI otherwise, and the
+//! clocks lowered to what the picture needs once it runs; what the set
+//! did is kept for RTGCTRL_AMD_MODE.
 //!
 //! The pipe's update is the frame: through the device's interrupt ring,
 //! its server says it to the library (`FrameDone`), and a flip and
@@ -105,9 +108,26 @@
 //! audio driver has its sinks already and asks the codec what is at the
 //! far end of a link when a sink is started.
 //!
-//! The display's clocks are asked of the device's power manager through
-//! the display's own mailbox, and read from the engine (`smu.zig`) - on
-//! request only, through the board's controls (RTGCTRL_AMD_*).
+//! The display's clocks are set for what its pipes read (`bandwidth.zig`,
+//! `clocks.zig`): the vendor's model of the engine's bandwidth works out,
+//! for the picture and each plane lit beside it - the picture counted in
+//! the frames' rows, a buffer read in place of a frame as well, the
+//! overlay at its largest - the display clock, the pipes' clock and each
+//! pipe's share of it, the controller's clock in deep sleep, and the
+//! lowest of the power manager's states whose controller and fabric
+//! clocks and memory return what the pipes read, the memory as the video
+//! BIOS names it. They are asked of the power manager through the
+//! display's own mailbox (`smu.zig`) before a change, where one goes up,
+//! and once the pipes have taken it, where one goes down; each pipe's
+//! divider of the pipes' clock is set in the engine, and the display
+//! controller is told them. Each lit pipe's schedule is worked out at
+//! them, and the other pipes' anew where they change, with the timing
+//! generator's global sync, at one update; the fetchers' time to urgency
+//! in a blank starts from the hub's watermarks as the firmware wrote
+//! them. A mode or a plane no state serves is refused. The clocks, the
+//! states, what was asked and the manager's readings are read through
+//! the board's controls (RTGCTRL_AMD_CLOCKS), which ask the manager
+//! nothing else.
 //!
 //! The display controller - the engine's own processor - is started with
 //! its firmware as the board is made, before the library first looks at
@@ -191,11 +211,13 @@ const mode = @import("mode.zig");
 const gart = @import("gart.zig");
 const video = @import("video.zig");
 const coefficients = @import("coefficients.zig");
+const bandwidth = @import("bandwidth.zig");
+const clocks = @import("clocks.zig");
 
 const MODULE_NAME = "rtg-amd";
 const DRIVER_NAME = "amd";
 const VERSION = 1;
-const REVISION = 22;
+const REVISION = 23;
 const BUILD_DATE = "26.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -297,10 +319,26 @@ const Screen = struct {
     pipe_lock: exec.SignalSemaphore = .{},
     /// What the last mode set did.
     last_set: rtg.tags.RtgAmdPipe = .{},
-    /// The top of the display clock's and the pipes' clock's levels, in
-    /// kHz, once read: what a mode is worked out at.
-    top_display_khz: u32 = 0,
-    top_pipes_khz: u32 = 0,
+    /// The display's clocks as what its pipes read asks (`raiseTo`,
+    /// `lowerDue`): what they are worked out from, read once, under
+    /// `smu_lock`; and under `pipe_lock` what each pipe reads, by its
+    /// number - null for one that reads nothing - the demand they were
+    /// last set for, what the power manager and the pipes' dividers were
+    /// told, whether the other pipes' schedules are to be worked out anew
+    /// and the clocks lowered once the pipes have taken a change, whether
+    /// a mode set makes the change - its drops only counted - whether the
+    /// display controller still waits to be told them, and what the log
+    /// has said.
+    facts: ?bandwidth.Facts = null,
+    reading: [pipe_count]?Reading = @splat(null),
+    fitted: ?Fitted = null,
+    told: clocks.Told = .{},
+    rewrite_due: bool = false,
+    lower_due: bool = false,
+    setting_mode: bool = false,
+    notify_due: bool = false,
+    fit_refused: bool = false,
+    refusal_said: u32 = 0,
     /// The pointer as the pipe's cursor: the device's memory of its two
     /// images, null on a board whose library lays the pointer; which of
     /// them the cursor was last told to read; what it was told; and the
@@ -335,11 +373,6 @@ const Screen = struct {
     /// Under `pipe_lock`.
     turn_x: bool = false,
     turn_y: bool = false,
-    /// The display clock and the pipes' clock once held at their top -
-    /// by a mode set, or for a plane - as they then run, in kHz: what a
-    /// plane is worked out at. 0 before.
-    held_display_khz: u32 = 0,
-    held_pipes_khz: u32 = 0,
     /// The bands the display reads itself (`showBands`): each one's pipe
     /// - the picture's own fetcher for the first that shows anything, a
     /// plane for each after it - and its place; how many; and the bands
@@ -638,12 +671,15 @@ fn showBands(screen: *Screen, bands: []const rtg.RtgBand) i32 {
     }
     if (count == 0) return refused;
 
-    // The pipes: the planes the bands had first, free ones after; and
-    // each plane's schedule for its width.
+    // The pipes: the planes the bands had first, free ones after; what
+    // each reads counted, the planes the bands no longer need not; and
+    // each plane's schedule for its width at the clocks that serves.
     var fresh: [pipe_count]bool = @splat(false);
     var taken: [pipe_count]u32 = undefined;
     var schedules: [pipe_count]mode.Schedule = undefined;
     const vstartup = mode.vstartupOf(engine, engine.pipe);
+    var next = screen.reading;
+    for (screen.band_planes[1..@max(screen.band_count, 1)]) |old| next[old.index] = null;
     for (1..count) |i| {
         if (i < screen.band_count) {
             wanted[i].index = screen.band_planes[i].index;
@@ -653,9 +689,14 @@ fn showBands(screen: *Screen, bands: []const rtg.RtgBand) i32 {
         }
         taken[i - 1] = wanted[i].index;
         const place = &wanted[i].band.place;
-        const held = planeHeld(screen, place.pitch) orelse return refused;
-        schedules[i] = mode.planeSchedule(screen.timings, place.width, held, vstartup) orelse return refused;
+        next[wanted[i].index] = readingOf(mode.pictureFetch(place.width, place.pitch));
     }
+    const fitted = demandFor(screen, screen.timings, vstartup, &next) orelse return refused;
+    for (1..count) |i| {
+        const held = fitted.heldOf(engine, wanted[i].index) orelse return refused;
+        schedules[i] = mode.fetchSchedule(screen.timings, next[wanted[i].index].?.fetch, held, vstartup) orelse return refused;
+    }
+    raiseTo(screen, fitted, next);
 
     const output = mode.outputOf(engine, engine.pipe);
     for (1..count) |i| {
@@ -680,6 +721,7 @@ fn showBands(screen: *Screen, bands: []const rtg.RtgBand) i32 {
     const kept: usize = @max(screen.band_count, 1);
     for (screen.band_planes[@min(count, kept)..kept]) |old| plane.release(engine, old.index);
     bandCursors(screen, cursors[0..count]);
+    writeOthers(screen, taken[0 .. count - 1]);
     plane.unlock(engine, engine.pipe);
     for (screen.band_planes[@min(count, kept)..kept]) |old| plane.shut(engine, old.index);
 
@@ -700,7 +742,8 @@ fn showBands(screen: *Screen, bands: []const rtg.RtgBand) i32 {
         dropBands(screen);
         return refused;
     }
-    // Taken at the pipe's next update, as a flip.
+    // Taken at the pipe's next update, as a flip; the clocks lowered
+    // after it, where the bands need them slower.
     screen.updates +%= 1;
     pace(screen, 1);
     var looks: u32 = 0;
@@ -711,6 +754,7 @@ fn showBands(screen: *Screen, bands: []const rtg.RtgBand) i32 {
         }
         pace(screen, 1);
     }
+    lowerDue(screen, true);
     return err.RTGERR_OK;
 }
 
@@ -766,9 +810,12 @@ fn bandCursors(screen: *Screen, over: []const CursorPlane) void {
 /// The display back on a whole picture from the bands it read: the
 /// frame or buffer at the device's `address`, its rows `pitch` bytes
 /// apart, read by the picture's fetcher with all of the picture as its
-/// place, unscaled; the bands' planes out of the blender's tree and the
-/// cursor laid by the picture's fetcher alone, at one update - or, `now`,
-/// the address at once; then the planes taken down. Holding `pipe_lock`.
+/// place, unscaled; the bands' planes out of the blender's tree, the
+/// cursor laid by the picture's fetcher alone and the other pipes'
+/// schedules for what is left, at one update - or, `now`, the address at
+/// once; then the planes taken down. The clocks are lowered for what is
+/// left once the pipe has taken it (`lowerDue`), by the caller. Holding
+/// `pipe_lock`.
 fn leaveBands(screen: *Screen, address: u64, pitch: u32, now: bool) void {
     const engine = screen.dcn;
     const output = mode.outputOf(engine, engine.pipe);
@@ -790,12 +837,25 @@ fn leaveBands(screen: *Screen, address: u64, pitch: u32, now: bool) void {
             over_picture = &film_over;
         }
     }
+    // What is left counted, the clocks raised for it where they go up,
+    // and the other pipes' schedules worked out anew at the same update;
+    // lowered once it is taken.
+    var next = screen.reading;
+    for (planes) |one| next[one.index] = null;
+    if (screen.setting_mode) {
+        screen.reading = next;
+    } else if (demandFor(screen, screen.timings, mode.vstartupOf(engine, engine.pipe), &next)) |fitted| {
+        raiseTo(screen, fitted, next);
+    } else {
+        screen.reading = next;
+    }
     plane.lock(engine, engine.pipe);
     plane.writePlace(engine, engine.fetcher, &whole);
     dcn.flip(engine, address, now);
     plane.stack(engine, output, screen.overlay_pipe, over_picture, engine.fetcher);
     for (planes) |one| plane.release(engine, one.index);
     bandCursors(screen, &.{});
+    writeOthers(screen, &.{});
     plane.unlock(engine, engine.pipe);
     for (planes) |one| plane.shut(engine, one.index);
     screen.band_count = 0;
@@ -811,6 +871,7 @@ fn dropBands(screen: *Screen) void {
     leaveBands(screen, screen.dcn.surface, screen.fb.pitch, false);
     screen.flip_wanted = screen.dcn.surface;
     screen.scanning = screen.fb.pixels;
+    if (!screen.setting_mode) lowerDue(screen, false);
 }
 
 /// The display told to read `frame` from its next frame on: one of the
@@ -868,6 +929,8 @@ fn flipAmd(screen: *Screen, frame: *const rtg.RtgBitMap) i32 {
         }
         pace(screen, 1);
     }
+    // Bands the flip left: the clocks lowered for what is left.
+    lowerDue(screen, true);
     return rtg.boards.RTGFLIP_TAKEN;
 }
 
@@ -884,6 +947,7 @@ fn giveUpFlipping(screen: *Screen) void {
     tell(screen, found.surface, screen.fb.pitch, true);
     exec.kprintf(screen.sys, "%s: the display did not take the flip to 0x%lx, so the picture goes into the firmware's framebuffer again\n", .{ MODULE_NAME, screen.flip_wanted });
     screen.scanning = screen.fb.pixels;
+    lowerDue(screen, false);
 }
 
 /// The AMD display's two frames, for rtg.library to make its pictures
@@ -1261,9 +1325,11 @@ fn showOp(board: *rtg.RtgBoard, what: *const rtg.RtgShow) callconv(.c) i32 {
         writeCursor(screen);
         screen.sys.ReleaseSemaphore(&screen.cursor_lock);
     }
-    // The overlay's plane and the film's worked out for the mode, and lit
-    // again where a set took them down.
+    // The display's clocks set for the mode's picture and what else the
+    // pipes read; the overlay's plane and the film's worked out for the
+    // mode, and lit again where a set took them down.
     screen.sys.ObtainSemaphore(&screen.pipe_lock);
+    fitPicture(screen);
     if (screen.overlay_memory != null) showOverlay(screen);
     _ = showFilm(screen, false);
     screen.sys.ReleaseSemaphore(&screen.pipe_lock);
@@ -1479,12 +1545,19 @@ fn showOverlay(screen: *Screen) void {
     var where = plane.placeOf(screen.overlay_left, screen.overlay_top, one.width, one.height, screen.width, screen.height, screen.turn_x, screen.turn_y) orelse return dropOverlay(screen);
     where.address = memory.device + @as(u64, screen.overlay_turn) * overlay_image_bytes;
     where.pitch = overlay_pitch;
-    const held = planeHeld(screen, overlay_pitch) orelse return dropOverlay(screen);
-    const schedule = mode.planeSchedule(screen.timings, where.width, held, mode.vstartupOf(engine, engine.pipe)) orelse return dropOverlay(screen);
+    // Read where it is on the glass; counted at its largest.
+    const shown: Reading = .{
+        .fetch = mode.pictureFetch(where.width, overlay_pitch),
+        .counted = mode.pictureFetch(rtg.boards.RTG_OVERLAY_MAX, overlay_pitch),
+    };
+    const vstartup = mode.vstartupOf(engine, engine.pipe);
     const view: cursor.View = .{ .x = where.view_x, .y = where.view_y, .width = where.width, .height = where.height };
     const left = screen.overlay_left + @as(i32, @intCast(where.view_x));
     const top = screen.overlay_top + @as(i32, @intCast(where.view_y));
     if (screen.overlay_pipe) |index| {
+        screen.reading[index] = shown;
+        const held = heldFor(screen, index) orelse return dropOverlay(screen);
+        const schedule = mode.fetchSchedule(screen.timings, shown.fetch, held, vstartup) orelse return dropOverlay(screen);
         plane.move(engine, index, engine.pipe, &schedule, &where);
         planeCursor(screen, .{ .index = index, .view = view, .left = left, .top = top });
         return;
@@ -1494,16 +1567,31 @@ fn showOverlay(screen: *Screen) void {
         screen.overlay_refused = true;
         return;
     };
+    // The clocks raised for the overlay as well before it is lit, the
+    // other pipes worked out anew after, the clocks lowered once taken.
+    var next = screen.reading;
+    next[index] = shown;
+    const fitted = demandFor(screen, screen.timings, vstartup, &next) orelse {
+        if (!screen.overlay_refused) exec.kprintf(screen.sys, "%s: the display's clocks cannot serve the overlay as well, which is not shown\n", .{MODULE_NAME});
+        screen.overlay_refused = true;
+        return;
+    };
+    const held = fitted.heldOf(engine, index) orelse return;
+    const schedule = mode.fetchSchedule(screen.timings, shown.fetch, held, vstartup) orelse return;
+    raiseTo(screen, fitted, next);
     const output = mode.outputOf(engine, engine.pipe);
     if (!plane.light(engine, index, engine.pipe, output, engine.fetcher, screen.width | screen.height << 16, &schedule, &where)) {
         plane.darken(engine, index, engine.pipe, output);
         if (!screen.overlay_refused) exec.kprintf(screen.sys, "%s: the hub gave pipe %d no buffer, so the overlay is not shown\n", .{ MODULE_NAME, index });
         screen.overlay_refused = true;
+        fitWithout(screen, index, true);
         return;
     }
     screen.overlay_pipe = index;
     screen.overlay_refused = false;
+    rewriteOthers(screen, &.{index});
     planeCursor(screen, .{ .index = index, .view = view, .left = left, .top = top });
+    lowerDue(screen, false);
 }
 
 /// The cursor laid over the overlay's plane `over` as well from now on,
@@ -1522,13 +1610,15 @@ fn planeCursor(screen: *Screen, over: ?CursorPlane) void {
     writeCursor(screen);
 }
 
-/// The overlay's plane taken down, where it is lit. Holding `pipe_lock`.
+/// The overlay's plane taken down, where it is lit, and the clocks set
+/// for what is left (`fitWithout`). Holding `pipe_lock`.
 fn dropOverlay(screen: *Screen) void {
     const index = screen.overlay_pipe orelse return;
     const engine = screen.dcn;
     planeCursor(screen, null);
     plane.darken(engine, index, engine.pipe, mode.outputOf(engine, engine.pipe));
     screen.overlay_pipe = null;
+    fitWithout(screen, index, true);
 }
 
 /// The first pipe free for a plane, other than the picture's.
@@ -1551,28 +1641,344 @@ fn freePipeBut(engine: dcn.Engine, taken: []const u32) ?u32 {
     return null;
 }
 
-/// What a plane is worked out at: the display's clocks held at their
-/// top - the first time, one asker at a time at the mailbox, as a mode
-/// set holds them - as they then run, the hub's watermarks and its
-/// surface's rows, `pitch` pixels apart; at the top of the clocks'
-/// levels where they cannot be held. Null where neither can be read.
-fn planeHeld(screen: *Screen, pitch: u32) ?mode.Held {
-    if (screen.held_display_khz == 0) {
-        screen.sys.ObtainSemaphore(&screen.smu_lock);
-        var clocks: rtg.tags.RtgAmdClocks = .{};
-        const hold = smu.holdTop(screen.dcn, screen.smu, &clocks);
-        screen.sys.ReleaseSemaphore(&screen.smu_lock);
-        if (hold == err.RTGERR_OK and clocks.disp_khz != 0 and clocks.dpp_khz != 0) {
-            screen.held_display_khz = clocks.disp_khz;
-            screen.held_pipes_khz = clocks.dpp_khz;
-        }
+// --- the display's clocks, as what the pipes read asks ----------------------------
+
+/// What a lit pipe reads, for the display's clocks: what its schedule is
+/// worked out for, and what the clocks are worked out for - the same but
+/// for the overlay, which is counted at its largest, so that it moves on
+/// the glass with the clocks as they are.
+const Reading = struct {
+    fetch: mode.Fetch,
+    counted: mode.Fetch,
+};
+
+fn readingOf(fetch: mode.Fetch) Reading {
+    return .{ .fetch = fetch, .counted = fetch };
+}
+
+/// A demand of the model's (`bandwidth.Demand`) with what it was worked
+/// out from: the timings, the timing generator's start - null for a mode
+/// about to be set, whose start is worked out - and each plane with the
+/// pipe that reads it, in the pipes' order.
+const Fitted = struct {
+    demand: bandwidth.Demand = .{},
+    timings: rtg.RtgTimings,
+    vstartup: ?u32,
+    planes: [pipe_count]bandwidth.Plane = undefined,
+    pipes: [pipe_count]u32 = undefined,
+    count: u32 = 0,
+
+    fn load(fitted: *const Fitted) bandwidth.Load {
+        return .{ .timings = fitted.timings, .vstartup = fitted.vstartup, .planes = fitted.planes[0..fitted.count] };
     }
-    var held = if (screen.held_display_khz != 0)
-        mode.heldOf(screen.dcn, screen.dcn.fetcher, screen.held_display_khz, screen.held_pipes_khz)
-    else
-        topHeld(screen) orelse return null;
-    held.pitch = pitch;
-    return held;
+
+    /// What pipe `index`'s schedule is worked out at: its share of the
+    /// pipes' clock, the controller's deep sleep, the memory's wait, and
+    /// its time to urgency in a blank from the hub's watermarks as the hub
+    /// runs on them (`mode.hubWatermark`). Null for a pipe it has no plane
+    /// of.
+    fn heldOf(fitted: *const Fitted, engine: dcn.Engine, index: u32) ?mode.Held {
+        for (fitted.pipes[0..fitted.count], 0..) |pipe_index, plane_index| {
+            if (pipe_index != index) continue;
+            var held = bandwidth.heldOf(fitted.load(), plane_index, fitted.demand.clocks, @as(u64, fitted.demand.wait_ns) * 1000, fitted.demand.blankPs());
+            held.watermark = mode.hubWatermark(engine);
+            return held;
+        }
+        return null;
+    }
+};
+
+/// The least of the hub's buffer a plane is counted with: one segment,
+/// where the picture's share reads none.
+const smallest_buffer: u32 = 64 * 1024;
+
+/// The frames' rows, in pixels: what the picture's fetcher is counted as
+/// reading in, a buffer read in place of a frame too.
+fn framesPitch(screen: *const Screen) u32 {
+    return screen.fb.pitch / screen.bytes;
+}
+
+/// What the display's clocks are worked out from, read once - one asker
+/// at a time at the mailbox: the power manager's states and the clocks'
+/// tops (`smu.clocks`), the PLL the display's clocks are divided from,
+/// and the memory the video BIOS names. Null where the manager's table or
+/// the PLL cannot be read, read again the next time.
+fn factsOf(screen: *Screen) ?bandwidth.Facts {
+    screen.sys.ObtainSemaphore(&screen.smu_lock);
+    defer screen.sys.ReleaseSemaphore(&screen.smu_lock);
+    if (screen.facts) |known| return known;
+    var table: rtg.tags.RtgAmdClocks = .{};
+    if (smu.clocks(screen.dcn, screen.smu, &table) != err.RTGERR_OK) return null;
+    if (table.disp_count == 0 or table.fabric_count == 0 or table.pll_khz == 0) return null;
+    var facts: bandwidth.Facts = .{
+        .display_most_khz = smu.top(table.disp_mhz[0..table.disp_count]) * 1000,
+        .pipes_most_khz = smu.top(table.dpp_mhz[0..table.disp_count]) * 1000,
+        .pll_khz = table.pll_khz,
+        .memory = biosMemory(screen.dcn),
+    };
+    var fabric: [rtg.tags.RTG_AMD_FABRIC_STATES]bandwidth.Fabric = undefined;
+    const states = @min(table.fabric_count, rtg.tags.RTG_AMD_FABRIC_STATES);
+    for (fabric[0..states], 0..) |*state, index| state.* = .{
+        .fabric_mhz = table.fabric_mhz[index],
+        .memory_mhz = table.memory_mhz[index],
+        .voltage = table.fabric_voltage[index],
+        .ratio = @intCast(table.fabric_ratio[index] & 0xff),
+    };
+    bandwidth.levelsOf(&facts, &table.dcf_mhz, table.dcf_count, &table.soc_voltage, fabric[0..states]);
+    if (facts.count == 0) return null;
+    screen.facts = facts;
+    const top = facts.levels[facts.count - 1];
+    exec.kprintf(screen.sys, "%s: the display's clocks worked out for %d of the power manager's states, up to %d MHz in the controller, %d MHz in the fabric and %d MT/s of %d channels of %d bytes\n", .{
+        MODULE_NAME,
+        facts.count,
+        top.controller_khz / 1000,
+        top.fabric_khz / 1000,
+        top.memory_mts,
+        facts.memory.channels,
+        facts.memory.channel_bytes,
+    });
+    return facts;
+}
+
+/// The memory the video BIOS names (`bandwidth.memoryOfBios`); the
+/// vendor's default where the BIOS cannot be had.
+fn biosMemory(engine: dcn.Engine) bandwidth.Memory {
+    var found: sdk.resources.amdgpu.GPUBios = .{};
+    if (!engine.gpu.GetGPUBios(&found)) return bandwidth.memoryOf(0, 0);
+    const image = found.image orelse return bandwidth.memoryOf(0, 0);
+    return bandwidth.memoryOfBios(image[0..found.bytes]);
+}
+
+/// The demand of the pipes reading `reading` at `timings` from the timing
+/// generator's start `vstartup` (`bandwidth.demandOf`), each plane with
+/// the share of the hub's buffer the picture's fetcher has, which a plane
+/// is given as it is lit: null where the facts cannot be read or no state
+/// of the power manager serves it.
+fn demandFor(screen: *Screen, timings: rtg.RtgTimings, vstartup: ?u32, reading: *const [pipe_count]?Reading) ?Fitted {
+    const facts = factsOf(screen) orelse return null;
+    const buffer = @max(plane.bufferBytes(screen.dcn, screen.dcn.fetcher), smallest_buffer);
+    var fitted: Fitted = .{ .timings = timings, .vstartup = vstartup };
+    for (reading, 0..) |maybe, index| {
+        const one = maybe orelse continue;
+        fitted.planes[fitted.count] = .{ .fetch = one.counted, .buffer_bytes = buffer };
+        fitted.pipes[fitted.count] = @intCast(index);
+        fitted.count += 1;
+    }
+    fitted.demand = bandwidth.demandOf(&facts, fitted.load()) orelse return null;
+    return fitted;
+}
+
+/// Whether two demands set the same clocks and the same schedules: the
+/// same pipes at the same shares, the same clocks, state, wait and blank.
+fn sameFit(was: *const Fitted, now: *const Fitted) bool {
+    if (was.count != now.count) return false;
+    for (0..now.count) |index| {
+        if (was.pipes[index] != now.pipes[index]) return false;
+        if (was.demand.clocks.pipe_khz[index] != now.demand.clocks.pipe_khz[index]) return false;
+    }
+    const before = &was.demand;
+    const after = &now.demand;
+    return before.clocks.display_khz == after.clocks.display_khz and
+        before.clocks.pipes_khz == after.clocks.pipes_khz and
+        before.clocks.deep_sleep_hz == after.clocks.deep_sleep_hz and
+        before.level == after.level and
+        before.controller_khz == after.controller_khz and
+        before.prefetch_mode == after.prefetch_mode and
+        before.wait_ns == after.wait_ns and
+        before.blankPs() == after.blankPs();
+}
+
+/// The controller clock's first four states, in MHz: what the watermark
+/// sets the manager picks by it are bounded by.
+fn firstLevels(facts: *const bandwidth.Facts) [4]u32 {
+    var levels: [4]u32 = undefined;
+    for (&levels, 0..) |*level, index| level.* = facts.levels[@min(index, facts.count - 1)].controller_khz / 1000;
+    return levels;
+}
+
+/// The display's clocks raised for `fitted` before a change makes the
+/// pipes read what it counts - `next`, by pipe - where they go up
+/// (`clocks.raise`): the first time from what runs, after the manager is
+/// told the display is in use and handed the watermark sets. The demand
+/// kept, and where it changed the other pipes' schedules and the clocks'
+/// lowering left due. Holding `pipe_lock`.
+fn raiseTo(screen: *Screen, fitted: Fitted, next: [pipe_count]?Reading) void {
+    screen.reading = next;
+    const changed = if (screen.fitted) |*was| !sameFit(was, &fitted) else true;
+    screen.fitted = fitted;
+    if (!changed) {
+        if (screen.notify_due) notifyClocks(screen);
+        return;
+    }
+    screen.rewrite_due = true;
+    screen.lower_due = true;
+    const engine = screen.dcn;
+    const kept = &screen.fitted.?;
+    const asked = clocks.askedOf(&kept.demand, kept.pipes[0..kept.count]);
+    screen.sys.ObtainSemaphore(&screen.smu_lock);
+    clocks.startFrom(engine, screen.smu, &screen.told);
+    const levels = firstLevels(&screen.facts.?);
+    clocks.raise(engine, screen.smu, &screen.told, asked, levels);
+    screen.sys.ReleaseSemaphore(&screen.smu_lock);
+    sayRefused(screen);
+    notifyClocks(screen);
+}
+
+/// The display's clocks lowered to the demand they were raised for, once
+/// the pipes have taken the change - a frame waited for, unless `waited`
+/// says the caller has - where a change left them to be (`clocks.lower`):
+/// every pipe's divider written too. Holding `pipe_lock`.
+fn lowerDue(screen: *Screen, waited: bool) void {
+    if (!screen.lower_due) return;
+    screen.lower_due = false;
+    const fitted = if (screen.fitted) |*one| one else return;
+    if (!waited) pace(screen, 1);
+    const asked = clocks.askedOf(&fitted.demand, fitted.pipes[0..fitted.count]);
+    screen.sys.ObtainSemaphore(&screen.smu_lock);
+    clocks.lower(screen.dcn, screen.smu, &screen.told, asked);
+    screen.sys.ReleaseSemaphore(&screen.smu_lock);
+    sayRefused(screen);
+    notifyClocks(screen);
+}
+
+/// The display controller told the clocks the manager was last asked for
+/// (`dmub.notifyClocks`), as the vendor's clock manager tells it after
+/// each change: where the controller's lock can be had without waiting -
+/// a mode set and a sleep hold it already - else at the next change.
+/// Holding `pipe_lock`.
+fn notifyClocks(screen: *Screen) void {
+    if (!screen.controller.running) {
+        screen.notify_due = false;
+        return;
+    }
+    if (!screen.sys.AttemptSemaphore(&screen.controller_lock)) {
+        screen.notify_due = true;
+        return;
+    }
+    defer screen.sys.ReleaseSemaphore(&screen.controller_lock);
+    const told = &screen.told;
+    screen.notify_due = !dmub.notifyClocks(screen.dcn, &screen.controller, told.display_khz, told.pipes_khz, told.controller_khz, told.deep_sleep_khz);
+}
+
+/// A message the power manager refused or did not answer, said on the log
+/// once.
+fn sayRefused(screen: *Screen) void {
+    const refused = screen.told.refused;
+    if (refused == 0 or refused == screen.refusal_said) return;
+    screen.refusal_said = refused;
+    exec.kprintf(screen.sys, "%s: the power manager did not take message 0x%x for the display's clocks\n", .{ MODULE_NAME, refused });
+}
+
+/// Every lit pipe's schedule but those `made`, which the change wrote,
+/// worked out anew for the demand the clocks were raised for, where it
+/// changed, and the timing generator's global sync for all of them
+/// (`mode.syncOf`). Holding `pipe_lock` and the timing generator's
+/// update lock, so the pipe takes it with the change.
+fn writeOthers(screen: *Screen, made: []const u32) void {
+    if (!screen.rewrite_due or screen.setting_mode) return;
+    screen.rewrite_due = false;
+    const fitted = if (screen.fitted) |*one| one else return;
+    const engine = screen.dcn;
+    const vstartup = mode.vstartupOf(engine, engine.pipe);
+    var schedules: [pipe_count]mode.Schedule = undefined;
+    var lit: [pipe_count]u32 = undefined;
+    var count: usize = 0;
+    var picture: ?usize = null;
+    for (screen.reading, 0..) |maybe, index| {
+        const one = maybe orelse continue;
+        const pipe_index: u32 = @intCast(index);
+        const held = fitted.heldOf(engine, pipe_index) orelse continue;
+        schedules[count] = mode.fetchSchedule(fitted.timings, one.fetch, held, vstartup) orelse continue;
+        if (pipe_index == engine.fetcher) picture = count;
+        lit[count] = pipe_index;
+        count += 1;
+    }
+    const whole = picture orelse return;
+    next: for (lit[0..count], schedules[0..count]) |pipe_index, *schedule| {
+        for (made) |one| {
+            if (one == pipe_index) continue :next;
+        }
+        mode.writeSchedule(engine, pipe_index, schedule);
+    }
+    mode.writeSync(engine, engine.pipe, lit[0..count], mode.syncOf(fitted.timings, &schedules[whole], schedules[0..count]));
+}
+
+/// `writeOthers` at the pipe's next update, under the timing generator's
+/// update lock of its own: after a change whose lock is its plane's.
+/// Holding `pipe_lock`.
+fn rewriteOthers(screen: *Screen, made: []const u32) void {
+    if (!screen.rewrite_due or screen.setting_mode) return;
+    const engine = screen.dcn;
+    plane.lock(engine, engine.pipe);
+    writeOthers(screen, made);
+    plane.unlock(engine, engine.pipe);
+}
+
+/// What pipe `index` is worked out at for the demand the clocks are set
+/// for: null where they are set for none it is in.
+fn heldFor(screen: *const Screen, index: u32) ?mode.Held {
+    const fitted = if (screen.fitted) |*one| one else return null;
+    return fitted.heldOf(screen.dcn, index);
+}
+
+/// What pipe `index` read no longer counted, once it reads nothing: the
+/// clocks raised for what is left where they go up, the other pipes'
+/// schedules worked out anew, and - `lower_now` - the clocks lowered once
+/// the pipes have taken it, a frame waited for; a mode set only counts
+/// it, and makes its own change. Holding `pipe_lock`.
+fn fitWithout(screen: *Screen, index: u32, lower_now: bool) void {
+    var next = screen.reading;
+    next[index] = null;
+    if (screen.setting_mode) {
+        screen.reading = next;
+        return;
+    }
+    const engine = screen.dcn;
+    const fitted = demandFor(screen, screen.timings, mode.vstartupOf(engine, engine.pipe), &next) orelse {
+        // What is left runs at the clocks as they are.
+        screen.reading = next;
+        return;
+    };
+    raiseTo(screen, fitted, next);
+    rewriteOthers(screen, &.{});
+    if (lower_now) lowerDue(screen, false);
+}
+
+/// The picture's fetcher counted as reading the mode's whole picture in
+/// the frames' rows, and the display's clocks set for it and for what
+/// the planes read: at each show of a mode. Holding `pipe_lock`; nothing
+/// while the monitor sleeps.
+fn fitPicture(screen: *Screen) void {
+    if (screen.asleep) return;
+    const engine = screen.dcn;
+    var next = screen.reading;
+    next[engine.fetcher] = readingOf(mode.pictureFetch(screen.timings.h_active, framesPitch(screen)));
+    const fitted = demandFor(screen, screen.timings, mode.vstartupOf(engine, engine.pipe), &next) orelse {
+        if (!screen.fit_refused) exec.kprintf(screen.sys, "%s: the display's clocks could not be worked out for %dx%d, so they stay as they run\n", .{ MODULE_NAME, screen.timings.h_active, screen.timings.v_active });
+        screen.fit_refused = true;
+        return;
+    };
+    screen.fit_refused = false;
+    const first = !screen.told.started;
+    raiseTo(screen, fitted, next);
+    rewriteOthers(screen, &.{});
+    lowerDue(screen, false);
+    if (first) sayClocks(screen, "worked out for the picture");
+}
+
+/// The clocks the manager was last asked for, said on the log.
+fn sayClocks(screen: *const Screen, what: [*:0]const u8) void {
+    const told = &screen.told;
+    const level = if (screen.fitted) |one| one.demand.level else 0;
+    exec.kprintf(screen.sys, "%s: the display's clocks %s: display %d kHz, pipes %d kHz, the controller at least %d kHz and %d kHz in deep sleep, state %d\n", .{
+        MODULE_NAME,
+        what,
+        told.display_khz,
+        told.pipes_khz,
+        told.controller_khz,
+        told.deep_sleep_khz,
+        level,
+    });
 }
 
 // --- the video layer, a film's plane ----------------------------------------------
@@ -1811,15 +2217,34 @@ fn showFilm(screen: *Screen, wait: bool) i32 {
         .luma = .{ .width = across.size, .surface = luma_x + right, .pitch = one.y_pitch, .bytes = 1, .h_ratio = across.ratio, .v_ratio = down.ratio, .h_taps = across.taps, .v_taps = down.taps },
         .chroma = .{ .width = across.size_c, .surface = chroma_x + (right + 1) / 2, .pitch = one.c_pitch / 2, .bytes = 2, .h_ratio = across.ratio_c, .v_ratio = down.ratio_c, .h_taps = across.taps_c, .v_taps = down.taps_c },
         .scaled = true,
+        .cursor = false,
     };
-    const held = planeHeld(screen, one.y_pitch) orelse {
+    // Its pipe: the one it is lit on, else a free one.
+    const index = screen.film_pipe orelse freePipe(engine) orelse {
+        if (!screen.film_refused) exec.kprintf(screen.sys, "%s: no pipe is free for the film, which is not shown\n", .{MODULE_NAME});
+        screen.film_refused = true;
+        return refused;
+    };
+    // The clocks raised for what it reads before it is lit or moved, the
+    // other pipes worked out anew after, the clocks lowered once taken.
+    const vstartup = mode.vstartupOf(engine, engine.pipe);
+    var next = screen.reading;
+    next[index] = readingOf(fetch);
+    const fitted = demandFor(screen, screen.timings, vstartup, &next) orelse {
+        if (!screen.film_refused) exec.kprintf(screen.sys, "%s: the display's clocks cannot serve the film as well, which is not shown\n", .{MODULE_NAME});
+        screen.film_refused = true;
         dropFilm(screen);
         return refused;
     };
-    const schedule = mode.fetchSchedule(screen.timings, fetch, held, mode.vstartupOf(engine, engine.pipe)) orelse {
+    const held = fitted.heldOf(engine, index) orelse {
         dropFilm(screen);
         return refused;
     };
+    const schedule = mode.fetchSchedule(screen.timings, fetch, held, vstartup) orelse {
+        dropFilm(screen);
+        return refused;
+    };
+    raiseTo(screen, fitted, next);
     const film: plane.Film = .{
         .luma = addresses[0],
         .chroma = addresses[1],
@@ -1832,30 +2257,28 @@ fn showFilm(screen: *Screen, wait: bool) i32 {
         .mirror_y = screen.turn_y,
     };
     const matrix = coefficients.matrixOf(one.matrix == rtg.bitmaps.RTGYUV_BT709, one.range != rtg.bitmaps.RTGYUV_FULL);
-    const index = if (screen.film_pipe) |lit| lit: {
+    if (screen.film_pipe) |lit| {
         plane.moveFilm(engine, lit, engine.pipe, &schedule, &film, if (screen.film_matrix != matrix) matrix else null, &screen.film_filters);
-        break :lit lit;
-    } else lit: {
-        const free = freePipe(engine) orelse {
-            if (!screen.film_refused) exec.kprintf(screen.sys, "%s: no pipe is free for the film, which is not shown\n", .{MODULE_NAME});
-            screen.film_refused = true;
-            return refused;
-        };
-        gart.reach(engine, free);
+    } else {
+        gart.reach(engine, index);
         const output = mode.outputOf(engine, engine.pipe);
-        if (!plane.lightFilm(engine, free, engine.pipe, output, engine.fetcher, screen.width | screen.height << 16, &schedule, &film, matrix, &screen.film_filters, screen.film_layer, &video_keyed, &screen.film_unkeyed)) {
-            plane.darkenFilm(engine, free, engine.pipe, output, engine.fetcher, screen.film_layer, screen.film_unkeyed);
-            if (!screen.film_refused) exec.kprintf(screen.sys, "%s: the hub gave pipe %d no buffer, so the film is not shown\n", .{ MODULE_NAME, free });
+        if (!plane.lightFilm(engine, index, engine.pipe, output, engine.fetcher, screen.width | screen.height << 16, &schedule, &film, matrix, &screen.film_filters, screen.film_layer, &video_keyed, &screen.film_unkeyed)) {
+            plane.darkenFilm(engine, index, engine.pipe, output, engine.fetcher, screen.film_layer, screen.film_unkeyed);
+            if (!screen.film_refused) exec.kprintf(screen.sys, "%s: the hub gave pipe %d no buffer, so the film is not shown\n", .{ MODULE_NAME, index });
             screen.film_refused = true;
+            fitWithout(screen, index, true);
             return refused;
         }
-        screen.film_pipe = free;
+        screen.film_pipe = index;
         screen.film_refused = false;
-        break :lit free;
-    };
+    }
     screen.film_matrix = matrix;
     screen.film_reads = addresses;
-    if (!wait) return err.RTGERR_OK;
+    rewriteOthers(screen, &.{index});
+    if (!wait) {
+        lowerDue(screen, false);
+        return err.RTGERR_OK;
+    }
     // Taken at the pipe's next update, as a flip.
     pace(screen, 1);
     var looks: u32 = 0;
@@ -1866,6 +2289,7 @@ fn showFilm(screen: *Screen, wait: bool) i32 {
         }
         pace(screen, 1);
     }
+    lowerDue(screen, true);
     return err.RTGERR_OK;
 }
 
@@ -1909,7 +2333,8 @@ fn mapSpan(screen: *Screen, table: *gart.Table, start: usize, length: usize, bus
 }
 
 /// The film's plane taken down where it is lit, the picture whole again
-/// and no longer keyed; the frame kept. Holding `pipe_lock`.
+/// and no longer keyed, and the clocks set for what is left
+/// (`fitWithout`); the frame kept. Holding `pipe_lock`.
 fn dropFilm(screen: *Screen) void {
     const index = screen.film_pipe orelse return;
     const engine = screen.dcn;
@@ -1918,6 +2343,7 @@ fn dropFilm(screen: *Screen) void {
     screen.film_filters = null;
     screen.film_matrix = null;
     screen.film_reads = .{ 0, 0 };
+    fitWithout(screen, index, true);
 }
 
 /// What is on the connector (`monitor.detect`), one reader at a time at
@@ -1933,15 +2359,16 @@ fn detectOp(board: *rtg.RtgBoard, into: *rtg.modes.RtgDetect) callconv(.c) i32 {
 /// The timings the board makes: the one the pipe scans, whose picture
 /// and whose line and frame it has; once the display controller runs,
 /// every other a mode can be made of in the frames (`mode.of`, at the
-/// display's clocks' top) on an HDMI or DVI connector, at a pixel clock
-/// the link the monitor takes carries.
+/// display's clocks a state of the power manager serves for its picture,
+/// `modeFit`) on an HDMI or DVI connector, at a pixel clock the link the
+/// monitor takes carries.
 fn checkModeOp(board: *rtg.RtgBoard, timings: *const rtg.RtgTimings) callconv(.c) i32 {
     const screen = screenOf(board);
     if (monitor.isLit(screen.dcn, timings.*)) return err.RTGERR_OK;
     if (!screen.controller.running) return err.RTGERR_BAD_MODE;
     if (screen.connector.kind != sdk.resources.amdgpu.GPUCONNECTOR_HDMI and screen.connector.kind != sdk.resources.amdgpu.GPUCONNECTOR_DVI) return err.RTGERR_BAD_MODE;
-    const held = topHeld(screen) orelse return err.RTGERR_BAD_MODE;
-    _ = mode.of(timings.*, screen.fb.width, screen.fb.height, held) orelse return err.RTGERR_BAD_MODE;
+    var alone: [pipe_count]?Reading = undefined;
+    _ = modeFit(screen, timings, &alone) orelse return err.RTGERR_BAD_MODE;
     const most_khz: u32 = if (takesHdmi(screen)) hdmi_most_khz else dvi_most_khz;
     if (timings.pixel_clock_hz / 1000 > most_khz) return err.RTGERR_BAD_MODE;
     return err.RTGERR_OK;
@@ -1952,22 +2379,18 @@ fn checkModeOp(board: *rtg.RtgBoard, timings: *const rtg.RtgTimings) callconv(.c
 const hdmi_most_khz: u32 = 340_000;
 const dvi_most_khz: u32 = 165_000;
 
-/// What a mode is worked out at before it is set: the display's clocks
-/// at the top of their levels - read from the power manager the first
-/// time, one asker at a time at the mailbox - the fetcher's rows and the
-/// hub's watermarks. Null where the levels cannot be read.
-fn topHeld(screen: *Screen) ?mode.Held {
-    if (screen.top_display_khz == 0) {
-        screen.sys.ObtainSemaphore(&screen.smu_lock);
-        defer screen.sys.ReleaseSemaphore(&screen.smu_lock);
-        var levels: rtg.tags.RtgAmdClocks = .{};
-        if (smu.clocks(screen.dcn, screen.smu, &levels) == err.RTGERR_OK and levels.disp_count != 0) {
-            screen.top_pipes_khz = smu.top(levels.dpp_mhz[0..levels.disp_count]) * 1000;
-            screen.top_display_khz = smu.top(levels.disp_mhz[0..levels.disp_count]) * 1000;
-        }
-    }
-    if (screen.top_display_khz == 0 or screen.top_pipes_khz == 0) return null;
-    return mode.heldOf(screen.dcn, screen.dcn.fetcher, screen.top_display_khz, screen.top_pipes_khz);
+/// The mode for `timings` and the demand its picture makes alone - as
+/// the planes go down with the pipe for a set - with what its fetcher
+/// reads into `alone`: null where no state of the power manager serves
+/// it, or the pipe cannot make it at the clocks that do.
+fn modeFit(screen: *Screen, timings: *const rtg.RtgTimings, alone: *[pipe_count]?Reading) ?struct { set: mode.Mode, fitted: Fitted } {
+    const engine = screen.dcn;
+    alone.* = @splat(null);
+    alone[engine.fetcher] = readingOf(mode.pictureFetch(timings.h_active, framesPitch(screen)));
+    const fitted = demandFor(screen, timings.*, null, alone) orelse return null;
+    const held = fitted.heldOf(engine, engine.fetcher) orelse return null;
+    const set = mode.of(timings.*, screen.fb.width, screen.fb.height, held) orelse return null;
+    return .{ .set = set, .fitted = fitted };
 }
 
 /// Whether the pipe scans `timings`: its picture, its line and its frame,
@@ -2198,16 +2621,19 @@ fn wakeLink(screen: *Screen) i32 {
     return err.RTGERR_OK;
 }
 
-/// The pipe set to `timings` (`pipe.set`): the display's clocks held at
-/// their top first, the link HDMI or DVI as the monitor takes it, with
-/// the mode's AVI infoframe on HDMI. One asker at a time at the
-/// controller and the mailbox, and no flip meanwhile. What it did is
-/// kept (RTGCTRL_AMD_MODE) and said on the log; on success the engine is
-/// taken to scan the new mode.
+/// The pipe set to `timings` (`pipe.set`): the display's clocks raised
+/// first where the mode's picture needs them faster (`modeFit`), the
+/// link HDMI or DVI as the monitor takes it, with the mode's AVI
+/// infoframe on HDMI, and the clocks lowered to what the picture needs
+/// once the mode runs. One asker at a time at the controller and the
+/// mailbox, and no flip meanwhile. What it did is kept (RTGCTRL_AMD_MODE)
+/// and said on the log; on success the engine is taken to scan the new
+/// mode.
 fn setMode(screen: *Screen, timings: *const rtg.RtgTimings) i32 {
     const sys = screen.sys;
-    const at_top = topHeld(screen) orelse return err.RTGERR_BAD_MODE;
-    _ = mode.of(timings.*, screen.fb.width, screen.fb.height, at_top) orelse return err.RTGERR_BAD_MODE;
+    var alone: [pipe_count]?Reading = undefined;
+    const made = modeFit(screen, timings, &alone) orelse return err.RTGERR_BAD_MODE;
+    const new = made.set;
     const hdmi = takesHdmi(screen);
     var avi: [rtg.RTG_AVI_BYTES]u8 = @splat(0);
     var sends_avi = false;
@@ -2221,22 +2647,6 @@ fn setMode(screen: *Screen, timings: *const rtg.RtgTimings) i32 {
     sys.ObtainSemaphore(&screen.controller_lock);
     defer sys.ReleaseSemaphore(&screen.controller_lock);
     if (!screen.controller.running) return err.RTGERR_NOT_SUPPORTED;
-    sys.ObtainSemaphore(&screen.smu_lock);
-    var clocks: rtg.tags.RtgAmdClocks = .{};
-    const hold = smu.holdTop(screen.dcn, screen.smu, &clocks);
-    sys.ReleaseSemaphore(&screen.smu_lock);
-    if (hold != err.RTGERR_OK) {
-        exec.kprintf(sys, "%s: the display's clocks could not be held at their top (%ld), so the mode is not set\n", .{ MODULE_NAME, @as(i64, hold) });
-        return @intCast(hold);
-    }
-    // Worked out at the clocks as they run now, where they read.
-    var running = at_top;
-    if (clocks.disp_khz != 0 and clocks.dpp_khz != 0) {
-        running = mode.heldOf(screen.dcn, screen.dcn.fetcher, clocks.disp_khz, clocks.dpp_khz);
-        screen.held_display_khz = clocks.disp_khz;
-        screen.held_pipes_khz = clocks.dpp_khz;
-    }
-    const new = mode.of(timings.*, screen.fb.width, screen.fb.height, running) orelse return err.RTGERR_BAD_MODE;
 
     sys.ObtainSemaphore(&screen.pipe_lock);
     defer sys.ReleaseSemaphore(&screen.pipe_lock);
@@ -2251,16 +2661,25 @@ fn setMode(screen: *Screen, timings: *const rtg.RtgTimings) i32 {
     defer if (was_asleep) {
         _ = sleepLink(screen, sleep_at);
     };
-    // A plane goes down with the pipe; the show lights it again.
+    // A plane goes down with the pipe; the show lights it again. The
+    // clocks raised for the mode first - for its picture alone, and what
+    // runs now still served - and lowered once it runs.
+    screen.setting_mode = true;
     dropOverlay(screen);
     dropBands(screen);
     dropFilm(screen);
+    screen.setting_mode = false;
+    raiseTo(screen, made.fitted, alone);
     const code = pipe.set(screen.dcn, &screen.controller, screen.connector, &new, hdmi, if (sends_avi) &avi else null, screen.pixel_clock_hz, &screen.last_set);
     const done = &screen.last_set;
     if (code != err.RTGERR_OK) {
+        // Held where they were raised to, for whatever runs.
+        screen.lower_due = false;
         exec.kprintf(sys, "%s: %dx%d at %d kHz not set (%ld), stopped at stage %d\n", .{ MODULE_NAME, new.width, new.height, timings.pixel_clock_hz / 1000, @as(i64, code), done.stage });
         return code;
     }
+    screen.rewrite_due = false;
+    lowerDue(screen, false);
     screen.dcn.width = new.width;
     screen.dcn.height = new.height;
     screen.dcn.h_total = new.h_total;
@@ -2270,13 +2689,14 @@ fn setMode(screen: *Screen, timings: *const rtg.RtgTimings) i32 {
     crc.fit(screen.dcn);
     if (screen.gart != null) gart.reach(screen.dcn, screen.dcn.fetcher);
     screen.bands_refused = false;
-    exec.kprintf(sys, "%s: the display set to %dx%d at %d kHz on %s, display clock %d kHz, down for %d us%s\n", .{
+    exec.kprintf(sys, "%s: the display set to %dx%d at %d kHz on %s, display clock %d kHz, pipes %d kHz, down for %d us%s\n", .{
         MODULE_NAME,
         new.width,
         new.height,
         timings.pixel_clock_hz / 1000,
         if (hdmi) @as([*:0]const u8, "HDMI") else "DVI",
-        clocks.disp_khz,
+        screen.told.display_khz,
+        screen.told.pipes_khz,
         done.down_us,
         if (done.underflow != 0) @as([*:0]const u8, ", and it ran short of pixels") else "",
     });
@@ -2305,9 +2725,31 @@ fn control(board: *rtg.RtgBoard, what: u32, value: isize) callconv(.c) isize {
         rtg.tags.RTGCTRL_AMD_CLOCKS => {
             if (value == 0) return err.RTGERR_BAD_ARG;
             const into: *rtg.tags.RtgAmdClocks = @ptrFromInt(@as(usize, @bitCast(value)));
+            screen.sys.ObtainSemaphore(&screen.pipe_lock);
+            const told = screen.told;
+            const fitted = screen.fitted;
+            screen.sys.ReleaseSemaphore(&screen.pipe_lock);
             screen.sys.ObtainSemaphore(&screen.smu_lock);
             defer screen.sys.ReleaseSemaphore(&screen.smu_lock);
-            return smu.clocks(screen.dcn, screen.smu, into);
+            const code = smu.clocks(screen.dcn, screen.smu, into);
+            clocks.readDividers(screen.dcn, into);
+            if (told.started) {
+                into.asked_dcf_khz = told.controller_khz;
+                into.asked_deep_sleep_khz = told.deep_sleep_khz;
+                into.asked_disp_khz = told.display_khz;
+                into.asked_dpp_khz = told.pipes_khz;
+                into.asked_pipe_khz = told.pipe_khz;
+                into.answered_dcf_mhz = told.answered_controller_mhz;
+                into.answered_deep_sleep_mhz = told.answered_deep_sleep_mhz;
+                into.answered_disp_mhz = told.answered_display_mhz;
+                into.answered_dpp_mhz = told.answered_pipes_mhz;
+            }
+            if (fitted) |one| {
+                into.level = one.demand.level;
+                into.change_in_active = @intFromBool(one.demand.change_in_active);
+            }
+            into.fabric_now_mhz = smu.fabricNow(screen.sys, screen.smu);
+            return code;
         },
         rtg.tags.RTGCTRL_AMD_CONTROLLER, rtg.tags.RTGCTRL_AMD_START_CONTROLLER => {
             if (value == 0) return err.RTGERR_BAD_ARG;

@@ -654,6 +654,11 @@ pub fn taken(engine: dcn.Engine, index: u32) bool {
     return at(engine, index * hubp_stride + hubp_flip_control).* & flip_pending == 0;
 }
 
+/// The bytes of the hub's buffer the fetcher `index` has.
+pub fn bufferBytes(engine: dcn.Engine, index: u32) u32 {
+    return (at(engine, det_control + index).* & det_mask) * det_segment_kib * 1024;
+}
+
 /// Whether pipe `index` is free for a plane: its blender stage in no
 /// tree and its fetcher blanked.
 pub fn isFree(engine: dcn.Engine, index: u32) bool {
