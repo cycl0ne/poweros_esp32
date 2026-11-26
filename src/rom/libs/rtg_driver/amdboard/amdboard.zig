@@ -48,6 +48,17 @@
 //! WaitVBlank wait for it; where the ring cannot be had, the library
 //! waits as long as a frame takes.
 //!
+//! Asleep (`power`), the monitor is sent nothing, which it sleeps at:
+//! the pipe goes down in its mode - an HDMI monitor muted, the timing
+//! generator stopped, the link let go of, the PHY off and its PLL
+//! powered down - and comes up in it again on waking (`pipe.sleep`,
+//! `pipe.wake`), the link's sound with it. No frames are counted
+//! meanwhile: a flip is where the fetcher reads once it runs again, and
+//! the library waits by the clock. A mode set while asleep wakes the
+//! pipe for the set and puts it to sleep after. Without the display
+//! controller, which runs the tables the PHY is switched by, the board
+//! does not sleep.
+//!
 //! The sound the link it lit can carry, which the firmware leaves
 //! switched off and which no other driver can reach, is set each time
 //! the board is put in a mode (`sound.soundUp`): at the mode's pixel
@@ -114,7 +125,7 @@ const mode = @import("mode.zig");
 const MODULE_NAME = "rtg-amd";
 const DRIVER_NAME = "amd";
 const VERSION = 1;
-const REVISION = 13;
+const REVISION = 14;
 const BUILD_DATE = "26.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -160,6 +171,13 @@ const Screen = struct {
     /// and its pixel clock as the library has it, 0 where not known.
     mode_id: u32 = 0,
     pixel_clock_hz: u32 = 0,
+    /// The mode's timings as the library showed it, what the sound is
+    /// set for again on waking.
+    timings: rtg.RtgTimings = .{},
+    /// Whether the monitor is sent nothing, and the stream it is sent
+    /// again on waking.
+    asleep: bool = false,
+    sleeping: pipe.Stream = .{},
     /// What a row of a buffer is rounded up to: the board's display
     /// memory's alignment, which the library rounds a mode's rows by.
     alignment: u32 = row_alignment,
@@ -328,6 +346,15 @@ fn flipOp(board: *rtg.RtgBoard, frame: *rtg.RtgBitMap) callconv(.c) i32 {
     // Not while the pipe is down: no update would take it.
     screen.sys.ObtainSemaphore(&screen.pipe_lock);
     defer screen.sys.ReleaseSemaphore(&screen.pipe_lock);
+    // Asleep, the pipe is down and takes no update: the frame is where
+    // the fetcher reads once it runs again, and taken a frame on, by the
+    // library's clock.
+    if (screen.asleep) {
+        screen.updates +%= 1;
+        scanFrom(screen, frame);
+        pace(screen, 1);
+        return rtg.boards.RTGFLIP_TAKEN;
+    }
     return flipAmd(screen, frame);
 }
 
@@ -640,12 +667,11 @@ fn showOp(board: *rtg.RtgBoard, what: *const rtg.RtgShow) callconv(.c) i32 {
         const code = setMode(screen, what.timings);
         if (code != err.RTGERR_OK) return code;
     }
-    // The link's sound for the mode: its clock and the numbers the
+    screen.timings = what.timings.*;
+    // The link's sound for the mode - its clock and the numbers the
     // monitor rebuilds it from at the mode's pixel clock, and what the
-    // monitor plays.
-    var said: rtg.RtgMonitorInfo = .{};
-    _ = screen.rtg_base.GetBoardMonitor(screen.board, &said, @sizeOf(rtg.RtgMonitorInfo));
-    _ = sound.soundUp(screen.dcn, what.timings, &said);
+    // monitor plays - or on waking where the monitor sleeps.
+    if (!screen.asleep) soundFor(screen);
     screen.mode_id = shown.id;
     screen.pixel_clock_hz = shown.pixel_clock_hz;
     screen.width = shown.width;
@@ -742,6 +768,84 @@ fn aviFlags(said: *const rtg.RtgMonitorInfo, timings: *const rtg.RtgTimings) u32
     return flags;
 }
 
+/// The link's sound set for the mode the board shows and the monitor on
+/// it (`sound.soundUp`).
+fn soundFor(screen: *Screen) void {
+    var said: rtg.RtgMonitorInfo = .{};
+    _ = screen.rtg_base.GetBoardMonitor(screen.board, &said, @sizeOf(rtg.RtgMonitorInfo));
+    _ = sound.soundUp(screen.dcn, &screen.timings, &said);
+}
+
+/// The monitor sent nothing, which it sleeps at, or the stream again: the
+/// pipe down and up in its mode (`pipe.sleep`, `pipe.wake`), the link's
+/// sound off before and set again after. The library darkens the picture
+/// before it asks for sleep and lights it once the board is awake, each
+/// composed by its flips. RTGPWR_BLANK where the display controller does
+/// not run, which the tables the PHY is switched by need; an error, and
+/// the pipe brought up again, where a step fails. One asker at a time at
+/// the controller, and no flip meanwhile.
+fn powerOp(board: *rtg.RtgBoard, state: u32) callconv(.c) i32 {
+    const screen = screenOf(board);
+    const sys = screen.sys;
+    const asleep = state == rtg.boards.RTGPWR_ASLEEP;
+    sys.ObtainSemaphore(&screen.controller_lock);
+    defer sys.ReleaseSemaphore(&screen.controller_lock);
+    if (!screen.controller.running) return @intCast(rtg.boards.RTGPWR_BLANK);
+    sys.ObtainSemaphore(&screen.pipe_lock);
+    defer sys.ReleaseSemaphore(&screen.pipe_lock);
+    const code = if (asleep) sleepLink(screen, screen.pixel_clock_hz) else wakeLink(screen);
+    if (code != err.RTGERR_OK) return code;
+    if (!asleep) soundFor(screen);
+    return @intCast(if (asleep) rtg.boards.RTGPWR_ASLEEP else rtg.boards.RTGPWR_ON);
+}
+
+/// The link put to sleep, the controller's and the pipe's locks held, in
+/// the mode the pipe scans at `pixel_hz`: its sound off first. A step
+/// that fails has the pipe brought up again.
+fn sleepLink(screen: *Screen, pixel_hz: u32) i32 {
+    if (screen.asleep) return err.RTGERR_OK;
+    sound.soundDown(screen.dcn);
+    var stage: u32 = 0;
+    const started = screen.sys.UptimeUs();
+    const code = pipe.sleep(screen.dcn, &screen.controller, screen.connector, pixel_hz, &screen.sleeping, &stage);
+    if (code != err.RTGERR_OK) {
+        exec.kprintf(screen.sys, "%s: the monitor not put to sleep (%ld), stopped at stage %d\n", .{ MODULE_NAME, @as(i64, code), stage });
+        if (stage >= rtg.tags.RTG_AMD_PIPE_MUTED) {
+            var back: u32 = 0;
+            _ = pipe.wake(screen.dcn, &screen.controller, &screen.sleeping, &back);
+        }
+        soundFor(screen);
+        return code;
+    }
+    screen.asleep = true;
+    exec.kprintf(screen.sys, "%s: the monitor is sent nothing after %d us, the PHY %s\n", .{
+        MODULE_NAME,
+        @as(u32, @intCast(@min(screen.sys.UptimeUs() - started, 0xffff_ffff))),
+        @as([*:0]const u8, if (pipe.phyOn(screen.dcn, &screen.sleeping)) "still on" else "off"),
+    });
+    return err.RTGERR_OK;
+}
+
+/// The link woken, the controller's and the pipe's locks held: the
+/// stream it was sent before. Its sound is the caller's.
+fn wakeLink(screen: *Screen) i32 {
+    if (!screen.asleep) return err.RTGERR_OK;
+    var stage: u32 = 0;
+    const started = screen.sys.UptimeUs();
+    const code = pipe.wake(screen.dcn, &screen.controller, &screen.sleeping, &stage);
+    if (code != err.RTGERR_OK) {
+        exec.kprintf(screen.sys, "%s: the monitor not woken (%ld), stopped at stage %d\n", .{ MODULE_NAME, @as(i64, code), stage });
+        return code;
+    }
+    screen.asleep = false;
+    exec.kprintf(screen.sys, "%s: the monitor is sent its stream again after %d us, the PHY %s\n", .{
+        MODULE_NAME,
+        @as(u32, @intCast(@min(screen.sys.UptimeUs() - started, 0xffff_ffff))),
+        @as([*:0]const u8, if (pipe.phyOn(screen.dcn, &screen.sleeping)) "on" else "still off"),
+    });
+    return err.RTGERR_OK;
+}
+
 /// The pipe set to `timings` (`pipe.set`): the display's clocks held at
 /// their top first, the link HDMI or DVI as the monitor takes it, with
 /// the mode's AVI infoframe on HDMI. One asker at a time at the
@@ -779,6 +883,17 @@ fn setMode(screen: *Screen, timings: *const rtg.RtgTimings) i32 {
 
     sys.ObtainSemaphore(&screen.pipe_lock);
     defer sys.ReleaseSemaphore(&screen.pipe_lock);
+    // A monitor asleep is woken for the set and put to sleep again after.
+    const was_asleep = screen.asleep;
+    if (was_asleep) {
+        const woken = wakeLink(screen);
+        if (woken != err.RTGERR_OK) return woken;
+    }
+    // At the new mode's pixel clock once it is set.
+    var sleep_at = screen.pixel_clock_hz;
+    defer if (was_asleep) {
+        _ = sleepLink(screen, sleep_at);
+    };
     const code = pipe.set(screen.dcn, &screen.controller, screen.connector, &new, hdmi, if (sends_avi) &avi else null, screen.pixel_clock_hz, &screen.last_set);
     const done = &screen.last_set;
     if (code != err.RTGERR_OK) {
@@ -789,6 +904,7 @@ fn setMode(screen: *Screen, timings: *const rtg.RtgTimings) i32 {
     screen.dcn.height = new.height;
     screen.dcn.h_total = new.h_total;
     screen.dcn.v_total = new.v_total;
+    sleep_at = timings.pixel_clock_hz;
     crc.fit(screen.dcn);
     exec.kprintf(sys, "%s: the display set to %dx%d at %d kHz on %s, display clock %d kHz, down for %d us%s\n", .{
         MODULE_NAME,
@@ -898,6 +1014,7 @@ fn control(board: *rtg.RtgBoard, what: u32, value: isize) callconv(.c) isize {
             defer screen.sys.ReleaseSemaphore(&screen.controller_lock);
             screen.sys.ObtainSemaphore(&screen.pipe_lock);
             defer screen.sys.ReleaseSemaphore(&screen.pipe_lock);
+            if (screen.asleep) return err.RTGERR_NO_DISPLAY;
             return pipe.cycle(screen.dcn, &screen.controller, screen.connector, screen.pixel_clock_hz, into);
         },
         rtg.tags.RTGCTRL_AMD_MODE => {
@@ -941,6 +1058,7 @@ const ops = rtg.boards.RtgBoardOps{
     .control = &control,
     .detect = &detectOp,
     .check_mode = &checkModeOp,
+    .power = &powerOp,
 };
 
 const driver_ops = rtg.RtgDriverOps{ .attach = &attach, .detach = &detach };

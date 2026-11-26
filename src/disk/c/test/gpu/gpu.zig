@@ -4,13 +4,14 @@
 //! controller read or started, its hot-plug lines and notifications
 //! counted, an AUX read through it, a monitor's EDID read over its DDC
 //! line, the picture's checksum read, the display's pipe taken down and
-//! brought up again in its mode or put in each mode it offers, its security
+//! brought up again in its mode or put in each mode it offers, its
+//! monitor put to sleep and woken, its security
 //! processor started and the video decoder's firmware loaded by it, the
 //! display's interrupt at each frame counted, or one flip of the picture
 //! the display reads. Built against the SDK only.
 //!
 //!   Gpu TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,
-//!       WATCHDOG/K/N
+//!       SLEEP/K/N,WATCHDOG/K/N
 //!
 //! BIOS prints the device's video BIOS image (GetGPUBios): where it is
 //! and how long, its tables' header's version, the version of each of
@@ -102,6 +103,18 @@
 //! a look at the monitor. Ctrl-C stops after the mode shown. The watchdog
 //! is armed for it and fed after each mode.
 //!
+//! SLEEP puts the display's board's monitor to sleep for SLEEP seconds
+//! (SetBoardPower, RTGPWR_ASLEEP) and wakes it (RTGPWR_ON). Printed are
+//! the picture's checksum before, while asleep - the last frame's, the
+//! timing generator stopped - and after, which should be the one before;
+//! pipe 0's count of frames and how many it counts in 100 ms, before,
+//! twice while asleep (none) and after; each answer and the power state
+//! the board then says it is in. With MODES, the board is shown in the
+//! first other mode it offers while asleep, and back in its own, each set
+//! printed: the monitor is woken for each set and put to sleep after.
+//! How long the PHY took to go off and come on is on the system's lines.
+//! The watchdog is armed for it and fed while the monitor sleeps.
+//!
 //! DUMP prints LENGTH (16 unless given, at most 512) of the display
 //! engine's registers from DUMP on, in 32-bit words from the engine's
 //! address SEGMENT (2 unless given: the one its pipes, links and
@@ -110,7 +123,7 @@
 //! is armed for it.
 //!
 //! Without BIOS, CLOCKS, DMCUB, CRC, EVENTS, AUX, EDID, CYCLE, MODES,
-//! DUMP, FRAMES or FLIP the two files are read from
+//! SLEEP, DUMP, FRAMES or FLIP the two files are read from
 //! DEVS:firmware/amdgpu/, named for the blocks that use them as the
 //! device's table gives their versions - psp_13_0_4_toc.bin for the
 //! security processor 13.0.4, vcn_4_0_2.bin for the video decoder 4.0.2 -
@@ -164,10 +177,10 @@ const rtg = sdk.rtg;
 const RtgBase = sdk.interface.rtg.RtgBase;
 
 pub const COMMAND_NAME = "Gpu";
-const VERSION_STRING = "\x00$VER: Gpu 1.11 (26.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Gpu 1.12 (26.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,WATCHDOG/K/N";
+const template = "TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,SLEEP/K/N,WATCHDOG/K/N";
 const arg_toc = 0;
 const arg_firmware = 1;
 const arg_frames = 2;
@@ -193,8 +206,9 @@ const arg_dump = 21;
 const arg_segment = 22;
 const arg_modes = 23;
 const arg_hold = 24;
-const arg_watchdog = 25;
-const arg_count = 26;
+const arg_sleep = 25;
+const arg_watchdog = 26;
+const arg_count = 27;
 
 /// Where the files are.
 const directory = "DEVS:firmware/amdgpu/";
@@ -1025,7 +1039,8 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         return edidRead(sys, dl, millis, &request);
     }
     if (argv[arg_cycle] != 0) return pipeCycle(sys, dl, millis);
-    if (argv[arg_modes] != 0) return everyMode(sys, dl, millis, if (argv[arg_hold] != 0) number(argv[arg_hold]) else 2);
+    if (argv[arg_modes] != 0 and argv[arg_sleep] == 0) return everyMode(sys, dl, millis, if (argv[arg_hold] != 0) number(argv[arg_hold]) else 2);
+    if (argv[arg_sleep] != 0) return asleepFor(sys, dl, ab, info, millis, number(argv[arg_sleep]), argv[arg_modes] != 0);
     if (argv[arg_dump] != 0) {
         const length = if (argv[arg_length] != 0) number(argv[arg_length]) else 16;
         const segment = if (argv[arg_segment] != 0) number(argv[arg_segment]) else 2;
@@ -1178,6 +1193,138 @@ fn micros(tb: *TimerBase) u64 {
 }
 
 /// Half-seconds waited, the watchdog fed after each.
+/// SLEEP: the board's monitor asleep for `seconds`, then woken, the
+/// picture's checksum and pipe 0's count of frames read before, while
+/// asleep and after; with `moving`, shown in another mode and back while
+/// asleep.
+fn asleepFor(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUInfo, millis: u32, seconds: u32, moving: bool) i32 {
+    var block: amdgpu.GPUBlock = .{};
+    if (!ab.FindGPUBlock(amdgpu.GPUBLOCK_DISPLAY, 0, &block) or block.count < 3) {
+        _ = Printf(dl, "The device %04x:%04x names no display engine\n", .{ info.vendor, info.device });
+        return dos.RETURN_FAIL;
+    }
+    const engine = Display{ .registers = @intCast(info.registers), .segment = block.addresses[2], .pipe = 0, .fetcher = 0 };
+    const base = sys.OpenLibrary(rtg.RTGNAME, rtg.RTG_VERSION) orelse {
+        _ = Printf(dl, "No %s\n", .{rtg.RTGNAME});
+        return dos.RETURN_FAIL;
+    };
+    defer sys.CloseLibrary(base);
+    const rb: *RtgBase = @ptrCast(base);
+    const board = amdBoard(dl, rb) orelse return dos.RETURN_WARN;
+    const wb = arm(sys, dl, millis) orelse return dos.RETURN_FAIL;
+    defer wb.DisarmWatchdog();
+
+    printChecksum(dl, rb, board, "before");
+    printFrames(dl, engine, "before");
+    const slept = rb.SetBoardPower(board, rtg.boards.RTGPWR_ASLEEP);
+    wb.FeedWatchdog();
+    _ = Printf(dl, "asleep: %s, the board says %s\n", .{ powerAnswer(rb, slept), powerName(powerOf(rb, board)) });
+    dl.Delay(8);
+    printChecksum(dl, rb, board, "asleep");
+    printFrames(dl, engine, "asleep");
+    hold(dl, wb, 2 * seconds);
+    printFrames(dl, engine, "later");
+    var moved = true;
+    if (moving) moved = anotherMode(dl, rb, board, wb);
+    const woken = rb.SetBoardPower(board, rtg.boards.RTGPWR_ON);
+    wb.FeedWatchdog();
+    _ = Printf(dl, "awake: %s, the board says %s\n", .{ powerAnswer(rb, woken), powerName(powerOf(rb, board)) });
+    dl.Delay(8);
+    printChecksum(dl, rb, board, "after");
+    printFrames(dl, engine, "after");
+    if (slept != @as(i32, @intCast(rtg.boards.RTGPWR_ASLEEP)) or woken != @as(i32, @intCast(rtg.boards.RTGPWR_ON))) return dos.RETURN_WARN;
+    return if (moved) dos.RETURN_OK else dos.RETURN_ERROR;
+}
+
+/// The board shown in the first mode it offers but the one it is in,
+/// with a picture of bars, the set printed and the frames counted; then
+/// back in its mode, showing what it showed. Whether both shows went.
+fn anotherMode(dl: *DosBase, rb: *RtgBase, board: *rtg.RtgBoard, wb: *WatchdogBase) bool {
+    var list: [modes_most]rtg.RtgMode = undefined;
+    const count = @min(rb.GetBoardModes(board, &list, modes_most), modes_most);
+    var was: ?*const rtg.RtgMode = null;
+    var other: ?*const rtg.RtgMode = null;
+    for (list[0..count]) |*one| {
+        if (one.flags & rtg.modes.RTGMF_CURRENT != 0) was = one else if (other == null) other = one;
+    }
+    const from = was orelse return false;
+    const to = other orelse {
+        _ = Printf(dl, "no other mode\n", .{});
+        return false;
+    };
+    const before = rb.BoardDisplayBitMap(board) orelse return false;
+    const picture = rb.AllocBitMap(board, to.width, to.height, @intFromEnum(to.format), rtg.bitmaps.RTGBMF_DISPLAYABLE) orelse {
+        _ = Printf(dl, "no room for a picture of %ux%u\n", .{ to.width, to.height });
+        return false;
+    };
+    bars(picture);
+    _ = rb.RefreshRect(picture, null);
+    const band = [_]rtg.RtgBand{.{ .bitmap = picture }};
+    const shown = rb.ShowBoard(board, to.id, &band, band.len);
+    wb.FeedWatchdog();
+    var account: rtg.tags.RtgAmdPipe = .{};
+    _ = rb.BoardControl(board, rtg.tags.RTGCTRL_AMD_MODE, @bitCast(@intFromPtr(&account)));
+    const name: [*:0]const u8 = @ptrCast(&to.name);
+    _ = Printf(dl, "asleep, shown in %s: %s, set at %u kHz, the board says %s\n", .{ name, rb.RtgErrorText(shown), account.pixel_khz, powerName(powerOf(rb, board)) });
+    const back_band = [_]rtg.RtgBand{.{ .bitmap = before }};
+    const back = rb.ShowBoard(board, from.id, &back_band, back_band.len);
+    wb.FeedWatchdog();
+    _ = rb.BoardControl(board, rtg.tags.RTGCTRL_AMD_MODE, @bitCast(@intFromPtr(&account)));
+    const back_name: [*:0]const u8 = @ptrCast(&from.name);
+    _ = Printf(dl, "asleep, back in %s: %s, set at %u kHz, the board says %s\n", .{ back_name, rb.RtgErrorText(back), account.pixel_khz, powerName(powerOf(rb, board)) });
+    // Shown no longer, the bars are given back.
+    if (shown == rtg.errors.RTGERR_OK and back == rtg.errors.RTGERR_OK) rb.FreeBitMap(picture);
+    return shown == rtg.errors.RTGERR_OK and back == rtg.errors.RTGERR_OK;
+}
+
+/// The picture's checksum, read twice a few frames apart, on a line.
+fn printChecksum(dl: *DosBase, rb: *RtgBase, board: *rtg.RtgBoard, when: [*:0]const u8) void {
+    var first: rtg.tags.RtgAmdCrc = .{};
+    var second: rtg.tags.RtgAmdCrc = .{};
+    const read_first = rb.BoardControl(board, rtg.tags.RTGCTRL_AMD_CRC, @bitCast(@intFromPtr(&first)));
+    dl.Delay(3);
+    const read_second = rb.BoardControl(board, rtg.tags.RTGCTRL_AMD_CRC, @bitCast(@intFromPtr(&second)));
+    if (read_first != rtg.errors.RTGERR_OK or read_second != rtg.errors.RTGERR_OK) {
+        _ = Printf(dl, "%-7s no checksum\n", .{when});
+        return;
+    }
+    const same = first.red == second.red and first.green == second.green and first.blue == second.blue;
+    _ = Printf(dl, "%-7s checksum %04x %04x %04x%s\n", .{ when, second.red, second.green, second.blue, @as([*:0]const u8, if (same) "" else " CHANGING") });
+}
+
+/// The pipe's count of frames, read twice 100 ms apart, on a line.
+fn printFrames(dl: *DosBase, engine: Display, when: [*:0]const u8) void {
+    const first = engine.otg(dcn.OTG_STATUS_FRAME_COUNT).*;
+    dl.Delay(5);
+    const second = engine.otg(dcn.OTG_STATUS_FRAME_COUNT).*;
+    _ = Printf(dl, "%-7s frame %u, %u frames in 100 ms\n", .{ when, second, (second -% first) & frame_count_mask });
+}
+
+/// The bits a pipe's count of frames has.
+const frame_count_mask: u32 = 0xff_ffff;
+
+/// The power state the board says it is in.
+fn powerOf(rb: *RtgBase, board: *rtg.RtgBoard) u32 {
+    var info: rtg.RtgBoardInfo = .{};
+    _ = rb.GetBoardInfo(board, &info, @sizeOf(rtg.RtgBoardInfo));
+    return info.power;
+}
+
+fn powerName(state: u32) [*:0]const u8 {
+    return switch (state) {
+        rtg.boards.RTGPWR_ON => "on",
+        rtg.boards.RTGPWR_BLANK => "blank",
+        rtg.boards.RTGPWR_ASLEEP => "asleep",
+        else => "?",
+    };
+}
+
+/// What SetBoardPower answered: the state reached, or the error's text.
+fn powerAnswer(rb: *RtgBase, answer: i32) [*:0]const u8 {
+    if (answer < 0) return rb.RtgErrorText(answer);
+    return powerName(@intCast(answer));
+}
+
 fn hold(dl: *DosBase, wb: *WatchdogBase, halves: u32) void {
     for (0..halves) |_| {
         dl.Delay(25);

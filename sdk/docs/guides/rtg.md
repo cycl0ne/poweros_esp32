@@ -1733,6 +1733,21 @@ the audio driver reads from the codec when a stream starts. A monitor
 that plays no sound, and a link driven as DVI, carry none: the endpoint
 says nothing is there, and the machine plays elsewhere.
 
+Asleep (`RTGBC_POWER`, the Blanker's sleep), the monitor is sent
+nothing, which it sleeps at: the pipe goes down in its mode as
+`RTGCTRL_AMD_PIPE` takes it - an HDMI monitor muted, the timing
+generator stopped, the link let go of, the PHY off and its PLL powered
+down - and on waking comes up in that mode again, the pixel clock set
+anew, the link's sound with it. The timing generator takes its pixel
+clock from the PHY's PLL, so no frames are counted while asleep: the
+library waits by the clock, and the frame last flipped to is read once
+the pipe runs. A mode set while asleep wakes the pipe for the set and
+puts it to sleep after. Each sleep and wake is said on the log, with how
+long it took; `C:test/Gpu SLEEP n` puts the monitor to sleep for n
+seconds and prints the picture's checksum and the pipe's frames before,
+while asleep and after. Without the display controller the board is
+blank instead of asleep.
+
 **Video layers.** On the VisionFive 2 the layer is the DC8200's first
 overlay: NV12 and I420, BT.601 and BT.709, video's range and the whole
 byte - by matrices worked out in the driver - pictures up to

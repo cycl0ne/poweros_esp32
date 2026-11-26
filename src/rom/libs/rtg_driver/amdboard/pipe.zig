@@ -44,6 +44,11 @@
 //! or 4:4:4. Not touched: the planes, the audio's own registers, the
 //! packets' contents, the power of the front end's memories.
 //!
+//! **Asleep** (`sleep`, `wake`), the pipe goes down and comes up the same
+//! way in its mode: on these chips the timing generator takes its pixel
+//! clock from the PHY's PLL, so it would stop with the PHY whatever is
+//! kept, and the PLL is set again on waking.
+//!
 //! **A mode set** (`set`) goes down and up the same way with a new mode
 //! (`mode.zig`) in between: the fetcher is blanked once the timing
 //! generator has stopped and let go of again once it runs; the mode is
@@ -755,6 +760,36 @@ pub fn cycle(engine: dcn.Engine, controller: *dmub.Controller, on: monitor.Conne
     into.down_us = @intCast(@min(engine.sys.UptimeUs() - started, 0xffff_ffff));
     read(engine, &stream, &into.after);
     return came_up;
+}
+
+/// The monitor sent nothing, which it sleeps at: the stream taken into
+/// `into` - all `wake` needs - at the pixel clock of the board's mode,
+/// and the pipe taken down (`down`): an HDMI monitor muted, the timing
+/// generator stopped, the link let go of, the PHY off and its PLL powered
+/// down. RTGERR_OK; why the stream is not one this takes, with nothing
+/// done; RTGERR_TIMEOUT where a step did not finish, `stage` saying how
+/// far it got. The controller runs.
+pub fn sleep(engine: dcn.Engine, controller: *dmub.Controller, on: monitor.Connector, pixel_clock_hz: u32, into: *Stream, stage: *u32) i32 {
+    stage.* = tags.RTG_AMD_PIPE_NONE;
+    if (!controller.running) return err.RTGERR_NOT_SUPPORTED;
+    const taken = take(engine, on, pixel_clock_hz, into);
+    if (taken != err.RTGERR_OK) return taken;
+    stage.* = tags.RTG_AMD_PIPE_TAKEN;
+    return down(engine, controller, into, false, stage);
+}
+
+/// The monitor sent the stream `stream` again, the one `sleep` took: the
+/// pipe brought up in its mode (`up`). RTGERR_OK, RTGERR_TIMEOUT where a
+/// step did not finish.
+pub fn wake(engine: dcn.Engine, controller: *dmub.Controller, stream: *const Stream, stage: *u32) i32 {
+    stage.* = tags.RTG_AMD_PIPE_DOWN;
+    if (!controller.running) return err.RTGERR_NOT_SUPPORTED;
+    return up(engine, controller, stream, null, stage);
+}
+
+/// Whether the stream's PHY is on: its back end enabled.
+pub fn phyOn(engine: dcn.Engine, stream: *const Stream) bool {
+    return linkAt(engine, stream.back, dig_back_enable).* & back_enable != 0;
 }
 
 test "an infoframe's words: its header, then its checksum and body" {
