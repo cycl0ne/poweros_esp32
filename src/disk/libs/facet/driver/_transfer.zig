@@ -264,7 +264,9 @@ pub fn resolveImage(command: *const _command.ResolveImage) void {
 /// four samples, and the rectangle inside both; or of a format the tiles
 /// keep in its own bytes, whose four samples are read as floats, averaged
 /// and written back in the format, as a pass resolves one
-/// (`raster.resolveTexels`, since 1.226).
+/// (`raster.resolveTexels`, since 1.226); one of whole numbers keeps its
+/// first sample, as Vulkan has an integer format's resolve select one
+/// sample (since 1.227).
 pub fn resolveRectangle(source: *const Image, from_layer: u32, from: [2]u32, destination: *Image, to_level: u32, to_layer: u32, to: [2]u32, width: u32, height: u32) void {
     const pixel = _image.bytesOf(source.format);
     var planes: [4]Image = undefined;
@@ -273,6 +275,12 @@ pub fn resolveRectangle(source: *const Image, from_layer: u32, from: [2]u32, des
     for (0..height) |row| for (0..width) |column| {
         const x: u32 = @intCast(column);
         const y: u32 = @intCast(row);
+        if (raster.wholeTexels(texels)) {
+            var bytes: [16]u8 = @splat(0);
+            _image.readTexel(&planes[0], 0, from_layer, from[0] + x, from[1] + y, &bytes);
+            _image.writeTexel(destination, to_level, to_layer, to[0] + x, to[1] + y, bytes[0..pixel]);
+            continue;
+        }
         if (texels != .none) {
             var sum: [4]f32 = .{ 0, 0, 0, 0 };
             for (&planes) |*plane| {
@@ -616,9 +624,10 @@ fn texelOf(image: *const Image, color: u32, parts: [4]f32, words: [4]u32) ?Texel
             .r8g8b8a8_unorm => .{ .four = color & 0xFF00_FF00 | (color >> 16 & 0xFF) | (color & 0xFF) << 16 },
             .r5g6b5_unorm_pack16 => .{ .two = narrow(color) },
             // A colour attachment the tiles keep in its own bytes (since
-            // 1.226): the clear's floats in the format, as a tile's clear
-            // writes them (`raster.encodeWords`).
-            else => partsTexel(_image.targetTexels(image.format), parts),
+            // 1.226): the clear's floats in the format, or its whole
+            // numbers since 1.227, as a tile's clear writes them
+            // (`raster.encodeWords`).
+            else => wordsTexel(_image.targetTexels(image.format), words),
         },
         // On a device of a layout of its own a texel is kept as a buffer
         // holds it in the image's format (`_image.readTexel`), not as the
@@ -680,15 +689,15 @@ fn texelOf(image: *const Image, color: u32, parts: [4]f32, words: [4]u32) ?Texel
     };
 }
 
-/// The four floats of a clear written as one texel of `format`, for a fill:
-/// held to 0 to 1 for a format of those, an sRGB one's through the
-/// transfer function, and a float format's as they are at its width.
-/// Null for `.none`. (Since 1.226.)
-fn partsTexel(format: shader.TexelFormat, parts: [4]f32) ?Texel {
+/// The four words of a clear written as one texel of `format`, for a fill:
+/// as floats held to 0 to 1 for a format of those, an sRGB one's through
+/// the transfer function, and a float format's as they are at its width;
+/// as whole numbers for one of those (since 1.227). Null for `.none`.
+/// (Since 1.226.)
+fn wordsTexel(format: shader.TexelFormat, words: [4]u32) ?Texel {
     if (format == .none) return null;
     var bytes: [16]u8 = @splat(0);
-    var one = shader.Texels{ .bytes = &bytes, .count = 1, .format = format, .writable = true };
-    one.set(0, parts);
+    raster.encodeWords(format, words, &bytes);
     return switch (format.bytes()) {
         1 => .{ .one = bytes[0] },
         2 => .{ .two = std.mem.readInt(u16, bytes[0..2], .little) },
@@ -747,7 +756,20 @@ pub fn blitImage(command: *const _command.BlitImage) void {
     // one with a stencil is left alone. Before 1.126 a blit into a depth
     // image wrote two bytes it never set.
     const depth = source.kind == .depth;
-    if (depth or destination.kind == .depth) {
+    // Whole numbers into whole numbers of the same sign alone
+    // (VUID-vkCmdBlitImage-srcImage-00229, -00230), and never filtered,
+    // no such format saying SAMPLED_IMAGE_FILTER_LINEAR
+    // (VUID-vkCmdBlitImage-filter-02001): each pixel takes the nearest
+    // one's numbers, held to what the destination's channels hold, as
+    // Vulkan converts a whole number in a blit ("first clamping to the
+    // representable range of the destination format"). Since 1.227; until
+    // then no such format was a blit's source.
+    const from_wholes = _image.wholeTarget(source.format);
+    const to_wholes = _image.wholeTarget(destination.format);
+    if (from_wholes or to_wholes) {
+        if (!from_wholes or !to_wholes or command.filter != .nearest) return;
+        if ((_image.targetTexels(source.format).kind() == .sint) != (_image.targetTexels(destination.format).kind() == .sint)) return;
+    } else if (depth or destination.kind == .depth) {
         if (source.format != destination.format) return;
         if (source.format != .d16_unorm and source.format != .x8_d24_unorm_pack32) return;
     } else if ((_image.blocked(destination) or _image.keptTexels(destination)) and !_image.drawnRows(destination)) {
@@ -783,6 +805,16 @@ pub fn blitImage(command: *const _command.BlitImage) void {
                 var x = left;
                 while (x < right) : (x += 1) {
                     const u = along(x, to_x, from_x);
+                    if (from_wholes) {
+                        var texel: [16]u8 = @splat(0);
+                        _image.readTexel(source, from_level, from_layer, held(@intFromFloat(@floor(u)), from_size[0]), held(@intFromFloat(@floor(v)), from_size[1]), &texel);
+                        const numbers = (shader.Texels{ .bytes = &texel, .count = 1, .format = _image.targetTexels(source.format), .writable = false }).intAt(0);
+                        var out: [16]u8 = @splat(0);
+                        var into = shader.Texels{ .bytes = &out, .count = 1, .format = _image.targetTexels(destination.format), .writable = true };
+                        into.setInt(0, numbers);
+                        _image.writeTexel(destination, to_level, to_layer, @intCast(x), @intCast(y), &out);
+                        continue;
+                    }
                     if (depth) {
                         var texel: [4]u8 = undefined;
                         _image.readTexel(source, from_level, from_layer, held(@intFromFloat(@floor(u)), from_size[0]), held(@intFromFloat(@floor(v)), from_size[1]), &texel);

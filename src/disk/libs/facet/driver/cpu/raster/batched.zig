@@ -1243,7 +1243,9 @@ const Batch = struct {
     /// keeps as 0xAARRGGBB given the function's floats as that where it
     /// wrote floats. (Since 1.226; `putAt` alone until then.)
     inline fn putOutput(batch: *Batch, comptime samples: u32, output: u32, blend: pipeline.Blend, mixing: *const pipeline.Mixing, colors: [*][4]u32) void {
-        const floats = batch.shading.written == .floats;
+        // Floats, or whole numbers (since 1.227): four words a pixel
+        // either way, which the attachment's format says how to read.
+        const floats = batch.shading.written != .colors;
         const values = batch.fragments.values + output * batch.count;
         if (batch.tile.texels[output] != .none) return batch.putTexels(samples, output, blend, mixing, colors, values, floats);
         if (floats) colorsOfValues(values, colors, batch.count);
@@ -1285,6 +1287,7 @@ const Batch = struct {
     fn putTexels(batch: *Batch, comptime samples: u32, output: u32, blend: pipeline.Blend, mixing: *const pipeline.Mixing, colors: [*][4]u32, values: [*][4][4]u32, floats: bool) void {
         const tile = batch.tile;
         const format = tile.texels[output];
+        if (target_zig.wholeTexels(format)) return batch.putWholes(samples, output, blend, mixing, colors, values, floats);
         const of_one = format.kind() != .sfloat;
         inline for (0..samples) |sample| {
             for (batch.quads[0..batch.count], 0..) |quad, k| {
@@ -1298,6 +1301,48 @@ const Batch = struct {
                         const x = @as(u32, quad.x) + across;
                         const given = if (floats) floatsOfWords(values[k][i]) else partsOfColor(colors[k][i]);
                         row.set(x, if (blend == .off) given else mixing.mixedFloats(given, row.at(x), of_one));
+                    }
+                }
+            }
+        }
+    }
+
+    /// The same for an attachment of whole numbers: the function's four
+    /// words taken as the numbers they are, signed where the format is,
+    /// as llvmpipe takes a pure integer format's outputs, which were
+    /// "ints or uints disguised as floats" (lp_state_fs.c:2738-2753), and
+    /// put into the format held to what each channel holds. A function
+    /// that writes 0xAARRGGBB gives its bytes as the numbers 0 to 255.
+    /// Never blended (CreateGraphicsPipelines refuses that, as lavapipe
+    /// turns it off), and the colour mask kept: a channel it leaves out
+    /// keeps the number it had. (Since 1.227.)
+    fn putWholes(batch: *Batch, comptime samples: u32, output: u32, blend: pipeline.Blend, mixing: *const pipeline.Mixing, colors: [*][4]u32, values: [*][4][4]u32, words: bool) void {
+        const tile = batch.tile;
+        const format = tile.texels[output];
+        const signed = format.kind() == .sint;
+        inline for (0..samples) |sample| {
+            for (batch.quads[0..batch.count], 0..) |quad, k| {
+                const bits = batch.bitsOf(samples, sample, k);
+                if (bits == 0) continue;
+                inline for (0..4) |i| {
+                    if (bits >> i & 1 != 0) {
+                        const down: u32 = i >> 1;
+                        const across: u32 = i & 1;
+                        var row = shader.Texels{ .bytes = tile.texelRow(output, sample, @as(u32, quad.y) + down), .count = tile_size, .format = format, .writable = true };
+                        const x = @as(u32, quad.x) + across;
+                        var given: [4]i64 = undefined;
+                        if (words) {
+                            for (&given, values[k][i]) |*whole, word| whole.* = if (signed) @as(i32, @bitCast(word)) else word;
+                        } else {
+                            for (&given, [4]u5{ 16, 8, 0, 24 }) |*whole, shift| whole.* = colors[k][i] >> shift & 0xFF;
+                        }
+                        if (blend != .off) {
+                            const under = row.intAt(x);
+                            inline for (0..4, [4]u32{ 0x00FF_0000, 0x0000_FF00, 0x0000_00FF, 0xFF00_0000 }) |c, mask_bits| {
+                                if (mixing.mask & mask_bits == 0) given[c] = under[c];
+                            }
+                        }
+                        row.setInt(x, given);
                     }
                 }
             }

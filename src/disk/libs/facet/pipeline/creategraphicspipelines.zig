@@ -625,6 +625,14 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
             const mixing = &made.mixings[index];
             mixing.mask = attachment.color_write_mask & facet.COLOR_COMPONENT_ALL;
             if (attachment.blend_enable) {
+                // Not into a format that is not blended, the whole numbers
+                // (VUID-VkGraphicsPipelineCreateInfo-blendEnable-04717,
+                // since 1.227): lavapipe turns such a blend off
+                // (lp_state_fs.c:4688-4690), which Vulkan has the program
+                // not ask for.
+                if (colorFormatOf(pass, subpass, @intCast(index))) |format| {
+                    if (device.physical.ops.format_properties(device.physical, format).optimal_tiling_features & facet.FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND == 0) return .error_validation_failed;
+                }
                 const factors = [4]facet.BlendFactor{ attachment.src_color_blend_factor, attachment.dst_color_blend_factor, attachment.src_alpha_blend_factor, attachment.dst_alpha_blend_factor };
                 // A second source's factors want `dual_src_blend`, which no
                 // device has (VUID-VkPipelineColorBlendAttachmentState-srcColorBlendFactor-00608
@@ -693,4 +701,14 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
         if (!dynamic_scissor) made.scissor = (view.scissors orelse return .error_validation_failed)[0];
     }
     return .success;
+}
+
+/// The format of colour attachment `index` of the subpass, as Vulkan
+/// counts them, or null where it is ATTACHMENT_UNUSED: the part that
+/// draws it, one a colour or all of them together. (Since 1.227.)
+fn colorFormatOf(pass: *const _render.RenderPass, subpass: _render.Subpass, index: u32) ?facet.Format {
+    for (pass.parts[subpass.first_part..][0..subpass.part_count]) |part| {
+        if (index >= part.output and index - part.output < part.color_count) return part.color_formats[index - part.output];
+    }
+    return null;
 }
