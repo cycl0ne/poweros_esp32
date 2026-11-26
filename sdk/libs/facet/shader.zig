@@ -1296,6 +1296,16 @@ pub const Attachment = extern struct {
         return row.at(x - attachment.left);
     }
 
+    /// The same as the whole numbers the attachment keeps, for one of
+    /// `_uint` or `_sint` (`Texels.intAt`): what Vulkan's `subpassLoad`
+    /// of a `usubpassInput` or an `isubpassInput` reads. All zero outside
+    /// it. (Since 1.227.)
+    pub fn intAt(attachment: *const Attachment, x: u32, y: u32) [4]i64 {
+        const row = attachment.rowAt(y) orelse return .{ 0, 0, 0, 0 };
+        if (x < attachment.left) return .{ 0, 0, 0, 0 };
+        return row.intAt(x - attachment.left);
+    }
+
     /// The attachment's row `y` as texels, from its first column: null
     /// above or below what this holds, or where there is nothing to read.
     fn rowAt(attachment: *const Attachment, y: u32) ?Texels {

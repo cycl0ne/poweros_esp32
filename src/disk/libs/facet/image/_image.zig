@@ -297,6 +297,11 @@ pub fn rowFormat(format: facet.Format) shader.TexelFormat {
 /// that is no colour attachment. A8B8G8R8_UNORM_PACK32 is R8G8B8A8_UNORM's
 /// bytes, and A8B8G8R8_SRGB_PACK32 R8G8B8A8_SRGB's. (Since 1.226,
 /// docs/facet-vulkan10.md item 36.)
+///
+/// And the twenty-one of whole numbers since 1.227, which are written as
+/// the numbers a fragment function gives and never blended, as llvmpipe
+/// takes a pure integer format's outputs as the integers they are and
+/// turns its blend off (lp_state_fs.c:2738-2753, :4688-4690).
 pub fn targetTexels(format: facet.Format) shader.TexelFormat {
     return switch (format) {
         .r8_unorm => .r8,
@@ -312,8 +317,37 @@ pub fn targetTexels(format: facet.Format) shader.TexelFormat {
         .r32_sfloat => .r32f,
         .r32g32_sfloat => .rg32f,
         .r32g32b32a32_sfloat => .rgba32f,
+        // Since 1.227. The A8B8G8R8 words are the R8G8B8A8 bytes, as in a
+        // texture (`keptFormat`).
+        .r8_uint => .r8u,
+        .r8_sint => .r8i,
+        .r8g8_uint => .rg8u,
+        .r8g8_sint => .rg8i,
+        .r8g8b8a8_uint, .a8b8g8r8_uint_pack32 => .rgba8u,
+        .r8g8b8a8_sint, .a8b8g8r8_sint_pack32 => .rgba8i,
+        .a2b10g10r10_uint_pack32 => .rgb10a2u,
+        .r16_uint => .r16u,
+        .r16_sint => .r16i,
+        .r16g16_uint => .rg16u,
+        .r16g16_sint => .rg16i,
+        .r16g16b16a16_uint => .rgba16u,
+        .r16g16b16a16_sint => .rgba16i,
+        .r32_uint => .r32u,
+        .r32_sint => .r32i,
+        .r32g32_uint => .rg32u,
+        .r32g32_sint => .rg32i,
+        .r32g32b32a32_uint => .rgba32u,
+        .r32g32b32a32_sint => .rgba32i,
         else => .none,
     };
+}
+
+/// Whether the tiles keep `format` as whole numbers: one of the
+/// twenty-one of `targetTexels` that a fragment function writes as
+/// numbers, its clears read as `uint32` or `int32`, never blended, and
+/// resolved by keeping one sample. (Since 1.227.)
+pub fn wholeTarget(format: facet.Format) bool {
+    return wholeNumbers(format) or format == .a2b10g10r10_uint_pack32;
 }
 
 /// How a shader function writes the pixels of an image kept in rows, as
@@ -385,9 +419,10 @@ pub fn sampledRowFormat(format: facet.Format) ?texture.Format {
         // A colour attachment the tiles keep in its own bytes, as a
         // texture of the format reads them where they lie, where there
         // is one (since 1.226): R8_UNORM, R8G8_UNORM and the floats of
-        // four channels and of one. A sampler reads none of the others
-        // yet, which their formats do not say SAMPLED_IMAGE of (items 34
-        // and 37).
+        // four channels and of one, and the whole numbers but
+        // A2B10G10R10_UINT_PACK32 (since 1.227). A sampler reads none of
+        // the others yet, which their formats do not say SAMPLED_IMAGE of
+        // (items 34 and 37).
         else => if (targetTexels(format) != .none) lyingFormat(format) else rowTexture(format),
     };
 }
@@ -431,6 +466,8 @@ pub fn bytesOf(format: facet.Format) u32 {
         .a1r5g5b5_unorm_pack16, .r16_sfloat => 2,
         .r8g8b8a8_srgb, .b8g8r8a8_srgb, .a8b8g8r8_unorm_pack32, .a8b8g8r8_srgb_pack32 => 4,
         .a2b10g10r10_unorm_pack32, .r16g16_sfloat => 4,
+        // And of whole numbers (since 1.227).
+        .a2b10g10r10_uint_pack32 => 4,
         .r16g16b16a16_sfloat, .r32g32_sfloat => 8,
         .r32g32b32_sfloat => 12,
         .r32g32b32a32_sfloat => 16,
@@ -810,7 +847,8 @@ fn laidOut(physical: *_instance.PhysicalDevice, info: *const facet.ImageCreateIn
     // (`Capabilities.whole_textures`, since 1.70): no colour
     // carries one, so an image of such a format is for a function and
     // nothing else.
-    if (wholeNumbers(info.format) and !(physical.can.whole_textures and in_texels)) return null;
+    // One drawn into is rows of its numbers (since 1.227).
+    if (wholeNumbers(info.format) and !(physical.can.whole_textures and in_texels) and !drawn_texels) return null;
     // Layers want `optimal` tiling, as a format unpacked on the way in
     // does: a linear image is one layer, which is all Vulkan promises of
     // one. Until 1.91 an image of layers was also one a function reads or

@@ -1458,7 +1458,7 @@ Still left out. Each is marked *facet-wide* or *V3D-only*:
 
 ### 36. Make the mandatory colour-attachment formats drawable
 
-*formats / colour attachments* &mdash; conformance-blocking, large &mdash; **step 1 done in 1.226: the cores draw the fourteen of 0 to 1 and of floats**; the twenty-one of whole numbers, and the V3D's, still to come
+*formats / colour attachments* &mdash; conformance-blocking, large &mdash; **steps 1 and 2 done in 1.226-1.227: the cores draw all thirty-five**; the V3D's, still to come
 
 Vulkan mandates COLOR_ATTACHMENT for 38 formats and COLOR_ATTACHMENT_BLEND for 14. facet provides 3 of each, hard-coded in a two-line `drawable()` and enforced by CreateImage. The missing 35 are the integer attachments, the three sRGB words, the half- and single-float forms, a2b10g10r10 both ways, a8b8g8r8_*_pack32 and a1r5g5b5. This is the largest piece in the formats strand: the tile buffer keeps 8 bits a channel of BGRA, dithered to 565 on store, so each new format needs a tile representation, a store, a load, a clear and — for the 11 blendable ones — a blend unit at that width. On the V3D the render-target config packets must name the format too. The same fix closes the colour-input-attachment gap, since an input attachment must be of a format rowFormat knows, which is the same three. Since 1.126 (item 32) BLIT_DST rides on this as well, set beside COLOR_ATTACHMENT as v3dv sets it: each format made an attachment here becomes a blit's destination, so the blit, which carries 8 bits a channel, has to write it at its own width - a float as a float, a whole number as it is. Since 1.127 (item 31) the A8B8G8R8 whole numbers are their R8G8B8A8 forms under another name, so each follows its form here with one name more; A1R5G5B5 is unpacked as it is copied in, so its attachment needs a tile format of its own and a store that packs it.
 
@@ -1561,13 +1561,58 @@ pipeline does not, is ONE, ZERO and ADD, which gives back the source. On
 the CM5 (packages f232 and f233) FacetProbe is 1004 of 1004 and
 FacetBoth's 316 cases are each as at 1.225.
 
-Still left out after step 1. Each is marked *facet-wide* or *V3D-only*:
-- **The twenty-one of whole numbers** are not drawn yet (step 2):
-  `Written.sints` and `.uints` are there and nothing reads them.
-  *Facet-wide*.
-- **The V3D draws none of the fourteen** (steps 3 and 4): it says no
+**Step 2, in 1.227: the cores draw the twenty-one.** The integer
+formats are COLOR_ATTACHMENT, BLIT_DST and both copies, and no BLEND,
+where the device says `texel_targets`, as lavapipe leaves BLEND off a
+pure integer format (lvp_formats.c:176-181); where a texture keeps them
+(`whole_textures`) they are a blit's source too, as v3dv sets BLIT_SRC
+with SAMPLED_IMAGE (v3dv_formats.c:169-173). Each is kept in rows of its
+numbers (`_image.targetTexels`, `_image.wholeTarget`), A8B8G8R8 as the
+R8G8B8A8 bytes and A2B10G10R10_UINT_PACK32 as `.rgb10a2u`. A fragment
+function writes them as four words a pixel (`Written.uints`, `.sints`),
+which the tiles take as the numbers they are, signed where the format
+is, and hold to what each channel holds (`Batch.putWholes`), as
+llvmpipe takes a pure integer format's outputs, "ints or uints
+disguised as floats" (lp_state_fs.c:2738-2753). They are never blended:
+CreateGraphicsPipelines refuses a blend into a format without
+COLOR_ATTACHMENT_BLEND (VUID-VkGraphicsPipelineCreateInfo-blendEnable-04717),
+where lavapipe turns it off (lp_state_fs.c:4688-4690); the colour mask
+keeps the channels it leaves out. A clear is read as `uint32` or
+`int32` (`raster.encodeWords`), in the pass, by CmdClearAttachments and
+by CmdClearColorImage. Four samples resolve by keeping the first, in a
+pass and in CmdResolveImage, as Vulkan has an integer format's resolve
+select one sample and lavapipe's nearest blit does (`resolve_color`,
+lvp_execute.c:1802). An input attachment of one is read as its numbers
+(`shader.Attachment.intAt`, `subpassLoad` of a `usubpassInput`). A blit
+carries the numbers, nearest alone and into whole numbers of the same
+sign alone (VUID-vkCmdBlitImage-srcImage-00229, -00230, -filter-02001),
+held to the destination's channels as Vulkan converts one. One both
+drawn and sampled is rows a texture reads the numbers out of. Three host
+tests are new (the twenty-one cleared, drawn, masked, refused a blend,
+cleared in the pass and outside it; four samples resolved, an input
+attachment read, a texture over drawn rows, blits; the V3D refusing all
+twenty-one) and four old ones are turned round (the whole numbers now
+attachments and blits both ways). FacetProbe 1.55 checks the
+twenty-one's features and passes on both devices and, on the cores,
+draws R32G32B32A32_UINT with 2^24 + 1 and R8G8_SINT below 0 and held,
+and is refused a pipeline that blends either. Thirteen mutations each
+fail a test: the mask ignored, a signed word read unsigned, a clear's
+words taken as floats, both resolves averaging, a blit into another
+sign or filtered, a blend taken, the formats said to be no attachment
+or their rows refused, the numbers sent the colours' way, an input
+attachment's numbers lost, and a blit's numbers carried as colours.
+On the CM5 (packages f234 and f235) FacetProbe is 1012 of 1012 and
+FacetBoth's 316 cases are each as at 1.226.
+
+Still left out after step 2. Each is marked *facet-wide* or *V3D-only*:
+- **The V3D draws none of the thirty-five** (steps 3 and 4): it says no
   COLOR_ATTACHMENT for them, so CreateImage and CreateRenderPass refuse
   each. *V3D-only*.
+- **A2B10G10R10_UINT_PACK32 is not sampled**, as A2B10G10R10_UNORM is
+  not (items 34 and 37), so it is no blit's source. *Facet-wide*.
+- **Alpha to coverage reads no alpha of whole numbers**: Vulkan leaves
+  it undefined for an integer colour attachment 0, and the cores take
+  the coverage as it is. *Facet-wide*.
 - **A format of the fourteen that a sampler does not read where it
   lies** (the sRGB words, A1R5G5B5, A2B10G10R10, R16_SFLOAT,
   R16G16_SFLOAT, R32G32_SFLOAT) may not be both sampled and drawn into:

@@ -51,11 +51,12 @@ fn describe(can: *const _instance.Capabilities, format: facet.Format) facet.Form
     const sampled = facet.FORMAT_FEATURE_SAMPLED_IMAGE | facet.FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR | facet.FORMAT_FEATURE_TRANSFER_DST | facet.FORMAT_FEATURE_BLIT_SRC;
     // A format of whole numbers is sampled without the linear filter:
     // Vulkan has no integer format filtered, there being nothing to mix
-    // between two whole numbers (since 1.70). Nor is it a blit's source: a
-    // blit carries a colour of 8 bits a channel, which a whole number is
-    // not, and Vulkan blits one into another of whole numbers alone
-    // (VUID-vkCmdBlitImage-srcImage-00229, -00230), none of which is a
-    // blit's destination here.
+    // between two whole numbers (since 1.70). Until 1.227 it was no blit's
+    // source either: a blit carried a colour of 8 bits a channel, and
+    // Vulkan blits one into another of whole numbers alone
+    // (VUID-vkCmdBlitImage-srcImage-00229, -00230), none of which was a
+    // blit's destination. Since then the blit carries their numbers
+    // (`_transfer.blitImage`), and the whole numbers say BLIT_SRC below.
     const nearest = facet.FORMAT_FEATURE_SAMPLED_IMAGE | facet.FORMAT_FEATURE_TRANSFER_DST;
     // The formats a texture is kept in are the ones a function can write
     // through as well; the unpacked ones are not, being kept as 8888.
@@ -88,6 +89,14 @@ fn describe(can: *const _instance.Capabilities, format: facet.Format) facet.Form
     // (lvp_formats.c:176-181), a blit's destination, and copied both ways,
     // its rows being its own bytes (`_image.targetTexels`).
     const target: u32 = if (can.texel_targets) attachment | transfer else 0;
+    // One of whole numbers likewise, not blended (since 1.227): lavapipe
+    // leaves BLEND off a pure integer format (lvp_formats.c:176-181), and
+    // a pipeline that blends one is refused
+    // (VUID-VkGraphicsPipelineCreateInfo-blendEnable-04717). A blit's
+    // destination as v3dv makes every colour attachment one
+    // (v3dv_formats.c:176-179), into one of whole numbers of its own sign
+    // alone (VUID-vkCmdBlitImage-srcImage-00229, -00230).
+    const whole_target: u32 = if (can.texel_targets) facet.FORMAT_FEATURE_COLOR_ATTACHMENT | facet.FORMAT_FEATURE_BLIT_DST | transfer else 0;
     return switch (format) {
         // STORAGE_IMAGE in the linear features says the rows of this
         // format may be written through by a function, which is what a
@@ -311,9 +320,13 @@ fn describe(can: *const _instance.Capabilities, format: facet.Format) facet.Form
         // given: a texture a function reads with
         // `texture.Texture.wholesAt` and writes with `setWholes`, and
         // read back, there being something of the format to read. No
-        // linear filter and never an attachment: a whole number is no
-        // colour, and nothing blends one. The A8B8G8R8 words of the 8-bit
-        // four are the same bytes, and so the same texels (since 1.127).
+        // linear filter, as a whole number has nothing to mix between it
+        // and the next. The A8B8G8R8 words of the 8-bit four are the same
+        // bytes, and so the same texels (since 1.127). An attachment where
+        // the tiles keep the numbers, and a blit's source where a texture
+        // keeps them, as v3dv sets BLIT_SRC with SAMPLED_IMAGE
+        // (v3dv_formats.c:169-173): the blit reads the numbers and writes
+        // them, never a colour (since 1.227).
         .r8_uint,
         .r8g8_uint,
         .r8g8b8a8_uint,
@@ -336,7 +349,7 @@ fn describe(can: *const _instance.Capabilities, format: facet.Format) facet.Form
         .r32g32b32a32_sint,
         => .{
             .linear_tiling_features = 0,
-            .optimal_tiling_features = if (can.whole_textures) nearest | storage | transfer else 0,
+            .optimal_tiling_features = (if (can.whole_textures) nearest | facet.FORMAT_FEATURE_BLIT_SRC | storage | transfer else 0) | whole_target,
             .buffer_features = texels,
         },
         // The two half-float formats of one channel and two, and the
@@ -369,10 +382,13 @@ fn describe(can: *const _instance.Capabilities, format: facet.Format) facet.Form
         .a8b8g8r8_snorm_pack32,
         .a2r10g10b10_unorm_pack32,
         .a2r10g10b10_uint_pack32,
-        .a2b10g10r10_uint_pack32,
         .r32g32b32_uint,
         .r32g32b32_sint,
         => .{ .linear_tiling_features = 0, .optimal_tiling_features = 0, .buffer_features = texels },
+        // A texel buffer since 1.68, and an attachment of whole numbers
+        // where the tiles keep them (since 1.227). No sampler reads it yet
+        // (items 34 and 37).
+        .a2b10g10r10_uint_pack32 => .{ .linear_tiling_features = 0, .optimal_tiling_features = whole_target, .buffer_features = texels },
         else => .{ .linear_tiling_features = 0, .optimal_tiling_features = 0, .buffer_features = 0 },
     };
 }

@@ -7478,4 +7478,35 @@ pub const LIBRARY_VERSION = 1;
 /// has its check of 1.48 that R8_UNORM is no attachment turned round on
 /// the cores. On the CM5 (packages f232 and f233) FacetProbe is 1004 of
 /// 1004 and FacetBoth's 316 cases are each as at 1.225.
-pub const LIBRARY_REVISION = 226;
+/// 227: **The cores draw the twenty-one colour attachments of whole
+/// numbers (docs/facet-vulkan10.md item 36, step 2 of four).** The
+/// `_uint` and `_sint` formats Vulkan has an attachment of, and
+/// A2B10G10R10_UINT_PACK32, are COLOR_ATTACHMENT, BLIT_DST and both
+/// copies and never BLEND where the device says
+/// `Capabilities.texel_targets`, as lavapipe leaves BLEND off a pure
+/// integer format (lvp_formats.c:176-181), and a blit's source where a
+/// texture keeps them (v3dv_formats.c:169-173). Each is kept in rows of
+/// its numbers (`_image.targetTexels`, `_image.wholeTarget`). A fragment
+/// function writes them as four words a pixel (`shader.Written.uints`,
+/// `.sints`), which the tiles take as the numbers they are, signed where
+/// the format is, held to what each channel holds (`Batch.putWholes`), as
+/// llvmpipe takes a pure integer format's outputs (lp_state_fs.c:
+/// 2738-2753); the colour mask keeps what it leaves out.
+/// CreateGraphicsPipelines refuses a blend into a format without
+/// COLOR_ATTACHMENT_BLEND (VUID-VkGraphicsPipelineCreateInfo-blendEnable-04717),
+/// where lavapipe turns it off (lp_state_fs.c:4688-4690). A clear is read
+/// as `uint32` or `int32` (`raster.encodeWords`), four samples resolve by
+/// keeping the first in a pass and in CmdResolveImage (lvp_execute.c:
+/// 1802), an input attachment is read as its numbers
+/// (`shader.Attachment.intAt`), and a blit carries the numbers, nearest
+/// alone and into whole numbers of the same sign alone
+/// (VUID-vkCmdBlitImage-srcImage-00229, -00230, -filter-02001).
+///
+/// Three host tests are new and four were turned round. Thirteen mutations
+/// of the new code, each run against the host tests, were all killed.
+/// FacetProbe 1.55 checks the twenty-one's features and passes on both
+/// devices and, on the cores, draws R32G32B32A32_UINT with 2^24 + 1 and
+/// R8G8_SINT below 0 and held, and is refused a pipeline that blends
+/// either. On the CM5 (packages f234 and f235) FacetProbe is 1012 of
+/// 1012 and FacetBoth's 316 cases are each as at 1.226.
+pub const LIBRARY_REVISION = 227;

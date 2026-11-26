@@ -544,8 +544,9 @@ exist now. What is left out:
   colour input attachment is of a format whose features say
   COLOR_ATTACHMENT: b8g8r8a8_unorm, r8g8b8a8_unorm or r5g6b5_unorm_pack16,
   and on the cores since 1.226 the fourteen of 0 to 1 and of floats of
-  docs/facet-vulkan10.md item 36, read as the format's texels: every
-  other is `error_validation_failed`
+  docs/facet-vulkan10.md item 36, read as the format's texels, and since
+  1.227 its twenty-one of whole numbers, read as their numbers
+  (`shader.Attachment.intAt`): every other is `error_validation_failed`
   (VUID-VkSubpassDescription-pInputAttachments-02647; since 1.135,
   `error_format_not_supported` before).
 - **Nothing is checked against the layout**: `AttachmentReference.layout`
@@ -829,8 +830,9 @@ Of textures:
 - **An image drawn into and sampled** since 1.119, on the cores: one
   made SAMPLED beside COLOR_ATTACHMENT or INPUT_ATTACHMENT, of
   B8G8R8A8, R8G8B8A8 or R5G6B5 - since 1.226 R8_UNORM, R8G8_UNORM and
-  the floats of one channel and of four as well - and one sample or
-  four, is kept in rows,
+  the floats of one channel and of four as well, and since 1.227 the
+  whole numbers but A2B10G10R10_UINT_PACK32 - and one sample or four, is
+  kept in rows,
   with its levels and its layers, and a sampler reads it where a pass
   drew it: no copy into a texture between. A pass draws into the level
   and the layer its framebuffer's view names, so a program makes the

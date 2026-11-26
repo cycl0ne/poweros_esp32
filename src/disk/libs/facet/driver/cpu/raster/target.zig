@@ -329,6 +329,22 @@ pub fn resolveSurface(from: Surface, into: Surface, area: Rect) void {
 /// src/gallium/frontends/lavapipe/lvp_execute.c:1782-1827, whose blit
 /// samples the source through its format). (Since 1.226.)
 fn resolveTexels(from: Surface, into: Surface, left: u32, top: u32, right: u32, bottom: u32) void {
+    // Whole numbers are not averaged: the first sample is kept, as
+    // Vulkan has a resolve of an integer format select one sample's
+    // value ("Multisample Resolve Operations"), and as lavapipe's nearest
+    // blit of one does (`resolve_color`, lvp_execute.c:1802). (Since
+    // 1.227.)
+    if (wholeTexels(from.texels)) {
+        const bytes = from.texels.bytes();
+        var y = top;
+        while (y < bottom) : (y += 1) {
+            const at = @as(usize, y) * from.pitch + @as(usize, left) * bytes;
+            const to = @as(usize, y) * into.pitch + @as(usize, left) * bytes;
+            const count = (right - left) * bytes;
+            @memcpy(into.pixels[to..][0..count], from.pixels[at..][0..count]);
+        }
+        return;
+    }
     var y = top;
     while (y < bottom) : (y += 1) {
         var planes: [4]shader.Texels = undefined;
@@ -398,14 +414,32 @@ inline fn depth24At(at: [*]const u8) u32 {
     return @as(u32, at[1]) | @as(u32, at[2]) << 8 | @as(u32, at[3]) << 16;
 }
 
+/// Whether `texels` holds whole numbers: what the tiles keep a colour
+/// attachment of `_uint` or `_sint` in (since 1.227).
+pub fn wholeTexels(texels: shader.TexelFormat) bool {
+    return switch (texels.kind()) {
+        .uint, .sint => true,
+        else => texels == .rgb10a2u or texels == .bgr10a2u,
+    };
+}
+
 /// A `ClearColorValue`'s four words written as one pixel of `texels`, a
 /// format the tiles keep in its own bytes (`Surface.texels`): its floats
 /// held to 0 to 1 for a format of those, through the transfer function
 /// for an sRGB one, as Vulkan clears one ("Clear Values": the colour is
 /// linear and converted), and kept as they are in a float format's
 /// width. (Since 1.226.)
+///
+/// A format of whole numbers takes the words as the numbers `uint32` or
+/// `int32` hold, signed where the format is, each held to what its
+/// channel holds (since 1.227).
 pub fn encodeWords(texels: shader.TexelFormat, words: [4]u32, into: *[16]u8) void {
     var one = shader.Texels{ .bytes = into, .count = 1, .format = texels, .writable = true };
+    if (wholeTexels(texels)) {
+        var wholes: [4]i64 = undefined;
+        for (&wholes, words) |*whole, word| whole.* = if (texels.kind() == .sint) @as(i32, @bitCast(word)) else word;
+        return one.setInt(0, wholes);
+    }
     var parts: [4]f32 = undefined;
     for (&parts, words) |*part, word| part.* = @bitCast(word);
     one.set(0, parts);
