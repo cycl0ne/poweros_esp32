@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: MIT
 //! amdgpu.resource's functions: the machine's AMD graphics device, where
 //! its register window is and where each of its blocks' registers are,
-//! its blocks powered up and down, its own memory handed out, the
-//! firmware its blocks run loaded through its security processor, and
-//! its interrupts handed to the drivers of the blocks that raise them.
+//! its blocks powered up and down, its own memory handed out and the
+//! machine's mapped for its engines, the firmware its blocks run loaded
+//! through its security processor, its interrupts handed to the drivers
+//! of the blocks that raise them, its graphics block's DMA and compute
+//! engines given jobs, and code objects loaded for the compute engine
+//! and their kernels run.
 //! A resource: no Open or Close, its first function in the first slot.
 //! The base comes from OpenResource("amdgpu.resource").
 ##include libs/exec/exec as exec
@@ -81,4 +84,36 @@ bool MapGPUMemory(*anyopaque address, u32 bytes, *amdgpu.GPUMemory memory)
 /// A mapping from MapGPUMemory taken out of the hub's page table;
 /// `memory` is cleared.
 void UnmapGPUMemory(*amdgpu.GPUMemory memory)
+/// The graphics block's compute engine started with one queue of jobs,
+/// mapped by the block's scheduler, once StartGPUGraphics has started the
+/// block; true once it runs.
+bool StartGPUCompute()
+/// The compute engine's packets `packets`, `words` words of them, put on
+/// its queue as one job; the job's number, for WaitGPUCompute, or 0 where
+/// the queue does not run, the job does not fit in it, or the engine does
+/// not make room for it in time.
+u32 SendGPUCompute([*]const u32 packets, u32 words)
+/// The kernel `kernel` run on the compute engine as `dispatch` says, as
+/// one job on its queue; the job's number, for WaitGPUCompute, or 0 where
+/// the queue does not run, the dispatch is not one the kernel can be run
+/// with, or there is no room for it in time.
+u32 SendGPUKernel(*const amdgpu.GPUKernel kernel, *const amdgpu.GPUDispatch dispatch)
+/// Waits until the compute engine has done job `job`, `most_ms`
+/// milliseconds at most; true once it has, false where it has not by
+/// then.
+bool WaitGPUCompute(u32 job, u32 most_ms)
+/// The compute engine's queue as it is, into `state`; false where it
+/// does not run.
+bool GetGPUComputeState(*amdgpu.GPUComputeState state)
+/// The code object `image`, `bytes` long, loaded into the device's
+/// memory, into `code`; false where it is not one for this device's
+/// graphics block, needs what the loader does not do, or there is no
+/// room.
+bool LoadGPUCode([*]const u8 image, u32 bytes, *amdgpu.GPUCode code)
+/// The kernel `name` of the loaded code object `code`, into `kernel`;
+/// false where the code object has no kernel of that name.
+bool FindGPUKernel(*const amdgpu.GPUCode code, [*:0]const u8 name, *amdgpu.GPUKernel kernel)
+/// A code object from LoadGPUCode taken out of the device's memory;
+/// `code` is cleared.
+void FreeGPUCode(*amdgpu.GPUCode code)
 ##end

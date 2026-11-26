@@ -12,11 +12,14 @@
 //! memory and in the machine's mapped for it, its copies of rectangles
 //! tried and its fills and copies timed beside graphics.library's, the
 //! board's own fills and copies by that engine held to graphics.library's,
-//! the display's interrupt at each frame counted, or one flip of the
-//! picture the display reads. Built against the SDK only.
+//! the block's compute engine's queue started and a kernel the build made
+//! for it run on the device's memory and on the machine's, the display's
+//! interrupt at each frame counted, or one flip of the picture the
+//! display reads. Built against the SDK only.
 //!
 //!   Gpu TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,
-//!       SLEEP/K/N,RANGE/S,POINTER/S,MIRROR/S,OVERLAY/S,DIRECT/S,BANDS/S,VIDEO/S,GFX/S,DMA/S,GART/S,ENGINE/S,BLITS/S,BLOCK/K/N,WATCHDOG/K/N
+//!       SLEEP/K/N,RANGE/S,POINTER/S,MIRROR/S,OVERLAY/S,DIRECT/S,BANDS/S,VIDEO/S,GFX/S,DMA/S,GART/S,ENGINE/S,BLITS/S,COMPUTE/S,BLOCK/K/N,
+//!       WATCHDOG/K/N
 //!
 //! BIOS prints the device's video BIOS image (GetGPUBios): where it is
 //! and how long, its tables' header's version, the version of each of
@@ -314,9 +317,26 @@
 //! itself (RPTAG_BitMap), as a program draws, and held to the same. Each
 //! is timed beside graphics.library's. The watchdog is armed for it.
 //!
+//! COMPUTE does what GFX does, prints the compute engine's registers,
+//! then starts its queue through the block's scheduler (StartGPUCompute),
+//! which prints how long that took and the scheduler's firmware, and
+//! tries it: four words written by the engine (WRITE_DATA) into the
+//! device's memory beside guards, read back; a hundred empty jobs sent and
+//! waited for one after another, timed, with the engine's interrupts
+//! counted; then the code object the build made from kernels/fill.zig,
+//! embedded in the command, loaded (LoadGPUCode) and its kernel `fill`
+//! found (FindGPUKernel), and dispatched (SendGPUKernel) - over 64 KiB of
+//! the device's memory between guards of a page each way, over as much of
+//! the machine's, placed 100 bytes into a page and mapped for it
+//! (MapGPUMemory), every word and every guard checked, and over 16 MiB of
+//! each, timed, the machine's every word checked. The queue and the
+//! engine's registers are printed at the end. The watchdog is armed for
+//! it.
+//!
 //! Without BIOS, CLOCKS, DMCUB, CRC, EVENTS, AUX, EDID, CYCLE, MODES,
 //! SLEEP, RANGE, POINTER, MIRROR, OVERLAY, DIRECT, BANDS, VIDEO, GFX,
-//! DMA, GART, ENGINE, BLITS, DUMP, FRAMES or FLIP the two files are read from
+//! DMA, GART, ENGINE, BLITS, COMPUTE, DUMP, FRAMES or FLIP the two files
+//! are read from
 //! DEVS:firmware/amdgpu/, named for the blocks that use them as the
 //! device's table gives their versions - psp_13_0_4_toc.bin for the
 //! security processor 13.0.4, vcn_4_0_2.bin for the video decoder 4.0.2 -
@@ -373,10 +393,10 @@ const graphics_library = sdk.graphics;
 const GraphicsBase = sdk.interface.graphics.GraphicsBase;
 
 pub const COMMAND_NAME = "Gpu";
-const VERSION_STRING = "\x00$VER: Gpu 1.25 (26.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Gpu 1.26 (26.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,SLEEP/K/N,RANGE/S,POINTER/S,MIRROR/S,OVERLAY/S,DIRECT/S,BANDS/S,VIDEO/S,GFX/S,DMA/S,GART/S,ENGINE/S,BLITS/S,BLOCK/K/N,WATCHDOG/K/N";
+const template = "TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,SLEEP/K/N,RANGE/S,POINTER/S,MIRROR/S,OVERLAY/S,DIRECT/S,BANDS/S,VIDEO/S,GFX/S,DMA/S,GART/S,ENGINE/S,BLITS/S,COMPUTE/S,BLOCK/K/N,WATCHDOG/K/N";
 const arg_toc = 0;
 const arg_firmware = 1;
 const arg_frames = 2;
@@ -415,9 +435,10 @@ const arg_dma = 34;
 const arg_gart = 35;
 const arg_engine = 36;
 const arg_blits = 37;
-const arg_block = 38;
-const arg_watchdog = 39;
-const arg_count = 40;
+const arg_compute = 38;
+const arg_block = 39;
+const arg_watchdog = 40;
+const arg_count = 41;
 
 /// Where the files are.
 const directory = "DEVS:firmware/amdgpu/";
@@ -1343,13 +1364,14 @@ fn graphicsFile(sys: *ExecBase, dl: *DosBase, prefix: []const u8, block: amdgpu.
     return true;
 }
 
-/// What GFX, DMA, GART and ENGINE go on to once the block is started.
-const GraphicsThen = enum { nothing, dma, gart, engine };
+/// What GFX, DMA, GART, ENGINE and COMPUTE go on to once the block is
+/// started.
+const GraphicsThen = enum { nothing, dma, gart, engine, compute };
 
 /// The graphics block's firmware loaded, the block started and its hub
 /// turned on, its registers printed before and after - and then its DMA
 /// engine's queue started and tried, on the device's memory or on the
-/// machine's, as `then` says.
+/// machine's, or its compute engine's, as `then` says.
 fn graphicsStart(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUInfo, millis: u32, then: GraphicsThen) i32 {
     var graphics: amdgpu.GPUBlock = .{};
     var dma: amdgpu.GPUBlock = .{};
@@ -1416,6 +1438,7 @@ fn graphicsStart(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPU
         .dma => dmaCheck(sys, dl, ab, info, graphics, wb),
         .gart => gartCheck(sys, dl, ab, info, graphics, wb),
         .engine => engineCheck(sys, dl, ab, info, graphics, wb),
+        .compute => computeCheck(sys, dl, ab, info, graphics, wb),
     };
 }
 
@@ -1929,6 +1952,299 @@ fn engineJobSpun(sys: *ExecBase, ab: *AMDGPUBase, words: []const u32, count: u32
         if (sys.UptimeUs() > until) return false;
     }
     return true;
+}
+
+/// The compute engine's registers COMPUTE prints: the command
+/// processor's, the scheduler's, the doorbells the engines answer to and
+/// the compute engine's interrupt.
+const compute_registers = [_]GraphicsRegister{
+    .{ .name = "GRBM_STATUS", .segment = 0, .offset = 0x0da4 },
+    .{ .name = "CP_STAT", .segment = 0, .offset = 0x0f40 },
+    .{ .name = "CP_CPC_STATUS", .segment = 0, .offset = 0x0e24 },
+    .{ .name = "CP_ME_CNTL", .segment = 1, .offset = 0x0803 },
+    .{ .name = "CP_MEC_CNTL", .segment = 1, .offset = 0x0802 },
+    .{ .name = "CP_MES_CNTL", .segment = 1, .offset = 0x2807 },
+    .{ .name = "CP_MES_INSTR_PNTR", .segment = 1, .offset = 0x2813 },
+    .{ .name = "RLC_CP_SCHEDULERS", .segment = 1, .offset = 0x098a },
+    .{ .name = "SH_MEM_CONFIG", .segment = 1, .offset = 0x09e4 },
+    .{ .name = "CP_RB_DOORBELL_RANGE_LOWER", .segment = 0, .offset = 0x1dfa },
+    .{ .name = "CP_RB_DOORBELL_RANGE_UPPER", .segment = 0, .offset = 0x1dfb },
+    .{ .name = "CP_MEC_DOORBELL_RANGE_LOWER", .segment = 0, .offset = 0x1dfc },
+    .{ .name = "CP_MEC_DOORBELL_RANGE_UPPER", .segment = 0, .offset = 0x1dfd },
+    .{ .name = "CP_ME1_PIPE0_INT_CNTL", .segment = 0, .offset = 0x1e25 },
+    .{ .name = "SCRATCH_REG0", .segment = 1, .offset = 0x2040 },
+};
+
+/// How long COMPUTE waits for each job, and how much its long
+/// dispatches fill.
+const compute_job_ms: u32 = 2000;
+const compute_long_bytes: u32 = 16 << 20;
+
+/// The arguments of the kernel `fill` (kernels/fill.zig): where it
+/// writes, the value it adds each word's number to, and how many words;
+/// and the threads in each of its groups, as it is written for.
+const FillArguments = extern struct { out: u64, value: u32, count: u32 };
+const fill_group: u32 = 64;
+
+/// The compute engine's queue as it is, on one line.
+fn printComputeQueue(dl: *DosBase, ab: *AMDGPUBase) void {
+    var state: amdgpu.GPUComputeState = .{};
+    if (!ab.GetGPUComputeState(&state)) {
+        _ = Printf(dl, "  its queue does not run\n", .{});
+        return;
+    }
+    _ = Printf(dl, "  its queue: %u jobs sent, %u done, %u interrupts; read to %lx of %lx; mapped %u, its registers read to %x and told %x; GRBM_STATUS %08x, CP_CPC_STATUS %08x\n", .{
+        state.sent,   state.done,       state.interrupts,    state.read,   state.written,
+        state.active, state.queue_read, state.queue_written, state.status, state.compute_status,
+    });
+}
+
+/// What `what` failed of the compute engine, said with its queue and its
+/// registers.
+fn computeFailed(dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUInfo, graphics: amdgpu.GPUBlock, what: [*:0]const u8) i32 {
+    _ = Printf(dl, "%s: not done\n", .{what});
+    printComputeQueue(dl, ab);
+    printGraphics(dl, info, graphics, &compute_registers);
+    printGraphics(dl, info, graphics, &hub_registers);
+    return dos.RETURN_ERROR;
+}
+
+/// The kernel `fill` dispatched over `count` words at the device's
+/// address `out`, in groups of `fill_group`, and waited for: the
+/// microseconds it took, or null with why said.
+fn dispatchFill(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUInfo, graphics: amdgpu.GPUBlock, kernel: *const amdgpu.GPUKernel, out: u64, count: u32) ?u64 {
+    const arguments: FillArguments = .{ .out = out, .value = fill_value, .count = count };
+    const dispatch: amdgpu.GPUDispatch = .{
+        .groups = .{ (count + fill_group - 1) / fill_group, 1, 1 },
+        .threads = .{ fill_group, 1, 1 },
+        .arguments = &arguments,
+        .argument_bytes = @sizeOf(FillArguments),
+    };
+    const began = sys.UptimeUs();
+    const job = ab.SendGPUKernel(kernel, &dispatch);
+    if (job == 0 or !ab.WaitGPUCompute(job, compute_job_ms)) {
+        _ = computeFailed(dl, ab, info, graphics, "A dispatch of the kernel");
+        return null;
+    }
+    return @max(1, sys.UptimeUs() - began);
+}
+
+/// What a dispatch of `fill` over `count` words after `guard_words` of
+/// guard left: how many of its words hold `fill_value` plus their
+/// number, the first that does not and what it holds, and how many of
+/// the guards' words on either side still hold `guard_value`.
+const KernelSeen = struct { right: u32, first_wrong: u32, wrong_value: u32, kept: u32 };
+
+fn kernelSeen(words: [*]volatile u32, count: u32, guard_words: u32) KernelSeen {
+    var seen: KernelSeen = .{ .right = 0, .first_wrong = count, .wrong_value = 0, .kept = 0 };
+    for (0..count) |index| {
+        const value = words[guard_words + index];
+        if (value == fill_value +% @as(u32, @intCast(index))) {
+            seen.right += 1;
+        } else if (seen.first_wrong == count) {
+            seen.first_wrong = @intCast(index);
+            seen.wrong_value = value;
+        }
+    }
+    for (0..guard_words) |index| {
+        if (words[index] == guard_value) seen.kept += 1;
+        if (words[guard_words + count + index] == guard_value) seen.kept += 1;
+    }
+    return seen;
+}
+
+/// A dispatch's words said: how many were right, and the first that was
+/// not; false where any was not or a guard was not kept.
+fn kernelRight(dl: *DosBase, seen: KernelSeen, count: u32, guard_words: u32) bool {
+    if (seen.right != count) {
+        _ = Printf(dl, "  the first word not right is word %u: %08x, %08x meant\n", .{ seen.first_wrong, seen.wrong_value, fill_value +% seen.first_wrong });
+    }
+    return seen.right == count and seen.kept == 2 * guard_words;
+}
+
+/// The compute engine's queue started through the scheduler and tried:
+/// words the engine writes, empty jobs one after another, and the kernel
+/// the build made dispatched over the device's memory and the machine's.
+fn computeCheck(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUInfo, graphics: amdgpu.GPUBlock, wb: *WatchdogBase) i32 {
+    _ = Printf(dl, "The compute engine before its queue is started:\n", .{});
+    printGraphics(dl, info, graphics, &compute_registers);
+    var began = sys.UptimeUs();
+    if (!ab.StartGPUCompute()) {
+        wb.FeedWatchdog();
+        _ = Printf(dl, "The compute engine's queue does not run: see C:Log; its registers:\n", .{});
+        printGraphics(dl, info, graphics, &compute_registers);
+        return dos.RETURN_ERROR;
+    }
+    const start_us = sys.UptimeUs() - began;
+    wb.FeedWatchdog();
+    var state: amdgpu.GPUComputeState = .{};
+    _ = ab.GetGPUComputeState(&state);
+    _ = Printf(dl, "The compute engine's queue runs, started in %lu us: its ring at %lx, %u bytes; the scheduler's firmware %08x, its mapper's %08x\n", .{
+        start_us, state.ring, state.ring_bytes, state.scheduler, state.scheduler_queues,
+    });
+    printComputeQueue(dl, ab);
+    printGraphics(dl, info, graphics, &compute_registers);
+
+    var all_right = true;
+    var piece: amdgpu.GPUMemory = .{};
+    const piece_bytes = fill_bytes + 2 * guard_bytes;
+    if (!ab.AllocGPUMemory(piece_bytes, 4096, &piece)) {
+        _ = Printf(dl, "No room in the device's memory for %u bytes\n", .{piece_bytes});
+        return dos.RETURN_ERROR;
+    }
+    defer ab.FreeGPUMemory(&piece);
+    const words = wordsOf(piece);
+    const count = fill_bytes / 4;
+    const guard_words = guard_bytes / 4;
+    for (0..piece_bytes / 4) |index| words[index] = guard_value;
+    const target = piece.device + guard_bytes;
+    const write = [8]u32{
+        amdgpu.GPUPACKET | amdgpu.GPUPACKET_WRITE_DATA << amdgpu.GPUPACKET_OP_SHIFT | (3 + 4 - 1) << amdgpu.GPUPACKET_COUNT_SHIFT,
+        amdgpu.GPUWRITE_MEMORY | amdgpu.GPUWRITE_CONFIRM,
+        @truncate(target),
+        @truncate(target >> 32),
+        0x1111_1111,
+        0x2222_2222,
+        0x3333_3333,
+        0x4444_4444,
+    };
+    began = sys.UptimeUs();
+    const first = ab.SendGPUCompute(&write, write.len);
+    if (first == 0 or !ab.WaitGPUCompute(first, compute_job_ms)) return computeFailed(dl, ab, info, graphics, "Four words written by the engine");
+    const write_us = sys.UptimeUs() - began;
+    var alike: u32 = 0;
+    for (write[4..], 0..) |value, index| {
+        if (words[guard_words + index] == value) alike += 1;
+    }
+    const beside_kept = words[guard_words - 1] == guard_value and words[guard_words + 4] == guard_value;
+    _ = Printf(dl, "Four words written by the engine at %lx: job %u done in %lu us; %u of 4 written - %08x %08x %08x %08x - the words beside them %s\n", .{
+        target,                                                      first,                  write_us,               alike,
+        words[guard_words],                                          words[guard_words + 1], words[guard_words + 2], words[guard_words + 3],
+        @as([*:0]const u8, if (beside_kept) "kept" else "not kept"),
+    });
+    if (alike != 4 or !beside_kept) all_right = false;
+    wb.FeedWatchdog();
+
+    _ = ab.GetGPUComputeState(&state);
+    const interrupts = state.interrupts;
+    began = sys.UptimeUs();
+    var trip: u32 = 0;
+    while (trip < dma_round_trips) : (trip += 1) {
+        const job = ab.SendGPUCompute(&write, 0);
+        if (job == 0 or !ab.WaitGPUCompute(job, compute_job_ms)) return computeFailed(dl, ab, info, graphics, "An empty job");
+    }
+    const trips_us = sys.UptimeUs() - began;
+    _ = ab.GetGPUComputeState(&state);
+    _ = Printf(dl, "%u empty jobs, each sent and waited for: %lu us in all, %lu us each; %u of the engine's interrupts\n", .{
+        dma_round_trips, trips_us, trips_us / dma_round_trips, state.interrupts -% interrupts,
+    });
+    wb.FeedWatchdog();
+
+    const image = @embedFile("gpu_code");
+    var code: amdgpu.GPUCode = .{};
+    if (!ab.LoadGPUCode(image.ptr, image.len, &code)) {
+        _ = Printf(dl, "The code object of %u bytes is not loaded: see C:Log\n", .{@as(u32, image.len)});
+        return dos.RETURN_ERROR;
+    }
+    defer ab.FreeGPUCode(&code);
+    var kernel: amdgpu.GPUKernel = .{};
+    if (!ab.FindGPUKernel(&code, "fill", &kernel)) {
+        _ = Printf(dl, "The code object has no kernel fill that can be run: see C:Log\n", .{});
+        return dos.RETURN_ERROR;
+    }
+    _ = Printf(dl, "The code object of %u bytes loaded at %lx, %u bytes; its kernel fill at %lx: resource words %08x %08x %08x, %u bytes of arguments, %u of group memory, %u of private, properties %x\n", .{
+        @as(u32, image.len), code.memory.device, code.memory.bytes,     kernel.code,        kernel.rsrc1,
+        kernel.rsrc2,        kernel.rsrc3,       kernel.argument_bytes, kernel.group_bytes, kernel.private_bytes,
+        kernel.properties,
+    });
+
+    for (0..piece_bytes / 4) |index| words[index] = guard_value;
+    const device_us = dispatchFill(sys, dl, ab, info, graphics, &kernel, piece.device + guard_bytes, count) orelse return dos.RETURN_ERROR;
+    var seen = kernelSeen(words, count, guard_words);
+    _ = Printf(dl, "The kernel over %u words of the device's memory at %lx, %u groups of %u: done in %lu us; %u of its %u words right, %u of the guards' %u kept\n", .{
+        count, piece.device + guard_bytes, count / fill_group, fill_group, device_us, seen.right, count, seen.kept, 2 * guard_words,
+    });
+    if (!kernelRight(dl, seen, count, guard_words)) all_right = false;
+    wb.FeedWatchdog();
+
+    const ram = ramBuffer(sys, piece_bytes) orelse {
+        _ = Printf(dl, "No memory for %u bytes\n", .{piece_bytes});
+        return dos.RETURN_FAIL;
+    };
+    defer sys.FreeVec(ram.allocation);
+    for (0..piece_bytes / 4) |index| ram.words[index] = guard_value;
+    var mapped: amdgpu.GPUMemory = .{};
+    if (!ab.MapGPUMemory(ram.at, piece_bytes, &mapped)) {
+        _ = Printf(dl, "%u bytes of the machine's memory are not mapped: see C:Log\n", .{piece_bytes});
+        return dos.RETURN_ERROR;
+    }
+    const ram_us = dispatchFill(sys, dl, ab, info, graphics, &kernel, mapped.device + guard_bytes, count) orelse {
+        ab.UnmapGPUMemory(&mapped);
+        return dos.RETURN_ERROR;
+    };
+    const ram_device = mapped.device;
+    ab.UnmapGPUMemory(&mapped);
+    seen = kernelSeen(ram.words, count, guard_words);
+    _ = Printf(dl, "The kernel over %u words of the machine's memory at %lx, mapped at %lx: done in %lu us; %u of its %u words right, %u of the guards' %u kept\n", .{
+        count, @as(u64, @intFromPtr(ram.at)) + guard_bytes, ram_device + guard_bytes, ram_us, seen.right, count, seen.kept, 2 * guard_words,
+    });
+    if (!kernelRight(dl, seen, count, guard_words)) all_right = false;
+    wb.FeedWatchdog();
+
+    const long_bytes = compute_long_bytes + 2 * guard_bytes;
+    const long_count = compute_long_bytes / 4;
+    const long = ramBuffer(sys, long_bytes) orelse {
+        _ = Printf(dl, "No memory for %u MiB\n", .{compute_long_bytes >> 20});
+        return dos.RETURN_FAIL;
+    };
+    defer sys.FreeVec(long.allocation);
+    for (0..long_bytes / 4) |index| long.words[index] = guard_value;
+    var long_mapped: amdgpu.GPUMemory = .{};
+    if (!ab.MapGPUMemory(long.at, long_bytes, &long_mapped)) {
+        _ = Printf(dl, "%u MiB of the machine's memory are not mapped: see C:Log\n", .{compute_long_bytes >> 20});
+        return dos.RETURN_ERROR;
+    }
+    _ = ab.GetGPUComputeState(&state);
+    const long_interrupts = state.interrupts;
+    const long_us = dispatchFill(sys, dl, ab, info, graphics, &kernel, long_mapped.device + guard_bytes, long_count) orelse {
+        ab.UnmapGPUMemory(&long_mapped);
+        return dos.RETURN_ERROR;
+    };
+    ab.UnmapGPUMemory(&long_mapped);
+    _ = ab.GetGPUComputeState(&state);
+    seen = kernelSeen(long.words, long_count, guard_words);
+    _ = Printf(dl, "The kernel over %u MiB of the machine's memory, mapped, %u groups: done in %lu us, %lu MB/s; %u of its %u words right, %u of the guards' %u kept; %u interrupts\n", .{
+        compute_long_bytes >> 20,            long_count / fill_group, long_us,   @as(u64, compute_long_bytes) / long_us,
+        seen.right,                          long_count,              seen.kept, 2 * guard_words,
+        state.interrupts -% long_interrupts,
+    });
+    if (!kernelRight(dl, seen, long_count, guard_words)) all_right = false;
+    wb.FeedWatchdog();
+
+    var long_piece: amdgpu.GPUMemory = .{};
+    if (ab.AllocGPUMemory(compute_long_bytes, 4096, &long_piece)) {
+        defer ab.FreeGPUMemory(&long_piece);
+        const long_words = wordsOf(long_piece);
+        const last = long_count - 1;
+        for ([_]u32{ 0, last / 2, last }) |index| long_words[index] = guard_value;
+        const piece_us = dispatchFill(sys, dl, ab, info, graphics, &kernel, long_piece.device, long_count) orelse return dos.RETURN_ERROR;
+        _ = Printf(dl, "The kernel over %u MiB of the device's memory: done in %lu us, %lu MB/s; its first, middle and last words %08x %08x %08x (%08x %08x %08x meant)\n", .{
+            compute_long_bytes >> 20, piece_us,               @as(u64, compute_long_bytes) / piece_us,
+            long_words[0],            long_words[last / 2],   long_words[last],
+            fill_value,               fill_value +% last / 2, fill_value +% last,
+        });
+        if (long_words[0] != fill_value or long_words[last / 2] != fill_value +% last / 2 or long_words[last] != fill_value +% last) all_right = false;
+        wb.FeedWatchdog();
+    } else {
+        _ = Printf(dl, "No room in the device's memory for %u MiB\n", .{compute_long_bytes >> 20});
+    }
+
+    _ = Printf(dl, "At the end:\n", .{});
+    printComputeQueue(dl, ab);
+    printGraphics(dl, info, graphics, &compute_registers);
+    _ = Printf(dl, "Its memory hub's:\n", .{});
+    printGraphics(dl, info, graphics, &hub_registers);
+    return if (all_right) dos.RETURN_OK else dos.RETURN_WARN;
 }
 
 /// ENGINE: the queue started, the engine's copies of rectangles and its
@@ -2671,8 +2987,8 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     if (argv[arg_video] != 0) return videoCheck(sys, dl, ab, info, millis);
     if (argv[arg_blits] != 0) return blitsCheck(sys, dl, millis);
     if (argv[arg_sleep] != 0) return asleepFor(sys, dl, ab, info, millis, number(argv[arg_sleep]), argv[arg_modes] != 0);
-    if (argv[arg_gfx] != 0 or argv[arg_dma] != 0 or argv[arg_gart] != 0 or argv[arg_engine] != 0) {
-        const then: GraphicsThen = if (argv[arg_engine] != 0) .engine else if (argv[arg_gart] != 0) .gart else if (argv[arg_dma] != 0) .dma else .nothing;
+    if (argv[arg_gfx] != 0 or argv[arg_dma] != 0 or argv[arg_gart] != 0 or argv[arg_engine] != 0 or argv[arg_compute] != 0) {
+        const then: GraphicsThen = if (argv[arg_compute] != 0) .compute else if (argv[arg_engine] != 0) .engine else if (argv[arg_gart] != 0) .gart else if (argv[arg_dma] != 0) .dma else .nothing;
         return graphicsStart(sys, dl, ab, info, millis, then);
     }
     if (argv[arg_dump] != 0) {

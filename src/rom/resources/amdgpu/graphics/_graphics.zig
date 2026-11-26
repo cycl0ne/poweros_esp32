@@ -29,8 +29,9 @@
 //! range faults to the scratch page. A fault is taken by the hub alone,
 //! the access sent to the scratch page; it does not stop the engine.
 //! The other fifteen contexts are left off: nothing the system runs uses
-//! them. The bus block's doorbells are left as they are too: the queues
-//! are told of new work through their own registers.
+//! them. The bus block's doorbells are left as they are too: the DMA
+//! engine's queue is told of new work through its own registers, and
+//! StartGPUCompute opens the doorbells for the compute engine's.
 //!
 //! **A page of the machine's memory** is mapped into the table as the
 //! vendor's driver maps one into its GART (amdgpu_gart_map,

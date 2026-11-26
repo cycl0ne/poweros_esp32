@@ -37,7 +37,7 @@ const _graphics = @import("graphics/_graphics.zig");
 /// The name it is opened by. The SDK's.
 pub const RESOURCE_NAME = amdgpu.AMDGPUNAME;
 pub const RESOURCE_VERSION = 1;
-pub const RESOURCE_REVISION = 11;
+pub const RESOURCE_REVISION = 12;
 const BUILD_DATE = "26.11.2026";
 const RESOURCE_VERSION_STRING =
     "\x00$VER: " ++ RESOURCE_NAME ++ " " ++
@@ -64,6 +64,8 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     ab.pci_lib = null;
     ab.pci = null;
     ab.info = .{};
+    ab.doorbells = 0;
+    ab.doorbells_bytes = 0;
     ab.bios = .{};
     ab.connectors = @splat(.{});
     ab.connector_count = 0;
@@ -118,6 +120,24 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     ab.dma_trap_int = .{};
     sys_base.InitSemaphore(&ab.dma_lock);
     sys_base.InitSemaphore(&ab.dma_wait_lock);
+    ab.scheduler_start = .{ 0, 0 };
+    ab.compute = .{};
+    ab.compute_running = false;
+    ab.compute_failed = false;
+    ab.scheduler_written = 0;
+    ab.mapper_written = 0;
+    ab.compute_written = 0;
+    ab.scheduler_calls = 0;
+    ab.scheduler_version = 0;
+    ab.mapper_version = 0;
+    ab.compute_sent = 0;
+    ab.compute_ends = 0;
+    ab.compute_end = .{};
+    ab.compute_end_int = .{};
+    ab.compute_slot = 0;
+    ab.compute_slot_jobs = @splat(0);
+    sys_base.InitSemaphore(&ab.compute_lock);
+    sys_base.InitSemaphore(&ab.compute_wait_lock);
     if (_device.take(ab)) {
         const gpu: *sdk.interface.amdgpu.AMDGPUBase = @ptrCast(&ab.lib);
         var block: amdgpu.GPUBlock = .{};

@@ -1071,3 +1071,90 @@ which `FindTask` has to find.
 A program with more to do than one core gets through hands some of it to
 the others - a task of its own, a job in parts, a job beside it: [Work on
 more cores](cores.md).
+
+## A kernel on an AMD graphics device
+
+On a machine with an AMD graphics device - the x86-64 NucBox - a program
+can run code of its own on the device's graphics block: a kernel, run by
+the block's compute engine on many threads at once. `amdgpu.resource`
+runs one queue of jobs on that engine for every program, mapped by the
+block's own scheduler: `StartGPUCompute` starts it once the block runs
+(`StartGPUGraphics`, which the `amd` board does as the machine comes
+up), and answers at once where it already runs.
+
+A kernel is written in Zig, as an exported function of the kernel
+calling convention, and built by the build's own compiler for the
+block's processor (gfx1103) with `addGPUCode`, which links it into a code
+object the program embeds:
+
+```zig
+// kernels/fill.zig: word i of `out` set to `value + i`, a thread a word,
+// in groups of 64 threads.
+export fn fill(out: [*]addrspace(.global) u32, value: u32, count: u32) callconv(.kernel) void {
+    const index = @workGroupId(0) *% 64 +% @workItemId(0);
+    if (index < count) out[index] = value +% index;
+}
+```
+
+```zig
+// build.zig
+const code = poweros_sdk.addGPUCode(b, b.path("kernels/fill.zig"), "fill");
+const seg = poweros_sdk.addProgram(b, sdk, .{
+    .name = "fill",
+    .root = b.path("fill.zig"),
+    .chip = .x64uefi,
+    .imports = &.{.{ .name = "gpu_code", .module = b.createModule(.{ .root_source_file = code }) }},
+});
+```
+
+The program loads the code object into the device's memory
+(`LoadGPUCode`), finds the kernel by its name (`FindGPUKernel`) and runs
+it (`SendGPUKernel`): how many groups in each of three dimensions, how
+many threads in each group, and its arguments, which are copied, so they
+need not stay. Each run is a job on the queue, whose number
+`WaitGPUCompute` waits for; what the kernel wrote is in the memory once
+the job is done. Its addresses are the device's: a piece of the device's
+own memory by its `device` address (`AllocGPUMemory`), a buffer of the
+machine's by where it is mapped for the engines (`MapGPUMemory`), whose
+writes the CPU reads at once, without a cache written back or dropped.
+
+```zig
+const ab: *AMDGPUBase = @ptrCast(sys.OpenResource(amdgpu.AMDGPUNAME) orelse return error.NoDevice);
+const image = @embedFile("gpu_code");
+var code: amdgpu.GPUCode = .{};
+if (!ab.StartGPUCompute() or !ab.LoadGPUCode(image.ptr, image.len, &code)) return error.NoCompute;
+defer ab.FreeGPUCode(&code);
+var kernel: amdgpu.GPUKernel = .{};
+if (!ab.FindGPUKernel(&code, "fill", &kernel)) return error.NoKernel;
+
+const count = 4096;
+const buffer = sys.AllocVec(count * 4, exec.MEMF_ANY) orelse return error.NoMemory;
+defer sys.FreeVec(buffer);
+var mapped: amdgpu.GPUMemory = .{};
+if (!ab.MapGPUMemory(buffer, count * 4, &mapped)) return error.NotMapped;
+defer ab.UnmapGPUMemory(&mapped);
+
+const Arguments = extern struct { out: u64, value: u32, count: u32 };
+const arguments: Arguments = .{ .out = mapped.device, .value = 7, .count = count };
+const dispatch: amdgpu.GPUDispatch = .{
+    .groups = .{ count / 64, 1, 1 },
+    .threads = .{ 64, 1, 1 },
+    .arguments = &arguments,
+    .argument_bytes = @sizeOf(Arguments),
+};
+const job = ab.SendGPUKernel(&kernel, &dispatch);
+if (job == 0 or !ab.WaitGPUCompute(job, 1000)) return error.NotDone;
+```
+
+A kernel gets the address of its arguments and its group's number, and
+nothing else: one that needs a stack or scratch memory, a trap handler,
+its dispatch's packet or its arguments in its registers is refused, as
+are more than 256 bytes of arguments, more than 64 KiB of group memory
+and more than 1024 threads in a group - the system's log says why. A job
+the engine never finishes - a kernel that runs on - holds every job after
+it, as the queue cannot be reset. `SendGPUCompute` puts the engine's own
+packets on the queue instead, `GetGPUComputeState` says how far it is.
+`C:test/Gpu COMPUTE` starts the queue and tries it with the kernel above;
+on the NucBox a job is 12 us from sent to done, and the kernel fills
+16 MiB of the device's memory in about 440 us and of the machine's,
+mapped, in 1 to 2 ms.

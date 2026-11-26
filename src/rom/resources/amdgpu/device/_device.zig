@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: MPL-2.0
-//! The device: its function on PCI found and claimed, its two windows,
-//! and its table of blocks read.
+//! The device: its function on PCI found and claimed, its windows, and
+//! its table of blocks read.
 //!
 //! The function is the vendor's display function. Its registers are in
 //! the sixth window, its memory in the first; a function whose windows are
 //! not those two, or whose table is in none of the places a table is
 //! looked for, is given back and said so of - it is a device this does
 //! not know, and is left alone rather than read at addresses that would
-//! mean something else.
+//! mean something else. Its doorbells - a word for each queue its engines
+//! run, which tells an engine the queue has new work - are in the third
+//! window; a function without it is kept, and only its compute engine is
+//! not started.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -27,14 +30,19 @@ pub const owner = sdk.resources.amdgpu.AMDGPUNAME;
 const VENDOR: u32 = 0x1002;
 const CLASS_DISPLAY: u32 = 0x0300;
 
-/// The window the memory is in, and the one the registers are in.
+/// The window the memory is in, the one the doorbells are in, and the
+/// one the registers are in.
 const bar_memory = 0;
+const bar_doorbells = 2;
 const bar_registers = 5;
 /// The least either window can be and still be the one: a chip's
 /// registers fill a quarter of a mebibyte, and its memory is never a
 /// handful of pages.
 const registers_least = 256 * 1024;
 const memory_least = 16 * 1024 * 1024;
+/// The least the doorbell window can be: two pages for the queues, and
+/// the scheduler's own after them.
+const doorbells_least = @import("../compute/_compute.zig").doorbells_least;
 
 /// The device found, claimed and read into the base: true where it is
 /// there. Every function of the vendor's that is a display function is
@@ -82,6 +90,10 @@ fn read(ab: *AMDGPUBase, device: *PCIDevice) bool {
         .window_bytes = memory.bytes,
         .memory_bytes = _table.memoryBytes(registers),
     };
+    if (window(device, bar_doorbells, doorbells_least)) |doorbells| {
+        ab.doorbells = doorbells.at;
+        ab.doorbells_bytes = doorbells.bytes;
+    }
     exec.kprintf(sys, "%s: %x:%x, the table of blocks is in %s\n", .{
         owner, @as(u32, device.vendor_id), @as(u32, device.device_id), table.where,
     });

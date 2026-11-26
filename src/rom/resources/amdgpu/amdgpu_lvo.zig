@@ -26,6 +26,14 @@ const WaitGPUDMA = @import("dma/waitgpudma.zig").WaitGPUDMA;
 const GetGPUDMAState = @import("dma/getgpudmastate.zig").GetGPUDMAState;
 const MapGPUMemory = @import("memory/mapgpumemory.zig").MapGPUMemory;
 const UnmapGPUMemory = @import("memory/unmapgpumemory.zig").UnmapGPUMemory;
+const StartGPUCompute = @import("compute/startgpucompute.zig").StartGPUCompute;
+const SendGPUCompute = @import("compute/sendgpucompute.zig").SendGPUCompute;
+const SendGPUKernel = @import("compute/sendgpukernel.zig").SendGPUKernel;
+const WaitGPUCompute = @import("compute/waitgpucompute.zig").WaitGPUCompute;
+const GetGPUComputeState = @import("compute/getgpucomputestate.zig").GetGPUComputeState;
+const LoadGPUCode = @import("code/loadgpucode.zig").LoadGPUCode;
+const FindGPUKernel = @import("code/findgpukernel.zig").FindGPUKernel;
+const FreeGPUCode = @import("code/freegpucode.zig").FreeGPUCode;
 
 /// amdgpu.resource's interface, as the SDK generates it from
 /// sdk/fd/amdgpu_lib.fd.
@@ -68,6 +76,14 @@ const contract_files = [_][]const u8{
     @embedFile("dma/getgpudmastate.zig"),
     @embedFile("memory/mapgpumemory.zig"),
     @embedFile("memory/unmapgpumemory.zig"),
+    @embedFile("compute/startgpucompute.zig"),
+    @embedFile("compute/sendgpucompute.zig"),
+    @embedFile("compute/sendgpukernel.zig"),
+    @embedFile("compute/waitgpucompute.zig"),
+    @embedFile("compute/getgpucomputestate.zig"),
+    @embedFile("code/loadgpucode.zig"),
+    @embedFile("code/findgpukernel.zig"),
+    @embedFile("code/freegpucode.zig"),
 };
 
 fn lvoGetGPUInfo(ab: *AMDGPUBase, info: *amdgpu.GPUInfo) callconv(.c) bool {
@@ -124,6 +140,30 @@ fn lvoMapGPUMemory(ab: *AMDGPUBase, address: *anyopaque, bytes: u32, memory: *am
 fn lvoUnmapGPUMemory(ab: *AMDGPUBase, memory: *amdgpu.GPUMemory) callconv(.c) void {
     UnmapGPUMemory(ab, memory);
 }
+fn lvoStartGPUCompute(ab: *AMDGPUBase) callconv(.c) bool {
+    return StartGPUCompute(ab);
+}
+fn lvoSendGPUCompute(ab: *AMDGPUBase, packets: [*]const u32, words: u32) callconv(.c) u32 {
+    return SendGPUCompute(ab, packets, words);
+}
+fn lvoSendGPUKernel(ab: *AMDGPUBase, kernel: *const amdgpu.GPUKernel, dispatch: *const amdgpu.GPUDispatch) callconv(.c) u32 {
+    return SendGPUKernel(ab, kernel, dispatch);
+}
+fn lvoWaitGPUCompute(ab: *AMDGPUBase, job: u32, most_ms: u32) callconv(.c) bool {
+    return WaitGPUCompute(ab, job, most_ms);
+}
+fn lvoGetGPUComputeState(ab: *AMDGPUBase, state: *amdgpu.GPUComputeState) callconv(.c) bool {
+    return GetGPUComputeState(ab, state);
+}
+fn lvoLoadGPUCode(ab: *AMDGPUBase, image: [*]const u8, bytes: u32, code: *amdgpu.GPUCode) callconv(.c) bool {
+    return LoadGPUCode(ab, image, bytes, code);
+}
+fn lvoFindGPUKernel(ab: *AMDGPUBase, code: *const amdgpu.GPUCode, name: [*:0]const u8, kernel: *amdgpu.GPUKernel) callconv(.c) bool {
+    return FindGPUKernel(ab, code, name, kernel);
+}
+fn lvoFreeGPUCode(ab: *AMDGPUBase, code: *amdgpu.GPUCode) callconv(.c) void {
+    FreeGPUCode(ab, code);
+}
 
 /// The jump table, in slot order: a resource has no standard vectors, so
 /// its first function is in the first slot.
@@ -146,4 +186,12 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoGetGPUDMAState),
     vec(lvoMapGPUMemory),
     vec(lvoUnmapGPUMemory),
+    vec(lvoStartGPUCompute),
+    vec(lvoSendGPUCompute),
+    vec(lvoSendGPUKernel),
+    vec(lvoWaitGPUCompute),
+    vec(lvoGetGPUComputeState),
+    vec(lvoLoadGPUCode),
+    vec(lvoFindGPUKernel),
+    vec(lvoFreeGPUCode),
 };

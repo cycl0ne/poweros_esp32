@@ -74,10 +74,12 @@ pub fn parseSets(text: []const u8) ?Sets {
 /// named after its place unless `catalog` names it (`sys/` for the
 /// system's own modules). A module the disk's host tests take in beside
 /// anvil.library, whose strings they import as `strings`, imports its
-/// own under a name of its own. And the set it is in (`Set`), which a
-/// board's disk has or has not. No two programs have one name: the load
-/// file is installed under it.
-pub const Program = struct { disk: []const u8, source: []const u8, name: []const u8, set: Set = .base, imports: []const []const u8 = &.{}, strings: ?[]const u8 = null, strings_as: []const u8 = "strings", catalog: ?[]const u8 = null };
+/// own under a name of its own. The kernels it runs on the AMD graphics
+/// block's compute engine, from the source `gpu_code` names, built into a
+/// code object it embeds as `gpu_code` (`poweros_sdk.addGPUCode`). And the
+/// set it is in (`Set`), which a board's disk has or has not. No two
+/// programs have one name: the load file is installed under it.
+pub const Program = struct { disk: []const u8, source: []const u8, name: []const u8, set: Set = .base, imports: []const []const u8 = &.{}, strings: ?[]const u8 = null, strings_as: []const u8 = "strings", catalog: ?[]const u8 = null, gpu_code: ?[]const u8 = null };
 
 /// A translation of a program's strings: its place on the disk, in
 /// LOCALE:Catalogs/<language>/, the descriptor and the translation it is
@@ -257,22 +259,22 @@ const commands = [_][]const u8{
     "bluetooth",
 };
 const tests = [_][]const u8{
-    "hello",       "echoargs",    "gfx",       "anim",         "intuition",
-    "console",     "keyboard",    "touch",     "input",        "lines",
-    "nyan",        "plasma",      "audiotest", "fonts",        "screens",
-    "layout",      "classes",     "gadgets",   "listview",     "diskfont",
-    "colorwheel",  "tapedeck",    "pointer",   "crypto",       "bsdsocktest",
-    "asl",         "settings",    "iff",       "datatypes",    "shapes",
-    "styles",      "motion",      "widgets",   "modbusserver", "cores",
-    "scroll",      "listbrowser", "notify",    "icon",         "launch",
-    "drag",        "tap",         "app",       "open",         "engine",
-    "jpeg",        "keysource",   "usbdevice", "scsi",         "sound",
-    "memowner",    "records",     "exall",     "disktest",     "filetest",
-    "speed2d",     "windraw",     "semtest",   "membench",     "glyphs",
-    "ribbon",      "taskbench",   "videodec",  "audiodec",     "film",
-    "commodities", "filmdt",      "watchdog",  "gpu",          "dttime",
-    "names",       "axes",        "bands",     "vchiq",        "expunge",
-    "dtwrite",     "btecho",      "btgatt",    "bthiddevice",
+    "hello",       "echoargs",    "gfx",         "anim",         "intuition",
+    "console",     "keyboard",    "touch",       "input",        "lines",
+    "nyan",        "plasma",      "audiotest",   "fonts",        "screens",
+    "layout",      "classes",     "gadgets",     "listview",     "diskfont",
+    "colorwheel",  "tapedeck",    "pointer",     "crypto",       "bsdsocktest",
+    "asl",         "settings",    "iff",         "datatypes",    "shapes",
+    "styles",      "motion",      "widgets",     "modbusserver", "cores",
+    "scroll",      "listbrowser", "notify",      "icon",         "launch",
+    "drag",        "tap",         "app",         "open",         "engine",
+    "jpeg",        "keysource",   "usbdevice",   "scsi",         "sound",
+    "memowner",    "records",     "exall",       "disktest",     "filetest",
+    "speed2d",     "windraw",     "semtest",     "membench",     "glyphs",
+    "ribbon",      "taskbench",   "videodec",    "audiodec",     "film",
+    "commodities", "filmdt",      "watchdog",    "dttime",       "names",
+    "axes",        "bands",       "vchiq",       "expunge",      "dtwrite",
+    "btecho",      "btgatt",      "bthiddevice",
 };
 /// C:dbg: the tools that look into the running system - its tasks, where
 /// one stands, and the end of one that is stuck.
@@ -334,8 +336,10 @@ const inner_commands = [_]Program{
     .{ .disk = "c/net/mountshare", .source = "c/net/mountshare/mountshare.zig", .name = "mountshare", .set = .net, .imports = &.{"smbclient"} },
 };
 
-/// Test programs built with an inner module.
+/// Test programs built with an inner module or code of their own for the
+/// graphics block's compute engine.
 const inner_tests = [_]Program{
+    .{ .disk = "c/test/gpu", .source = "c/test/gpu/gpu.zig", .name = "gpu", .set = .tests, .gpu_code = "c/test/gpu/kernels/fill.zig" },
     .{ .disk = "c/test/raster", .source = "c/test/raster/raster.zig", .name = "raster", .set = .@"3d", .imports = &.{"raster"} },
     .{ .disk = "c/test/cube", .source = "c/test/raster/cube.zig", .name = "cube", .set = .@"3d", .imports = &.{"raster"} },
     .{ .disk = "c/test/facetcube", .source = "c/test/raster/facetcube.zig", .name = "facetcube", .set = .@"3d", .imports = &.{"raster"} },
@@ -1138,7 +1142,7 @@ pub fn build(b: *std.Build) void {
     }
     for (programs) |program| {
         if (!builtFor(program, chip)) continue;
-        var imports: [inner_modules.len + 1]std.Build.Module.Import = undefined;
+        var imports: [inner_modules.len + 2]std.Build.Module.Import = undefined;
         var count: usize = 0;
         for (program.imports) |name| {
             for (inner) |import| {
@@ -1150,6 +1154,11 @@ pub fn build(b: *std.Build) void {
         if (program.strings) |descriptor| {
             const catalog_name = program.catalog orelse b.fmt("{s}.catalog", .{program.disk});
             imports[count] = .{ .name = program.strings_as, .module = poweros_sdk.addStrings(b, sdk, b.path(descriptor), catalog_name) };
+            count += 1;
+        }
+        if (program.gpu_code) |kernels| {
+            const code = poweros_sdk.addGPUCode(b, b.path(kernels), program.name);
+            imports[count] = .{ .name = "gpu_code", .module = b.createModule(.{ .root_source_file = code }) };
             count += 1;
         }
         const seg = poweros_sdk.addProgram(b, sdk, .{

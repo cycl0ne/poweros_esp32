@@ -23,6 +23,14 @@
 //! to be done, GetGPUDMAState says how far it is. MapGPUMemory maps a
 //! range of the machine's memory into the hub's page table, so that the
 //! engines reach a buffer where it is, and UnmapGPUMemory takes it out.
+//! The block's compute engine runs one queue of jobs too, mapped by the
+//! block's scheduler (`compute/_compute.zig`): StartGPUCompute starts the
+//! scheduler and the queue, SendGPUCompute puts a job of its packets on
+//! it, SendGPUKernel a kernel's dispatch, WaitGPUCompute waits for one,
+//! GetGPUComputeState says how far it is. LoadGPUCode places a code
+//! object for the engine in the device's memory (`code/_code.zig`),
+//! FindGPUKernel finds a kernel in it by its name, and FreeGPUCode gives
+//! the memory back.
 //!
 //! The device's video BIOS image - the copy the machine's firmware keeps
 //! in its tables (`device/_bios.zig`) - is the resource's to find too,
@@ -89,6 +97,16 @@ test {
     _ = @import("dma/getgpudmastate.zig");
     _ = @import("memory/mapgpumemory.zig");
     _ = @import("memory/unmapgpumemory.zig");
+    _ = @import("compute/_compute.zig");
+    _ = @import("compute/startgpucompute.zig");
+    _ = @import("compute/sendgpucompute.zig");
+    _ = @import("compute/sendgpukernel.zig");
+    _ = @import("compute/waitgpucompute.zig");
+    _ = @import("compute/getgpucomputestate.zig");
+    _ = @import("code/_code.zig");
+    _ = @import("code/loadgpucode.zig");
+    _ = @import("code/findgpukernel.zig");
+    _ = @import("code/freegpucode.zig");
     _ = @import("device/_bios.zig");
     _ = @import("device/getgpubios.zig");
     _ = @import("device/_connectors.zig");

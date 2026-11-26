@@ -212,6 +212,98 @@ pub const GPUDMAState = extern struct {
     status: u32 = 0,
 };
 
+/// The graphics block's compute engine's packets, as SendGPUCompute takes
+/// them: each starts with a header word - GPUPACKET, with its operation at
+/// GPUPACKET_OP_SHIFT and the number of words after the header less one
+/// at GPUPACKET_COUNT_SHIFT - and addresses are the device's, low word
+/// first. A job's packets are run in order.
+pub const GPUPACKET: u32 = 3 << 30;
+pub const GPUPACKET_OP_SHIFT = 8;
+pub const GPUPACKET_COUNT_SHIFT = 16;
+/// A packet whose words after the header are passed over.
+pub const GPUPACKET_NOP: u32 = 0x10;
+/// Words written into memory, four words and the words written: the
+/// header, GPUWRITE_MEMORY with GPUWRITE_CONFIRM - the engine goes on once
+/// the memory has them - the address (low word, high word), on four
+/// bytes, and the words.
+pub const GPUPACKET_WRITE_DATA: u32 = 0x37;
+pub const GPUWRITE_MEMORY: u32 = 5 << 8;
+pub const GPUWRITE_CONFIRM: u32 = 1 << 20;
+
+/// What GetGPUComputeState says of the compute engine's queue: where its
+/// ring is and how long, in bytes; how far the engine has read it, as it
+/// last wrote that back, and how far it has been written, in bytes since
+/// it started; the number of the last job sent and of the last the engine
+/// has done; how many times the engine has raised its interrupt at the
+/// end of a job; the versions of the scheduler's firmware and of its
+/// second pipe's, which maps the queue; whether the queue is mapped, and
+/// how far the engine has read and been told of it, in words, as its
+/// registers read now; and the graphics block's status and its compute
+/// processor's.
+pub const GPUComputeState = extern struct {
+    ring: u64 align(4) = 0,
+    ring_bytes: u32 = 0,
+    read: u64 align(4) = 0,
+    written: u64 align(4) = 0,
+    sent: u32 = 0,
+    done: u32 = 0,
+    interrupts: u32 = 0,
+    scheduler: u32 = 0,
+    scheduler_queues: u32 = 0,
+    active: u32 = 0,
+    queue_read: u32 = 0,
+    queue_written: u32 = 0,
+    status: u32 = 0,
+    compute_status: u32 = 0,
+};
+
+/// A code object loaded by LoadGPUCode: the piece of the device's memory
+/// its segments are in, the address the code object gives the start of
+/// that piece, and the image it was loaded from, which FindGPUKernel reads
+/// its symbols in - the caller's, kept in place while the code object is
+/// looked into.
+pub const GPUCode = extern struct {
+    memory: GPUMemory = .{},
+    first: u64 align(4) = 0,
+    image: ?[*]const u8 = null,
+    bytes: u32 = 0,
+};
+
+/// A kernel of a loaded code object, as FindGPUKernel finds it: the
+/// device's address its code starts at; its program's resource words -
+/// what its descriptor gives the engine to run it with; the bytes its
+/// arguments take; the bytes of group memory a group of it uses and of
+/// private memory each of its lanes does; and its descriptor's properties
+/// - which values it is handed in its scalar registers, and that its
+/// waves are 32 lanes wide (GPUKERNEL_WAVE32).
+pub const GPUKernel = extern struct {
+    code: u64 align(4) = 0,
+    rsrc1: u32 = 0,
+    rsrc2: u32 = 0,
+    rsrc3: u32 = 0,
+    argument_bytes: u32 = 0,
+    group_bytes: u32 = 0,
+    private_bytes: u32 = 0,
+    properties: u32 = 0,
+};
+/// A kernel's properties: the address of its arguments handed to it in
+/// its first two scalar registers, and waves of 32 lanes.
+pub const GPUKERNEL_ARGUMENTS: u32 = 1 << 3;
+pub const GPUKERNEL_WAVE32: u32 = 1 << 10;
+/// The most bytes of arguments a dispatch takes.
+pub const GPUKERNEL_ARGUMENTS_MAX = 256;
+
+/// A kernel's dispatch, as SendGPUKernel takes it: how many groups it
+/// runs in each of the three dimensions and how many threads each group
+/// has in each, and its arguments - `argument_bytes` of them at
+/// `arguments`, copied when it is sent, so they need not stay.
+pub const GPUDispatch = extern struct {
+    groups: [3]u32 = .{ 1, 1, 1 },
+    threads: [3]u32 = .{ 1, 1, 1 },
+    arguments: ?*const anyopaque = null,
+    argument_bytes: u32 = 0,
+};
+
 /// AddGPUIntServer's clients - which of the device's blocks raised an
 /// interrupt - and their sources, as the interrupt block numbers them.
 /// The display engine.

@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: MIT
 //! amdgpu.resource's functions: the machine's AMD graphics device, where
 //! its register window is and where each of its blocks' registers are,
-//! its blocks powered up and down, its own memory handed out, the
-//! firmware its blocks run loaded through its security processor, and
-//! its interrupts handed to the drivers of the blocks that raise them.
+//! its blocks powered up and down, its own memory handed out and the
+//! machine's mapped for its engines, the firmware its blocks run loaded
+//! through its security processor, its interrupts handed to the drivers
+//! of the blocks that raise them, its graphics block's DMA and compute
+//! engines given jobs, and code objects loaded for the compute engine
+//! and their kernels run.
 //! A resource: no Open or Close, its first function in the first slot.
 //! The base comes from OpenResource("amdgpu.resource").
 //!
@@ -37,6 +40,14 @@ pub const LVO = struct {
     pub const GetGPUDMAState = libraries.lvo(15);
     pub const MapGPUMemory = libraries.lvo(16);
     pub const UnmapGPUMemory = libraries.lvo(17);
+    pub const StartGPUCompute = libraries.lvo(18);
+    pub const SendGPUCompute = libraries.lvo(19);
+    pub const SendGPUKernel = libraries.lvo(20);
+    pub const WaitGPUCompute = libraries.lvo(21);
+    pub const GetGPUComputeState = libraries.lvo(22);
+    pub const LoadGPUCode = libraries.lvo(23);
+    pub const FindGPUKernel = libraries.lvo(24);
+    pub const FreeGPUCode = libraries.lvo(25);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -60,6 +71,14 @@ pub const Fn = struct {
     pub const GetGPUDMAState = *const fn (*AMDGPUBase, *amdgpu.GPUDMAState) callconv(.c) bool;
     pub const MapGPUMemory = *const fn (*AMDGPUBase, *anyopaque, u32, *amdgpu.GPUMemory) callconv(.c) bool;
     pub const UnmapGPUMemory = *const fn (*AMDGPUBase, *amdgpu.GPUMemory) callconv(.c) void;
+    pub const StartGPUCompute = *const fn (*AMDGPUBase) callconv(.c) bool;
+    pub const SendGPUCompute = *const fn (*AMDGPUBase, [*]const u32, u32) callconv(.c) u32;
+    pub const SendGPUKernel = *const fn (*AMDGPUBase, *const amdgpu.GPUKernel, *const amdgpu.GPUDispatch) callconv(.c) u32;
+    pub const WaitGPUCompute = *const fn (*AMDGPUBase, u32, u32) callconv(.c) bool;
+    pub const GetGPUComputeState = *const fn (*AMDGPUBase, *amdgpu.GPUComputeState) callconv(.c) bool;
+    pub const LoadGPUCode = *const fn (*AMDGPUBase, [*]const u8, u32, *amdgpu.GPUCode) callconv(.c) bool;
+    pub const FindGPUKernel = *const fn (*AMDGPUBase, *const amdgpu.GPUCode, [*:0]const u8, *amdgpu.GPUKernel) callconv(.c) bool;
+    pub const FreeGPUCode = *const fn (*AMDGPUBase, *amdgpu.GPUCode) callconv(.c) void;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -191,5 +210,61 @@ pub const AMDGPUBase = opaque {
     /// `memory` is cleared.
     pub fn UnmapGPUMemory(self: *AMDGPUBase, memory: *amdgpu.GPUMemory) void {
         return libraries.call(self, LVO.UnmapGPUMemory, Fn.UnmapGPUMemory, .{memory});
+    }
+
+    /// The graphics block's compute engine started with one queue of jobs,
+    /// mapped by the block's scheduler, once StartGPUGraphics has started the
+    /// block; true once it runs.
+    pub fn StartGPUCompute(self: *AMDGPUBase) bool {
+        return libraries.call(self, LVO.StartGPUCompute, Fn.StartGPUCompute, .{});
+    }
+
+    /// The compute engine's packets `packets`, `words` words of them, put on
+    /// its queue as one job; the job's number, for WaitGPUCompute, or 0 where
+    /// the queue does not run, the job does not fit in it, or the engine does
+    /// not make room for it in time.
+    pub fn SendGPUCompute(self: *AMDGPUBase, packets: [*]const u32, words: u32) u32 {
+        return libraries.call(self, LVO.SendGPUCompute, Fn.SendGPUCompute, .{ packets, words });
+    }
+
+    /// The kernel `kernel` run on the compute engine as `dispatch` says, as
+    /// one job on its queue; the job's number, for WaitGPUCompute, or 0 where
+    /// the queue does not run, the dispatch is not one the kernel can be run
+    /// with, or there is no room for it in time.
+    pub fn SendGPUKernel(self: *AMDGPUBase, kernel: *const amdgpu.GPUKernel, dispatch: *const amdgpu.GPUDispatch) u32 {
+        return libraries.call(self, LVO.SendGPUKernel, Fn.SendGPUKernel, .{ kernel, dispatch });
+    }
+
+    /// Waits until the compute engine has done job `job`, `most_ms`
+    /// milliseconds at most; true once it has, false where it has not by
+    /// then.
+    pub fn WaitGPUCompute(self: *AMDGPUBase, job: u32, most_ms: u32) bool {
+        return libraries.call(self, LVO.WaitGPUCompute, Fn.WaitGPUCompute, .{ job, most_ms });
+    }
+
+    /// The compute engine's queue as it is, into `state`; false where it
+    /// does not run.
+    pub fn GetGPUComputeState(self: *AMDGPUBase, state: *amdgpu.GPUComputeState) bool {
+        return libraries.call(self, LVO.GetGPUComputeState, Fn.GetGPUComputeState, .{state});
+    }
+
+    /// The code object `image`, `bytes` long, loaded into the device's
+    /// memory, into `code`; false where it is not one for this device's
+    /// graphics block, needs what the loader does not do, or there is no
+    /// room.
+    pub fn LoadGPUCode(self: *AMDGPUBase, image: [*]const u8, bytes: u32, code: *amdgpu.GPUCode) bool {
+        return libraries.call(self, LVO.LoadGPUCode, Fn.LoadGPUCode, .{ image, bytes, code });
+    }
+
+    /// The kernel `name` of the loaded code object `code`, into `kernel`;
+    /// false where the code object has no kernel of that name.
+    pub fn FindGPUKernel(self: *AMDGPUBase, code: *const amdgpu.GPUCode, name: [*:0]const u8, kernel: *amdgpu.GPUKernel) bool {
+        return libraries.call(self, LVO.FindGPUKernel, Fn.FindGPUKernel, .{ code, name, kernel });
+    }
+
+    /// A code object from LoadGPUCode taken out of the device's memory;
+    /// `code` is cleared.
+    pub fn FreeGPUCode(self: *AMDGPUBase, code: *amdgpu.GPUCode) void {
+        return libraries.call(self, LVO.FreeGPUCode, Fn.FreeGPUCode, .{code});
     }
 };

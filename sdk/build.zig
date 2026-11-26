@@ -288,6 +288,30 @@ pub fn addCatalog(b: *std.Build, dep: *std.Build.Dependency, descriptor: std.Bui
     return run.addOutputFileArg(std.fs.path.basename(catalog_name));
 }
 
+/// A kernel for the AMD graphics block's compute engine, built from
+/// `root` by the build's own compiler for the block on the NucBox - gfx1103,
+/// the graphics block 11.0.1 that amdgpu.resource knows - and linked into
+/// a code object (`<name>.co`): an ELF shared object of the vendor's kind,
+/// which amdgpu.resource's LoadGPUCode loads and FindGPUKernel finds the
+/// kernels of. A program takes it in with `@embedFile` of the import it
+/// is handed as. Built optimized for speed: a kernel has no panic handler
+/// to go to, so its checks would have nowhere to fail to.
+pub fn addGPUCode(b: *std.Build, root: std.Build.LazyPath, name: []const u8) std.Build.LazyPath {
+    const target = b.resolveTargetQuery(.{
+        .cpu_arch = .amdgcn,
+        .os_tag = .amdhsa,
+        .cpu_model = .{ .explicit = &std.Target.amdgcn.cpu.gfx1103 },
+    });
+    const object = b.addObject(.{
+        .name = b.fmt("{s}_gpu", .{name}),
+        .root_module = b.createModule(.{ .root_source_file = root, .target = target, .optimize = .ReleaseFast }),
+    });
+    const link = b.addSystemCommand(&.{ b.graph.zig_exe, "ld.lld", "-shared", "-o" });
+    const code = link.addOutputFileArg(b.fmt("{s}.co", .{name}));
+    link.addFileArg(object.getEmittedBin());
+    return code;
+}
+
 /// What `addProgram` builds.
 pub const Program = struct {
     /// The name of the compile artifact, and of the load file (`<name>.seg`).

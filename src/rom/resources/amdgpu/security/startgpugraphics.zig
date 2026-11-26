@@ -112,7 +112,7 @@ const _graphics = @import("../graphics/_graphics.zig");
 ///
 /// NOTES:
 /// The block is left powered. Its engines are left halted with their
-/// code: each is started with its queue (StartGPUDMA).
+/// code: each is started with its queue (StartGPUDMA, StartGPUCompute).
 ///
 /// BUGS:
 /// A command processor of the later kind, whose files' header is of the
@@ -120,7 +120,8 @@ const _graphics = @import("../graphics/_graphics.zig");
 /// is refused.
 ///
 /// SEE ALSO:
-/// `StartGPUSecurity`, `LoadGPUFirmware`, `SetGPUPower`, `StartGPUDMA`
+/// `StartGPUSecurity`, `LoadGPUFirmware`, `SetGPUPower`, `StartGPUDMA`,
+/// `StartGPUCompute`
 ///
 /// EXAMPLES:
 /// ```zig
@@ -177,6 +178,12 @@ pub fn StartGPUGraphics(ab: *AMDGPUBase, files: *const amdgpu.GPUGraphicsFiles) 
     if (!_graphics.waitForEngines(ab) or !_graphics.turnOnHub(ab)) {
         ab.graphics_failed = true;
         return false;
+    }
+    // The scheduler's two pipes' first instructions, which StartGPUCompute
+    // points them at.
+    for ([_]amdgpu.GPUFile{ files.mes, files.mes_kiq }, 0..) |file, pipe| {
+        const image = file.image.?[0..file.bytes];
+        ab.scheduler_start[pipe] = @as(u64, word(image, scheduler_start_at + 4)) << 32 | word(image, scheduler_start_at);
     }
     ab.graphics_started = true;
     return true;
@@ -270,6 +277,9 @@ const scheduler_code_at = 0x28;
 const scheduler_data_bytes_at = 0x30;
 const scheduler_data_at = 0x34;
 const scheduler_header_least = 0x48;
+/// Where the scheduler's header holds the address of its first
+/// instruction, low word first.
+const scheduler_start_at = 0x38;
 const controller_code_bytes_at = 0x20;
 const controller_data_bytes_at = 0x28;
 const controller_header_least = 0x30;

@@ -5,7 +5,8 @@
 //! of it is handed out, the security processor's ring with the
 //! protected region it was given, the interrupt block's ring with the
 //! servers its entries are handed to, the graphics block with its memory
-//! hub's page table, and its DMA engine's queue.
+//! hub's page table, its DMA engine's queue, and its compute engine's
+//! queue with the scheduler that maps it.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -27,6 +28,11 @@ pub const AMDGPUBase = extern struct {
     /// What GetGPUInfo answers; its `registers` 0 while there is no
     /// device.
     info: amdgpu.GPUInfo = .{},
+    /// The doorbell window: where the CPU and the device reach it - the
+    /// same address on this machine - and how many bytes it is; 0 where
+    /// the function has none.
+    doorbells: u64 = 0,
+    doorbells_bytes: u64 = 0,
     /// The device's video BIOS image, where the firmware kept one; its
     /// `image` null where not.
     bios: amdgpu.GPUBios = .{},
@@ -123,4 +129,40 @@ pub const AMDGPUBase = extern struct {
     dma_trap_int: exec.Interrupt = .{},
     dma_lock: exec.SignalSemaphore,
     dma_wait_lock: exec.SignalSemaphore,
+    /// The scheduler's two pipes' first instruction, from their files'
+    /// headers as StartGPUGraphics loaded them.
+    scheduler_start: [2]u64 = .{ 0, 0 },
+    /// The compute engine's queue: the piece its rings, their queue
+    /// descriptions and what the engines write back are in; whether it
+    /// runs, and whether it failed to start - after which it is not tried
+    /// again. The words written into each of the three rings since it
+    /// started - the scheduler's own, the pipe that maps queues for it,
+    /// and the queue's - and the number of the last call made of the
+    /// scheduler. The scheduler's firmware versions. The number of the
+    /// last job put on the queue, the interrupts the engine raised at the
+    /// ends of jobs, the waitable those interrupts signal and their
+    /// server; the slot of arguments a kernel's next dispatch takes, and
+    /// the job each slot was last taken by; the lock jobs are put on the
+    /// queue under, and the one a task waits under.
+    compute: amdgpu.GPUMemory = .{},
+    compute_running: bool = false,
+    compute_failed: bool = false,
+    scheduler_written: u64 = 0,
+    mapper_written: u64 = 0,
+    compute_written: u64 = 0,
+    scheduler_calls: u32 = 0,
+    scheduler_version: u32 = 0,
+    mapper_version: u32 = 0,
+    compute_sent: u32 = 0,
+    compute_ends: u32 = 0,
+    compute_end: exec.Waitable = .{},
+    compute_end_int: exec.Interrupt = .{},
+    compute_slot: u32 = 0,
+    compute_slot_jobs: [compute_slots]u32 = @splat(0),
+    compute_lock: exec.SignalSemaphore,
+    compute_wait_lock: exec.SignalSemaphore,
 };
+
+/// The slots of arguments the compute queue's kernels are handed theirs
+/// in.
+pub const compute_slots = 64;

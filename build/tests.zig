@@ -99,12 +99,18 @@ pub fn addCheckSteps(b: *std.Build, with: CheckStepsWith) void {
     // And the fetched files of the Unicode Character Database; empty
     // when scripts/fetch-unicode.sh has not run.
     test_options.addOption([]const u8, "unicode_dir", unicodeDir(b) orelse "");
+    // The kernel C:test/Gpu runs, as the build makes it, for the tests of
+    // the code objects amdgpu.resource loads.
+    const gpu_test_code = b.createModule(.{
+        .root_source_file = poweros_sdk.addGPUCode(b, disk_dep.path("c/test/gpu/kernels/fill.zig"), "gpu_test"),
+    });
     for ([_][]const u8{ "src/tests.zig", "src/rom/devs/timer/timeval.zig" }) |path| {
         const test_mod = b.createModule(.{
             .root_source_file = b.path(path),
             .target = b.graph.host,
         });
         test_mod.addImport("sdk", sdk);
+        test_mod.addImport("gpu_test_code", gpu_test_code);
         test_mod.addOptions("test_options", test_options);
         const unit_tests = b.addTest(.{ .root_module = test_mod });
         test_step.dependOn(&b.addRunArtifact(unit_tests).step);
