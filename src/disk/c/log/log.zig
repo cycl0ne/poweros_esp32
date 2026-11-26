@@ -10,6 +10,7 @@
 //!   Log FOLLOW           and then what comes, until Ctrl-C
 //!   Log SAVE             into RAM:Log/system.log
 //!   Log TO SD0:boot.log  into that file
+//!   Log FOLLOW TO Work:system.log   into that file, and what comes
 //!   Log LEVEL warning    keep errors and warnings only from now on
 //!   Log MIRROR ON        the log on the USB console too (OFF: not)
 //!   Log SYSLOG 10.0.0.2  to that syslog server, and what comes, as above
@@ -24,6 +25,14 @@
 //!
 //! FOLLOW asks exec for a signal when the log grows (`SetLogSignal`), at
 //! most every ten ticks, and reads what came each time. Ctrl-C ends it.
+//! With SAVE or TO it writes into the file: what the log holds, then
+//! each piece that comes, and after each the file's handler is asked to
+//! put everything written on the medium (ACTION_FLUSH) - a file system
+//! may keep an open file's writes until it is closed, and a power cut
+//! would lose them. So the file holds the log up to the last piece
+//! before a cut, or a machine that stopped. Run it in the background
+//! with `Run >NIL: Log FOLLOW TO <file>`. Each piece is a write of the
+//! medium: on flash, that is wear.
 //!
 //! LEVEL (error, warning, info or debug) and MIRROR (ON or OFF) change
 //! exec's settings (`LogControl`) and say what they were; given alone,
@@ -47,7 +56,7 @@ const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Log";
-const VERSION_STRING = "\x00$VER: Log 1.1 (04.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Log 1.2 (26.11.2026)\r\n";
 
 const template = "LINES/N,FROM/K,FOLLOW/S,SAVE/S,TO/K,LEVEL/K,MIRROR/K,SYSLOG/K";
 const arg_lines = 0;
@@ -137,6 +146,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
 
     const to = rdargs.string(argv[arg_to]);
     if (argv[arg_save] != 0 or to != null) {
+        if (argv[arg_follow] != 0) return followInto(sys, dl, to orelse default_file, to == null, text, &position, buffer);
         return save(dl, to orelse default_file, to == null, text);
     }
 
@@ -316,10 +326,11 @@ fn save(dl: *DosBase, name: [*:0]const u8, make_dir: bool, text: []const u8) i32
 
 // --- following -----------------------------------------------------------------
 
-/// Where what comes goes: printed, or sent.
+/// Where what comes goes: printed, written or sent. False: it can take
+/// no more, which is said, and the following ends.
 const Sink = struct {
     context: *anyopaque,
-    put: *const fn (context: *anyopaque, bytes: []const u8) void,
+    put: *const fn (context: *anyopaque, bytes: []const u8) bool,
 };
 
 const Printer = struct {
@@ -329,12 +340,63 @@ const Printer = struct {
         return .{ .context = printer, .put = put };
     }
 
-    fn put(context: *anyopaque, bytes: []const u8) void {
+    fn put(context: *anyopaque, bytes: []const u8) bool {
         const printer: *Printer = @ptrCast(@alignCast(context));
         _ = printer.dl.Write(printer.dl.Output(), bytes.ptr, @intCast(bytes.len));
         _ = printer.dl.Flush(printer.dl.Output());
+        return true;
     }
 };
+
+/// A file followed into: each piece written, then put on the medium.
+const Keeper = struct {
+    dl: *DosBase,
+    file: *dos.FileHandle,
+    name: [*:0]const u8,
+
+    fn sink(keeper: *Keeper) Sink {
+        return .{ .context = keeper, .put = put };
+    }
+
+    fn put(context: *anyopaque, bytes: []const u8) bool {
+        const keeper: *Keeper = @ptrCast(@alignCast(context));
+        if (!keeper.write(bytes)) {
+            _ = keeper.dl.PrintFault(keeper.dl.IoErr(), keeper.name);
+            return false;
+        }
+        return true;
+    }
+
+    /// `bytes` written and everything written put on the medium by the
+    /// file's handler. One that has no such step has nothing kept back.
+    fn write(keeper: *Keeper, bytes: []const u8) bool {
+        if (keeper.dl.Write(keeper.file, bytes.ptr, @intCast(bytes.len)) != @as(isize, @intCast(bytes.len))) return false;
+        const handler = keeper.file.task orelse return true;
+        _ = keeper.dl.DoPkt(handler, @intFromEnum(dos.ActionCode.flush), 0, 0, 0, 0, 0);
+        return true;
+    }
+};
+
+/// `text`, then what comes after `position`, into `name`, each piece put
+/// on the medium as it is written, until Ctrl-C; RAM:Log made first when
+/// it is the default.
+fn followInto(sys: *ExecBase, dl: *DosBase, name: [*:0]const u8, make_dir: bool, text: []const u8, position: *u64, buffer: [*]u8) i32 {
+    if (make_dir) {
+        // Already there is as good as made.
+        if (dl.CreateDir(default_dir)) |lock| dl.UnLock(lock);
+    }
+    const file = dl.Open(name, dos.MODE_NEWFILE) orelse {
+        _ = dl.PrintFault(dl.IoErr(), name);
+        return dos.RETURN_FAIL;
+    };
+    defer _ = dl.Close(file);
+    var keeper = Keeper{ .dl = dl, .file = file, .name = name };
+    if (!keeper.write(text)) {
+        _ = dl.PrintFault(dl.IoErr(), name);
+        return dos.RETURN_FAIL;
+    }
+    return follow(sys, dl, position, buffer, keeper.sink());
+}
 
 /// What comes after `position`, as it comes, to `sink`, until Ctrl-C.
 fn follow(sys: *ExecBase, dl: *DosBase, position: *u64, buffer: [*]u8, sink: Sink) i32 {
@@ -360,7 +422,7 @@ fn follow(sys: *ExecBase, dl: *DosBase, position: *u64, buffer: [*]u8, sink: Sin
         while (true) {
             const count = sys.ReadLog(position, buffer, buffer_size);
             if (count == 0) break;
-            sink.put(sink.context, buffer[0..count]);
+            if (!sink.put(sink.context, buffer[0..count])) return dos.RETURN_FAIL;
         }
     }
 }
@@ -379,7 +441,7 @@ const Syslog = struct {
         return .{ .context = server, .put = put };
     }
 
-    fn put(context: *anyopaque, bytes: []const u8) void {
+    fn put(context: *anyopaque, bytes: []const u8) bool {
         const to: *Syslog = @ptrCast(@alignCast(context));
         for (bytes) |byte| {
             if (byte == '\n') {
@@ -391,6 +453,7 @@ const Syslog = struct {
             to.line[to.length] = byte;
             to.length += 1;
         }
+        return true;
     }
 
     /// The gathered line as one datagram: `<priority>writer: [time] text`.
@@ -538,7 +601,7 @@ fn syslog(sys: *ExecBase, dl: *DosBase, host: [*:0]const u8, text: []const u8, p
 
     var to = Syslog{ .sb = sb, .socket = socket };
     const sink = to.sink();
-    sink.put(sink.context, text);
+    _ = sink.put(sink.context, text);
     return follow(sys, dl, position, buffer, sink);
 }
 

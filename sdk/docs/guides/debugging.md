@@ -365,7 +365,9 @@ instead, and nothing has to be set for it:
   is written. It stops when the cold-start modules have run and the
   display driver has the screen, so the picture comes up clean.
 - Everything from before that is in the log, which `Log` shows once there
-  is a shell to run it in, and `Log TO <file>` saves.
+  is a shell to run it in, and `Log TO <file>` saves. `Run >NIL: Log
+  FOLLOW TO <file>` keeps writing it to a disk as it comes, each piece put
+  on the medium, so a machine that stops leaves its log up to then.
 
 A boot that stops between the kernel's last line and the picture is in
 the cold start, where the modules are made and nothing is said about it.

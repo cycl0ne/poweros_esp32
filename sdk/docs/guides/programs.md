@@ -838,6 +838,15 @@ log holds and then every line as it comes, a UDP datagram each, to port
 514 (or `host:port`). S:Network-Startup starts it when
 `ENVARC:Sys/net/syslog` names a server.
 
+**Into a file, through a power cut.** `Run >NIL: Log FOLLOW TO
+Work:system.log` writes what the log holds and then each piece as it
+comes, and after each asks the file's handler to put everything written
+on the medium (`ACTION_FLUSH`, sent with `DoPkt`): a file system keeps an
+open file's writes until it is closed, and a cut would lose them all. So
+the file holds the log up to the last piece before a power cut, or before
+a machine that stopped - read it after the next start. The file is
+written anew each time; on flash, each piece is a write of the medium.
+
 **The last words.** On the ESP32s a dead end that nobody answers - no
 debugger asked for within a few seconds - restarts the machine rather
 than halting it, and keeps the last 4 KiB of the log in RTC memory, which
