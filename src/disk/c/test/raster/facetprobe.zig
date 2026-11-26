@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetProbe";
-const VERSION_STRING = "\x00$VER: FacetProbe 1.52 (26.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetProbe 1.53 (26.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "CORES/S,V3D/S,QUIET/S";
@@ -2550,7 +2550,9 @@ fn stencilChecks(probe: *Probe) void {
     if (!probe.can.stored_stencil) {
         probe.check(passStenciling(probe, .s8_uint, "cdcs") == null, "a stored stencil refused where the device keeps none");
         probe.check(passStenciling(probe, .d16_unorm_s8_uint, "cdld") == null, "a loaded stencil refused the same way");
-        probe.check(passStenciling(probe, .s8_uint, "cdcd") != null, "a stencil that stays in the tiles is still taken");
+        // And one that stays in the tiles since facet 1.225: the format is
+        // no attachment where no stencil is kept.
+        probe.check(passStenciling(probe, .s8_uint, "cdcd") == null, "and one that stays in the tiles, S8_UINT being no attachment here");
         return;
     }
     // An op for a plane the format has not keeps nothing (since 1.106).
@@ -2598,7 +2600,13 @@ fn stencilChecks(probe: *Probe) void {
     // giving it no DEPTH_STENCIL_ATTACHMENT (since 1.135).
     if (!probe.can.stored_both) {
         probe.check(passStenciling(probe, .d16_unorm_s8_uint, "cdcs") == null, "a stored stencil refused for a format that holds a depth too");
-        probe.check(passStenciling(probe, .d16_unorm_s8_uint, "cdcd") != null, "one that stays in the tiles is still taken");
+        // And since facet 1.225 one that stays in the tiles, the format
+        // being no attachment there, as Vulkan has it
+        // (VUID-VkSubpassDescription-pDepthStencilAttachment-02650): the
+        // V3D's format of both planes is D24_UNORM_S8_UINT (item 35).
+        probe.check(passStenciling(probe, .d16_unorm_s8_uint, "cdcd") == null, "and one that stays in the tiles, the format being no attachment here");
+        var no_image: ?*facet.Image = null;
+        probe.check(fb.CreateImage(probe.device.?, &.{ .format = .d16_unorm_s8_uint, .extent = .{ .width = side, .height = side }, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT }, &no_image) != .success and no_image == null, "and an image of it to be one refused");
     }
 
     // One format of stencil alone, and those that hold a depth beside it

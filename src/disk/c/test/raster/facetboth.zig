@@ -166,7 +166,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.79 (26.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.80 (26.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -9979,9 +9979,13 @@ fn stageFloat(format: facet.Format, x: usize, y: usize, into: []u8) usize {
     }
 }
 const Target = enum(u32) { bgra, rgba, rgb565 };
-/// The attachment a stencil case draws with, on a picture in bgra.
+/// The attachment a stencil case draws with, on a picture in bgra: of a
+/// stencil beside a depth, D24_UNORM_S8_UINT since facet 1.225, the
+/// V3D's format of both planes since 1.224, which says no
+/// D16_UNORM_S8_UINT attachment and since 1.225 refuses one; or of a
+/// stencil alone.
 const Stencil = enum(u32) { none, with_depth, alone };
-const stencil_formats = [2]facet.Format{ .d16_unorm_s8_uint, .s8_uint };
+const stencil_formats = [2]facet.Format{ .d24_unorm_s8_uint, .s8_uint };
 
 /// What a pipeline of a case is.
 const Options = struct {

@@ -1334,7 +1334,7 @@ Found independently by: formats (2 items), semantics (1 item) — 3 overlapping 
 
 ### 35. Add a wider depth format and a conformant combined depth+stencil format
 
-*formats / depth-stencil* &mdash; conformance-blocking, large
+*formats / depth-stencil* &mdash; conformance-blocking, large &mdash; **done in 1.222-1.225: X8_D24_UNORM_PACK32 and D24_UNORM_S8_UINT drawn on both devices**; D32_SFLOAT and the V3D's sampled D24_UNORM_S8_UINT left out
 
 Vulkan requires DEPTH_STENCIL_ATTACHMENT for at least one of X8_D24_UNORM_PACK32 and D32_SFLOAT, and for at least one of D24_UNORM_S8_UINT and D32_SFLOAT_S8_UINT. facet has none of the four. Its three depth formats are d16_unorm, s8_uint and d16_unorm_s8_uint, and of those only D16_UNORM is in the spec's table at all — S8_UINT and D16_UNORM_S8_UINT are explicitly optional in 1.0, so they earn no credit. Both "at least one of" rules therefore fail. The work reaches the whole depth path: the tile's depth plane is 16 bits (colour 16 KiB plus depth 8 KiB for a 64x64 tile), stored depth rows are 2 bytes a pixel, the V3D's STORE_Z writes the top 16 bits of a deeper hardware number, and sampled depth reads texture.Format.d16. A 24- or 32-bit plane doubles the tile's depth budget, which is the same cache argument that blocks multisampling.
 
@@ -1425,6 +1425,24 @@ X8_D24 on both devices, stores a D24S8's two planes in one store, loads
 its depth alone with the stencil cleared and stores both again, and
 stores and loads a D24S8's stencil alone; on the CM5 (package f230) it is
 997 of 997, and FacetBoth's 316 cases are each as at 1.223.
+
+**Step 4, in 1.225: DEPTH_STENCIL_ATTACHMENT held for every format.**
+`_image.shapeFor` holds the usage to the feature for D16_UNORM_S8_UINT
+too, as lavapipe and v3dv hold every usage (lvp_formats.c:394-435,
+v3dv_formats.c:512-551), and CreateRenderPass refuses an attachment of
+any format without it (VUID-VkSubpassDescription-pDepthStencilAttachment-02650):
+the V3D's D16_UNORM_S8_UINT, which it drew in its tiles alone where the
+pass kept neither plane, and S8_UINT where a device keeps no stencil. The
+check that refused a D16_UNORM_S8_UINT kept on a device without
+`stored_both` goes, the feature saying the same. FacetBoth 1.80 draws its
+eighteen stencil cases with a stencil beside a depth on
+D24_UNORM_S8_UINT, which both devices store and draw. Two host tests are
+turned round (the device without `stored_both` refusing a D16S8 in the
+tiles alone and its image, and a device without `stored_stencil`
+refusing an S8_UINT pass first for its format) and three mutations each
+fail one. FacetProbe 1.53 checks the V3D refuses both. On the CM5
+(package f231) FacetProbe is 998 of 998 and FacetBoth's 316 cases are
+each as at 1.224, the eighteen on D24_UNORM_S8_UINT. Item 35 is done.
 
 Still left out. Each is marked *facet-wide* or *V3D-only*:
 - **The V3D samples no D24_UNORM_S8_UINT**, nor reads one as an input
@@ -5109,14 +5127,9 @@ FacetBoth's 316 cases are each as they were at 1.219, and FacetProbe is
 923 of 923.
 
 Still left out. Each is marked *facet-wide* or *V3D-only*:
-- **DEPTH_STENCIL_ATTACHMENT is not held for D16_UNORM_S8_UINT.** Held
-  for every other format since 1.222, which refuses an attachment of the
-  two of 24 bits of depth no device draws yet (item 35). Held for this
-  one, it would refuse the V3D's, its one format of a depth and a
-  stencil, which eighteen of FacetBoth's stencil cases draw in the tiles
-  alone. v3dv's is D24_UNORM_S8_UINT, stored in one word with both
-  planes, which facet has as an image since 1.222 and the V3D does not
-  draw yet (item 35, step 3). *V3D-only*.
+- ~~**DEPTH_STENCIL_ATTACHMENT is not held for D16_UNORM_S8_UINT.**~~
+  Held since 1.225 (item 35, step 4): the V3D draws D24_UNORM_S8_UINT
+  since 1.224, and FacetBoth's eighteen stencil cases with it.
 - **The transfers are not held.** Both drivers hold TRANSFER_SRC and
   TRANSFER_DST to their features (lvp_formats.c:418-428). Vulkan 1.0 has
   no feature for either, which VK_KHR_maintenance1 brings, and held here

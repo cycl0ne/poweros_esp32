@@ -9683,7 +9683,7 @@ test "a device that keeps no depth, as the V3D keeps none: the pass that asks fo
     bench.rig.fb.DestroyRenderPass(bench.device, tiles_only);
 }
 
-test "a device that keeps no D16_UNORM_S8_UINT, as the V3D keeps none: such an attachment kept is error_validation_failed, the format query giving it no DEPTH_STENCIL_ATTACHMENT, and one in the tiles alone is drawn (item 91); a D24_UNORM_S8_UINT, a word a pixel, kept all the same (since 1.224)" {
+test "a device that keeps no D16_UNORM_S8_UINT, as the V3D keeps none: such an attachment is error_validation_failed, kept or in the tiles alone (since 1.225), the format query giving it no DEPTH_STENCIL_ATTACHMENT and CreateImage refusing one (item 91, item 94); a D24_UNORM_S8_UINT, a word a pixel, kept all the same (since 1.224)" {
     var bench = try Bench.up();
     defer bench.down();
     const fb = bench.rig.fb;
@@ -9723,12 +9723,26 @@ test "a device that keeps no D16_UNORM_S8_UINT, as the V3D keeps none: such an a
     };
     try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateRenderPass(bench.device, &.{ .attachment_count = 2, .attachments = &in_tiles, .subpass_count = 2, .subpasses = &read_after }, &refused));
     try testing.expect(refused == null);
-    // One that keeps neither plane is drawn in the tiles alone, as it was
-    // (docs/facet-vulkan10.md item 94), and a format of one plane keeps
-    // what it holds.
+    // One that keeps neither plane is refused as well since 1.225, the
+    // format being no attachment there (-pDepthStencilAttachment-02650;
+    // drawn in the tiles alone before, docs/facet-vulkan10.md item 94),
+    // and so is an image of it to be one (as lavapipe and v3dv hold a
+    // usage to its feature, lvp_formats.c:394-435, v3dv_formats.c:512-551).
+    // What is made all the same is given back before it is looked at, so
+    // that a device which makes it fails here rather than leaving it.
+    const tiles_alone = fb.CreateRenderPass(bench.device, &.{ .attachment_count = 2, .attachments = &in_tiles, .subpass_count = 1, .subpasses = @ptrCast(&subpass) }, &refused);
+    const pass_anyway = refused;
+    fb.DestroyRenderPass(bench.device, pass_anyway);
+    try testing.expectEqual(facet.Result.error_validation_failed, tiles_alone);
+    try testing.expect(pass_anyway == null);
+    var no_image: ?*facet.Image = null;
+    const imaged = fb.CreateImage(bench.device, &.{ .format = .d16_unorm_s8_uint, .extent = .{ .width = 64, .height = 64 }, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT }, &no_image);
+    const image_anyway = no_image;
+    fb.DestroyImage(bench.device, image_anyway);
+    try testing.expect(imaged != .success);
+    try testing.expect(image_anyway == null);
+    // A format of one plane keeps what it holds.
     var made: ?*facet.RenderPass = null;
-    try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(bench.device, &.{ .attachment_count = 2, .attachments = &in_tiles, .subpass_count = 1, .subpasses = @ptrCast(&subpass) }, &made));
-    fb.DestroyRenderPass(bench.device, made);
     for ([_]facet.AttachmentDescription{
         .{ .format = .d16_unorm, .store_op = .store, .final_layout = .general },
         .{ .format = .s8_uint, .stencil_store_op = .store, .final_layout = .general },
@@ -14990,9 +15004,12 @@ test "a stencil shared by two subpasses with another in between: marked in the f
     var pass_made: ?*facet.RenderPass = null;
 
     // A device that keeps no stencil in an image's rows cannot share one
-    // between two subpasses of different tiles.
+    // between two subpasses of different tiles: it says no S8_UINT
+    // attachment at all, and since 1.225 the pass is refused for that
+    // first (-pDepthStencilAttachment-02650; error_feature_not_present,
+    // for the sharing, before).
     physical.can.stored_stencil = false;
-    try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateRenderPass(device, &info, &pass_made));
+    try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateRenderPass(device, &info, &pass_made));
     physical.can.stored_stencil = true;
 
     try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(device, &info, &pass_made));

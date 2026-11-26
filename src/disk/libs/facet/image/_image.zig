@@ -667,20 +667,17 @@ pub fn shapeOf(device: *Device, info: *const facet.ImageCreateInfo) ?Image {
 /// one on a device that unpacks floats, is refused where it was made
 /// unpacked into 8888, and an input attachment of one on the cores where
 /// it was kept in rows. DEPTH_STENCIL_ATTACHMENT wants its feature too
-/// since 1.222, which refuses an attachment of the two formats of 24 bits
-/// of depth that no device draws yet (item 35). One usage is not held
-/// yet, and one format is let off another. The transfers are not held,
-/// Vulkan 1.0 having no feature for them, where both drivers hold
-/// TRANSFER_SRC and TRANSFER_DST. And D16_UNORM_S8_UINT is let off
-/// DEPTH_STENCIL_ATTACHMENT: the V3D's says no such feature, keeping
-/// neither plane past its pass (`Capabilities.stored_both`), and is drawn
-/// in its tiles alone, the V3D's one format of a depth and a stencil until
-/// it draws v3dv's D24_UNORM_S8_UINT (item 35).
+/// since 1.222, which refuses an attachment of a format of 24 bits of
+/// depth where the device draws none (item 35), and since 1.225 of
+/// D16_UNORM_S8_UINT as well: the V3D's says no such feature, keeping
+/// neither plane past its pass (`Capabilities.stored_both`), and was drawn
+/// in its tiles alone until it drew v3dv's D24_UNORM_S8_UINT (item 35,
+/// step 4). The transfers are not held, Vulkan 1.0 having no feature for
+/// them, where both drivers hold TRANSFER_SRC and TRANSFER_DST.
 pub fn shapeFor(physical: *_instance.PhysicalDevice, info: *const facet.ImageCreateInfo) ?Image {
     const own = physical.ops.format_properties(physical, info.format);
     const own_features = if (info.tiling == .optimal) own.optimal_tiling_features else own.linear_tiling_features;
-    const depth_held: u32 = if (info.format == .d16_unorm_s8_uint) 0 else facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT;
-    const held = info.usage & (facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_STORAGE | facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_INPUT_ATTACHMENT | depth_held);
+    const held = info.usage & (facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_STORAGE | facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_INPUT_ATTACHMENT | facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT);
     if (held != 0 and !viewable(own_features, held)) return null;
     const image = laidOut(physical, info) orelse return null;
     if (image.mutable) for (std.enums.values(facet.Format)) |other| {

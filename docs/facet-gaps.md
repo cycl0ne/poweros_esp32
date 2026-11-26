@@ -222,12 +222,17 @@ pass's depth. What is left out:
   pixel's depth, and the four ops are taken on their own - a pass may keep
   the stencil and leave the depth in the tiles. An op for a plane the
   format has not keeps nothing (since 1.106; refused before). Keeping
-  either plane of a format that holds **both** wants `stored_both` as
-  well (1.47): the cores write a pixel's planes where they lie in its four
-  bytes, while the V3D writes one plane's pixels one after another and so
-  keeps only `d16_unorm` or `s8_uint`. There `d16_unorm_s8_uint` says no
-  DEPTH_STENCIL_ATTACHMENT, and one kept is `error_validation_failed`
-  (since 1.135; `error_feature_not_present` before).
+  either plane of `d16_unorm_s8_uint`, which holds **both**, wants
+  `stored_both` as well (1.47): the cores write a pixel's planes where
+  they lie in its four bytes, while the V3D writes a plane of 16 bits or
+  of 8 one pixel after another and so keeps only `d16_unorm` or
+  `s8_uint` of those. There `d16_unorm_s8_uint` says no
+  DEPTH_STENCIL_ATTACHMENT, and since 1.225 is no attachment at all,
+  CreateImage and CreateRenderPass refusing one whether it keeps a plane
+  or not (`error_validation_failed`; drawn in the tiles alone where it
+  kept neither before). The V3D's format of both planes is
+  `d24_unorm_s8_uint` since 1.224, a word a pixel, either plane or both
+  kept.
 - **24 bits of depth since 1.222, as images alone**: X8_D24_UNORM_PACK32
   and D24_UNORM_S8_UINT, one word a pixel with the depth in its top 24
   bits and the stencil or nothing in its low byte, as the V3D keeps a
@@ -747,7 +752,7 @@ them of a device that says what this one says of itself
 | A sampler's filter, mipmap mode, address mode or compare operation that is none of Vulkan 1.0's, or such a border colour where an address mode clamps to it; elsewhere the border colour is not read, and is taken since 1.133 | `sampler/createsampler.zig` |
 | A pipeline layout of more than `max_bound_descriptor_sets` sets, or push constants past `max_push_constants_size` | `pipeline/createpipelinelayout.zig` |
 | A render pass of no subpass, a subpass bound to compute, of more than `max_color_attachments` colour attachments, or of a flag that is none of Vulkan's or facet's | `render/createrenderpass.zig` |
-| A depth attachment of `d16_unorm_s8_uint` that loads, stores or is kept for another subpass, on a device that stores a tile buffer whole: the V3D (`stored_both`, 1.47), whose format query gives that format no DEPTH_STENCIL_ATTACHMENT (VUID-VkSubpassDescription-pDepthStencilAttachment-02650; `error_feature_not_present` until 1.135). One that keeps neither plane is drawn in the tiles (docs/facet-vulkan10.md item 94), and either plane of a format that holds it alone is kept on every device. Read as an input attachment after the subpass that drew it, such an attachment breaks -pInputAttachments-02647 too, and is refused for it on a device without `stored_both` that reads a depth as an input attachment; no device is one, the V3D reading no input attachment at all (above) | `render/createrenderpass.zig` |
+| A depth or stencil attachment of a format whose query gives it no DEPTH_STENCIL_ATTACHMENT (VUID-VkSubpassDescription-pDepthStencilAttachment-02650): `d16_unorm_s8_uint` on a device that stores a tile buffer whole, the V3D (`stored_both`, 1.47; refused where it loaded, stored or was kept for another subpass since 1.135, `error_feature_not_present` before, and since 1.225 where it keeps neither plane too, drawn in the tiles before, docs/facet-vulkan10.md item 94), `s8_uint` where no stencil is kept (since 1.225), and the two of 24 bits of depth where none is drawn (since 1.222). Either plane of a format that holds it alone is kept on every device. Read as an input attachment after the subpass that drew it, such an attachment breaks -pInputAttachments-02647 too, and is refused for it on a device without `stored_both` that reads a depth as an input attachment; no device is one, the V3D reading no input attachment at all (above) | `render/createrenderpass.zig` |
 
 Since 1.134 `error_validation_failed` is also the answer to what does not
 hold together, which answered `error_initialization_failed` until then -
