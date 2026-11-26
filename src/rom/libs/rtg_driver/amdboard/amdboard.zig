@@ -48,6 +48,13 @@
 //! WaitVBlank wait for it; where the ring cannot be had, the library
 //! waits as long as a frame takes.
 //!
+//! The colours go out in full or limited range (`colours.zig`): the one
+//! the settings ask for, else limited for a CEA mode to an HDMI monitor
+//! that does not let its range be chosen, else full - set in the
+//! blender's output matrix at each show, and said in the AVI infoframe,
+//! which is written into the running link where it changed, in the
+//! firmware's mode as well, which sends none.
+//!
 //! The monitor's brightness is its own, asked for and set over its DDC
 //! with DDC/CI - its control 0x10, in per cent of its largest - by
 //! rtg.library's GetMonitorControl and SetMonitorControl, each transfer
@@ -128,13 +135,14 @@ const hpd = @import("hpd.zig");
 const aux = @import("aux.zig");
 const monitor = @import("monitor.zig");
 const i2c = @import("i2c.zig");
+const colours = @import("colours.zig");
 const pipe = @import("pipe.zig");
 const mode = @import("mode.zig");
 
 const MODULE_NAME = "rtg-amd";
 const DRIVER_NAME = "amd";
 const VERSION = 1;
-const REVISION = 15;
+const REVISION = 16;
 const BUILD_DATE = "26.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -186,6 +194,9 @@ const Screen = struct {
     /// Whether the monitor is sent nothing, and the stream it is sent
     /// again on waking.
     asleep: bool = false,
+    /// The AVI infoframe the link was last given, null for none or one
+    /// not known - the firmware's.
+    avi_sent: ?[rtg.RTG_AVI_BYTES]u8 = null,
     sleeping: pipe.Stream = .{},
     /// What a row of a buffer is rounded up to: the board's display
     /// memory's alignment, which the library rounds a mode's rows by.
@@ -532,8 +543,11 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, device_tags: ?[*]const
         .instance_size = @sizeOf(Screen),
         // The display runs as the firmware lit it: its mode is kept.
         .flags = rtg.boards.RTGBF_ADOPTED,
-        // The monitor on its connector takes a brightness in per cent.
+        // The monitor on its connector takes a brightness in per cent,
+        // and its colours in full or limited range where the engine's
+        // blender is reached.
         .brightness_steps = 101,
+        .caps = if (colours.reached(found)) rtg.boards.RTGBC_COLOR_RANGE else 0,
         .format = format,
     }) orelse return err.RTGERR_NO_MEMORY;
     const screen = screenOf(board);
@@ -686,6 +700,10 @@ fn showOp(board: *rtg.RtgBoard, what: *const rtg.RtgShow) callconv(.c) i32 {
     // monitor rebuilds it from at the mode's pixel clock, and what the
     // monitor plays - or on waking where the monitor sleeps.
     if (!screen.asleep) soundFor(screen);
+    // Its colours in the range the settings or the monitor ask for, and
+    // the AVI infoframe that says so - in the firmware's mode as well,
+    // which sends none.
+    if (!screen.asleep) coloursFor(screen);
     screen.mode_id = shown.id;
     screen.pixel_clock_hz = shown.pixel_clock_hz;
     screen.width = shown.width;
@@ -768,18 +786,57 @@ fn takesHdmi(screen: *Screen) bool {
     return said.flags & rtg.modes.RTGMON_HDMI != 0;
 }
 
-/// What the AVI infoframe says beyond the picture: the RGB range in
-/// full, where the monitor lets it be said; no number for a mode that
-/// HDMI 1.4's vendor infoframe names to a monitor short of HDMI 2.0.
-fn aviFlags(said: *const rtg.RtgMonitorInfo, timings: *const rtg.RtgTimings) u32 {
-    var flags: u32 = 0;
-    if (said.flags & rtg.modes.RTGMON_RANGE_SELECTABLE != 0) flags |= rtg.RTGAVI_RANGE_FULL;
+/// What the AVI infoframe says beyond the picture: the RGB range, where
+/// it is said (`colours.outputFor`); no number for a mode that HDMI
+/// 1.4's vendor infoframe names to a monitor short of HDMI 2.0.
+fn aviFlags(said: *const rtg.RtgMonitorInfo, timings: *const rtg.RtgTimings, output: colours.Output) u32 {
+    var flags: u32 = colours.aviFlags(output);
     const vendor_named = switch (timings.vic) {
         93, 94, 95, 98 => true,
         else => false,
     };
     if (vendor_named and said.flags & rtg.modes.RTGMON_HDMI2 == 0) flags |= rtg.RTGAVI_NO_VIC;
     return flags;
+}
+
+/// The link's colours for the mode the board shows: their range set in
+/// the blender's output matrix, and on an HDMI link the AVI infoframe
+/// that says it sent where it is not the one sent last (`colours.zig`).
+/// A change of range is said on the log. No flip meanwhile.
+fn coloursFor(screen: *Screen) void {
+    const engine = screen.dcn;
+    if (!colours.reached(engine)) return;
+    var said: rtg.RtgMonitorInfo = .{};
+    _ = screen.rtg_base.GetBoardMonitor(screen.board, &said, @sizeOf(rtg.RtgMonitorInfo));
+    const output = colours.outputFor(&said, &screen.timings, screen.board.info.color_range);
+    screen.sys.ObtainSemaphore(&screen.pipe_lock);
+    defer screen.sys.ReleaseSemaphore(&screen.pipe_lock);
+    const out = mode.outputOf(engine, engine.pipe);
+    const was = colours.rangeOf(engine, out);
+    colours.setRange(engine, out, output.limited);
+    if (was == null or was.? != output.limited) {
+        exec.kprintf(screen.sys, "%s: the colours go out in %s range%s\n", .{
+            MODULE_NAME,
+            if (output.limited) @as([*:0]const u8, "limited") else "full",
+            if (output.said) @as([*:0]const u8, ", said in the AVI infoframe") else "",
+        });
+    }
+    if (!pipe.litAsHdmi(engine)) return;
+    const front = sound.litLink(engine) orelse return;
+    var avi: [rtg.RTG_AVI_BYTES]u8 = @splat(0);
+    if (drivers(screen).BuildAviInfoFrame(&screen.timings, aviFlags(&said, &screen.timings, output), &avi) != rtg.RTG_AVI_BYTES) return;
+    if (screen.avi_sent) |*sent| {
+        if (sameFrame(sent, &avi)) return;
+    }
+    pipe.sendAvi(engine, front, &avi);
+    screen.avi_sent = avi;
+}
+
+fn sameFrame(a: *const [rtg.RTG_AVI_BYTES]u8, b: *const [rtg.RTG_AVI_BYTES]u8) bool {
+    for (a, b) |one, other| {
+        if (one != other) return false;
+    }
+    return true;
 }
 
 /// The link's sound set for the mode the board shows and the monitor on
@@ -809,7 +866,13 @@ fn powerOp(board: *rtg.RtgBoard, state: u32) callconv(.c) i32 {
     defer sys.ReleaseSemaphore(&screen.pipe_lock);
     const code = if (asleep) sleepLink(screen, screen.pixel_clock_hz) else wakeLink(screen);
     if (code != err.RTGERR_OK) return code;
-    if (!asleep) soundFor(screen);
+    if (!asleep) {
+        soundFor(screen);
+        // The infoframe written again, whatever the packet generator
+        // kept while the link was down.
+        screen.avi_sent = null;
+        coloursFor(screen);
+    }
     return @intCast(if (asleep) rtg.boards.RTGPWR_ASLEEP else rtg.boards.RTGPWR_ON);
 }
 
@@ -941,7 +1004,8 @@ fn setMode(screen: *Screen, timings: *const rtg.RtgTimings) i32 {
     if (hdmi) {
         var said: rtg.RtgMonitorInfo = .{};
         _ = screen.rtg_base.GetBoardMonitor(screen.board, &said, @sizeOf(rtg.RtgMonitorInfo));
-        sends_avi = drivers(screen).BuildAviInfoFrame(timings, aviFlags(&said, timings), &avi) == rtg.RTG_AVI_BYTES;
+        const output = colours.outputFor(&said, timings, screen.board.info.color_range);
+        sends_avi = drivers(screen).BuildAviInfoFrame(timings, aviFlags(&said, timings, output), &avi) == rtg.RTG_AVI_BYTES;
     }
 
     sys.ObtainSemaphore(&screen.controller_lock);
@@ -983,6 +1047,7 @@ fn setMode(screen: *Screen, timings: *const rtg.RtgTimings) i32 {
     screen.dcn.height = new.height;
     screen.dcn.h_total = new.h_total;
     screen.dcn.v_total = new.v_total;
+    screen.avi_sent = if (sends_avi) avi else null;
     sleep_at = timings.pixel_clock_hz;
     crc.fit(screen.dcn);
     exec.kprintf(sys, "%s: the display set to %dx%d at %d kHz on %s, display clock %d kHz, down for %d us%s\n", .{

@@ -58,6 +58,7 @@ test {
     _ = @import("libs/rtg_driver/amdboard/smu.zig");
     _ = @import("libs/rtg_driver/amdboard/dmub.zig");
     _ = @import("libs/rtg_driver/amdboard/crc.zig");
+    _ = @import("libs/rtg_driver/amdboard/colours.zig");
     _ = @import("libs/rtg_driver/amdboard/hpd.zig");
     _ = @import("libs/rtg_driver/amdboard/aux.zig");
     _ = @import("libs/rtg_driver/amdboard/i2c.zig");

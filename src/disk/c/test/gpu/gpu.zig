@@ -5,13 +5,13 @@
 //! counted, an AUX read through it, a monitor's EDID read over its DDC
 //! line, the picture's checksum read, the display's pipe taken down and
 //! brought up again in its mode or put in each mode it offers, its
-//! monitor put to sleep and woken, its security
+//! monitor put to sleep and woken, its colours' range tried, its security
 //! processor started and the video decoder's firmware loaded by it, the
 //! display's interrupt at each frame counted, or one flip of the picture
 //! the display reads. Built against the SDK only.
 //!
 //!   Gpu TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,
-//!       SLEEP/K/N,WATCHDOG/K/N
+//!       SLEEP/K/N,RANGE/S,WATCHDOG/K/N
 //!
 //! BIOS prints the device's video BIOS image (GetGPUBios): where it is
 //! and how long, its tables' header's version, the version of each of
@@ -115,6 +115,14 @@
 //! How long the PHY took to go off and come on is on the system's lines.
 //! The watchdog is armed for it and fed while the monitor sleeps.
 //!
+//! RANGE shows the board's mode with a still picture - eight bars of
+//! colour, a white frame - and reads the picture's checksum with the
+//! colours in full range, in limited range and in full again, each
+//! twice: the first and the last should be the same, the second
+//! another, and each steady. The range is the board's settings line's
+//! (SetBoardSettings), which is put back as it was, and so is the
+//! picture. The watchdog is armed for it.
+//!
 //! DUMP prints LENGTH (16 unless given, at most 512) of the display
 //! engine's registers from DUMP on, in 32-bit words from the engine's
 //! address SEGMENT (2 unless given: the one its pipes, links and
@@ -123,7 +131,7 @@
 //! is armed for it.
 //!
 //! Without BIOS, CLOCKS, DMCUB, CRC, EVENTS, AUX, EDID, CYCLE, MODES,
-//! SLEEP, DUMP, FRAMES or FLIP the two files are read from
+//! SLEEP, RANGE, DUMP, FRAMES or FLIP the two files are read from
 //! DEVS:firmware/amdgpu/, named for the blocks that use them as the
 //! device's table gives their versions - psp_13_0_4_toc.bin for the
 //! security processor 13.0.4, vcn_4_0_2.bin for the video decoder 4.0.2 -
@@ -177,10 +185,10 @@ const rtg = sdk.rtg;
 const RtgBase = sdk.interface.rtg.RtgBase;
 
 pub const COMMAND_NAME = "Gpu";
-const VERSION_STRING = "\x00$VER: Gpu 1.12 (26.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Gpu 1.13 (26.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,SLEEP/K/N,WATCHDOG/K/N";
+const template = "TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,SLEEP/K/N,RANGE/S,WATCHDOG/K/N";
 const arg_toc = 0;
 const arg_firmware = 1;
 const arg_frames = 2;
@@ -207,8 +215,9 @@ const arg_segment = 22;
 const arg_modes = 23;
 const arg_hold = 24;
 const arg_sleep = 25;
-const arg_watchdog = 26;
-const arg_count = 27;
+const arg_range = 26;
+const arg_watchdog = 27;
+const arg_count = 28;
 
 /// Where the files are.
 const directory = "DEVS:firmware/amdgpu/";
@@ -1040,6 +1049,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     }
     if (argv[arg_cycle] != 0) return pipeCycle(sys, dl, millis);
     if (argv[arg_modes] != 0 and argv[arg_sleep] == 0) return everyMode(sys, dl, millis, if (argv[arg_hold] != 0) number(argv[arg_hold]) else 2);
+    if (argv[arg_range] != 0) return rangeCheck(sys, dl, millis);
     if (argv[arg_sleep] != 0) return asleepFor(sys, dl, ab, info, millis, number(argv[arg_sleep]), argv[arg_modes] != 0);
     if (argv[arg_dump] != 0) {
         const length = if (argv[arg_length] != 0) number(argv[arg_length]) else 16;
@@ -1290,6 +1300,73 @@ fn printChecksum(dl: *DosBase, rb: *RtgBase, board: *rtg.RtgBoard, when: [*:0]co
     }
     const same = first.red == second.red and first.green == second.green and first.blue == second.blue;
     _ = Printf(dl, "%-7s checksum %04x %04x %04x%s\n", .{ when, second.red, second.green, second.blue, @as([*:0]const u8, if (same) "" else " CHANGING") });
+}
+
+/// RANGE: a still picture's checksum in full range, limited and full
+/// again.
+fn rangeCheck(sys: *ExecBase, dl: *DosBase, millis: u32) i32 {
+    const base = sys.OpenLibrary(rtg.RTGNAME, rtg.RTG_VERSION) orelse {
+        _ = Printf(dl, "No %s\n", .{rtg.RTGNAME});
+        return dos.RETURN_FAIL;
+    };
+    defer sys.CloseLibrary(base);
+    const rb: *RtgBase = @ptrCast(base);
+    const board = amdBoard(dl, rb) orelse return dos.RETURN_WARN;
+    var info: rtg.RtgBoardInfo = .{};
+    _ = rb.GetBoardInfo(board, &info, @sizeOf(rtg.RtgBoardInfo));
+    if (info.caps & rtg.boards.RTGBC_COLOR_RANGE == 0) {
+        _ = Printf(dl, "The board does not send its colours in another range\n", .{});
+        return dos.RETURN_WARN;
+    }
+    var list: [modes_most]rtg.RtgMode = undefined;
+    const count = @min(rb.GetBoardModes(board, &list, modes_most), modes_most);
+    var current: ?*const rtg.RtgMode = null;
+    for (list[0..count]) |*one| {
+        if (one.flags & rtg.modes.RTGMF_CURRENT != 0) current = one;
+    }
+    const shown = current orelse {
+        _ = Printf(dl, "The board is in no mode\n", .{});
+        return dos.RETURN_WARN;
+    };
+    const before = rb.BoardDisplayBitMap(board) orelse return dos.RETURN_WARN;
+    const wb = arm(sys, dl, millis) orelse return dos.RETURN_FAIL;
+    defer wb.DisarmWatchdog();
+
+    const picture = rb.AllocBitMap(board, shown.width, shown.height, @intFromEnum(shown.format), rtg.bitmaps.RTGBMF_DISPLAYABLE) orelse {
+        _ = Printf(dl, "No room for a picture of %ux%u\n", .{ shown.width, shown.height });
+        return dos.RETURN_FAIL;
+    };
+    bars(picture);
+    _ = rb.RefreshRect(picture, null);
+    const band = [_]rtg.RtgBand{.{ .bitmap = picture }};
+    if (rb.ShowBoard(board, shown.id, &band, band.len) != rtg.errors.RTGERR_OK) {
+        rb.FreeBitMap(picture);
+        _ = Printf(dl, "The bars were not shown\n", .{});
+        return dos.RETURN_FAIL;
+    }
+    wb.FeedWatchdog();
+    var line: rtg.RtgSettings = .{};
+    _ = rb.GetBoardSettings(board, &line, @sizeOf(rtg.RtgSettings));
+    const kept = line;
+
+    dl.Delay(8);
+    printChecksum(dl, rb, board, "full");
+    line.flags |= rtg.RTGSET_RANGE | rtg.RTGSET_LIMITED_RANGE;
+    _ = rb.SetBoardSettings(board, &line);
+    wb.FeedWatchdog();
+    dl.Delay(8);
+    printChecksum(dl, rb, board, "limited");
+    line.flags &= ~@as(u32, rtg.RTGSET_LIMITED_RANGE);
+    _ = rb.SetBoardSettings(board, &line);
+    wb.FeedWatchdog();
+    dl.Delay(8);
+    printChecksum(dl, rb, board, "full");
+
+    var back = kept;
+    _ = rb.SetBoardSettings(board, &back);
+    const back_band = [_]rtg.RtgBand{.{ .bitmap = before }};
+    if (rb.ShowBoard(board, shown.id, &back_band, back_band.len) == rtg.errors.RTGERR_OK) rb.FreeBitMap(picture);
+    return dos.RETURN_OK;
 }
 
 /// The pipe's count of frames, read twice 100 ms apart, on a line.

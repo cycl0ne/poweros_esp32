@@ -75,12 +75,14 @@ const RtgDriverBase = sdk.interface.rtgdriver.RtgDriverBase;
 /// Who says what is found, on the boot's lines.
 pub const owner = "rtg-amd";
 
-/// The two of the display block's addresses the registers here are
+/// The three of the display block's addresses the registers here are
 /// counted from. A display engine answers with six: the third holds the
-/// pipes, the links and the audio endpoints, and the second the clocks
-/// the engine is given.
+/// pipes, the links and the audio endpoints, the second the clocks the
+/// engine is given, and the fourth the blender, which lays the pipes'
+/// planes over each other and holds each output's colour matrix.
 const block_wanted = 2;
 const clocks_wanted = 1;
+const blender_wanted = 3;
 
 /// The engine whose registers these files name: every offset here is
 /// that version's, and another's are elsewhere.
@@ -93,6 +95,7 @@ const engine_revision = 4;
 /// the furthest - and from where the clocks' are.
 const display_reach: u64 = 0x2a00;
 const clocks_reach: u64 = 0x100;
+const blender_reach: u64 = 0x600;
 
 // --- the registers, counted in 32-bit words from the block -------------------------
 
@@ -149,9 +152,12 @@ pub const Engine = struct {
     memory_bytes: usize,
     registers: usize,
     /// Where the registers read here are counted from, in 32-bit words:
-    /// the pipes', the links' and the endpoints', and the clocks'.
+    /// the pipes', the links' and the endpoints', the clocks', and the
+    /// blender's - 0 where the device's table names none, or counts it
+    /// from past the device's registers.
     block: u32,
     clocks: u32,
+    blender: u32 = 0,
     /// What the engine says it is.
     major: u8,
     minor: u8,
@@ -192,6 +198,16 @@ pub const Engine = struct {
         };
     }
 };
+
+/// Where the blender's registers are counted from, in the display block
+/// `block` of a device with `registers_bytes` of them: 0 where the block
+/// names no such address, or one they would reach past the end from.
+fn blenderOf(block: amdgpu.GPUBlock, registers_bytes: u64) u32 {
+    if (block.count <= blender_wanted) return 0;
+    const at = block.addresses[blender_wanted];
+    if ((@as(u64, at) + blender_reach) * 4 > registers_bytes) return 0;
+    return at;
+}
 
 /// The engine behind the framebuffer `fb`, with what it says of itself
 /// read out. Null where the machine has no AMD graphics device, one whose
@@ -247,6 +263,7 @@ pub fn find(sys: *ExecBase, fb: uefi.Framebuffer) ?Engine {
         .registers = @intCast(info.registers),
         .block = block.addresses[block_wanted],
         .clocks = block.addresses[clocks_wanted],
+        .blender = blenderOf(block, info.registers_bytes),
         .major = block.major,
         .minor = block.minor,
         .revision = block.revision,

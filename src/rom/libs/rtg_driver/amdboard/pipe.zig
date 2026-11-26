@@ -625,6 +625,21 @@ fn writePacket(engine: dcn.Engine, front: u32, frame: *const [sdk.rtg.RTG_AVI_BY
     linkAt(engine, front, vpg_immediate).* |= vpg_first_now;
 }
 
+/// The AVI infoframe `frame` sent on the running link of front end
+/// `front` from the next frame on, as a stream's infoframes are updated
+/// (enc3_stream_encoder_update_hdmi_info_packets): the HDMI packets'
+/// controls taken at once, the audio's clock on for the packet
+/// generator, the frame written as its first packet, and that packet
+/// sent every frame on line 2.
+pub fn sendAvi(engine: dcn.Engine, front: u32, frame: *const [sdk.rtg.RTG_AVI_BYTES]u8) void {
+    linkAt(engine, front, hdmi_double_buffer).* |= double_buffer_off;
+    linkAt(engine, front, afmt_control).* |= audio_clock_on;
+    writePacket(engine, front, frame);
+    linkAt(engine, front, hdmi_generic).* |= generic0_sent;
+    const line = linkAt(engine, front, hdmi_generic_line);
+    line.* = (line.* & ~generic0_line_mask) | packet_line;
+}
+
 /// An infoframe as the packet generator's data register takes it: the
 /// header's three bytes and a 0, then the checksum and the bytes, the
 /// rest 0.

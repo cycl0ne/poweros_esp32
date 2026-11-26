@@ -1741,6 +1741,18 @@ the audio driver reads from the codec when a stream starts. A monitor
 that plays no sound, and a link driven as DVI, carry none: the endpoint
 says nothing is there, and the machine plays elsewhere.
 
+The colours go out in full or limited range (`RTGBC_COLOR_RANGE`,
+`Rtg amd.0 SET RANGE=LIMITED`): the range the settings ask for, else
+limited for a CEA mode to an HDMI monitor that does not let its range
+be chosen, else full. The range is the blender's output matrix for the
+pipe's output - the identity, or 0x1B67 of each colour with 0x201
+added - set at each show, and said in the AVI infoframe, which is
+written into the running link where it changed: in the firmware's mode
+too, which sends no infoframe, so the monitor is told from the first
+picture on. A change of range is said on the log; `C:test/Gpu RANGE`
+shows a still picture and prints its checksum in full, limited and full
+range. The link carries RGB at 8 bits a colour, the frames' own.
+
 The monitor's brightness (`RTGBC_BRIGHTNESS`, `C:Backlight`) is its
 own, asked for and set over DDC/CI on an HDMI or DVI connector by the
 display engine's I2C engine, in per cent of its largest; the log says
