@@ -1192,7 +1192,13 @@ fn dispatch(queue: *Queue, count: [3]u32) void {
         };
         player.shared_address = place.address;
     }
-    const uniforms = streamOf(queue, made.stream(), &.{}, null, 0, made.spillWords()) orelse {
+    // The TMU's state of each storage image the program reads or writes
+    // (since 1.218): where one is not bound where the V3D keeps it, the
+    // function runs on the cores, which reach any.
+    var tmus: [compile.most_samplers]Configuration = undefined;
+    const units = made.sampled();
+    for (units, 0..) |each, k| tmus[k] = storageBy(queue, each) orelse return onCores(queue, pipeline, count);
+    const uniforms = streamOf(queue, made.stream(), tmus[0..units.len], null, 0, made.spillWords()) orelse {
         exec.kprintf(sys, "v3d: no memory for a dispatch's uniforms: its function runs on the cores\n", .{});
         return onCores(queue, pipeline, count);
     };
@@ -1343,6 +1349,10 @@ fn streamOf(queue: *Queue, stream: []const compile.Word, tmus: []const Configura
         .shared_offset => player.shared_address,
         // The unit's view, as `tmuConfiguration` measured it (since 1.181).
         .texture_size => |each| if (each.unit < tmus.len) tmus[each.unit].sizes[@intFromEnum(each.field)] else 0,
+        // A storage image's state, with the words a load hands back in
+        // the low bits P0 has for them, where a sample's has its two
+        // (write_tmu_p0, v3dv_uniforms.c:139-185; since 1.218).
+        .image => |each| if (each.unit < tmus.len) tmus[each.unit].texture & ~return_words_mask | each.bits else 0,
     };
     return place.address;
 }
@@ -1559,6 +1569,15 @@ fn idsOf(values: compile.SystemValues) cl.Ids {
     return .{ .vertex_id = values.vertex_id, .instance_id = values.instance_id, .base_instance = values.base_instance };
 }
 
+/// TMU Config Parameter 0's return words, its bits 0 to 3
+/// (cle/v3d_packet.xml:1537), below the state's address, which is aligned
+/// to 16 (`tiling.texture_state_alignment`).
+const return_words_mask: u32 = 0xF;
+
+comptime {
+    std.debug.assert(tiling.texture_state_alignment > return_words_mask);
+}
+
 /// The two words a program that samples reads as the TMU's
 /// configuration. A fixed form has them in a place of their own; a
 /// generated program has them among the floats it holds, where its own
@@ -1587,7 +1606,8 @@ fn pickOf(source: facet.texture.Swizzle.Source) tiling.Pick {
 /// read, a comparison of anything but a depth, or with no memory.
 fn tmuConfiguration(queue: *Queue, set: u32, binding: u32, how: tiling.Sampled, compared: bool) ?Configuration {
     const player = playerOf(queue);
-    const sampled = player.resources.sampled(set, binding, 0) orelse return null;
+    // A dispatch's storage images are its own sets' (since 1.218).
+    const sampled = resourcesOf(player).sampled(set, binding, 0) orelse return null;
     const view: *const _image.ImageView = @fieldParentPtr("texels", sampled);
     const image = view.image;
     // A texture, or since 1.142 a depth image laid out as one, which the
@@ -1693,6 +1713,24 @@ fn sampledBy(queue: *Queue, which: compile.Sampler) ?Configuration {
     // sampler's comparison goes to the TMU with it (since 1.143).
     const how = tiling.samplerOf(sampler, which.compared) orelse return null;
     return tmuConfiguration(queue, which.set, which.binding, how, which.compared);
+}
+
+/// The TMU's state of a dispatch's storage image: the view the compute
+/// sets bind at its set and binding, as v3dv writes a storage image's
+/// texture state, the one it samples it with (v3dv_descriptor_set.c:
+/// 1146-1159, the second state a cube array's alone, :1153-1155;
+/// write_tmu_p0, v3dv_uniforms.c:139-185), and a default
+/// sampler beside it, which its lookups at TMUSF never read. Its memory
+/// is kept to be dropped from the CPU's caches after the dispatch, as a
+/// storage buffer's is. Null where nothing of the V3D's layout is bound
+/// there (since 1.218).
+fn storageBy(queue: *Queue, which: compile.Sampler) ?Configuration {
+    const player = playerOf(queue);
+    const texels = player.compute_resources.written(which.set, which.binding, 0) orelse return null;
+    const view: *const _image.ImageView = @fieldParentPtr("texels", texels);
+    const made = tmuConfiguration(queue, which.set, which.binding, tiling.samplerOf(&input_sampler, false).?, false) orelse return null;
+    keepStorage(player, .{ .at = view.image.data.?, .bytes = @intCast(view.image.bytes) });
+    return made;
 }
 
 /// The sampler state an input attachment's view is given: nearest, at

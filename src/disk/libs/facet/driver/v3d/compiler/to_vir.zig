@@ -727,6 +727,10 @@ fn emitStep(e: *Emit, each: Step, at: u16) Error!void {
             try emitTex(e, each, at);
             try unpackTexel(e, at);
         },
+        // A storage image's texel read, its two words the steps after it
+        // make floats, which the flush defines, and one written (since
+        // 1.218).
+        .image_load, .image_store => return emitImageLoadStore(e, each, at),
         // What passed is where a depth is read, the first half of the
         // first word: one float out, as nir_lower_tex's packing_16 leaves
         // the one component a shadow sample's def has.
@@ -824,6 +828,11 @@ fn emitStep(e: *Emit, each: Step, at: u16) Error!void {
                     // (:1575-1578), the MOV of the u2u16 (:1599-1611)
                     // what copy propagation takes out (since 1.200).
                     .pack_half => try c.add(.vfpack, .{ a, b }),
+                    // pack_2x16_to_unorm_2x8_v3d, VFTOUNORM8, and
+                    // pack_4x16_to_4x8_v3d, V8PACK (:1825-1831; since
+                    // 1.218).
+                    .pack_unorm_8 => try c.mul(.vftounorm8, .{a}),
+                    .pack_4x8 => try c.add(.v8pack, .{ a, b }),
                     .half_float => half: {
                         const float = try c.mul(.fmov, .{a});
                         vir.setUnpack(c.defs[float.index].?, 0, .l);
@@ -1976,6 +1985,69 @@ fn emitTex(e: *Emit, each: Step, at: u16) Error!void {
     try addPendingTmuFlush(e, at, return_words);
 }
 
+/// v3d_vir_emit_image_load_store (v3d_tex.c:564-655), for a compute
+/// program's image_load and image_store of an Rgba8 image (since 1.218).
+/// P0 the words to hand back, and the image's number in its high bits for
+/// the driver to put the image's state there (:609-613), as a sample's;
+/// a store hands back none (return_channels_required, :531-561), a load
+/// both words of its four 16-bit floats, the output of an image of 8 bits
+/// a channel (v3d_gl_format_is_return_32,
+/// v3d_nir_lower_image_load_store.c:48-62), whatever the program reads of
+/// them, as a sample does (`texel_words`). P1 has the per-pixel mask, a
+/// compute program's, and the 16-bit output (:576-580); P2 the regular
+/// operation (:592). Both are the defaults, p1_unpacked_default's and
+/// p2_unpacked_default's, so neither is written (:645-648). Then
+/// vir_image_emit_register_writes (:440-518): the coordinate's y to TMUT,
+/// a 3D image's slice to TMUR and a layer, an array's or a cube's face, to
+/// TMUI; a store's words to TMUD; and x to TMUSF, which starts the lookup,
+/// under the execute mask for a store where the lanes may part (:500-515).
+/// Each source is read once before, as get_required_image_tmu_writes
+/// counts the writes (:521-529), which may flush what the TMU owes; the
+/// threads that leaves room for, and a flush where the output FIFO would
+/// overflow (:629-642). A store leaves the job's caches to be cleaned
+/// (tmu_dirty_rcl, :625-626), and the LDTMUs are owed, or a store's TMUWT
+/// (ntq_add_pending_tmu_flush, :650-654).
+fn emitImageLoadStore(e: *Emit, each: Step, at: u16) Error!void {
+    const c = e.c;
+    const is_store = each.tag == .image_store;
+    const dim = e.work.samplers[each.at].dim;
+    const return_words: u32 = if (is_store) 0 else texel_words;
+    const data: u32 = if (is_store) @intCast(e.work.steps[each.b].kind.parts()) else 0;
+    if (is_store) c.tmu_dirty_rcl = true;
+
+    // The count, each source read as the writes read it.
+    var tmu_writes: u32 = 1;
+    _ = try getSrc(e, each.a, 1);
+    if (dim != .flat) {
+        _ = try getSrc(e, each.a, 2);
+        tmu_writes += 1;
+    }
+    for (0..data) |k| _ = try getSrc(e, each.b, k);
+    tmu_writes += data;
+    _ = try getSrc(e, each.a, 0);
+    tmu_writes += 1;
+    while (tmu_writes > 16 / @as(u32, c.threads)) c.threads /= 2;
+    if (tmuFifoOverflow(e, @popCount(return_words))) try flushTmu(e);
+
+    try wrtmuc(c, .image_tmu_config_p0, return_words | @as(u32, each.at) << 24);
+    _ = try tmuWrite(c, .tmut, try getSrc(e, each.a, 1));
+    switch (dim) {
+        .flat => {},
+        .volume => _ = try tmuWrite(c, .tmur, try getSrc(e, each.a, 2)),
+        .layers => _ = try tmuWrite(c, .tmui, try getSrc(e, each.a, 2)),
+        // A storage cube is its faces' layers (`compile.Sampler.storage`).
+        .cube => unreachable,
+    }
+    for (0..data) |k| _ = try tmuWrite(c, .tmud, try getSrc(e, each.b, k));
+    const x = try getSrc(e, each.a, 0);
+    const masked = is_store and c.inNonuniformControlFlow();
+    if (masked) c.setPf(try c.mulDest(.mov, vir.nopReg(), .{c.execute}), .pushz);
+    const retiring = try tmuWrite(c, .tmusf, x);
+    if (masked) vir.setCond(retiring, .ifa);
+    retiring.ldtmu_count = return_words;
+    try addPendingTmuFlush(e, at, return_words);
+}
+
 /// ntq_minify (nir_to_vir.c:895-912): a size at a level, the level 0
 /// size shifted right by it and at least 1. v3dv gives no null
 /// descriptor here, so a size of 0 is not kept (since 1.181).
@@ -2196,7 +2268,9 @@ fn flushTmu(e: *Emit) Error!void {
         if (pending.component_mask > 0) {
             const tag = e.work.steps[pending.step].tag;
             const general = switch (tag) {
-                .ubo, .ubo_indirect, .ssbo, .ssbo_indirect, .ssbo_atomic, .scratch, .scratch_indirect, .shared, .shared_atomic => true,
+                // A storage image's two words too, which are its own
+                // (since 1.218).
+                .ubo, .ubo_indirect, .ssbo, .ssbo_indirect, .ssbo_atomic, .scratch, .scratch_indirect, .shared, .shared_atomic, .image_load => true,
                 else => false,
             };
             for (0..4) |j| {

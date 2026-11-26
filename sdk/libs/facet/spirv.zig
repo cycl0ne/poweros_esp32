@@ -118,6 +118,8 @@ pub const Op = enum(u16) {
     // A subpassLoad, an input attachment read where the pixel is: Dim
     // SubpassData, as vtn's image_deref_load of it
     // (nir_lower_input_attachments; since facet 1.215).
+    // And a texel of a storage image read, and one written: vtn's
+    // image_deref_load and image_deref_store (since facet 1.218).
     image_read = 98,
     image_write = 99,
     // An image of a sampled image, and its size and levels: NIR's txs and
@@ -230,7 +232,7 @@ pub const MemoryModel = enum(u32) { simple = 0, glsl450 = 1, _ };
 pub const ExecutionModel = enum(u32) { vertex = 0, tessellation_control = 1, tessellation_evaluation = 2, geometry = 3, fragment = 4, gl_compute = 5, _ };
 pub const ExecutionMode = enum(u32) { origin_upper_left = 7, origin_lower_left = 8, early_fragment_tests = 9, depth_replacing = 12, local_size = 17, _ };
 pub const StorageClass = enum(u32) { uniform_constant = 0, input = 1, uniform = 2, output = 3, workgroup = 4, cross_workgroup = 5, private = 6, function = 7, push_constant = 9, _ };
-pub const Decoration = enum(u32) { block = 2, buffer_block = 3, row_major = 4, col_major = 5, array_stride = 6, matrix_stride = 7, built_in = 11, no_perspective = 13, flat = 14, non_writable = 24, location = 30, input_attachment_index = 43, binding = 33, descriptor_set = 34, offset = 35, _ };
+pub const Decoration = enum(u32) { block = 2, buffer_block = 3, row_major = 4, col_major = 5, array_stride = 6, matrix_stride = 7, built_in = 11, no_perspective = 13, flat = 14, non_writable = 24, non_readable = 25, location = 30, input_attachment_index = 43, binding = 33, descriptor_set = 34, offset = 35, _ };
 pub const BuiltIn = enum(u32) { position = 0, point_size = 1, clip_distance = 3, cull_distance = 4, frag_coord = 15, frag_depth = 22, num_workgroups = 24, workgroup_size = 25, workgroup_id = 26, local_invocation_id = 27, global_invocation_id = 28, local_invocation_index = 29, vertex_index = 42, instance_index = 43, _ };
 /// The instructions of the extended set GLSL.std.450, by the numbers its
 /// specification gives them (GLSL.std.450.h), which an OpExtInst names.
@@ -325,7 +327,10 @@ pub const Glsl = enum(u32) {
 pub const glsl_set = "GLSL.std.450";
 
 pub const Dim = enum(u32) { dim_1d = 0, dim_2d = 1, dim_3d = 2, cube = 3, subpass_data = 6, _ };
-pub const ImageFormat = enum(u32) { unknown = 0, _ };
+/// An image's format, as OpTypeImage names it: Unknown for a sampled
+/// image, and for a storage image the one its texels are written in
+/// (since facet 1.218).
+pub const ImageFormat = enum(u32) { unknown = 0, rgba8 = 4, _ };
 pub const FunctionControl = enum(u32) { none = 0, _ };
 pub const SelectionControl = enum(u32) { none = 0, _ };
 
@@ -754,6 +759,10 @@ pub const Profile = struct {
     storage_classes: []const StorageClass = &.{ .input, .output, .uniform_constant, .uniform, .push_constant, .function },
     /// Every image type's dimensionality has to be here.
     image_dims: []const Dim = &.{.dim_2d},
+    /// The formats of the storage images it reads and writes, an image of
+    /// Sampled 2 but SubpassData: none by default, so a profile that says
+    /// nothing refuses every one (since facet 1.218).
+    storage_formats: []const ImageFormat = &.{},
     /// The stages this device runs a program of the module's own for.
     stages: []const ExecutionModel = &.{ .vertex, .fragment },
     /// The optional operands this device takes on an image instruction.
@@ -778,6 +787,10 @@ pub const Profile = struct {
     }
     pub fn takesDim(profile: Profile, dim: Dim) bool {
         for (profile.image_dims) |each| if (each == dim) return true;
+        return false;
+    }
+    pub fn takesStorageFormat(profile: Profile, format: ImageFormat) bool {
+        for (profile.storage_formats) |each| if (each == format) return true;
         return false;
     }
     pub fn takesStage(profile: Profile, stage: ExecutionModel) bool {
@@ -967,10 +980,18 @@ pub fn look(words: []const u32, profile: Profile) Outcome {
                 // Sampled must be 1 or 2 under Vulkan, and only 1 is a
                 // texture a shader reads through a sampler. An input
                 // attachment, Dim SubpassData, is 2, as Vulkan has it
-                // (since facet 1.215).
-                const sampled: u32 = if (dim == .subpass_data) 2 else 1;
-                if (operands[6] != sampled) return .{ .fault = .image_refused };
-                if (@as(ImageFormat, @enumFromInt(operands[7])) != .unknown) return .{ .fault = .image_refused };
+                // (since facet 1.215), of an Unknown format. So is a
+                // storage image, read and written with no sampler, of a
+                // format the profile takes: a texel of it is written in
+                // that format, which no Unknown one says on a device of
+                // no shaderStorageImageWriteWithoutFormat (since facet
+                // 1.218).
+                const format: ImageFormat = @enumFromInt(operands[7]);
+                if (dim == .subpass_data) {
+                    if (operands[6] != 2 or format != .unknown) return .{ .fault = .image_refused };
+                } else if (operands[6] == 2) {
+                    if (!profile.takesStorageFormat(format)) return .{ .fault = .image_refused };
+                } else if (operands[6] != 1 or format != .unknown) return .{ .fault = .image_refused };
             },
             .type_float => {
                 if (operands.len < 2) return .{ .fault = .truncated_instruction };

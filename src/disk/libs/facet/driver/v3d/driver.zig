@@ -744,9 +744,17 @@ pub const ComputeShader = struct {
     program: compile.ComputeProgram,
     spill: ?Block = null,
     spill_size_per_thread: u32 = 0,
+    /// The storage image of each unit, by where the dispatch binds it
+    /// (since 1.218).
+    samplers: [compile.most_samplers]compile.Sampler = undefined,
+    sampler_count: u32 = 0,
 
     pub fn stream(made: *const ComputeShader) []const compile.Word {
         return made.uniforms[0..made.uniform_count];
+    }
+
+    pub fn sampled(made: *const ComputeShader) []const compile.Sampler {
+        return made.samplers[0..made.sampler_count];
     }
 
     /// What the stream's spill words are written as (`_play.streamOf`).
@@ -1046,7 +1054,7 @@ fn vertexStage(pipeline: *const Pipeline, work: *compile.Work, hardware: *Hardwa
 /// v3dv_pipeline.c:3320) and put where the V3D reads it, with a spill
 /// buffer where it spills (pipeline_check_spill_size, :1669-1708). Where
 /// it shipped none, or the back end refuses the words - a workgroup of
-/// more than 256 invocations, Workgroup memory, a barrier, a sampler -
+/// more than 256 invocations, a texture it samples -
 /// the pipeline is made all the same, and its function runs on the cores
 /// as every compute function did before (since 1.195). Out of memory is
 /// said.
@@ -1061,9 +1069,10 @@ fn computePipeline(pipeline: *Pipeline) facet.Result {
         error.OutOfMemory => .error_out_of_host_memory,
         else => .success,
     };
-    // The TMU's samplers are a draw's to configure (`tmuConfiguration`),
-    // and a dispatch has none bound yet.
-    if (code.sampler_count != 0) return .success;
+    // A dispatch points the TMU at its storage images (`_play.zig`'s
+    // `storageBy`; since 1.218); a texture it samples is not yet one it
+    // configures.
+    for (code.sampled()) |each| if (!each.storage) return .success;
     // The library holds a group to what the entry declared; the words
     // say it again, and a program of another size would run other groups.
     const size = code.compute.local_size;
@@ -1103,6 +1112,8 @@ fn computePipeline(pipeline: *Pipeline) facet.Result {
         .program = code.compute,
         .spill = spill,
         .spill_size_per_thread = code.spill_size,
+        .samplers = code.samplers,
+        .sampler_count = code.sampler_count,
     };
     @memcpy(made.uniforms[0..code.uniform_count], code.uniforms);
     if (code.spill_size != 0 and spill == null) {
