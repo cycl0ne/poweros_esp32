@@ -32,11 +32,12 @@ const _memory = @import("memory/_memory.zig");
 const _security = @import("security/_security.zig");
 const _power = @import("power/_power.zig");
 const _interrupt = @import("interrupt/_interrupt.zig");
+const _graphics = @import("graphics/_graphics.zig");
 
 /// The name it is opened by. The SDK's.
 pub const RESOURCE_NAME = amdgpu.AMDGPUNAME;
 pub const RESOURCE_VERSION = 1;
-pub const RESOURCE_REVISION = 9;
+pub const RESOURCE_REVISION = 10;
 const BUILD_DATE = "26.11.2026";
 const RESOURCE_VERSION_STRING =
     "\x00$VER: " ++ RESOURCE_NAME ++ " " ++
@@ -84,6 +85,7 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     ab.security_made = false;
     ab.security_ready = false;
     ab.security_dead = false;
+    ab.graphics_started = false;
     ab.protected = .{};
     sys_base.InitSemaphore(&ab.security_lock);
     ab.interrupts = .{};
@@ -97,6 +99,23 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     ab.ih_entries = 0;
     ab.ih_overflows = 0;
     sys_base.InitSemaphore(&ab.interrupt_lock);
+    ab.graphics = .{};
+    ab.graphics_known = false;
+    ab.graphics_failed = false;
+    ab.gart = .{};
+    ab.graphics_scratch = .{};
+    ab.gart_start = 0;
+    ab.gart_bytes = 0;
+    ab.dma_ring = .{};
+    ab.dma_running = false;
+    ab.dma_failed = false;
+    ab.dma_written = 0;
+    ab.dma_sent = 0;
+    ab.dma_traps = 0;
+    ab.dma_trap = .{};
+    ab.dma_trap_int = .{};
+    sys_base.InitSemaphore(&ab.dma_lock);
+    sys_base.InitSemaphore(&ab.dma_wait_lock);
     if (_device.take(ab)) {
         const gpu: *sdk.interface.amdgpu.AMDGPUBase = @ptrCast(&ab.lib);
         var block: amdgpu.GPUBlock = .{};
@@ -104,6 +123,7 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
         if (gpu.FindGPUBlock(amdgpu.GPUBLOCK_POWER, 0, &block)) _power.take(ab, block);
         if (gpu.FindGPUBlock(amdgpu.GPUBLOCK_SECURITY, 0, &block)) _security.take(ab, block);
         if (gpu.FindGPUBlock(amdgpu.GPUBLOCK_INTERRUPTS, 0, &block)) _interrupt.take(ab, block);
+        if (gpu.FindGPUBlock(amdgpu.GPUBLOCK_GRAPHICS, 0, &block)) _graphics.take(ab, block);
         tell(ab);
         _bios.take(ab);
         _connectors.take(ab);

@@ -18,12 +18,16 @@ Generated from the source by `./zig build autodoc`.
 - [FreeGPUMemory](#freegpumemory) - A piece of the device's memory given back.
 - [GetGPUBios](#getgpubios) - The device's video BIOS image.
 - [GetGPUConnector](#getgpuconnector) - One of the display's connectors.
+- [GetGPUDMAState](#getgpudmastate) - The DMA engine's queue as it is, read into `state`.
 - [GetGPUInfo](#getgpuinfo) - What the device is and where the machine reaches it.
 - [LoadGPUFirmware](#loadgpufirmware) - A block's firmware loaded by the security processor into its protected region, or a list of a block's register writes applied by it.
 - [RemGPUIntServer](#remgpuintserver) - A server AddGPUIntServer added taken off again.
+- [SendGPUDMA](#sendgpudma) - A job of the DMA engine's packets put on its queue: copied into the ring with a fence and a trap after them, and the engine told.
 - [SetGPUPower](#setgpupower) - A block of the device powered up or down by its power manager.
-- [StartGPUGraphics](#startgpugraphics) - The graphics block's firmware loaded by the security processor, the RLC told to hand each engine its code, and the block's power controller started by the power manager.
+- [StartGPUDMA](#startgpudma) - The graphics block's DMA engine started with one queue of jobs: the engine let run, its ring made and set, tried with one write, and its interrupt at the end of each job taken.
+- [StartGPUGraphics](#startgpugraphics) - The graphics block's firmware loaded by the security processor, the RLC told to hand each engine its code, the block's power controller started by the power manager, and its memory hub turned on once every engine has its code.
 - [StartGPUSecurity](#startgpusecurity) - The security processor made ready to load firmware: its ring made, its table of contents loaded, and the protected region it asks for set up.
+- [WaitGPUDMA](#waitgpudma) - Waits until the DMA engine has done job `job`, for `most_ms` milliseconds at most.
 
 ## AddGPUIntServer
 
@@ -455,6 +459,69 @@ while (ab.GetGPUConnector(index, &connector)) : (index += 1) {
 }
 ```
 
+## GetGPUDMAState
+
+The DMA engine's queue as it is, read into `state`.
+
+**SYNOPSIS**
+
+```zig
+fn GetGPUDMAState(ab: *AMDGPUBase, state: *amdgpu.GPUDMAState) bool
+```
+
+**SINCE**
+
+1.10. LVO -64.
+
+**INPUTS**
+
+- `state` - where to put it.
+
+**RESULT**
+
+True with `state` filled in; false, `state` untouched, where the queue
+does not run.
+
+**BEHAVIOR**
+
+The ring's device address and length; how far the engine has read it,
+as it last wrote it back, and how far it has been written, in bytes
+since the queue started; the number of the last job sent and of the
+last done; the interrupts the engine raised at the ends of jobs; and
+the engine's status register - its bit 0 set while it is idle.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none: what is read is a moment's, and moves on as the engine
+  works.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+`state` is the caller's.
+
+**NOTES**
+
+The engine writes how far it has read after every few packets, not at
+once; `done` is the job's fence, which is written at the job's end.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`StartGPUDMA`, `SendGPUDMA`, `WaitGPUDMA`
+
+**EXAMPLES**
+
+```zig
+var state: amdgpu.GPUDMAState = .{};
+if (ab.GetGPUDMAState(&state)) Printf(dl, "%u of %u done\n", .{ state.done, state.sent });
+```
+
 ## GetGPUInfo
 
 What the device is and where the machine reaches it.
@@ -675,6 +742,86 @@ None known.
 ab.RemGPUIntServer(&frame);
 ```
 
+## SendGPUDMA
+
+A job of the DMA engine's packets put on its queue: copied into the ring with a fence and a trap after them, and the engine told.
+
+**SYNOPSIS**
+
+```zig
+fn SendGPUDMA(ab: *AMDGPUBase, packets: [*]const u32, words: u32) u32
+```
+
+**SINCE**
+
+1.10. LVO -56.
+
+**INPUTS**
+
+- `packets` - the engine's packets (GPUDMA_OP_*), one after another.
+- `words` - how many words they are; 0 makes a job of nothing, whose
+  end says every job before it is done.
+
+**RESULT**
+
+The job's number, which WaitGPUDMA waits for: never 0, one more than
+the last job's, past 0 to 1. 0 where the queue does not run
+(StartGPUDMA), where the job with its fence and trap would take the
+whole ring (some 16 thousand words), or where the engine has not
+read enough of the ring to make room for it within a second.
+
+**BEHAVIOR**
+
+Under the queue's lock the job waits for room in the ring - the engine
+reads it as it goes, and says how far after every few packets - then
+its words are copied into the ring, followed by a fence that writes
+its number into the queue's page once the engine has done its
+packets, a trap that raises the engine's interrupt, and NOPs to the
+next 16 words. The engine is told through its write pointer, after a
+fence for the ring's words: it starts on the job at once where it is
+idle, else after the jobs before it. The packets are not looked at:
+what they name is the caller's to have right.
+
+**CONTEXT**
+
+- Waits: only for room in the ring, a second at most.
+- Interrupts: no.
+- Locks: takes the queue's lock.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The packets are copied: they are the caller's again on return. The
+memory they name must stay where it is until the job is done.
+
+**NOTES**
+
+Addresses in the packets are the device's: a piece of its own memory
+by its `device` address (AllocGPUMemory). What the engine writes is
+in the memory once the job is done: its writes go past the graphics
+block's caches.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`StartGPUDMA`, `WaitGPUDMA`, `GetGPUDMAState`
+
+**EXAMPLES**
+
+```zig
+// 4 KiB of the device's memory set to a constant.
+const fill = [_]u32{
+    amdgpu.GPUDMA_OP_CONST_FILL | amdgpu.GPUDMA_FILL_WORDS,
+    @truncate(piece.device), @truncate(piece.device >> 32),
+    0x1234_5678, 4096 - 1,
+};
+const job = ab.SendGPUDMA(&fill, fill.len);
+if (job == 0 or !ab.WaitGPUDMA(job, 1000)) return error.NoDma;
+```
+
 ## SetGPUPower
 
 A block of the device powered up or down by its power manager.
@@ -754,9 +901,91 @@ if (!ab.SetGPUPower(amdgpu.GPUPOWER_JPEG, 0, true)) return error.NoEngine;
 defer _ = ab.SetGPUPower(amdgpu.GPUPOWER_JPEG, 0, false);
 ```
 
+## StartGPUDMA
+
+The graphics block's DMA engine started with one queue of jobs: the engine let run, its ring made and set, tried with one write, and its interrupt at the end of each job taken.
+
+**SYNOPSIS**
+
+```zig
+fn StartGPUDMA(ab: *AMDGPUBase) bool
+```
+
+**SINCE**
+
+1.10. LVO -52.
+
+**INPUTS**
+
+None.
+
+**RESULT**
+
+True once the queue runs and has done the write it was tried with, and
+at once where an earlier call started it. False where StartGPUGraphics
+has not started the block, the power manager does not keep it
+powered, the device's memory has no room for the ring, the engine
+does not do the write within 100 ms, or its interrupt cannot be had;
+after the write fails or the interrupt cannot be had, every later call
+answers false at once. On a machine without the device, false.
+
+**BEHAVIOR**
+
+The block is kept powered first (SetGPUPower with GPUPOWER_GRAPHICS),
+as a block switched off drops every write; it stays so. Then, as the
+vendor's driver starts its own queue on the engine: the engine let
+run, its interrupt for a queue that has run empty switched on; the
+ring's size and its privilege set, its pointers cleared, the page it
+writes how far it has read into named, as is the copy of the write
+pointer its firmware looks at, the ring's address set, its doorbell
+off, its watchdog at 100 ms, its translation's answers and its cache
+policies set - reads not kept in the L2, writes past it - the engine
+let run again and the ring and its indirect packets switched on. The
+ring is tried with one packet that writes a word into the page, which
+the CPU then reads. Last the engine's trap is handed to the queue's
+server (AddGPUIntServer) and switched on, so that each job's end
+wakes whoever waits for it.
+
+**CONTEXT**
+
+- Waits: yes, for the power manager, a millisecond or so, and for the
+  write, at most 100 ms.
+- Interrupts: no.
+- Locks: takes the queue's lock, and the mailbox's, the memory's and
+  the interrupts' locks inside it.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The ring, 64 KiB, and its page, 4 KiB, are taken from the device's
+memory and kept for as long as the system runs.
+
+**NOTES**
+
+The queue runs in the graphics hub's first context, so its packets
+name memory by its address to the device: the device's own memory
+through the hub's aperture, the machine's once it is mapped into the
+hub's page table.
+
+**BUGS**
+
+The block is kept powered for as long as the queue runs, rather than
+allowed to switch off between jobs.
+
+**SEE ALSO**
+
+`StartGPUGraphics`, `SendGPUDMA`, `WaitGPUDMA`, `GetGPUDMAState`
+
+**EXAMPLES**
+
+```zig
+if (!ab.StartGPUGraphics(&files)) return error.NoGraphics;
+if (!ab.StartGPUDMA()) return error.NoDma;
+```
+
 ## StartGPUGraphics
 
-The graphics block's firmware loaded by the security processor, the RLC told to hand each engine its code, and the block's power controller started by the power manager.
+The graphics block's firmware loaded by the security processor, the RLC told to hand each engine its code, the block's power controller started by the power manager, and its memory hub turned on once every engine has its code.
 
 **SYNOPSIS**
 
@@ -779,23 +1008,30 @@ fn StartGPUGraphics(ab: *AMDGPUBase, files: *const amdgpu.GPUGraphicsFiles) bool
 
 **RESULT**
 
-True once every part is loaded, the RLC told to start and the power
-controller started, and at once where an earlier call did all of it.
-False where a file is not given, or its header is not one the
-resource reads - the command processor's of another version than
-the first, the RLC's of another than 2.0 to 2.3, a part outside its
-file - which is said on the system's lines, and nothing is loaded;
-where StartGPUSecurity has not made the processor ready, the
-processor does not answer within five seconds, or the device's memory
-has no room for a part's copy; where the power manager refuses to
-start the power controller or does not answer within a second; where
-either is one whose commands the resource does not know; and on a
-machine without the device.
+True once every part is loaded, the RLC told to start, the power
+controller started, every engine has its code and the hub is on, and
+at once where an earlier call did all of it. False where a file is not
+given, or its header is not one the resource reads - the command
+processor's of another version than the first, the RLC's of another
+than 2.0 to 2.3, a part outside its file - which is said on the
+system's lines, and nothing is loaded; where the block is one whose
+registers the resource does not know (it knows 11.0.1); where
+StartGPUSecurity has not made the processor ready, the processor does
+not answer within five seconds, or the device's memory has no room for
+a part's copy or the hub's page table; where the power manager does
+not keep the block powered, refuses to start the power controller or
+does not answer within a second; where either is one whose commands
+the resource does not know; where the engines do not have their code
+within 100 ms or the hub does not take its new table - after which
+every later call answers false at once; and on a machine without the
+device.
 
 **BEHAVIOR**
 
 Every file's parts are worked out first. Then, under the security
-processor's lock, each part is copied into a piece of its own, which
+processor's lock, the power manager is told to keep the block powered
+(SetGPUPower with GPUPOWER_GRAPHICS), as a block switched off answers
+no register, and each part is copied into a piece of its own, which
 the processor is given with the part's kind and which is given back
 once it answers - the DMA engine's two threads, the command
 processor's prefetch parser, micro engine and compute engine, the
@@ -807,12 +1043,18 @@ manager to start the power controller, which powers the block up and
 lets the RLC load the engines. Every status the processor answers
 is put on the system's lines with the part's kind; one that is not 0
 stops nothing, as the processor answers some parts so that it takes.
+Then the call waits until the block's command processor is idle
+(CP_STAT 0) and its RLC says its loading is complete (the top bit of
+RLC_RLCS_BOOTLOAD_STATUS), and turns its memory hub on: its system
+aperture over the device's own memory, uncached, its TLB and L2 cache
+on, and its first context with an empty page table over 512 MiB of
+the device's addresses (0x7FFF00000000 on), in the device's memory.
 
 **CONTEXT**
 
 - Waits: yes, for the processor - a few milliseconds a part, of some
-  twenty, at most five seconds for one - and for the power manager,
-  at most a second.
+  twenty, at most five seconds for one - for the power manager, at
+  most a second, and for the engines, at most 100 ms.
 - Interrupts: no.
 - Locks: takes the security processor's lock, and the memory lock and
   the mailbox's lock inside it.
@@ -821,17 +1063,14 @@ stops nothing, as the processor answers some parts so that it takes.
 **OWNERSHIP**
 
 The files stay the caller's; each part is copied. What the processor
-put into its region stays there, and the block runs from it.
+put into its region stays there, and the block runs from it. The
+hub's page table, 1 MiB, and its scratch page are taken from the
+device's memory and kept.
 
 **NOTES**
 
-The block says it is done in its own registers - its command
-processor idle (CP_STAT 0) and its RLC's loading complete (the top bit
-of RLC_RLCS_BOOTLOAD_STATUS) - which are its driver's to read; the
-RLC takes some milliseconds after this returns. The driver keeps the
-block powered while it reads them (SetGPUPower with
-GPUPOWER_GRAPHICS), since a block switched off does not answer. The
-engines' queues are their driver's to set up.
+The block is left powered. Its engines are left halted with their
+code: each is started with its queue (StartGPUDMA).
 
 **BUGS**
 
@@ -841,7 +1080,7 @@ is refused.
 
 **SEE ALSO**
 
-`StartGPUSecurity`, `LoadGPUFirmware`, `SetGPUPower`
+`StartGPUSecurity`, `LoadGPUFirmware`, `SetGPUPower`, `StartGPUDMA`
 
 **EXAMPLES**
 
@@ -849,9 +1088,7 @@ is refused.
 var files: amdgpu.GPUGraphicsFiles = .{};
 files.pfp = .{ .image = pfp.ptr, .bytes = @intCast(pfp.len) };
 // ... me, mec, rlc, mes, mes_kiq, imu, dma the same way ...
-if (!ab.SetGPUPower(amdgpu.GPUPOWER_GRAPHICS, 0, true)) return error.NoPower;
 if (!ab.StartGPUGraphics(&files)) return error.NoGraphics;
-// Then wait for the block's command processor and RLC to say done.
 ```
 
 ## StartGPUSecurity
@@ -938,4 +1175,72 @@ machine restarts.
 ```zig
 const toc = try readWhole(dos, "DEVS:firmware/amdgpu/psp_13_0_4_toc.bin");
 if (!ab.StartGPUSecurity(toc.ptr, @intCast(toc.len))) return error.NoSecurity;
+```
+
+## WaitGPUDMA
+
+Waits until the DMA engine has done job `job`, for `most_ms` milliseconds at most.
+
+**SYNOPSIS**
+
+```zig
+fn WaitGPUDMA(ab: *AMDGPUBase, job: u32, most_ms: u32) bool
+```
+
+**SINCE**
+
+1.10. LVO -60.
+
+**INPUTS**
+
+- `job` - a job's number, as SendGPUDMA answered it.
+- `most_ms` - how long to wait at most, in milliseconds; 0 only looks.
+
+**RESULT**
+
+True once the engine has done the job and every one before it, at once
+where it already has. False where it has not within `most_ms`, where
+`job` is 0 or the queue does not run.
+
+**BEHAVIOR**
+
+The engine writes each job's number into the queue's page as it ends
+it, and raises its interrupt, whose server signals the queue's
+waitable. The wait looks at the number written, and sleeps on the
+waitable until the job is done or the time is up - looking again at
+least every 10 ms, whatever wakes it. Numbers are compared modulo
+2^32, so a job more than two thousand million jobs old is taken as one
+not sent yet.
+
+**CONTEXT**
+
+- Waits: yes, until the job is done, `most_ms` at most.
+- Interrupts: no.
+- Locks: takes the queue's waiting lock: tasks wait one after another,
+  each for its own job.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated.
+
+**NOTES**
+
+A job the engine has not done after a long wait points at a packet it
+cannot do; GetGPUDMAState says how far it has read.
+
+**BUGS**
+
+A job the engine never ends - a packet it hangs on - holds every job
+after it: there is no reset of the queue.
+
+**SEE ALSO**
+
+`SendGPUDMA`, `GetGPUDMAState`, `WaitForAny`
+
+**EXAMPLES**
+
+```zig
+const job = ab.SendGPUDMA(&packets, packets.len);
+if (job == 0 or !ab.WaitGPUDMA(job, 1000)) return error.NoDma;
 ```

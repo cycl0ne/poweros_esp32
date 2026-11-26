@@ -20,6 +20,10 @@ const RemGPUIntServer = @import("interrupt/remgpuintserver.zig").RemGPUIntServer
 const GetGPUBios = @import("device/getgpubios.zig").GetGPUBios;
 const GetGPUConnector = @import("device/getgpuconnector.zig").GetGPUConnector;
 const StartGPUGraphics = @import("security/startgpugraphics.zig").StartGPUGraphics;
+const StartGPUDMA = @import("dma/startgpudma.zig").StartGPUDMA;
+const SendGPUDMA = @import("dma/sendgpudma.zig").SendGPUDMA;
+const WaitGPUDMA = @import("dma/waitgpudma.zig").WaitGPUDMA;
+const GetGPUDMAState = @import("dma/getgpudmastate.zig").GetGPUDMAState;
 
 /// amdgpu.resource's interface, as the SDK generates it from
 /// sdk/fd/amdgpu_lib.fd.
@@ -56,6 +60,10 @@ const contract_files = [_][]const u8{
     @embedFile("device/getgpubios.zig"),
     @embedFile("device/getgpuconnector.zig"),
     @embedFile("security/startgpugraphics.zig"),
+    @embedFile("dma/startgpudma.zig"),
+    @embedFile("dma/sendgpudma.zig"),
+    @embedFile("dma/waitgpudma.zig"),
+    @embedFile("dma/getgpudmastate.zig"),
 };
 
 fn lvoGetGPUInfo(ab: *AMDGPUBase, info: *amdgpu.GPUInfo) callconv(.c) bool {
@@ -94,6 +102,18 @@ fn lvoGetGPUConnector(ab: *AMDGPUBase, index: u32, connector: *amdgpu.GPUConnect
 fn lvoStartGPUGraphics(ab: *AMDGPUBase, files: *const amdgpu.GPUGraphicsFiles) callconv(.c) bool {
     return StartGPUGraphics(ab, files);
 }
+fn lvoStartGPUDMA(ab: *AMDGPUBase) callconv(.c) bool {
+    return StartGPUDMA(ab);
+}
+fn lvoSendGPUDMA(ab: *AMDGPUBase, packets: [*]const u32, words: u32) callconv(.c) u32 {
+    return SendGPUDMA(ab, packets, words);
+}
+fn lvoWaitGPUDMA(ab: *AMDGPUBase, job: u32, most_ms: u32) callconv(.c) bool {
+    return WaitGPUDMA(ab, job, most_ms);
+}
+fn lvoGetGPUDMAState(ab: *AMDGPUBase, state: *amdgpu.GPUDMAState) callconv(.c) bool {
+    return GetGPUDMAState(ab, state);
+}
 
 /// The jump table, in slot order: a resource has no standard vectors, so
 /// its first function is in the first slot.
@@ -110,4 +130,8 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoGetGPUBios),
     vec(lvoGetGPUConnector),
     vec(lvoStartGPUGraphics),
+    vec(lvoStartGPUDMA),
+    vec(lvoSendGPUDMA),
+    vec(lvoWaitGPUDMA),
+    vec(lvoGetGPUDMAState),
 };

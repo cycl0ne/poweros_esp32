@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! StartGPUGraphics: the graphics block's firmware loaded by the security
-//! processor, and the block started on it.
+//! processor, the block started on it, and its memory hub turned on once
+//! its engines have their code.
 //!
 //! **The parts.** Each file holds one engine's code, or several parts of
 //! it, behind a header of the vendor's that says where each part is; the
@@ -21,7 +22,8 @@
 //! the resource cannot read is loaded none of. Then the processor is told
 //! every part is there, on which the RLC starts handing each engine its
 //! code; and the power manager starts the block's power controller (the
-//! IMU), which powers the block up for it.
+//! IMU), which powers the block up for it. Once the engines say they have
+//! their code, the block's memory hub is turned on (`_graphics.zig`).
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -29,10 +31,12 @@ const amdgpu = sdk.resources.amdgpu;
 const AMDGPUBase = @import("../amdgpu.zig").AMDGPUBase;
 const _security = @import("_security.zig");
 const _power = @import("../power/_power.zig");
+const _graphics = @import("../graphics/_graphics.zig");
 
 /// The graphics block's firmware loaded by the security processor, the
-/// RLC told to hand each engine its code, and the block's power
-/// controller started by the power manager.
+/// RLC told to hand each engine its code, the block's power controller
+/// started by the power manager, and its memory hub turned on once every
+/// engine has its code.
 ///
 /// SYNOPSIS:
 /// ```zig
@@ -50,22 +54,29 @@ const _power = @import("../power/_power.zig");
 ///   DMA engine's.
 ///
 /// RESULT:
-/// True once every part is loaded, the RLC told to start and the power
-/// controller started, and at once where an earlier call did all of it.
-/// False where a file is not given, or its header is not one the
-/// resource reads - the command processor's of another version than
-/// the first, the RLC's of another than 2.0 to 2.3, a part outside its
-/// file - which is said on the system's lines, and nothing is loaded;
-/// where StartGPUSecurity has not made the processor ready, the
-/// processor does not answer within five seconds, or the device's memory
-/// has no room for a part's copy; where the power manager refuses to
-/// start the power controller or does not answer within a second; where
-/// either is one whose commands the resource does not know; and on a
-/// machine without the device.
+/// True once every part is loaded, the RLC told to start, the power
+/// controller started, every engine has its code and the hub is on, and
+/// at once where an earlier call did all of it. False where a file is not
+/// given, or its header is not one the resource reads - the command
+/// processor's of another version than the first, the RLC's of another
+/// than 2.0 to 2.3, a part outside its file - which is said on the
+/// system's lines, and nothing is loaded; where the block is one whose
+/// registers the resource does not know (it knows 11.0.1); where
+/// StartGPUSecurity has not made the processor ready, the processor does
+/// not answer within five seconds, or the device's memory has no room for
+/// a part's copy or the hub's page table; where the power manager does
+/// not keep the block powered, refuses to start the power controller or
+/// does not answer within a second; where either is one whose commands
+/// the resource does not know; where the engines do not have their code
+/// within 100 ms or the hub does not take its new table - after which
+/// every later call answers false at once; and on a machine without the
+/// device.
 ///
 /// BEHAVIOR:
 /// Every file's parts are worked out first. Then, under the security
-/// processor's lock, each part is copied into a piece of its own, which
+/// processor's lock, the power manager is told to keep the block powered
+/// (SetGPUPower with GPUPOWER_GRAPHICS), as a block switched off answers
+/// no register, and each part is copied into a piece of its own, which
 /// the processor is given with the part's kind and which is given back
 /// once it answers - the DMA engine's two threads, the command
 /// processor's prefetch parser, micro engine and compute engine, the
@@ -77,11 +88,17 @@ const _power = @import("../power/_power.zig");
 /// lets the RLC load the engines. Every status the processor answers
 /// is put on the system's lines with the part's kind; one that is not 0
 /// stops nothing, as the processor answers some parts so that it takes.
+/// Then the call waits until the block's command processor is idle
+/// (CP_STAT 0) and its RLC says its loading is complete (the top bit of
+/// RLC_RLCS_BOOTLOAD_STATUS), and turns its memory hub on: its system
+/// aperture over the device's own memory, uncached, its TLB and L2 cache
+/// on, and its first context with an empty page table over 512 MiB of
+/// the device's addresses (0x7FFF00000000 on), in the device's memory.
 ///
 /// CONTEXT:
 /// - Waits: yes, for the processor - a few milliseconds a part, of some
-///   twenty, at most five seconds for one - and for the power manager,
-///   at most a second.
+///   twenty, at most five seconds for one - for the power manager, at
+///   most a second, and for the engines, at most 100 ms.
 /// - Interrupts: no.
 /// - Locks: takes the security processor's lock, and the memory lock and
 ///   the mailbox's lock inside it.
@@ -89,16 +106,13 @@ const _power = @import("../power/_power.zig");
 ///
 /// OWNERSHIP:
 /// The files stay the caller's; each part is copied. What the processor
-/// put into its region stays there, and the block runs from it.
+/// put into its region stays there, and the block runs from it. The
+/// hub's page table, 1 MiB, and its scratch page are taken from the
+/// device's memory and kept.
 ///
 /// NOTES:
-/// The block says it is done in its own registers - its command
-/// processor idle (CP_STAT 0) and its RLC's loading complete (the top bit
-/// of RLC_RLCS_BOOTLOAD_STATUS) - which are its driver's to read; the
-/// RLC takes some milliseconds after this returns. The driver keeps the
-/// block powered while it reads them (SetGPUPower with
-/// GPUPOWER_GRAPHICS), since a block switched off does not answer. The
-/// engines' queues are their driver's to set up.
+/// The block is left powered. Its engines are left halted with their
+/// code: each is started with its queue (StartGPUDMA).
 ///
 /// BUGS:
 /// A command processor of the later kind, whose files' header is of the
@@ -106,21 +120,20 @@ const _power = @import("../power/_power.zig");
 /// is refused.
 ///
 /// SEE ALSO:
-/// `StartGPUSecurity`, `LoadGPUFirmware`, `SetGPUPower`
+/// `StartGPUSecurity`, `LoadGPUFirmware`, `SetGPUPower`, `StartGPUDMA`
 ///
 /// EXAMPLES:
 /// ```zig
 /// var files: amdgpu.GPUGraphicsFiles = .{};
 /// files.pfp = .{ .image = pfp.ptr, .bytes = @intCast(pfp.len) };
 /// // ... me, mec, rlc, mes, mes_kiq, imu, dma the same way ...
-/// if (!ab.SetGPUPower(amdgpu.GPUPOWER_GRAPHICS, 0, true)) return error.NoPower;
 /// if (!ab.StartGPUGraphics(&files)) return error.NoGraphics;
-/// // Then wait for the block's command processor and RLC to say done.
 /// ```
 pub fn StartGPUGraphics(ab: *AMDGPUBase, files: *const amdgpu.GPUGraphicsFiles) bool {
-    if (ab.device == null or !ab.security_known or !ab.power_known) return false;
+    if (ab.device == null or !ab.security_known or !ab.power_known or !ab.graphics_known) return false;
     const sys = ab.sys_base;
     const owner = amdgpu.AMDGPUNAME;
+    const gpu: *sdk.interface.amdgpu.AMDGPUBase = @ptrCast(&ab.lib);
 
     var parts: [load_order.len][most_parts]Part = undefined;
     var counts: [load_order.len]usize = @splat(0);
@@ -140,7 +153,11 @@ pub fn StartGPUGraphics(ab: *AMDGPUBase, files: *const amdgpu.GPUGraphicsFiles) 
     sys.ObtainSemaphore(&ab.security_lock);
     defer sys.ReleaseSemaphore(&ab.security_lock);
     if (ab.graphics_started) return true;
-    if (ab.security_dead or !ab.security_ready) return false;
+    if (ab.graphics_failed or ab.security_dead or !ab.security_ready) return false;
+    if (!gpu.SetGPUPower(amdgpu.GPUPOWER_GRAPHICS, 0, true)) {
+        exec.kprintf(sys, "%s: the power manager does not keep the graphics block powered\n", .{owner});
+        return false;
+    }
     for (load_order, 0..) |file, index| {
         const image = fileOf(files, file).image orelse continue;
         for (parts[index][0..counts[index]]) |part| {
@@ -157,6 +174,10 @@ pub fn StartGPUGraphics(ab: *AMDGPUBase, files: *const amdgpu.GPUGraphicsFiles) 
         return false;
     };
     if (!startController(ab)) return false;
+    if (!_graphics.waitForEngines(ab) or !_graphics.turnOnHub(ab)) {
+        ab.graphics_failed = true;
+        return false;
+    }
     ab.graphics_started = true;
     return true;
 }

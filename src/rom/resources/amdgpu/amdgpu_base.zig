@@ -3,8 +3,9 @@
 //! is answered about it, the table of its blocks it was read from, the
 //! power manager its mailbox reaches, the device's own memory with what
 //! of it is handed out, the security processor's ring with the
-//! protected region it was given, and the interrupt block's ring with the
-//! servers its entries are handed to.
+//! protected region it was given, the interrupt block's ring with the
+//! servers its entries are handed to, the graphics block with its memory
+//! hub's page table, and its DMA engine's queue.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -88,4 +89,34 @@ pub const AMDGPUBase = extern struct {
     ih_entries: u32 = 0,
     ih_overflows: u32 = 0,
     interrupt_lock: exec.SignalSemaphore,
+    /// The graphics block, where it is one whose registers are known, and
+    /// whether it failed to come up once its firmware was loaded - after
+    /// which nothing more is asked of it. Its memory hub's page table for
+    /// its first context, and the page a stray address of its engines
+    /// lands on; where the range that table maps begins in the device's
+    /// addresses, and how long it is.
+    graphics: amdgpu.GPUBlock = .{},
+    graphics_known: bool = false,
+    graphics_failed: bool = false,
+    gart: amdgpu.GPUMemory = .{},
+    graphics_scratch: amdgpu.GPUMemory = .{},
+    gart_start: u64 = 0,
+    gart_bytes: u64 = 0,
+    /// The DMA engine's queue: the piece its ring and what the engine
+    /// writes back are in; whether it runs, and whether it failed to start
+    /// - after which it is not tried again. How many bytes have been
+    /// written into the ring since it started, the number of the last job
+    /// put on it, the interrupts the engine raised at the ends of jobs,
+    /// the waitable those interrupts signal and their server; the lock
+    /// jobs are put on the queue under, and the one a task waits under.
+    dma_ring: amdgpu.GPUMemory = .{},
+    dma_running: bool = false,
+    dma_failed: bool = false,
+    dma_written: u64 = 0,
+    dma_sent: u32 = 0,
+    dma_traps: u32 = 0,
+    dma_trap: exec.Waitable = .{},
+    dma_trap_int: exec.Interrupt = .{},
+    dma_lock: exec.SignalSemaphore,
+    dma_wait_lock: exec.SignalSemaphore,
 };

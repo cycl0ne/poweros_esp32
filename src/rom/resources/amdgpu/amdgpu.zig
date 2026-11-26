@@ -16,7 +16,11 @@
 //! StartGPUSecurity and LoadGPUFirmware have the security processor put
 //! a block's firmware into the protected region it runs from -
 //! StartGPUGraphics the graphics block's whole set, which the block's
-//! RLC then hands its engines.
+//! RLC then hands its engines, and turns on the block's memory hub
+//! (`graphics/_graphics.zig`). The block's DMA engine runs one queue of
+//! jobs for every driver (`dma/_dma.zig`): StartGPUDMA starts it,
+//! SendGPUDMA puts a job of its packets on it, WaitGPUDMA waits for one
+//! to be done, GetGPUDMAState says how far it is.
 //!
 //! The device's video BIOS image - the copy the machine's firmware keeps
 //! in its tables (`device/_bios.zig`) - is the resource's to find too,
@@ -75,6 +79,12 @@ test {
     _ = @import("security/startgpusecurity.zig");
     _ = @import("security/loadgpufirmware.zig");
     _ = @import("security/startgpugraphics.zig");
+    _ = @import("graphics/_graphics.zig");
+    _ = @import("dma/_dma.zig");
+    _ = @import("dma/startgpudma.zig");
+    _ = @import("dma/sendgpudma.zig");
+    _ = @import("dma/waitgpudma.zig");
+    _ = @import("dma/getgpudmastate.zig");
     _ = @import("device/_bios.zig");
     _ = @import("device/getgpubios.zig");
     _ = @import("device/_connectors.zig");
@@ -130,6 +140,13 @@ test "a machine without the device has the resource, and it answers false" {
     try testing.expectEqual(@as(u32, 7), connector.number);
     const graphics: amdgpu.GPUGraphicsFiles = .{ .pfp = .{ .image = &file, .bytes = file.len } };
     try testing.expect(!call(ab).StartGPUGraphics(&graphics));
+    try testing.expect(!call(ab).StartGPUDMA());
+    const nop = [_]u32{amdgpu.GPUDMA_OP_NOP};
+    try testing.expectEqual(@as(u32, 0), call(ab).SendGPUDMA(&nop, nop.len));
+    try testing.expect(!call(ab).WaitGPUDMA(1, 0));
+    var state: amdgpu.GPUDMAState = .{ .sent = 7 };
+    try testing.expect(!call(ab).GetGPUDMAState(&state));
+    try testing.expectEqual(@as(u32, 7), state.sent);
     call(ab).RemGPUIntServer(&server);
     try testing.expect(!ab.ih_running);
     try tearDown(ab);

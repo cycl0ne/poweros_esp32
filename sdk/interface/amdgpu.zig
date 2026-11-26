@@ -31,6 +31,10 @@ pub const LVO = struct {
     pub const GetGPUBios = libraries.lvo(9);
     pub const GetGPUConnector = libraries.lvo(10);
     pub const StartGPUGraphics = libraries.lvo(11);
+    pub const StartGPUDMA = libraries.lvo(12);
+    pub const SendGPUDMA = libraries.lvo(13);
+    pub const WaitGPUDMA = libraries.lvo(14);
+    pub const GetGPUDMAState = libraries.lvo(15);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -48,6 +52,10 @@ pub const Fn = struct {
     pub const GetGPUBios = *const fn (*AMDGPUBase, *amdgpu.GPUBios) callconv(.c) bool;
     pub const GetGPUConnector = *const fn (*AMDGPUBase, u32, *amdgpu.GPUConnector) callconv(.c) bool;
     pub const StartGPUGraphics = *const fn (*AMDGPUBase, *const amdgpu.GPUGraphicsFiles) callconv(.c) bool;
+    pub const StartGPUDMA = *const fn (*AMDGPUBase) callconv(.c) bool;
+    pub const SendGPUDMA = *const fn (*AMDGPUBase, [*]const u32, u32) callconv(.c) u32;
+    pub const WaitGPUDMA = *const fn (*AMDGPUBase, u32, u32) callconv(.c) bool;
+    pub const GetGPUDMAState = *const fn (*AMDGPUBase, *amdgpu.GPUDMAState) callconv(.c) bool;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -133,10 +141,37 @@ pub const AMDGPUBase = opaque {
 
     /// The graphics block's firmware - the files `files` names, each as it is
     /// on the disk - loaded by the security processor in the order the
-    /// block's RLC takes it, the RLC told to hand each engine its code, and
-    /// the block's power controller started by the power manager; true once
-    /// all of it is done.
+    /// block's RLC takes it, the RLC told to hand each engine its code, the
+    /// block's power controller started by the power manager, and its memory
+    /// hub turned on once every engine has its code; true once all of it is
+    /// done.
     pub fn StartGPUGraphics(self: *AMDGPUBase, files: *const amdgpu.GPUGraphicsFiles) bool {
         return libraries.call(self, LVO.StartGPUGraphics, Fn.StartGPUGraphics, .{files});
+    }
+
+    /// The graphics block's DMA engine started with one queue of jobs, once
+    /// StartGPUGraphics has started the block; true once it runs.
+    pub fn StartGPUDMA(self: *AMDGPUBase) bool {
+        return libraries.call(self, LVO.StartGPUDMA, Fn.StartGPUDMA, .{});
+    }
+
+    /// The DMA engine's packets `packets`, `words` words of them, put on its
+    /// queue as one job; the job's number, for WaitGPUDMA, or 0 where the
+    /// queue does not run, the job does not fit in it, or the engine does not
+    /// make room for it in time.
+    pub fn SendGPUDMA(self: *AMDGPUBase, packets: [*]const u32, words: u32) u32 {
+        return libraries.call(self, LVO.SendGPUDMA, Fn.SendGPUDMA, .{ packets, words });
+    }
+
+    /// Waits until the DMA engine has done job `job`, `most_ms` milliseconds
+    /// at most; true once it has, false where it has not by then.
+    pub fn WaitGPUDMA(self: *AMDGPUBase, job: u32, most_ms: u32) bool {
+        return libraries.call(self, LVO.WaitGPUDMA, Fn.WaitGPUDMA, .{ job, most_ms });
+    }
+
+    /// The DMA engine's queue as it is, into `state`; false where it does not
+    /// run.
+    pub fn GetGPUDMAState(self: *AMDGPUBase, state: *amdgpu.GPUDMAState) bool {
+        return libraries.call(self, LVO.GetGPUDMAState, Fn.GetGPUDMAState, .{state});
     }
 };

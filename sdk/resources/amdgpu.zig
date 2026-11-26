@@ -166,6 +166,38 @@ pub const GPUGraphicsFiles = extern struct {
     dma: GPUFile = .{},
 };
 
+/// The graphics block's DMA engine's packets, as SendGPUDMA takes them:
+/// each starts with a header word whose low byte is its operation, and
+/// addresses are the device's, low word first. A job's packets are run in
+/// order, each done before the next.
+///
+/// A packet of one word that does nothing.
+pub const GPUDMA_OP_NOP: u32 = 0;
+/// A constant written over a run of memory, five words: the header, the
+/// run's address (low word, high word), the constant, and the run's length
+/// in bytes less one, at most 1 << 30. With GPUDMA_FILL_WORDS in the
+/// header the constant is written as 32-bit words over a run that starts
+/// and ends on four bytes; without it, its low byte into every byte.
+pub const GPUDMA_OP_CONST_FILL: u32 = 11;
+pub const GPUDMA_FILL_WORDS: u32 = 2 << 30;
+
+/// What GetGPUDMAState says of the DMA engine's queue: where its ring is
+/// and how long, in bytes; how far the engine has read it and how far it
+/// has been written, in bytes since it started; the number of the last
+/// job sent and of the last the engine has done; how many times the
+/// engine has raised its interrupt at the end of a job; and its status
+/// register as it reads now.
+pub const GPUDMAState = extern struct {
+    ring: u64 align(4) = 0,
+    ring_bytes: u32 = 0,
+    read: u64 align(4) = 0,
+    written: u64 align(4) = 0,
+    sent: u32 = 0,
+    done: u32 = 0,
+    traps: u32 = 0,
+    status: u32 = 0,
+};
+
 /// AddGPUIntServer's clients - which of the device's blocks raised an
 /// interrupt - and their sources, as the interrupt block numbers them.
 /// The display engine.

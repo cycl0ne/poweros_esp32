@@ -7,12 +7,13 @@
 //! brought up again in its mode or put in each mode it offers, its
 //! monitor put to sleep and woken, its colours' range tried, its security
 //! processor started and the video decoder's firmware loaded by it, the
-//! graphics block's firmware loaded and the block started, the display's
+//! graphics block's firmware loaded, the block started and its memory
+//! hub turned on, its DMA engine's queue tried with jobs, the display's
 //! interrupt at each frame counted, or one flip of the picture the
 //! display reads. Built against the SDK only.
 //!
 //!   Gpu TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,
-//!       SLEEP/K/N,RANGE/S,POINTER/S,MIRROR/S,OVERLAY/S,DIRECT/S,BANDS/S,VIDEO/S,GFX/S,BLOCK/K/N,WATCHDOG/K/N
+//!       SLEEP/K/N,RANGE/S,POINTER/S,MIRROR/S,OVERLAY/S,DIRECT/S,BANDS/S,VIDEO/S,GFX/S,DMA/S,BLOCK/K/N,WATCHDOG/K/N
 //!
 //! BIOS prints the device's video BIOS image (GetGPUBios): where it is
 //! and how long, its tables' header's version, the version of each of
@@ -241,17 +242,27 @@
 //! which the last may be missing, sdma_6_0_1.bin for its DMA engine 6.0.1
 //! - and the security processor's table of contents beside them. The
 //! processor is made ready (StartGPUSecurity, at once where it is), the
-//! block kept powered (SetGPUPower), its registers printed, its firmware
-//! loaded and the block started (StartGPUGraphics), and then its command
-//! processor and RLC waited for, two seconds at most, to say the
-//! engines have their code: CP_STAT 0 and the top bit of
-//! RLC_RLCS_BOOTLOAD_STATUS. How long each took is printed, and the
-//! registers again; the block is left powered and started. The watchdog
-//! is armed for it.
+//! block kept powered (SetGPUPower) and its registers printed, then its
+//! firmware loaded, the block started and its memory hub turned on
+//! (StartGPUGraphics), which waits until the engines have their code.
+//! How long that took is printed, and the block's registers again with
+//! its hub's; the block is left powered and started. The watchdog is
+//! armed for it.
+//!
+//! DMA does what GFX does, then starts the block's DMA engine with its
+//! queue (StartGPUDMA) and tries it: a job of eight NOPs; a hundred
+//! empty jobs - each only the fence and the trap that end it - sent and
+//! waited for one after another, timed, with the engine's interrupts
+//! counted; 64 KiB of the device's memory, between guards of a page each
+//! way, filled with a constant once with the fill's size 0 and once in
+//! words, and read back; and a fill of 64 MiB in words (16 where the
+//! device's memory has no room for it), timed. The queue's state and the
+//! engine's registers are printed at the end, with the hub's. The
+//! watchdog is armed for it.
 //!
 //! Without BIOS, CLOCKS, DMCUB, CRC, EVENTS, AUX, EDID, CYCLE, MODES,
 //! SLEEP, RANGE, POINTER, MIRROR, OVERLAY, DIRECT, BANDS, VIDEO, GFX,
-//! DUMP, FRAMES or FLIP the two files are read from
+//! DMA, DUMP, FRAMES or FLIP the two files are read from
 //! DEVS:firmware/amdgpu/, named for the blocks that use them as the
 //! device's table gives their versions - psp_13_0_4_toc.bin for the
 //! security processor 13.0.4, vcn_4_0_2.bin for the video decoder 4.0.2 -
@@ -306,10 +317,10 @@ const RtgBase = sdk.interface.rtg.RtgBase;
 const TagItem = sdk.utility.TagItem;
 
 pub const COMMAND_NAME = "Gpu";
-const VERSION_STRING = "\x00$VER: Gpu 1.22 (26.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Gpu 1.23 (26.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,SLEEP/K/N,RANGE/S,POINTER/S,MIRROR/S,OVERLAY/S,DIRECT/S,BANDS/S,VIDEO/S,GFX/S,BLOCK/K/N,WATCHDOG/K/N";
+const template = "TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,SLEEP/K/N,RANGE/S,POINTER/S,MIRROR/S,OVERLAY/S,DIRECT/S,BANDS/S,VIDEO/S,GFX/S,DMA/S,BLOCK/K/N,WATCHDOG/K/N";
 const arg_toc = 0;
 const arg_firmware = 1;
 const arg_frames = 2;
@@ -344,9 +355,10 @@ const arg_direct = 30;
 const arg_bands = 31;
 const arg_video = 32;
 const arg_gfx = 33;
-const arg_block = 34;
-const arg_watchdog = 35;
-const arg_count = 36;
+const arg_dma = 34;
+const arg_block = 35;
+const arg_watchdog = 36;
+const arg_count = 37;
 
 /// Where the files are.
 const directory = "DEVS:firmware/amdgpu/";
@@ -1173,9 +1185,11 @@ fn dump(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUInfo, mil
 /// The most registers DUMP prints.
 const dump_most: u32 = 512;
 
-/// The graphics block's registers GFX prints, by the vendor's names:
-/// each one's segment and number in it.
+/// A register of the graphics block GFX and DMA print, by the vendor's
+/// name: its segment and number in it.
 const GraphicsRegister = struct { name: [*:0]const u8, segment: u8, offset: u32 };
+
+/// The block's own.
 const graphics_registers = [_]GraphicsRegister{
     .{ .name = "GRBM_STATUS", .segment = 0, .offset = 0x0da4 },
     .{ .name = "GRBM_STATUS2", .segment = 0, .offset = 0x0da2 },
@@ -1191,22 +1205,62 @@ const graphics_registers = [_]GraphicsRegister{
     .{ .name = "SDMA0_F32_CNTL", .segment = 1, .offset = 0x589a },
 };
 
-/// The command processor's status, idle at 0, and the RLC's loading
-/// status, whose top bit says every engine has its code.
-const cp_stat = graphics_registers[2];
-const rlc_bootload_status = graphics_registers[8];
-const bootload_complete: u32 = 0x8000_0000;
+/// Its memory hub's.
+const hub_registers = [_]GraphicsRegister{
+    .{ .name = "GCMC_VM_FB_LOCATION_BASE", .segment = 0, .offset = 0x1678 },
+    .{ .name = "GCMC_VM_FB_LOCATION_TOP", .segment = 0, .offset = 0x1679 },
+    .{ .name = "GCMC_VM_FB_OFFSET", .segment = 0, .offset = 0x15a7 },
+    .{ .name = "GCMC_VM_SYSTEM_APERTURE_LOW_ADDR", .segment = 0, .offset = 0x167d },
+    .{ .name = "GCMC_VM_SYSTEM_APERTURE_HIGH_ADDR", .segment = 0, .offset = 0x167e },
+    .{ .name = "GCMC_VM_MX_L1_TLB_CNTL", .segment = 0, .offset = 0x167f },
+    .{ .name = "GCVM_L2_CNTL", .segment = 0, .offset = 0x15bc },
+    .{ .name = "GCVM_L2_CNTL3", .segment = 0, .offset = 0x15be },
+    .{ .name = "GCVM_L2_PROTECTION_FAULT_CNTL", .segment = 0, .offset = 0x15c4 },
+    .{ .name = "GCVM_L2_PROTECTION_FAULT_STATUS", .segment = 0, .offset = 0x15c8 },
+    .{ .name = "GCVM_CONTEXT0_CNTL", .segment = 0, .offset = 0x1688 },
+    .{ .name = "GCVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_LO32", .segment = 0, .offset = 0x16f3 },
+    .{ .name = "GCVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_HI32", .segment = 0, .offset = 0x16f4 },
+    .{ .name = "GCVM_CONTEXT0_PAGE_TABLE_START_ADDR_LO32", .segment = 0, .offset = 0x1713 },
+    .{ .name = "GCVM_CONTEXT0_PAGE_TABLE_END_ADDR_LO32", .segment = 0, .offset = 0x1733 },
+};
 
-/// How long GFX waits for the block to say it is up, in ticks of 20 ms.
-const graphics_wait_ticks: u32 = 100;
+/// Its DMA engine's.
+const dma_registers = [_]GraphicsRegister{
+    .{ .name = "SDMA0_F32_CNTL", .segment = 1, .offset = 0x589a },
+    .{ .name = "SDMA0_CNTL", .segment = 0, .offset = 0x001c },
+    .{ .name = "SDMA0_STATUS_REG", .segment = 0, .offset = 0x0025 },
+    .{ .name = "SDMA0_UTCL1_CNTL", .segment = 0, .offset = 0x003c },
+    .{ .name = "SDMA0_UTCL1_PAGE", .segment = 0, .offset = 0x003f },
+    .{ .name = "SDMA0_QUEUE0_RB_CNTL", .segment = 0, .offset = 0x0080 },
+    .{ .name = "SDMA0_QUEUE0_RB_BASE", .segment = 0, .offset = 0x0081 },
+    .{ .name = "SDMA0_QUEUE0_RB_RPTR", .segment = 0, .offset = 0x0083 },
+    .{ .name = "SDMA0_QUEUE0_RB_WPTR", .segment = 0, .offset = 0x0085 },
+    .{ .name = "SDMA0_QUEUE0_RB_RPTR_ADDR_LO", .segment = 0, .offset = 0x0089 },
+    .{ .name = "SDMA0_QUEUE0_IB_CNTL", .segment = 0, .offset = 0x008a },
+    .{ .name = "SDMA0_QUEUE0_CONTEXT_STATUS", .segment = 0, .offset = 0x0091 },
+};
+
+/// How long DMA waits for each job, and how many empty jobs it sends one
+/// after another, each waited for.
+const dma_job_ms: u32 = 2000;
+const dma_round_trips: u32 = 100;
+/// The fill DMA reads back: its bytes, between guards of a page each way
+/// that the engine must leave as they are, and what each holds.
+const fill_bytes: u32 = 64 * 1024;
+const guard_bytes: u32 = 4096;
+const fill_value: u32 = 0x1234_5678;
+const guard_value: u32 = 0xA5A5_A5A5;
+/// The long fill, and the shorter one where the device's memory has no
+/// room for it.
+const long_fills = [_]u32{ 64 << 20, 16 << 20 };
 
 fn graphicsAt(info: amdgpu.GPUInfo, block: amdgpu.GPUBlock, register: GraphicsRegister) *volatile u32 {
     return reg(@intCast(info.registers + (@as(u64, block.addresses[register.segment]) + register.offset) * 4));
 }
 
-fn printGraphics(dl: *DosBase, info: amdgpu.GPUInfo, block: amdgpu.GPUBlock) void {
-    for (graphics_registers) |register| {
-        _ = Printf(dl, "  %-26s %08lx\n", .{ register.name, @as(u64, graphicsAt(info, block, register).*) });
+fn printGraphics(dl: *DosBase, info: amdgpu.GPUInfo, block: amdgpu.GPUBlock, registers: []const GraphicsRegister) void {
+    for (registers) |register| {
+        _ = Printf(dl, "  %-40s %08lx\n", .{ register.name, @as(u64, graphicsAt(info, block, register).*) });
     }
 }
 
@@ -1230,10 +1284,10 @@ fn graphicsFile(sys: *ExecBase, dl: *DosBase, prefix: []const u8, block: amdgpu.
     return true;
 }
 
-/// The graphics block's firmware loaded and the block started, and waited
-/// for until its engines have their code; its registers printed before
-/// and after.
-fn graphicsStart(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUInfo, millis: u32) i32 {
+/// The graphics block's firmware loaded, the block started and its hub
+/// turned on, its registers printed before and after - and with
+/// `dma_too`, its DMA engine's queue started and tried.
+fn graphicsStart(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUInfo, millis: u32, dma_too: bool) i32 {
     var graphics: amdgpu.GPUBlock = .{};
     var dma: amdgpu.GPUBlock = .{};
     var security: amdgpu.GPUBlock = .{};
@@ -1279,39 +1333,165 @@ fn graphicsStart(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPU
     }
     wb.FeedWatchdog();
     _ = Printf(dl, "The graphics block kept powered; its registers:\n", .{});
-    printGraphics(dl, info, graphics);
+    printGraphics(dl, info, graphics, &graphics_registers);
 
     const started_at = sys.UptimeUs();
     if (!ab.StartGPUGraphics(&files)) {
         wb.FeedWatchdog();
-        _ = Printf(dl, "The graphics block's firmware is not loaded or the block not started: see C:Log\n", .{});
-        printGraphics(dl, info, graphics);
+        _ = Printf(dl, "The graphics block's firmware is not loaded, the block not started or its hub not on: see C:Log\n", .{});
+        printGraphics(dl, info, graphics, &graphics_registers);
+        printGraphics(dl, info, graphics, &hub_registers);
         return dos.RETURN_ERROR;
     }
-    const loaded_at = sys.UptimeUs();
     wb.FeedWatchdog();
-    _ = Printf(dl, "Its firmware loaded and the block started in %lu ms\n", .{(loaded_at - started_at) / 1000});
+    _ = Printf(dl, "Its firmware loaded, the block started and its hub on in %lu ms; its registers:\n", .{(sys.UptimeUs() - started_at) / 1000});
+    printGraphics(dl, info, graphics, &graphics_registers);
+    _ = Printf(dl, "Its memory hub's:\n", .{});
+    printGraphics(dl, info, graphics, &hub_registers);
+    if (!dma_too) return dos.RETURN_OK;
+    return dmaCheck(sys, dl, ab, info, graphics, wb);
+}
 
-    var ticks: u32 = 0;
-    var up = false;
-    while (ticks < graphics_wait_ticks) : (ticks += 1) {
-        const status = graphicsAt(info, graphics, cp_stat).*;
-        const bootload = graphicsAt(info, graphics, rlc_bootload_status).*;
-        if (status == 0 and bootload & bootload_complete != 0) {
-            up = true;
-            break;
+/// The DMA engine's queue as it is, on one line.
+fn printQueue(dl: *DosBase, ab: *AMDGPUBase) void {
+    var state: amdgpu.GPUDMAState = .{};
+    if (!ab.GetGPUDMAState(&state)) {
+        _ = Printf(dl, "  its queue does not run\n", .{});
+        return;
+    }
+    _ = Printf(dl, "  its queue: %u jobs sent, %u done, %u interrupts; read to %lx of %lx; status %08x\n", .{
+        state.sent, state.done, state.traps, state.read, state.written, state.status,
+    });
+}
+
+/// What `what` failed of the DMA engine, said with its queue and its
+/// registers.
+fn dmaFailed(dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUInfo, graphics: amdgpu.GPUBlock, what: [*:0]const u8) i32 {
+    _ = Printf(dl, "%s: not done\n", .{what});
+    printQueue(dl, ab);
+    printGraphics(dl, info, graphics, &dma_registers);
+    printGraphics(dl, info, graphics, &hub_registers);
+    return dos.RETURN_ERROR;
+}
+
+/// The words of a piece of the device's memory, as the CPU reaches them.
+fn wordsOf(piece: amdgpu.GPUMemory) [*]volatile u32 {
+    return @ptrFromInt(@as(usize, @intCast(piece.cpu)));
+}
+
+/// A constant fill of `bytes` at the device's address `device`, in words
+/// or with the fill's size 0.
+fn fillPacket(device: u64, bytes: u32, value: u32, size: u32) [5]u32 {
+    return .{ amdgpu.GPUDMA_OP_CONST_FILL | size, @truncate(device), @truncate(device >> 32), value, bytes - 1 };
+}
+
+/// The DMA engine's queue started and tried: NOPs, empty jobs one after
+/// another, a fill read back between guards, and a long fill.
+fn dmaCheck(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUInfo, graphics: amdgpu.GPUBlock, wb: *WatchdogBase) i32 {
+    if (!ab.StartGPUDMA()) {
+        wb.FeedWatchdog();
+        _ = Printf(dl, "The DMA engine's queue does not run: see C:Log; its registers:\n", .{});
+        printGraphics(dl, info, graphics, &dma_registers);
+        return dos.RETURN_ERROR;
+    }
+    wb.FeedWatchdog();
+    var state: amdgpu.GPUDMAState = .{};
+    _ = ab.GetGPUDMAState(&state);
+    _ = Printf(dl, "The DMA engine's queue runs: its ring at %lx, %u bytes\n", .{ state.ring, state.ring_bytes });
+    printQueue(dl, ab);
+
+    const nops = [_]u32{amdgpu.GPUDMA_OP_NOP} ** 8;
+    var began = sys.UptimeUs();
+    const first = ab.SendGPUDMA(&nops, nops.len);
+    if (first == 0 or !ab.WaitGPUDMA(first, dma_job_ms)) return dmaFailed(dl, ab, info, graphics, "Eight NOPs");
+    _ = Printf(dl, "Eight NOPs: job %u done in %lu us\n", .{ first, sys.UptimeUs() - began });
+    wb.FeedWatchdog();
+
+    _ = ab.GetGPUDMAState(&state);
+    var traps = state.traps;
+    began = sys.UptimeUs();
+    var trip: u32 = 0;
+    while (trip < dma_round_trips) : (trip += 1) {
+        const job = ab.SendGPUDMA(&nops, 0);
+        if (job == 0 or !ab.WaitGPUDMA(job, dma_job_ms)) return dmaFailed(dl, ab, info, graphics, "An empty job");
+    }
+    const trips_us = sys.UptimeUs() - began;
+    _ = ab.GetGPUDMAState(&state);
+    _ = Printf(dl, "%u empty jobs, each sent and waited for: %lu us in all, %lu us each; %u of the engine's interrupts\n", .{
+        dma_round_trips, trips_us, trips_us / dma_round_trips, state.traps -% traps,
+    });
+    wb.FeedWatchdog();
+
+    var all_right = true;
+    var piece: amdgpu.GPUMemory = .{};
+    const piece_bytes = fill_bytes + 2 * guard_bytes;
+    if (!ab.AllocGPUMemory(piece_bytes, 4096, &piece)) {
+        _ = Printf(dl, "No room in the device's memory for %u bytes\n", .{piece_bytes});
+        return dos.RETURN_ERROR;
+    }
+    defer ab.FreeGPUMemory(&piece);
+    const words = wordsOf(piece);
+    const count = piece_bytes / 4;
+    const guard_words = guard_bytes / 4;
+    for ([_]u32{ 0, amdgpu.GPUDMA_FILL_WORDS }) |size| {
+        for (0..count) |index| words[index] = guard_value;
+        const fill = fillPacket(piece.device + guard_bytes, fill_bytes, fill_value, size);
+        began = sys.UptimeUs();
+        const job = ab.SendGPUDMA(&fill, fill.len);
+        if (job == 0 or !ab.WaitGPUDMA(job, dma_job_ms)) return dmaFailed(dl, ab, info, graphics, "A fill");
+        const took = sys.UptimeUs() - began;
+        const filled = words[guard_words];
+        var alike: u32 = 0;
+        for (guard_words..count - guard_words) |index| {
+            if (words[index] == filled) alike += 1;
         }
-        dl.Delay(1);
+        var kept: u32 = 0;
+        for (0..guard_words) |index| {
+            if (words[index] == guard_value) kept += 1;
+            if (words[count - 1 - index] == guard_value) kept += 1;
+        }
+        const expected = if (size == amdgpu.GPUDMA_FILL_WORDS) fill_value else (fill_value & 0xff) * 0x0101_0101;
+        _ = Printf(dl, "A fill of %u bytes with %08x, size %u: done in %lu us; %u of its %u words %08x (%08x meant), %u of the guards' %u kept\n", .{
+            fill_bytes, fill_value, size >> 30, took, alike, fill_bytes / 4, filled, expected, kept, 2 * guard_words,
+        });
+        if (filled != expected or alike != fill_bytes / 4 or kept != 2 * guard_words) all_right = false;
         wb.FeedWatchdog();
     }
-    const waited_ms = (sys.UptimeUs() - loaded_at) / 1000;
-    if (up) {
-        _ = Printf(dl, "The engines have their code %lu ms after; its registers:\n", .{waited_ms});
-    } else {
-        _ = Printf(dl, "The engines do not have their code after %lu ms; its registers:\n", .{waited_ms});
+
+    for (long_fills) |bytes| {
+        var long: amdgpu.GPUMemory = .{};
+        if (!ab.AllocGPUMemory(bytes, 4096, &long)) {
+            _ = Printf(dl, "No room in the device's memory for %u MiB\n", .{bytes >> 20});
+            continue;
+        }
+        defer ab.FreeGPUMemory(&long);
+        const long_words = wordsOf(long);
+        const last = bytes / 4 - 1;
+        long_words[0] = guard_value;
+        long_words[last / 2] = guard_value;
+        long_words[last] = guard_value;
+        const fill = fillPacket(long.device, bytes, fill_value, amdgpu.GPUDMA_FILL_WORDS);
+        _ = ab.GetGPUDMAState(&state);
+        traps = state.traps;
+        began = sys.UptimeUs();
+        const job = ab.SendGPUDMA(&fill, fill.len);
+        if (job == 0 or !ab.WaitGPUDMA(job, dma_job_ms)) return dmaFailed(dl, ab, info, graphics, "The long fill");
+        const took = @max(1, sys.UptimeUs() - began);
+        _ = ab.GetGPUDMAState(&state);
+        _ = Printf(dl, "A fill of %u MiB in words: done in %lu us, %lu MB/s; its first, middle and last words %08x %08x %08x; %u interrupts\n", .{
+            bytes >> 20, took, @as(u64, bytes) / took, long_words[0], long_words[last / 2], long_words[last], state.traps -% traps,
+        });
+        if (long_words[0] != fill_value or long_words[last / 2] != fill_value or long_words[last] != fill_value) all_right = false;
+        wb.FeedWatchdog();
+        break;
     }
-    printGraphics(dl, info, graphics);
-    return if (up) dos.RETURN_OK else dos.RETURN_WARN;
+
+    _ = Printf(dl, "At the end:\n", .{});
+    printQueue(dl, ab);
+    printGraphics(dl, info, graphics, &dma_registers);
+    _ = Printf(dl, "Its memory hub's:\n", .{});
+    printGraphics(dl, info, graphics, &hub_registers);
+    return if (all_right) dos.RETURN_OK else dos.RETURN_WARN;
 }
 
 /// How long CYCLE waits for a picture to change by itself and then to
@@ -1403,7 +1583,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     if (argv[arg_bands] != 0) return bandsCheck(sys, dl, ab, info, millis);
     if (argv[arg_video] != 0) return videoCheck(sys, dl, ab, info, millis);
     if (argv[arg_sleep] != 0) return asleepFor(sys, dl, ab, info, millis, number(argv[arg_sleep]), argv[arg_modes] != 0);
-    if (argv[arg_gfx] != 0) return graphicsStart(sys, dl, ab, info, millis);
+    if (argv[arg_gfx] != 0 or argv[arg_dma] != 0) return graphicsStart(sys, dl, ab, info, millis, argv[arg_dma] != 0);
     if (argv[arg_dump] != 0) {
         const length = if (argv[arg_length] != 0) number(argv[arg_length]) else 16;
         const id = if (argv[arg_block] != 0) number(argv[arg_block]) else amdgpu.GPUBLOCK_DISPLAY;

@@ -54,8 +54,23 @@ bool GetGPUBios(*amdgpu.GPUBios bios)
 bool GetGPUConnector(u32 index, *amdgpu.GPUConnector connector)
 /// The graphics block's firmware - the files `files` names, each as it is
 /// on the disk - loaded by the security processor in the order the
-/// block's RLC takes it, the RLC told to hand each engine its code, and
-/// the block's power controller started by the power manager; true once
-/// all of it is done.
+/// block's RLC takes it, the RLC told to hand each engine its code, the
+/// block's power controller started by the power manager, and its memory
+/// hub turned on once every engine has its code; true once all of it is
+/// done.
 bool StartGPUGraphics(*const amdgpu.GPUGraphicsFiles files)
+/// The graphics block's DMA engine started with one queue of jobs, once
+/// StartGPUGraphics has started the block; true once it runs.
+bool StartGPUDMA()
+/// The DMA engine's packets `packets`, `words` words of them, put on its
+/// queue as one job; the job's number, for WaitGPUDMA, or 0 where the
+/// queue does not run, the job does not fit in it, or the engine does not
+/// make room for it in time.
+u32 SendGPUDMA([*]const u32 packets, u32 words)
+/// Waits until the DMA engine has done job `job`, `most_ms` milliseconds
+/// at most; true once it has, false where it has not by then.
+bool WaitGPUDMA(u32 job, u32 most_ms)
+/// The DMA engine's queue as it is, into `state`; false where it does not
+/// run.
+bool GetGPUDMAState(*amdgpu.GPUDMAState state)
 ##end
