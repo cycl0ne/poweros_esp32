@@ -675,6 +675,7 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, part
         .load = has_color and (!clears or !whole),
         .clear_inside = clears and !whole,
         .depth = command.parts[part].tests_depth,
+        .depth24 = command.parts[part].depth_bits == 24,
         .clear_depth = @as(f32, @floatFromInt(command.clear_depth)) / @as(f32, @floatFromInt(_render.depthUnits(command.parts[part].depth_bits))),
         .stencil = command.parts[part].tests_stencil,
         .clear_stencil = command.clear_stencil,
@@ -727,17 +728,23 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, part
     // saying it was CLEAR, which for DONT_CARE leaves contents Vulkan
     // leaves undefined (since 1.151). Before, such a tile stored the
     // tile's clear over the pixels outside the area.
-    var kept_inside: ?frames.Kept = null;
-    if (player.frame.kept) |*kept| if (kept.store and !kept.load and !frames.tilesInArea(&player.frame)) {
+    // Plane by plane since 1.224, v3dv asking it of each aspect: a D24S8
+    // that loads its depth and stores both loads its stencil too there,
+    // and the stencil alone is drawn over inside.
+    var depth_inside = false;
+    var stencil_inside = false;
+    if (player.frame.kept) |*kept| if (kept.store and !frames.tilesInArea(&player.frame)) {
+        const by_op = if (kept.load) kept.loaded orelse kept.buffer else cl.STORE_NONE;
+        depth_inside = cl.holdsDepth(kept.buffer) and !cl.holdsDepth(by_op);
+        stencil_inside = cl.holdsStencil(kept.buffer) and !cl.holdsStencil(by_op);
+        const every = cl.planes(cl.holdsDepth(kept.buffer) or cl.holdsDepth(by_op), cl.holdsStencil(kept.buffer) or cl.holdsStencil(by_op));
         kept.load = true;
-        kept_inside = kept.*;
+        kept.loaded = if (every != kept.buffer) every else null;
     };
     if (!startBinning(queue)) return;
     player.drawing = true;
     const colors_inside = clears and !whole;
-    if (colors_inside or kept_inside != null) {
-        const depth_inside = if (kept_inside) |kept| kept.buffer == cl.STORE_Z else false;
-        const stencil_inside = if (kept_inside) |kept| kept.buffer == cl.STORE_STENCIL else false;
+    if (colors_inside or depth_inside or stencil_inside) {
         clearRectangle(
             queue,
             player.area,
@@ -828,16 +835,33 @@ fn colorPlace(image: *const _image.Image, level: u32, layer: u32, height: u32) C
     return .{ .first = rows.at, .bytes = @as(usize, rows.pitch) * height, .stride = rows.pitch, .memory = cl.MEMORY_RASTER };
 }
 
-/// The depth or the stencil a part keeps in its image's rows, or null where
-/// both live in the tiles alone. One plane at most: a format that holds
-/// them both is refused on this device, the hardware storing a plane as its
-/// own pixels one after another (`Capabilities.stored_both`).
+/// The depth or the stencil a part keeps in its image's rows, or since
+/// 1.224 both of a D24_UNORM_S8_UINT, or null where both live in the
+/// tiles alone. The hardware stores a plane of 16 bits or of 8 as its own
+/// pixels one after another, so D16_UNORM_S8_UINT keeps neither here,
+/// CreateRenderPass refusing a pass that would (`Capabilities.stored_both`);
+/// a depth of 24 bits lies in a word with its stencil, which the tiles
+/// store either plane of or both (`cl.OUTPUT_D24S8`), as v3dv's D24S8.
 fn keptOf(queue: *Queue, part: *const _render.Part, framebuffer: *const _render.Target) ?frames.Kept {
-    const keeps_depth = part.loads_depth or part.stores_depth;
-    const keeps_stencil = part.loads_stencil or part.stores_stencil;
-    if (keeps_depth == keeps_stencil) return null; // neither, or the two together
+    // The planes stored and those loaded, each a buffer of the tiles, as
+    // v3dv picks them apart (`v3dv_zs_buffer`, v3dvx_cmd_buffer.c:331-334,
+    // 594-599; since 1.224).
+    const stored = cl.planes(part.stores_depth, part.stores_stencil);
+    const loaded = cl.planes(part.loads_depth, part.loads_stencil);
+    if (stored == cl.STORE_NONE and loaded == cl.STORE_NONE) return null;
     const view = framebuffer.depth orelse return null;
     const image = view.image;
+    if (image.format == .d16_unorm_s8_uint) return null;
+    const buffer = if (stored != cl.STORE_NONE) stored else loaded;
+    const wanted = frames.Kept{
+        .buffer = buffer,
+        .loaded = if (loaded != cl.STORE_NONE and loaded != buffer) loaded else null,
+        .format = if (_image.depthBits(image.format) == 24) cl.OUTPUT_D24S8 else if (cl.holdsDepth(buffer)) cl.OUTPUT_D16 else cl.OUTPUT_S8,
+        .image = 0,
+        .stride = 0,
+        .load = loaded != cl.STORE_NONE,
+        .store = stored != cl.STORE_NONE,
+    };
     const address = addressOf(queue, image);
     if (address == 0) {
         exec.kprintf(queue.device.sys, "v3d: a depth image at %lx is out of its reach\n", .{@intFromPtr(image.data)});
@@ -855,15 +879,11 @@ fn keptOf(queue: *Queue, part: *const _render.Part, framebuffer: *const _render.
         const at = layerAt(image, &layout, view.base_level, view.base_layer) + level.offset;
         playerOf(queue).kept_first = at;
         playerOf(queue).kept_bytes = level.slice_bytes;
-        return .{
-            .buffer = if (keeps_depth) cl.STORE_Z else cl.STORE_STENCIL,
-            .format = if (keeps_depth) cl.OUTPUT_D16 else cl.OUTPUT_S8,
-            .image = address + @as(u32, @intCast(at)),
-            .stride = tiling.blocksDown(&layout, view.base_level),
-            .memory = memoryOf(level.kind),
-            .load = if (keeps_depth) part.loads_depth else part.loads_stencil,
-            .store = if (keeps_depth) part.stores_depth else part.stores_stencil,
-        };
+        var made = wanted;
+        made.image = address + @as(u32, @intCast(at));
+        made.stride = tiling.blocksDown(&layout, view.base_level);
+        made.memory = memoryOf(level.kind);
+        return made;
     }
     // The level and the layer the view names, in that level's own rows, as
     // the cores' `planeOf` has drawn into since 1.58 and 1.63: until 1.91
@@ -872,14 +892,10 @@ fn keptOf(queue: *Queue, part: *const _render.Part, framebuffer: *const _render.
     const rows = _image.rowsAt(image, view.base_level, view.base_layer);
     playerOf(queue).kept_first = rows.at;
     playerOf(queue).kept_bytes = @as(usize, rows.pitch) * framebuffer.height;
-    return .{
-        .buffer = if (keeps_depth) cl.STORE_Z else cl.STORE_STENCIL,
-        .format = if (keeps_depth) cl.OUTPUT_D16 else cl.OUTPUT_S8,
-        .image = address + @as(u32, @intCast(rows.at)),
-        .stride = rows.pitch,
-        .load = if (keeps_depth) part.loads_depth else part.loads_stencil,
-        .store = if (keeps_depth) part.stores_depth else part.stores_stencil,
-    };
+    var made = wanted;
+    made.image = address + @as(u32, @intCast(rows.at));
+    made.stride = rows.pitch;
+    return made;
 }
 
 /// A part of the attachments cleared in the middle of a pass.

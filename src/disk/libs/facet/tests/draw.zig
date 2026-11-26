@@ -9683,7 +9683,7 @@ test "a device that keeps no depth, as the V3D keeps none: the pass that asks fo
     bench.rig.fb.DestroyRenderPass(bench.device, tiles_only);
 }
 
-test "a device that keeps no format of both planes, as the V3D keeps none: such an attachment kept is error_validation_failed, the format query giving it no DEPTH_STENCIL_ATTACHMENT, and one in the tiles alone is drawn (item 91)" {
+test "a device that keeps no D16_UNORM_S8_UINT, as the V3D keeps none: such an attachment kept is error_validation_failed, the format query giving it no DEPTH_STENCIL_ATTACHMENT, and one in the tiles alone is drawn (item 91); a D24_UNORM_S8_UINT, a word a pixel, kept all the same (since 1.224)" {
     var bench = try Bench.up();
     defer bench.down();
     const fb = bench.rig.fb;
@@ -9732,11 +9732,22 @@ test "a device that keeps no format of both planes, as the V3D keeps none: such 
     for ([_]facet.AttachmentDescription{
         .{ .format = .d16_unorm, .store_op = .store, .final_layout = .general },
         .{ .format = .s8_uint, .stencil_store_op = .store, .final_layout = .general },
+        // A depth of 24 bits lies in a word with its stencil, which a
+        // device that draws one (`depth24`) stores either plane of or
+        // both, as v3dv's D24S8 (since 1.224).
+        .{ .format = .d24_unorm_s8_uint, .load_op = .load, .stencil_store_op = .store, .final_layout = .general },
+        .{ .format = .d24_unorm_s8_uint, .store_op = .store, .stencil_store_op = .store, .final_layout = .general },
     }) |kept| {
         const attachments = [2]facet.AttachmentDescription{ .{ .format = .b8g8r8a8_unorm, .final_layout = .general }, kept };
         try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(bench.device, &.{ .attachment_count = 2, .attachments = &attachments, .subpass_count = 1, .subpasses = @ptrCast(&subpass) }, &made));
         fb.DestroyRenderPass(bench.device, made);
     }
+    fb.GetPhysicalDeviceFormatProperties(bench.physical, .d24_unorm_s8_uint, &properties);
+    try testing.expect(properties.optimal_tiling_features & facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT != 0);
+    // And read by the subpass after, which keeps both planes for it.
+    const deep_tiles = [2]facet.AttachmentDescription{ .{ .format = .b8g8r8a8_unorm, .final_layout = .general }, .{ .format = .d24_unorm_s8_uint, .final_layout = .general } };
+    try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(bench.device, &.{ .attachment_count = 2, .attachments = &deep_tiles, .subpass_count = 2, .subpasses = &read_after }, &made));
+    fb.DestroyRenderPass(bench.device, made);
 }
 
 test "a device that samples no depth, as the V3D sampled none until 1.142: the format query says so too, and every kept feature answers for its own formats" {

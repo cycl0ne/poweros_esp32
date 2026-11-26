@@ -388,7 +388,10 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
                     // (VUID-VkSubpassDescription-pInputAttachments-02647;
                     // `error_feature_not_present` until 1.135). The V3D
                     // reaches here since 1.216, with `d16_unorm_s8_uint`.
-                    if (_image.hasDepth(read.format) and _image.hasStencil(read.format) and !owner.physical.can.stored_both) return .error_validation_failed;
+                    // D16_UNORM_S8_UINT alone since 1.224: a depth of 24
+                    // bits lies in a word with its stencil, which a
+                    // device that draws one keeps (`depth24`).
+                    if (read.format == .d16_unorm_s8_uint and !owner.physical.can.stored_both) return .error_validation_failed;
                 };
                 // Drawn and read in the same subpass: the pixels being
                 // read are the ones being written, which is the
@@ -494,11 +497,13 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
                 if (loads_stencil or stores_stencil or (shared != null and tests_stencil)) {
                     if (!owner.physical.can.stored_stencil) return .error_feature_not_present;
                 }
-                // A format of both planes keeps either only where the
+                // D16_UNORM_S8_UINT keeps either plane only where the
                 // device writes a pixel's planes where they lie in it
                 // (`stored_both`, since 1.47): one that stores a tile
                 // buffer whole writes a plane's own pixels one after
-                // another, which those rows are not. Where it does not,
+                // another, which those rows are not. D24_UNORM_S8_UINT is
+                // held to its feature below alone (since 1.224): the V3D
+                // stores it a word a pixel, either plane or both. Where it does not,
                 // `_format.describe` gives such a format no
                 // DEPTH_STENCIL_ATTACHMENT
                 // (VUID-VkSubpassDescription-pDepthStencilAttachment-02650;
@@ -507,7 +512,7 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
                 // alone, though it breaks the same rule
                 // (docs/facet-vulkan10.md item 94).
                 if ((loads_depth or stores_depth or loads_stencil or stores_stencil or shared != null) and
-                    tests_depth and tests_stencil and !owner.physical.can.stored_both) return .error_validation_failed;
+                    depth.format == .d16_unorm_s8_uint and !owner.physical.can.stored_both) return .error_validation_failed;
                 // And of a format the device draws a depth or a stencil of
                 // at all (the same VUID, since 1.222): one of 24 bits of
                 // depth only where it draws that (`Capabilities.depth24`,

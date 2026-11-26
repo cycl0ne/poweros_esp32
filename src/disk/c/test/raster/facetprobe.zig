@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetProbe";
-const VERSION_STRING = "\x00$VER: FacetProbe 1.51 (26.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetProbe 1.52 (26.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "CORES/S,V3D/S,QUIET/S";
@@ -108,10 +108,9 @@ const Can = struct {
     tile_inputs: bool,
     /// Whether a depth of 24 bits is drawn into: X8_D24_UNORM_PACK32 and
     /// D24_UNORM_S8_UINT depth attachments. The cores draw one since facet
-    /// 1.223; the V3D's frames are set up for 16 bits of depth, and it
-    /// says no such attachment (docs/facet-vulkan10.md item 35). Vulkan
-    /// has it as a format feature, which is what is checked against this,
-    /// so it is read off the device's type.
+    /// 1.223 and the V3D since 1.224 (docs/facet-vulkan10.md item 35).
+    /// Vulkan has it as a format feature, which is what is checked
+    /// against this, so it is not read off that.
     depth24: bool,
 
     fn formatOf(fb: *FacetBase, physical: *facet.PhysicalDevice, format: facet.Format) facet.FormatProperties {
@@ -182,7 +181,7 @@ const Can = struct {
             .etc2_textures = formatOf(fb, physical, .etc2_r8g8b8_unorm_block).optimal_tiling_features != 0,
             .texel_offsets = limits.max_texel_offset != 0,
             .tile_inputs = properties.device_type == .cpu,
-            .depth24 = properties.device_type == .cpu,
+            .depth24 = true,
         };
     }
 };
@@ -2602,10 +2601,14 @@ fn stencilChecks(probe: *Probe) void {
         probe.check(passStenciling(probe, .d16_unorm_s8_uint, "cdcd") != null, "one that stays in the tiles is still taken");
     }
 
-    // One format of stencil alone, and one that holds a depth beside it
-    // where the device keeps either of the two.
-    const formats: []const facet.Format = if (probe.can.stored_both) &.{ .s8_uint, .d16_unorm_s8_uint } else &.{.s8_uint};
-    for (formats) |format| {
+    // One format of stencil alone, and those that hold a depth beside it
+    // where the device keeps either of the two: D16_UNORM_S8_UINT where
+    // it writes a pixel's planes where they lie, and D24_UNORM_S8_UINT
+    // where it draws a depth of 24 bits, the V3D storing and loading its
+    // stencil alone into the word's low byte since facet 1.224.
+    for ([_]facet.Format{ .s8_uint, .d16_unorm_s8_uint, .d24_unorm_s8_uint }) |format| {
+        if (format == .d16_unorm_s8_uint and !probe.can.stored_both) continue;
+        if (format == .d24_unorm_s8_uint and !probe.can.depth24) continue;
         // A byte a pixel in the buffer, of either format, as Vulkan has a
         // stencil aspect lie there (since facet 1.222; four for the format
         // that holds a depth too before).
@@ -2978,6 +2981,74 @@ fn sampledDepthChecks(probe: *Probe) void {
         const further: f32 = @floatCast((left_f + 0.25) / whole);
         probe.checkEqual(white, sampledWith(probe, kept_view, sampler.?, sets[0].?, layout.?, reading, onto, shade, vertex_buffer, vertex_bytes, pixels, pitch, nearer), "and sampled where the pass stored it, a reference a step nearer passes");
         probe.checkEqual(black, sampledWith(probe, kept_view, sampler.?, sets[0].?, layout.?, reading, onto, shade, vertex_buffer, vertex_bytes, pixels, pitch, further), "and a quarter of a step further does not");
+
+        // D24_UNORM_S8_UINT kept in rows: both planes stored in one
+        // store, the stencil the clear's beside the depth drawn; then a
+        // pass that loads the depth alone, clears the stencil and stores
+        // both, the tiles loading one plane and storing two, as v3dv picks
+        // a load's planes and a store's apart (v3dvx_cmd_buffer.c:331-334,
+        // 594-599; the V3D since facet 1.224).
+        const both_image = probe.bound(.{ .format = .d24_unorm_s8_uint, .extent = extent, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_TRANSFER_SRC }, 0) orelse {
+            probe.check(false, "a D24_UNORM_S8_UINT attachment");
+            break :drawn24;
+        };
+        const both_view = probe.viewed(.{ .image = both_image, .format = .d24_unorm_s8_uint, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH | facet.IMAGE_ASPECT_STENCIL } }) orelse {
+            probe.check(false, "a view of both its planes");
+            break :drawn24;
+        };
+        var both_passes: [2]*facet.RenderPass = undefined;
+        for (&both_passes, [2]facet.AttachmentLoadOp{ .clear, .load }) |*made_pass, depth_load| {
+            const both_attachments = [2]facet.AttachmentDescription{
+                .{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .color_attachment_optimal },
+                .{ .format = .d24_unorm_s8_uint, .load_op = depth_load, .store_op = .store, .stencil_load_op = .clear, .stencil_store_op = .store, .final_layout = .depth_stencil_attachment_optimal },
+            };
+            const color_reference = facet.AttachmentReference{ .attachment = 0, .layout = .color_attachment_optimal };
+            const depth_reference = facet.AttachmentReference{ .attachment = 1, .layout = .depth_stencil_attachment_optimal };
+            const both_subpass = facet.SubpassDescription{ .color_attachment_count = 1, .color_attachments = @ptrCast(&color_reference), .depth_stencil_attachment = &depth_reference };
+            made_pass.* = probe.renderPass(.{ .attachment_count = 2, .attachments = &both_attachments, .subpass_count = 1, .subpasses = @ptrCast(&both_subpass) }) orelse {
+                probe.check(false, "a pass that stores both planes of a D24_UNORM_S8_UINT");
+                break :drawn24;
+            };
+        }
+        // One framebuffer and one pipeline for both: the passes differ in
+        // a load op alone, which leaves them compatible.
+        const both_frame = probe.framebuffer(both_passes[0], &.{ color[1], both_view }) orelse {
+            probe.check(false, "a framebuffer over it");
+            break :drawn24;
+        };
+        const both_list = flatPipeline(probe, both_passes[0], flat.?, flat_layout.?) orelse {
+            probe.check(false, "a pipeline that draws it");
+            break :drawn24;
+        };
+        const stencil_back, const stencil_backed = probe.buffer(side * side, facet.BUFFER_USAGE_TRANSFER_DST) orelse break :drawn24;
+        // The two triangles again: each sample above drew its quad from
+        // the same buffer.
+        @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(both))], std.mem.asBytes(&both));
+        for ([2]u8{ 0x33, 0x44 }, 0..) |stencil_value, round| {
+            @memset(backed[0 .. side * side * 4], 0xAA);
+            @memset(stencil_backed[0 .. side * side], 0xAA);
+            const both_clears = [2]facet.ClearValue{ clears[0], .{ .depth_stencil = .{ .depth = 1, .stencil = stencil_value } } };
+            commands = probe.record() orelse break :drawn24;
+            fb.CmdBeginRenderPass(commands, &.{ .render_pass = both_passes[round], .framebuffer = both_frame, .render_area = area, .clear_value_count = 2, .clear_values = &both_clears }, .@"inline");
+            if (round == 0) {
+                fb.CmdBindPipeline(commands, .graphics, both_list);
+                fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+                fb.CmdPushConstants(commands, flat_layout.?, facet.SHADER_STAGE_FRAGMENT, 0, 4, &red);
+                fb.CmdDraw(commands, 6, 1, 0, 0);
+            }
+            fb.CmdEndRenderPass(commands);
+            fb.CmdCopyImageToBuffer(commands, both_image, .general, back, 1, @ptrCast(&facet.BufferImageCopy{ .image_subresource = .{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH }, .image_extent = extent }));
+            fb.CmdCopyImageToBuffer(commands, both_image, .general, stencil_back, 1, @ptrCast(&facet.BufferImageCopy{ .image_subresource = .{ .aspect_mask = facet.IMAGE_ASPECT_STENCIL }, .image_extent = extent }));
+            if (!probe.submit()) {
+                probe.check(false, "a D24_UNORM_S8_UINT drawn and read back");
+                break :drawn24;
+            }
+            const first_round = round == 0;
+            probe.checkEqual(left, std.mem.readInt(u32, backed[(8 * side + 16) * 4 ..][0..4], .little), if (first_round) "a D24_UNORM_S8_UINT drawn: its depth stored at all 24 bits beside its stencil" else "and loaded alone, its stencil cleared and both stored again: the depth as it was");
+            probe.checkEqual(left, std.mem.readInt(u32, backed[(side * side - 1) * 4 ..][0..4], .little), "to the last pixel");
+            probe.checkEqual(stencil_value, stencil_backed[8 * side + 16], if (first_round) "and its stencil, the clear's, stored with it" else "and the stencil the new clear's");
+            probe.checkEqual(stencil_value, stencil_backed[side * side - 1], "to the last pixel");
+        }
     }
 
     // --- 1.58: the planes a view names, and layers ---

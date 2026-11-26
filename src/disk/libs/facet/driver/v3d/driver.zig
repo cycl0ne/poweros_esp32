@@ -303,12 +303,20 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         .timestamp_queries = true,
         // The tiles' depth and stencil are stored to an image's rows and
         // loaded back from them, as the render target is (`cl.STORE_Z`,
-        // `STORE_STENCIL`, since 1.47). The hardware writes a plane's own
-        // pixels one after another, so the image's format holds that
-        // plane alone: a format of both keeps neither here.
+        // `STORE_STENCIL`, since 1.47). The hardware writes a plane of 16
+        // bits or of 8 as its own pixels one after another, so the image's
+        // format holds that plane alone: D16_UNORM_S8_UINT keeps neither
+        // here.
         .stored_depth = true,
         .stored_stencil = true,
         .stored_both = false,
+        // The tiles keep a depth of 24 bits where the attachment's format
+        // has one (`cl.renderingCommon`'s depth_24), and store it in a
+        // word with its stencil, D24S8, either plane alone or both
+        // (`cl.STORE_ZSTENCIL`), as v3dv draws X8_D24_UNORM_PACK32 and
+        // D24_UNORM_S8_UINT (v3dvx_formats.c:206, 209, 555-570;
+        // v3dvx_cmd_buffer.c:213-223, 997). Since 1.224.
+        .depth24 = true,
         // A sampled D16_UNORM lies as a texture does here, the pass
         // storing its depth in the level's tiling, and the TMU reads it as
         // DEPTH_COMP16, as v3dv does (v3dvx_formats.c:204,

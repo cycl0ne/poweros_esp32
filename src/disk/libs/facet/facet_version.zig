@@ -7386,4 +7386,34 @@ pub const LIBRARY_VERSION = 1;
 /// On the CM5 (package f228), FacetProbe is 951 of 951, the cores drawing
 /// an X8_D24 at all 24 bits, and FacetBoth's 316 cases are each as at
 /// 1.222.
-pub const LIBRARY_REVISION = 223;
+/// 224: **The V3D draws a depth of 24 bits (docs/facet-vulkan10.md item
+/// 35, step 3 of four).** Its tiles keep a depth of 24 bits where the
+/// attachment's format has one (`cl.renderingCommon`'s "Internal Depth
+/// Type", depth_24 1 against depth_16 2; `frames.Frame.depth24`), as v3dv
+/// sets it from its view (`get_internal_depth_type`, v3dvx_formats.c:
+/// 555-570, at v3dvx_cmd_buffer.c:997). X8_D24_UNORM_PACK32 and
+/// D24_UNORM_S8_UINT are stored and loaded as D24S8 (`cl.OUTPUT_D24S8`,
+/// 43; v3dvx_formats.c:206, 209), through the buffer of the planes each
+/// op keeps: Z, STENCIL, or both at once, ZSTENCIL (`cl.STORE_ZSTENCIL`,
+/// 11), the load's planes and the store's picked apart as v3dv picks them
+/// (`v3dv_zs_buffer`, v3dvx_cmd_buffer.c:213-223, 331-334, 594-599;
+/// `frames.Kept.loaded`, `cl.planes`). Over a render area a tile sticks
+/// out of, each plane stored is loaded and those the op did not load are
+/// drawn over inside, plane by plane. The bias is as it was: v3dv scales
+/// its units for a D16 on V3D 4.2 alone (v3dvx_cmd_buffer.c:1529-1532).
+/// The V3D says `Capabilities.depth24`, so both formats are its depth
+/// attachments. `stored_both` is D16_UNORM_S8_UINT's alone: the V3D still
+/// keeps neither of its planes, and CreateRenderPass holds a D24S8,
+/// kept or read as an input attachment, to its feature. The V3D samples
+/// no D24_UNORM_S8_UINT, sampling no stencil.
+///
+/// One host test is new: a frame of D24S8 loading the depth alone and
+/// storing both, and its depth type. Three grew: the packet's fields, the
+/// format answer of a device with `depth24` and no `stored_both`, and
+/// such a device keeping a D24S8 and reading it in a later subpass. Six
+/// mutations each fail a test. FacetProbe 1.52 draws an X8_D24 on both
+/// devices, stores a D24S8's two planes in one store, loads its depth
+/// alone with the stencil cleared and stores both again, and stores and
+/// loads its stencil alone. On the CM5 (package f230) FacetProbe is 997
+/// of 997 and FacetBoth's 316 cases are each as at 1.223.
+pub const LIBRARY_REVISION = 224;
