@@ -1798,6 +1798,114 @@ test "a buffer read in place of a frame: shown after another nothing was written
     try tearDown(rb);
 }
 
+test "bands a flipped board's display reads itself: handed over with the show while none is written in, made in frames once one is or where the driver refuses them" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const fk = fakeOf(rb);
+    fk.direct_bands = 4;
+    const board = try makeFlipped(rb, 16, 12);
+    fk.direct_bands = null;
+    const format = @intFromEnum(rtg.PixelFormat.rgb565);
+    const displayable = rtg.bitmaps.RTGBMF_DISPLAYABLE;
+    const direct = rtg.boards.RTGSHOW_DIRECT;
+    const ok = rtg.errors.RTGERR_OK;
+    const one = base(rb).AllocBitMap(board, 16, 12, format, displayable).?;
+    const other = base(rb).AllocBitMap(board, 16, 12, format, displayable).?;
+    paint(one, 1);
+    paint(other, 2);
+
+    // The first picture is a frame's.
+    try testing.expectEqual(ok, base(rb).ShowBitMap(board, one));
+    const flipped = fk.log.flips;
+    // A screen pulled down over another: the bands handed over with the
+    // show, no picture made and nothing flipped.
+    const pulled = [_]rtg.RtgBand{ .{ .bitmap = one }, .{ .bitmap = other, .line = 6, .origin = 6 } };
+    try testing.expectEqual(ok, base(rb).ShowBoard(board, 0, &pulled, pulled.len));
+    try testing.expect(fk.log.last_flags & direct != 0);
+    try testing.expectEqual(@as(u32, 2), fk.log.band_count);
+    try testing.expectEqual(flipped, fk.log.flips);
+    // Pulled further, nothing written in meanwhile: handed over again.
+    const further = [_]rtg.RtgBand{ .{ .bitmap = one }, .{ .bitmap = other, .line = 8, .origin = 8 } };
+    try testing.expectEqual(ok, base(rb).ShowBoard(board, 0, &further, further.len));
+    try testing.expect(fk.log.last_flags & direct != 0);
+    try testing.expectEqual(flipped, fk.log.flips);
+
+    // Written in while the display reads it: the next picture made whole
+    // in a frame and flipped to.
+    poke(other, 3, 2, white);
+    try testing.expectEqual(ok, base(rb).RefreshRect(other, &.{ .x = 3, .y = 2, .width = 1, .height = 1 }));
+    flips.service(rb, board);
+    try testing.expectEqual(flipped + 1, fk.log.flips);
+    try testing.expect(fake.glassOf(board).? != one and fake.glassOf(board).? != other);
+    try testing.expectEqual(painted(1, 3, 0), glassAt(board, 3, 0));
+    try testing.expectEqual(painted(2, 3, 0), glassAt(board, 3, 8));
+    try testing.expectEqual(white, glassAt(board, 3, 10));
+    // A show right after it: made in a frame. The next, with nothing
+    // written in since: read by the display again.
+    try testing.expectEqual(ok, base(rb).ShowBoard(board, 0, &pulled, pulled.len));
+    try testing.expectEqual(@as(u32, 0), fk.log.last_flags & direct);
+    try testing.expectEqual(painted(2, 3, 0), glassAt(board, 3, 6));
+    try testing.expectEqual(ok, base(rb).ShowBoard(board, 0, &further, further.len));
+    try testing.expect(fk.log.last_flags & direct != 0);
+
+    // Refused by the driver: asked again without the flag, and made in a
+    // frame.
+    const asked = fk.log.shown;
+    fk.show_answer = rtg.errors.RTGERR_NOT_SUPPORTED;
+    try testing.expectEqual(ok, base(rb).ShowBoard(board, 0, &pulled, pulled.len));
+    try testing.expectEqual(asked + 2, fk.log.shown);
+    try testing.expectEqual(@as(u32, 0), fk.log.last_flags & direct);
+    try testing.expectEqual(painted(1, 3, 5), glassAt(board, 3, 5));
+    try testing.expectEqual(painted(2, 3, 0), glassAt(board, 3, 6));
+
+    try testing.expectEqual(ok, base(rb).ShowBoard(board, 0, null, 0));
+    base(rb).FreeBitMap(other);
+    base(rb).FreeBitMap(one);
+    driverBase(rb).DeleteBoard(board);
+    try tearDown(rb);
+}
+
+test "a buffer the driver will not read in place of a frame is made in a frame" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const fk = fakeOf(rb);
+    fk.direct_flip = true;
+    const board = try makeFlipped(rb, 16, 12);
+    fk.direct_flip = false;
+    const format = @intFromEnum(rtg.PixelFormat.rgb565);
+    const displayable = rtg.bitmaps.RTGBMF_DISPLAYABLE;
+    const ok = rtg.errors.RTGERR_OK;
+    const one = base(rb).AllocBitMap(board, 16, 12, format, displayable).?;
+    const other = base(rb).AllocBitMap(board, 16, 12, format, displayable).?;
+    paint(one, 1);
+    paint(other, 2);
+    try testing.expectEqual(ok, base(rb).ShowBitMap(board, one));
+    // The flip to the buffer refused, the one to a frame taken.
+    fk.flip_answer = rtg.errors.RTGERR_NOT_SUPPORTED;
+    fk.while_flipping = &takeFlipsAgain;
+    try testing.expectEqual(ok, base(rb).ShowBitMap(board, other));
+    fk.while_flipping = null;
+    try testing.expect(fake.glassOf(board).? != other);
+    try testing.expect(glassIs(board, 2, &.{}));
+
+    try testing.expectEqual(ok, base(rb).ShowBoard(board, 0, null, 0));
+    base(rb).FreeBitMap(other);
+    base(rb).FreeBitMap(one);
+    driverBase(rb).DeleteBoard(board);
+    try tearDown(rb);
+}
+
+/// A test driver's flip refused once and taken after: its answer
+/// RTGERR_NOT_SUPPORTED is turned into RTGERR_BAD_ARG as the first is
+/// refused, and that into RTGFLIP_TAKEN for the next.
+fn takeFlipsAgain(board: *rtg.RtgBoard) void {
+    const fk = fake.stateOf(board.driver.?);
+    fk.flip_answer = switch (fk.flip_answer) {
+        rtg.errors.RTGERR_NOT_SUPPORTED => rtg.errors.RTGERR_BAD_ARG,
+        else => rtg.boards.RTGFLIP_TAKEN,
+    };
+}
+
 test "the pointer's colours: a pixel of each format as every drawing call writes one" {
     const pointers = @import("pointer/setboardpointer.zig");
     const colour = pointers.Colour{ .red = 0x10, .green = 0x20, .blue = 0x30 };

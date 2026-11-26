@@ -284,7 +284,7 @@ pub fn plain(board: *rtg.RtgBoard, mode: *const rtg.RtgMode, bands: []const rtg.
     // A picture the library mirrors or keeps black is its own.
     if (state.mirror_x or state.mirror_y or state.dark) return false;
     if (!readable(board, mode, bands)) return false;
-    if (flips.flipped(board)) return readsBuffer(board, bands);
+    if (flips.flipped(board)) return readsBuffer(board, bands) or readsBands(board, bands);
     const reads = state.direct_bands;
     if (bands.len > reads) return false;
     // A display that reads one band reads one whole buffer.
@@ -319,6 +319,26 @@ fn readsBuffer(board: *rtg.RtgBoard, bands: []const rtg.RtgBand) bool {
     if (laysOverlay(board) and board.overlay != null) return false;
     if (laysPointer(board) and board.pointer != null and board.info.flags & rtg.boards.RTGBF_POINTER != 0) return false;
     if (new.bitmap == old.bitmap and !state.direct) return false;
+    return true;
+}
+
+/// Whether a flipped board's display is to read several bands itself,
+/// as things stand: on a board that says it reads more than one
+/// (`RtgBoardSpec.direct_bands`), two bands or more and no more than it
+/// reads, none written in since they were shown, with nothing of the
+/// library's over the picture. That is a screen pulled down over
+/// another, neither drawn in while it moves. A band written in while the
+/// display reads it has the pictures made in frames again.
+///
+/// INPUTS:
+/// - `board` - a flipped board; its compose lock is held.
+/// - `bands` - the bands it is to show.
+fn readsBands(board: *rtg.RtgBoard, bands: []const rtg.RtgBand) bool {
+    const state = stateOf(board);
+    if (state.direct_bands < 2 or bands.len < 2 or bands.len > state.direct_bands) return false;
+    if (state.flip.written) return false;
+    if (laysOverlay(board) and board.overlay != null) return false;
+    if (laysPointer(board) and board.pointer != null and board.info.flags & rtg.boards.RTGBF_POINTER != 0) return false;
     return true;
 }
 

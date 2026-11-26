@@ -154,7 +154,7 @@ pub const LIBRARY_VERSION = 1;
 /// 44: GetMonitorControl and SetMonitorControl: a monitor's own controls
 /// - its brightness - asked for and set over its DDC by DDC/CI, the bus
 /// reached through the driver's hook, for every driver.
-pub const LIBRARY_REVISION = 44;
+pub const LIBRARY_REVISION = 45;
 const BUILD_DATE = "26.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

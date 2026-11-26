@@ -47,7 +47,18 @@
 //! library's over the picture, is handed on whole and read as it is, and
 //! nothing is copied. Should anything then be written in it, that is
 //! handed on at once, and the task takes the frames up again with the
-//! next picture, made whole.
+//! next picture, made whole. A buffer the driver will not have read so
+//! is made in a frame instead.
+//!
+//! **Bands read by the display.** A board whose display reads several
+//! bands itself (`RtgBoardSpec.direct_bands`) - planes, each a buffer's
+//! rows in a band of the picture - is handed two bands or more with its
+//! `show` (`RTGSHOW_DIRECT`) where none was written in since they were
+//! shown and nothing of the library's lies over them: a screen pulled
+//! down over another is shown without a picture being made of it. The
+//! driver reads them until its next `flip`; a band written in has the
+//! next picture made whole in a frame, as a buffer read in place of one
+//! does. Bands the driver refuses are made in a frame.
 //!
 //! **A picture copied into a shown buffer all at once** - a window's
 //! next frame, by the board's engine (CopyRect, CopyRects) or by a
@@ -646,23 +657,30 @@ pub fn shown(rb: *RtgBase, board: *rtg.RtgBoard, old: []const rtg.RtgBand) i32 {
     const state = &compose.flip;
     const bands = private.bands[0..private.band_count];
 
-    if (compose.direct and bands.len == 1) {
-        const bitmap = bands[0].bitmap;
-        const area = rtg.RtgRect{ .width = @intCast(bitmap.width), .height = @intCast(bitmap.height) };
-        // Nothing of it was handed on as it was drawn: out it goes,
+    if (compose.direct) {
+        // Nothing of them was handed on as they were drawn: out they go,
         // whole.
-        _ = composer.refreshed(rb, board, bitmap, &area);
-        const code = tell(rb, board, bitmap);
-        if (code < 0) return code;
-        // The frames are made whole when they are taken up again.
-        sys.AcquireLock(&state.damage_lock);
-        state.fresh = .{};
-        state.written = false;
-        sys.ReleaseLock(&state.damage_lock);
-        state.reads_buffer = true;
-        state.awaited = code != rtg.boards.RTGFLIP_TAKEN;
-        state.direct_flips +%= 1;
-        return err.RTGERR_OK;
+        for (bands) |band| {
+            const bitmap = band.bitmap;
+            const area = rtg.RtgRect{ .width = @intCast(bitmap.width), .height = @intCast(bitmap.height) };
+            _ = composer.refreshed(rb, board, bitmap, &area);
+        }
+        // One buffer is flipped to; several bands the driver's `show`
+        // has taken already.
+        const code = if (bands.len == 1) tell(rb, board, bands[0].bitmap) else rtg.boards.RTGFLIP_TAKEN;
+        if (code >= 0) {
+            // The frames are made whole when they are taken up again.
+            sys.AcquireLock(&state.damage_lock);
+            state.fresh = .{};
+            state.written = false;
+            sys.ReleaseLock(&state.damage_lock);
+            state.reads_buffer = true;
+            state.awaited = code != rtg.boards.RTGFLIP_TAKEN;
+            state.direct_flips +%= 1;
+            return err.RTGERR_OK;
+        }
+        // A buffer the driver will not have read so: made in a frame.
+        compose.direct = false;
     }
 
     var changed: Damage = .{};

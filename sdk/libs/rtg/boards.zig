@@ -212,6 +212,8 @@ pub const RTGBF_DIRECT_FLIP: u32 = 1 << 11;
 /// Its display's planes scale: a band whose buffer is not the mode's
 /// size is read by the display as it is, and scaled by it, by the ratio
 /// of the buffer's width to the mode's (`RtgBand`). Said by the driver.
+/// On a board that is flipped between frames, bands its planes do not
+/// scale are refused by its `show` and made in a frame.
 pub const RTGBF_SCALES: u32 = 1 << 12;
 
 /// RtgBoardInfo.caps: which ops the driver filled in, and what the
@@ -433,6 +435,10 @@ pub const RtgBoardSpec = extern struct {
     /// buffers shown (`RTGSHOW_DIRECT`). 0: none - it has a picture of
     /// its own, which the library composes. 1: one whole buffer. More:
     /// bands as they are shown (`RtgBand`), a repeating one among them.
+    /// On a board with `flip`, more than one is planes that read two
+    /// bands or more themselves while none of them is written in, handed
+    /// over with its `show` (`RTGSHOW_DIRECT`); the pictures are made in
+    /// frames otherwise.
     /// A driver that knows it only once the hardware has answered writes
     /// `RtgBoard.direct_bands`, and `RtgBoard.ops` where the ops hang on
     /// it too, before its `attach` answers.
@@ -543,7 +549,12 @@ pub const RtgBoardOps = extern struct {
     /// `RTGSHOW_MODE_CHANGED` it is handed the frame the display is to
     /// read from the start (`RtgShow.frame`), the whole picture in it;
     /// without it, it changes nothing, and the pictures reach the display
-    /// through `flip`.
+    /// through `flip` - but on a board whose display reads several bands
+    /// itself (`RtgBoardSpec.direct_bands`): in the mode it is in, a show
+    /// with `RTGSHOW_DIRECT` and two bands or more hands them over, to be
+    /// read until the next `flip`. Bands it refuses are made in a frame:
+    /// the show is asked again without the flag, and the picture flipped
+    /// to.
     ///
     /// Without `RTGSHOW_MODE_CHANGED` the board is in `mode` already and
     /// only what it shows changes: on any answer but RTGERR_OK the board

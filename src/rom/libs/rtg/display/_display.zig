@@ -42,7 +42,9 @@
 //! op is handed to start the display on; in the mode the board is in,
 //! the driver's op is asked and then the picture made and flipped to. A
 //! flip the driver refuses is the show's answer, and what was in place
-//! is put back.
+//! is put back - but for a buffer or bands the display was to read
+//! itself, which are made in a frame instead where the driver refuses
+//! them.
 //!
 //! **Power** (`power`). A board is on, blank or asleep. Blank is the
 //! library's: it composes black for a board whose picture it composes,
@@ -202,7 +204,14 @@ fn present(rb: *RtgBase, board: *rtg.RtgBoard, record: *modes.Record, bands: []c
         if (code == err.RTGERR_OK) flips.begun(rb, board);
         return code;
     }
-    const code = ask(board, record, bands, flags, null);
+    var code = ask(board, record, bands, flags, null);
+    // Bands the display would read itself that its driver refuses are
+    // made in a frame.
+    const state = composer.stateOf(board);
+    if (code != err.RTGERR_OK and state.direct and bands.len > 1) {
+        state.direct = false;
+        code = ask(board, record, bands, flags, null);
+    }
     if (code != err.RTGERR_OK) return code;
     return flips.shown(rb, board, old);
 }

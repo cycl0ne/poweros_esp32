@@ -1378,7 +1378,11 @@ eight are the same, the fetcher reading the buffers themselves in all
 the shows it should, and again after the monitor slept through two
 mode sets. A board whose
 planes scale says `RTGBF_SCALES`, and is handed bands whose buffers are
-not the mode's size.
+not the mode's size. A flipped board whose display reads bands too
+(`direct_bands` 2 or more) is handed them with `RTGSHOW_DIRECT` once the
+program draws in none of them while they are shown and nothing of the
+library's lies over the picture; a show it refuses is asked again
+without the flag, and the bands are made in a frame.
 
 `CopyRect` and `CopyRects` into a buffer a flipped board shows wait
 while a picture is made of it, and a picture waits for them: a window's
@@ -1499,7 +1503,7 @@ hardware.
 | VisionFive 2 on HDMI, the monitor's mode | `jh7110` | the JH7110's display controller reads RAM every frame and sends it through the chip's HDMI transmitter; the driver switches on the display's power domain, its clocks and resets, reads the monitor's EDID over the transmitter's DDC, and sets the transmitter's PHY and the controller for the mode | composed by rtg.library into one of two frames, which the controller is flipped between |
 | Compute Module 5 on its first HDMI port, the monitor's mode | `bcm2712` | the BCM2712's video scaler reads RAM every frame wherever its display list says the picture is, and sends it out through the pixel valve and the HDMI controller | composed by rtg.library into one of two frames, which the scaler is flipped between |
 | Compute Module 4 on its first HDMI port, the firmware's mode | `bcm2711` | the BCM2711's video scaler reads RAM every frame through a display list of the driver's own on the channel the firmware feeds the port from; the pixel valve and the HDMI controller stay as the firmware set them | as the Compute Module 5's |
-| a PC with an AMD display, the firmware's mode, and every mode the monitor names once its display controller runs | `amd` | the display engine that reads the framebuffer the firmware lit, flipped between that buffer and a frame of the device's own memory, both written through write-combining, or to a buffer of the machine's RAM through the engine's own page table | one whole buffer shown after another read by the engine itself; else composed by rtg.library into those two frames |
+| a PC with an AMD display, the firmware's mode, and every mode the monitor names once its display controller runs | `amd` | the display engine that reads the framebuffer the firmware lit, flipped between that buffer and a frame of the device's own memory, both written through write-combining, or to a buffer of the machine's RAM through the engine's own page table | one whole buffer shown after another, or up to four bands - each on a pipe of its own, scaled up by a whole number - read by the engine itself; else composed by rtg.library into those two frames |
 | a PC's firmware framebuffer, QEMU's q35 | `fw` | the framebuffer the UEFI firmware lit, which reads the one buffer it was given | composed by rtg.library straight into it, at the firmware's row length |
 | QEMU's virt machines with `-device ramfb` | `fw` | the emulator reads the shown buffer out of RAM at every refresh of its window; the buffer's address, size, pitch and format are written to the file `etc/ramfb` of the machine's firmware configuration device | one whole buffer read by the emulator; else composed by rtg.library into a frame of the driver's |
 | QEMU's virtio GPU, on a memory-mapped transport or on PCI | `virtio` | each picture is copied into the emulator's copy of a frame, and the window is told which frame to show | composed by rtg.library into one of two frames |
@@ -1782,6 +1786,31 @@ picture, overlay and pointer itself, against the board laying them; all
 thirty-six are the same. Where a pointer's pixel is partly clear over a
 clear pixel of the overlay, both pipes' cursors lay it, so it is
 blended twice there.
+
+Bands are read by the display too, up to four, one a pipe
+(`direct_bands`): the first that shows anything by the picture's
+fetcher, each after it by a plane of its own on a free pipe, laid whole by the blender
+under the overlay's plane, each reading only its band's lines of its
+buffer from the row its origin says - the buffer's pages mapped in the
+engine's page table as a flipped buffer's are. A buffer narrower than
+the mode by a whole number is scaled up by its plane's scaler, one tap
+each way, every pixel shown as many times across and down, as the
+library composes it; a buffer of a width that is no whole number of
+the mode's, a repeating band, or more bands than pipes free are made in
+a frame. Lines no band shows are the blender's background, black. The
+pointer is laid by the pipe of each band it is over, in that band's
+buffer - over a scaled band at the band's scale. Where the hub gives a
+new plane no buffer, the bands are made in frames until the next mode
+set, and the log says so. `C:test/Gpu BANDS` checks it: a picture pulled
+down over another, one shown from part way down, three at once with
+one at twice its size, one at four times from part way into its first
+row, one whose rows end above its band's last line - for each way of
+mirroring, the first with the pointer in each band and across their
+edge, and the first and the third with the overlay across their edge as
+well, the third then on all four pipes - each read as it is, against the
+same bands made in a frame; on the NucBox all forty are the same, read
+by as many fetchers as there are bands and planes, and again after the
+monitor slept through two mode sets.
 
 The picture is mirrored about either axis by the fetcher
 (`RTGBC_MIRROR_X`, `RTGBC_MIRROR_Y`, `Rtg amd.0 SET MIRROR=X`): its

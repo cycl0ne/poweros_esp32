@@ -11,7 +11,7 @@
 //! the display reads. Built against the SDK only.
 //!
 //!   Gpu TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,
-//!       SLEEP/K/N,RANGE/S,POINTER/S,MIRROR/S,OVERLAY/S,DIRECT/S,WATCHDOG/K/N
+//!       SLEEP/K/N,RANGE/S,POINTER/S,MIRROR/S,OVERLAY/S,DIRECT/S,BANDS/S,WATCHDOG/K/N
 //!
 //! BIOS prints the device's video BIOS image (GetGPUBios): where it is
 //! and how long, its tables' header's version, the version of each of
@@ -158,14 +158,31 @@
 //! DIRECT shows two pictures in turn on a board that reads a program's
 //! buffers in place of a frame, each drawn while the other is shown -
 //! in the mode the board is in, and in another of another row length
-//! where the board lists one: the first made in a frame, the next ones
-//! read by the display themselves; then the one shown written in, which
+//! where the board lists one: the first made in a frame - the picture
+//! shown before is said to be written in first, so that this holds
+//! whatever showed it - the next ones read by the display themselves;
+//! then the one shown written in, which
 //! has the next pictures made in frames again; then one drawn anew and
 //! shown at once, read as it is, and written in. Each picture's
 //! checksum against the same picture made in a frame, the address the
 //! board's fetcher reads and whether that is a buffer's, through the
 //! engine's page table, and how long each show took. The board's
 //! picture is put back after. The watchdog is armed for it.
+//!
+//! BANDS shows several buffers at once, in bands, on a board whose
+//! display reads bands itself - a picture pulled down over another, one
+//! with its rows from part way down, three at once with one of them half
+//! as wide and shown twice the size, one a quarter as wide shown four
+//! times the size from part way into its first row, one whose rows end
+//! before its band does - for each way of mirroring the picture, with
+//! the pointer hidden; the first of them with the pointer in each band
+//! and across their edge, and the first and the third with an overlay
+//! across the edge as well, the third then taking all four of the
+//! engine's pipes. Each read by the display as it is, against the same
+//! bands made in a frame once one of them is written in; with how many
+//! of the engine's fetchers read and how long the show took. The
+//! board's mirror, pointer and picture are put back after, and the
+//! overlay taken off. The watchdog is armed for it.
 //!
 //! DUMP prints LENGTH (16 unless given, at most 512) of the display
 //! engine's registers from DUMP on, in 32-bit words from the engine's
@@ -175,7 +192,8 @@
 //! is armed for it.
 //!
 //! Without BIOS, CLOCKS, DMCUB, CRC, EVENTS, AUX, EDID, CYCLE, MODES,
-//! SLEEP, RANGE, POINTER, MIRROR, OVERLAY, DIRECT, DUMP, FRAMES or FLIP the two files are read from
+//! SLEEP, RANGE, POINTER, MIRROR, OVERLAY, DIRECT, BANDS, DUMP, FRAMES or
+//! FLIP the two files are read from
 //! DEVS:firmware/amdgpu/, named for the blocks that use them as the
 //! device's table gives their versions - psp_13_0_4_toc.bin for the
 //! security processor 13.0.4, vcn_4_0_2.bin for the video decoder 4.0.2 -
@@ -229,10 +247,10 @@ const rtg = sdk.rtg;
 const RtgBase = sdk.interface.rtg.RtgBase;
 
 pub const COMMAND_NAME = "Gpu";
-const VERSION_STRING = "\x00$VER: Gpu 1.17 (26.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Gpu 1.18 (26.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,SLEEP/K/N,RANGE/S,POINTER/S,MIRROR/S,OVERLAY/S,DIRECT/S,WATCHDOG/K/N";
+const template = "TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,SLEEP/K/N,RANGE/S,POINTER/S,MIRROR/S,OVERLAY/S,DIRECT/S,BANDS/S,WATCHDOG/K/N";
 const arg_toc = 0;
 const arg_firmware = 1;
 const arg_frames = 2;
@@ -264,8 +282,9 @@ const arg_pointer = 27;
 const arg_mirror = 28;
 const arg_overlay = 29;
 const arg_direct = 30;
-const arg_watchdog = 31;
-const arg_count = 32;
+const arg_bands = 31;
+const arg_watchdog = 32;
+const arg_count = 33;
 
 /// Where the files are.
 const directory = "DEVS:firmware/amdgpu/";
@@ -1102,6 +1121,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     if (argv[arg_mirror] != 0) return mirrorCheck(sys, dl, millis);
     if (argv[arg_overlay] != 0) return overlayCheck(sys, dl, ab, info, millis);
     if (argv[arg_direct] != 0) return directCheck(sys, dl, ab, info, millis);
+    if (argv[arg_bands] != 0) return bandsCheck(sys, dl, ab, info, millis);
     if (argv[arg_sleep] != 0) return asleepFor(sys, dl, ab, info, millis, number(argv[arg_sleep]), argv[arg_modes] != 0);
     if (argv[arg_dump] != 0) {
         const length = if (argv[arg_length] != 0) number(argv[arg_length]) else 16;
@@ -1842,6 +1862,9 @@ fn directCheck(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUIn
     };
     const wb = arm(sys, dl, millis) orelse return dos.RETURN_FAIL;
     defer wb.DisarmWatchdog();
+    // The picture shown said to be written in, so that the first of the
+    // program's own is made in a frame whatever showed it before.
+    _ = rb.RefreshRect(before, null);
     var made: [4]?*rtg.RtgBitMap = @splat(null);
     var tally = Tally{};
     directIn(sys, dl, rb, board, engine, wb, shown, made[0..2], &tally);
@@ -1941,6 +1964,176 @@ fn compare(dl: *DosBase, made: [3]u32, read: [3]u32, tally: *Tally) void {
         return;
     }
     _ = Printf(dl, "  DIFFERENT from %04x %04x %04x\n", .{ made[0], made[1], made[2] });
+}
+
+/// BANDS: each case in each way of mirroring, read by the display and
+/// made in a frame.
+fn bandsCheck(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUInfo, millis: u32) i32 {
+    var block: amdgpu.GPUBlock = .{};
+    if (!ab.FindGPUBlock(amdgpu.GPUBLOCK_DISPLAY, 0, &block) or block.count < 3) {
+        _ = Printf(dl, "The device %04x:%04x names no display engine\n", .{ info.vendor, info.device });
+        return dos.RETURN_FAIL;
+    }
+    const engine = Display{ .registers = @intCast(info.registers), .segment = block.addresses[2], .pipe = 0, .fetcher = 0 };
+    const base = sys.OpenLibrary(rtg.RTGNAME, rtg.RTG_VERSION) orelse {
+        _ = Printf(dl, "No %s\n", .{rtg.RTGNAME});
+        return dos.RETURN_FAIL;
+    };
+    defer sys.CloseLibrary(base);
+    const rb: *RtgBase = @ptrCast(base);
+    const board = amdBoard(dl, rb) orelse return dos.RETURN_WARN;
+    var board_info: rtg.RtgBoardInfo = .{};
+    _ = rb.GetBoardInfo(board, &board_info, @sizeOf(rtg.RtgBoardInfo));
+    if (board_info.flags & rtg.boards.RTGBF_DIRECT_FLIP == 0) {
+        _ = Printf(dl, "The board reads no buffer in place of a frame\n", .{});
+        return dos.RETURN_WARN;
+    }
+    var list: [modes_most]rtg.RtgMode = undefined;
+    const count = @min(rb.GetBoardModes(board, &list, modes_most), modes_most);
+    var current: ?*const rtg.RtgMode = null;
+    for (list[0..count]) |*one| {
+        if (one.flags & rtg.modes.RTGMF_CURRENT != 0) current = one;
+    }
+    const shown = current orelse {
+        _ = Printf(dl, "The board is in no mode\n", .{});
+        return dos.RETURN_FAIL;
+    };
+    const before = rb.BoardDisplayBitMap(board) orelse {
+        _ = Printf(dl, "The board shows no picture\n", .{});
+        return dos.RETURN_FAIL;
+    };
+    const width = shown.width;
+    const height = shown.height;
+    const format = @intFromEnum(shown.format);
+    const displayable = rtg.bitmaps.RTGBMF_DISPLAYABLE;
+    // The overlay's image, in the heap - the program's stack is too small
+    // for it: shades, clear squares in it.
+    const overlay_width = 120;
+    const overlay_height = 80;
+    const overlay_memory = sys.AllocVec(overlay_width * overlay_height * 4, exec.MEMF_CLEAR) orelse {
+        _ = Printf(dl, "No room for the overlay's image\n", .{});
+        return dos.RETURN_FAIL;
+    };
+    defer sys.FreeVec(overlay_memory);
+    const overlay_pixels: [*]u32 = @ptrCast(@alignCast(overlay_memory));
+    for (0..overlay_height) |row| {
+        for (0..overlay_width) |column| {
+            const clear = (row / 10 + column / 10) % 3 == 0;
+            overlay_pixels[row * overlay_width + column] = if (clear) 0 else 0xFF00_0000 | @as(u32, @intCast(column * 2)) << 16 | @as(u32, @intCast(row * 3)) << 8 | 0x40;
+        }
+    }
+    const overlay_surface = rtg.Surface{ .pixels = @ptrCast(overlay_memory), .width = overlay_width, .height = overlay_height, .pitch = overlay_width * 4, .size_bytes = overlay_width * overlay_height * 4, .format = .bgra32 };
+    var made: [5]?*rtg.RtgBitMap = @splat(null);
+    const sizes = [_][2]u32{ .{ width, height }, .{ width, height }, .{ width / 2, height / 2 }, .{ width / 4, height / 4 }, .{ width, height / 4 } };
+    for (sizes, 0..) |size, i| {
+        made[i] = rb.AllocBitMap(board, size[0], size[1], format, displayable) orelse {
+            _ = Printf(dl, "No room for a picture of %ux%u\n", .{ size[0], size[1] });
+            for (made) |maybe| if (maybe) |one| rb.FreeBitMap(one);
+            return dos.RETURN_FAIL;
+        };
+        pattern(made[i].?, @intCast(i % 3));
+    }
+    const back = made[0].?;
+    const front = made[1].?;
+    const halved = made[2].?;
+    const quarter = made[3].?;
+    const short = made[4].?;
+    const cases = [_]struct { name: [*:0]const u8, bands: [3]rtg.RtgBand, count: u32 }{
+        .{ .name = "pulled down", .count = 2, .bands = .{ .{ .bitmap = back }, .{ .bitmap = front, .line = height / 3, .origin = height / 3 }, undefined } },
+        .{ .name = "part way down", .count = 2, .bands = .{ .{ .bitmap = back }, .{ .bitmap = front, .line = height / 4, .origin = height / 8 }, undefined } },
+        .{ .name = "three, one 2x", .count = 3, .bands = .{ .{ .bitmap = back }, .{ .bitmap = front, .line = height / 4, .origin = height / 4 }, .{ .bitmap = halved, .line = height * 5 / 8, .origin = height * 5 / 8 - 1 } } },
+        .{ .name = "4x, into a row", .count = 2, .bands = .{ .{ .bitmap = front }, .{ .bitmap = quarter, .line = height / 2 + 1, .origin = height / 2 - 2 }, undefined } },
+        .{ .name = "black below", .count = 2, .bands = .{ .{ .bitmap = back }, .{ .bitmap = short, .line = height / 2, .origin = height / 2 - 37 }, undefined } },
+    };
+    const ways = [_][2]bool{ .{ false, false }, .{ true, false }, .{ false, true }, .{ true, true } };
+    const names = [_][*:0]const u8{ "none", "x", "y", "x and y" };
+    const was_shown = board.info.flags & rtg.boards.RTGBF_POINTER != 0;
+    const wb = arm(sys, dl, millis) orelse return dos.RETURN_FAIL;
+    defer wb.DisarmWatchdog();
+    _ = rb.ShowBoardPointer(board, false);
+    var tally = Tally{};
+    const was_x = board.pointer_x;
+    const was_y = board.pointer_y;
+    const edge: i32 = @intCast(height / 3);
+    const places = [_][2]i32{ .{ 300, edge - 200 }, .{ 900, edge + 200 }, .{ 1500, edge - 8 } };
+    const place_names = [_][*:0]const u8{ "pointer above", "pointer below", "pointer across" };
+    for (ways, names) |way, name| {
+        _ = rb.MirrorBoard(board, way[0], way[1]);
+        for (cases) |one| bandsOnce(sys, dl, rb, board, engine, wb, shown.id, one.bands[0..one.count], 0, name, one.name, &tally);
+        if (board.pointer != null) {
+            for (places, place_names) |place, place_name| {
+                rb.MoveBoardPointer(board, place[0], place[1]);
+                _ = rb.ShowBoardPointer(board, true);
+                bandsOnce(sys, dl, rb, board, engine, wb, shown.id, cases[0].bands[0..cases[0].count], 0, name, place_name, &tally);
+            }
+            _ = rb.ShowBoardPointer(board, false);
+        }
+        // An overlay across the edge, a plane above the bands' planes.
+        if (rb.SetBoardOverlay(board, &overlay_surface, 0, 0) == rtg.errors.RTGERR_OK) {
+            rb.MoveBoardOverlay(board, 1000, edge - 40);
+            bandsOnce(sys, dl, rb, board, engine, wb, shown.id, cases[0].bands[0..cases[0].count], 1, name, "overlay over 2", &tally);
+            rb.MoveBoardOverlay(board, 1000, @as(i32, @intCast(height / 4)) - 40);
+            bandsOnce(sys, dl, rb, board, engine, wb, shown.id, cases[2].bands[0..cases[2].count], 1, name, "overlay over 3", &tally);
+            _ = rb.SetBoardOverlay(board, null, 0, 0);
+        }
+    }
+    _ = rb.MirrorBoard(board, board_info.mirror_x != 0, board_info.mirror_y != 0);
+    rb.MoveBoardPointer(board, was_x, was_y);
+    if (was_shown) _ = rb.ShowBoardPointer(board, true);
+    const band = [_]rtg.RtgBand{.{ .bitmap = before }};
+    if (rb.ShowBoard(board, shown.id, &band, band.len) == rtg.errors.RTGERR_OK) {
+        for (made) |maybe| if (maybe) |one| rb.FreeBitMap(one);
+    }
+    _ = Printf(dl, "%u of %u the same as made in a frame, %u of %u read by as many fetchers as they should be\n", .{ tally.same, tally.compared, tally.direct_right, tally.shows });
+    return if (tally.same == tally.compared and tally.direct_right == tally.shows) dos.RETURN_OK else dos.RETURN_WARN;
+}
+
+/// One of BANDS's shows: the bands shown twice - the first show after a
+/// band was written in is made in a frame, the next read by the display
+/// - and its checksum and fetchers, then one of them written in and the
+/// same of the frame it is made in; `planes` the board's own lit beside
+/// them. Bands that with those want more pipes than the display has are
+/// to be made in a frame both times.
+fn bandsOnce(sys: *ExecBase, dl: *DosBase, rb: *RtgBase, board: *rtg.RtgBoard, engine: Display, wb: *WatchdogBase, mode_id: u32, bands: []const rtg.RtgBand, planes: u32, way: [*:0]const u8, what: [*:0]const u8, tally: *Tally) void {
+    _ = rb.ShowBoard(board, mode_id, bands.ptr, @intCast(bands.len));
+    wb.FeedWatchdog();
+    const started = sys.UptimeUs();
+    if (rb.ShowBoard(board, mode_id, bands.ptr, @intCast(bands.len)) != rtg.errors.RTGERR_OK) {
+        _ = Printf(dl, "%-8s %-16s not shown\n", .{ way, what });
+        return;
+    }
+    const took = sys.UptimeUs() - started;
+    const read = steadyChecksum(dl, rb, board);
+    const reading = fetchersReading(engine);
+    wb.FeedWatchdog();
+    _ = rb.RefreshRect(bands[0].bitmap, null);
+    const framed = steadyChecksum(dl, rb, board);
+    const framed_reading = fetchersReading(engine);
+    wb.FeedWatchdog();
+    tally.compared += 1;
+    tally.shows += 1;
+    const equal = read != null and framed != null and sameSum(read.?, framed.?);
+    if (equal) tally.same += 1;
+    // More bands and planes than the display has pipes for are made in
+    // a frame.
+    const fits = bands.len + planes <= board.direct_bands;
+    const right = reading == (if (fits) bands.len else 1) + planes and framed_reading == 1 + planes;
+    if (right) tally.direct_right += 1;
+    const read_sum = read orelse [3]u32{ 0, 0, 0 };
+    const framed_sum = framed orelse [3]u32{ 0, 0, 0 };
+    _ = Printf(dl, "%-8s %-16s read %04x %04x %04x by %u fetchers in %lu us, made %04x %04x %04x by %u%s%s\n", .{
+        way,           what,          read_sum[0],   read_sum[1],    read_sum[2],                                                    reading,                                                              took,
+        framed_sum[0], framed_sum[1], framed_sum[2], framed_reading, @as([*:0]const u8, if (equal) ", the same" else ", DIFFERENT"), @as([*:0]const u8, if (right) "" else " - NOT READ AS IT SHOULD BE"),
+    });
+}
+
+/// How many of the engine's four fetchers are not blanked.
+fn fetchersReading(engine: Display) u32 {
+    var reading: u32 = 0;
+    for (0..4) |index| {
+        if (engine.at(0x05f3 + @as(u32, @intCast(index)) * dcn.HUBP_STRIDE).* & 1 == 0) reading += 1;
+    }
+    return reading;
 }
 
 /// One of DIRECT's pictures: the bars (0), the bars the other way round

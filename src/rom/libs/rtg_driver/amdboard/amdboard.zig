@@ -177,7 +177,7 @@ const gart = @import("gart.zig");
 const MODULE_NAME = "rtg-amd";
 const DRIVER_NAME = "amd";
 const VERSION = 1;
-const REVISION = 20;
+const REVISION = 21;
 const BUILD_DATE = "26.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -322,10 +322,36 @@ const Screen = struct {
     /// plane is worked out at. 0 before.
     held_display_khz: u32 = 0,
     held_pipes_khz: u32 = 0,
+    /// The bands the display reads itself (`showBands`): each one's pipe
+    /// - the picture's own fetcher for the first that shows anything, a
+    /// plane for each after it - and its place; how many; and the bands
+    /// as the library handed them over, laid again when the picture is
+    /// mirrored another way. None while the display reads a frame or a
+    /// buffer whole. Under `pipe_lock`.
+    band_planes: [pipe_count]BandPlane = undefined,
+    band_count: u32 = 0,
+    bands: [pipe_count]rtg.RtgBand = undefined,
+    bands_handed: u32 = 0,
+    /// Whether the hub gave a band's plane no buffer: bands are made in
+    /// frames from then on, until the next mode set.
+    bands_refused: bool = false,
+    /// The cursor as each of the bands' pipes lays it, for as many as
+    /// the bands have; none while the picture's fetcher reads all of the
+    /// picture. Under `cursor_lock`, written holding `pipe_lock` too.
+    band_cursors: [pipe_count]CursorPlane = undefined,
+    band_cursor_count: u32 = 0,
 };
 
-/// A plane the cursor is laid over too (`Screen.cursor_plane`).
-const CursorPlane = struct { index: u32, view: cursor.View, left: i32, top: i32 };
+/// A plane the cursor is laid over too (`Screen.cursor_plane`,
+/// `Screen.band_cursors`): its pipe, the part of its surface shown, and
+/// where the cursor falls on that part - the picture's place less
+/// (`left`, `top`), at the plane's scale (`times` the surface's pixels a
+/// pixel of the picture is, both ways), less the rows of the surface
+/// above the part (`row`).
+const CursorPlane = struct { index: u32, view: cursor.View, left: i32, top: i32, times: u32 = 1, row: u32 = 0 };
+
+/// A band read by a plane: its pipe and its place.
+const BandPlane = struct { index: u32, band: plane.Band };
 
 /// The overlay's two images in the device's memory: rows of the largest
 /// overlay, rounded up to the 256 bytes a linear surface's rows are, and
@@ -474,16 +500,27 @@ fn scanFrom(screen: *Screen, picture: *const rtg.RtgBitMap) bool {
 /// them by - and where the table cannot map it.
 fn bufferAddress(screen: *Screen, picture: *const rtg.RtgBitMap) ?u64 {
     const table = if (screen.gart) |*one| one else return null;
-    const pixels = picture.pixels orelse return null;
-    if (picture.format != screen.format or picture.width < screen.width or picture.height < screen.height) return null;
-    if (picture.pitch % row_alignment != 0 or @intFromPtr(pixels) % row_alignment != 0) return null;
-    const rows = @as(u64, picture.pitch) * screen.height;
-    if (rows > 0xffff_ffff) return null;
-    var bytes: u32 = @intCast(rows);
-    const machine = @intFromPtr(screen.sys.CachePreDMA(@ptrCast(pixels), &bytes, exec.DMAF_ReadFromRAM));
+    if (picture.width < screen.width or picture.height < screen.height) return null;
     // The buffer read until now keeps its pages.
     const busy = [_]u64{screen.flip_wanted};
-    return gart.map(table, machine, bytes, &busy);
+    return mapRows(screen, table, picture, screen.height, &busy);
+}
+
+/// The device's address of the first `rows` rows of a buffer of the
+/// library's, mapped in the engine's page table by the machine's address
+/// exec names for them; `busy` are the device's addresses fetchers read
+/// now, whose pages stay as they are. Null for a buffer of another format
+/// than the picture's or with rows or a start off the 256 bytes a fetcher
+/// reads them by, and where the table cannot map it.
+fn mapRows(screen: *Screen, table: *gart.Table, picture: *const rtg.RtgBitMap, rows: u32, busy: []const u64) ?u64 {
+    const pixels = picture.pixels orelse return null;
+    if (picture.format != screen.format) return null;
+    if (picture.pitch % row_alignment != 0 or @intFromPtr(pixels) % row_alignment != 0) return null;
+    const all = @as(u64, picture.pitch) * rows;
+    if (all > 0xffff_ffff) return null;
+    var bytes: u32 = @intCast(all);
+    const machine = @intFromPtr(screen.sys.CachePreDMA(@ptrCast(pixels), &bytes, exec.DMAF_ReadFromRAM));
+    return gart.map(table, machine, bytes, busy);
 }
 
 /// The fetcher told to read the device's `address`, its rows `pitch`
@@ -492,6 +529,7 @@ fn bufferAddress(screen: *Screen, picture: *const rtg.RtgBitMap) ?u64 {
 /// timing generator's update lock, so the pipe takes both at one update.
 fn tell(screen: *Screen, address: u64, pitch: u32, now: bool) void {
     const engine = screen.dcn;
+    if (screen.band_count != 0) return leaveBands(screen, address, pitch, now);
     if (pitch == screen.scan_pitch) {
         dcn.flip(engine, address, now);
         return;
@@ -501,6 +539,227 @@ fn tell(screen: *Screen, address: u64, pitch: u32, now: bool) void {
     dcn.flip(engine, address, now);
     plane.unlock(engine, engine.pipe);
     screen.scan_pitch = pitch;
+}
+
+// --- bands read by the display ------------------------------------------------------
+
+/// The bands the library hands over with its show (`RTGSHOW_DIRECT`),
+/// read by the display itself until its next flip: the first that shows
+/// anything by the picture's own fetcher, each after it by a plane on a
+/// pipe of its own - kept where it had one, lit on a free one where not,
+/// laid whole - each with its place and scale (`plane.bandOf`) and its
+/// buffer's rows mapped in the engine's page table; the blender's tree
+/// written whole, the overlay's plane on top, the bands' planes, the
+/// picture's stage at the bottom; planes no longer needed taken out; and
+/// the cursor laid by each band's pipe on its band. All of it at one
+/// update of the pipe, which is waited for as a flip is. Lines no band
+/// shows are the blender's background.
+///
+/// Refused - the display reading what it read - while the monitor
+/// sleeps, where the display is not flipped or has no page table, for
+/// more bands than the pipes and where no pipe is free, for a repeating
+/// band, one of another format or with rows or a start off 256 bytes, or
+/// of a buffer wider than the picture or narrower by no whole number,
+/// where the table cannot map its rows, and where the hub gives a new
+/// plane no buffer - after which bands are refused until the next mode
+/// set. Holding `pipe_lock`.
+fn showBands(screen: *Screen, bands: []const rtg.RtgBand) i32 {
+    const refused = err.RTGERR_NOT_SUPPORTED;
+    if (screen.asleep or !screen.amd_flipping or screen.bands_refused) return refused;
+    if (bands.len < 2 or bands.len > pipe_count) return refused;
+    const table = if (screen.gart) |*one| one else return refused;
+    const engine = screen.dcn;
+    // What the fetchers read now keeps its pages, and so does each band's
+    // buffer once mapped.
+    var busy: [2 * pipe_count + 1]u64 = undefined;
+    busy[0] = screen.flip_wanted;
+    var busy_count: usize = 1;
+    for (screen.band_planes[0..screen.band_count]) |one| {
+        busy[busy_count] = one.band.place.address;
+        busy_count += 1;
+    }
+    var wanted: [pipe_count]BandPlane = undefined;
+    var count: usize = 0;
+    for (bands, 0..) |band, i| {
+        const bitmap = band.bitmap;
+        if (band.flags & rtg.RTGBANDF_REPEAT != 0) return refused;
+        if (bitmap.width == 0 or bitmap.width > screen.width or screen.width % bitmap.width != 0) return refused;
+        const end = if (i + 1 < bands.len) bands[i + 1].line else screen.height;
+        var placed = plane.bandOf(band.line, end, band.origin, bitmap.width, bitmap.height, screen.width, screen.height, screen.turn_x, screen.turn_y) orelse continue;
+        const address = bandAddress(screen, table, bitmap, busy[0..busy_count]) orelse return refused;
+        busy[busy_count] = address;
+        busy_count += 1;
+        placed.place.address = address;
+        placed.place.pitch = bitmap.pitch / screen.bytes;
+        wanted[count] = .{ .index = engine.fetcher, .band = placed };
+        count += 1;
+    }
+    if (count == 0) return refused;
+
+    // The pipes: the planes the bands had first, free ones after; and
+    // each plane's schedule for its width.
+    var fresh: [pipe_count]bool = @splat(false);
+    var taken: [pipe_count]u32 = undefined;
+    var schedules: [pipe_count]mode.Schedule = undefined;
+    const vstartup = mode.vstartupOf(engine, engine.pipe);
+    for (1..count) |i| {
+        if (i < screen.band_count) {
+            wanted[i].index = screen.band_planes[i].index;
+        } else {
+            wanted[i].index = freePipeBut(engine, taken[0 .. i - 1]) orelse return refused;
+            fresh[i] = true;
+        }
+        taken[i - 1] = wanted[i].index;
+        const place = &wanted[i].band.place;
+        const held = planeHeld(screen, place.pitch) orelse return refused;
+        schedules[i] = mode.planeSchedule(screen.timings, place.width, held, vstartup) orelse return refused;
+    }
+
+    const output = mode.outputOf(engine, engine.pipe);
+    for (1..count) |i| {
+        if (!fresh[i]) continue;
+        gart.reach(engine, wanted[i].index);
+        plane.prepare(engine, wanted[i].index, engine.fetcher);
+    }
+    var cursors: [pipe_count]CursorPlane = undefined;
+    for (wanted[0..count], 0..) |one, i| cursors[i] = bandCursor(one);
+    plane.lock(engine, engine.pipe);
+    plane.writePlace(engine, engine.fetcher, &wanted[0].band.place);
+    for (1..count) |i| {
+        const index = wanted[i].index;
+        if (fresh[i]) {
+            plane.lit(engine, index, engine.pipe, output, engine.fetcher, screen.width | screen.height << 16, &schedules[i], &wanted[i].band.place, .whole);
+        } else {
+            mode.writeSchedule(engine, index, &schedules[i]);
+            plane.writePlace(engine, index, &wanted[i].band.place);
+        }
+    }
+    plane.stack(engine, output, screen.overlay_pipe, taken[0 .. count - 1], engine.fetcher);
+    const kept: usize = @max(screen.band_count, 1);
+    for (screen.band_planes[@min(count, kept)..kept]) |old| plane.release(engine, old.index);
+    bandCursors(screen, cursors[0..count]);
+    plane.unlock(engine, engine.pipe);
+    for (screen.band_planes[@min(count, kept)..kept]) |old| plane.shut(engine, old.index);
+
+    @memcpy(screen.band_planes[0..count], wanted[0..count]);
+    screen.band_count = @intCast(count);
+    @memcpy(screen.bands[0..bands.len], bands);
+    screen.bands_handed = @intCast(bands.len);
+    screen.flip_wanted = wanted[0].band.place.address;
+    screen.scan_pitch = wanted[0].band.place.pitch * screen.bytes;
+    screen.scanning = 0;
+    var settled = true;
+    for (1..count) |i| {
+        if (fresh[i] and !plane.settled(engine, wanted[i].index, engine.fetcher)) settled = false;
+    }
+    if (!settled) {
+        screen.bands_refused = true;
+        exec.kprintf(screen.sys, "%s: the hub gave a band's plane no buffer, so bands are made in frames\n", .{MODULE_NAME});
+        dropBands(screen);
+        return refused;
+    }
+    // Taken at the pipe's next update, as a flip.
+    screen.updates +%= 1;
+    pace(screen, 1);
+    var looks: u32 = 0;
+    while (!dcn.flipTaken(engine, screen.flip_wanted)) : (looks += 1) {
+        if (looks == 2) {
+            giveUpFlipping(screen);
+            return err.RTGERR_IO;
+        }
+        pace(screen, 1);
+    }
+    return err.RTGERR_OK;
+}
+
+/// The device's address a plane reads a band's buffer by: the frame's or
+/// the framebuffer's own where it is one of them, else all its rows
+/// mapped in the engine's page table (`mapRows`).
+fn bandAddress(screen: *Screen, table: *gart.Table, bitmap: *const rtg.RtgBitMap, busy: []const u64) ?u64 {
+    const address = @intFromPtr(bitmap.pixels orelse return null);
+    if (screen.amd_frame) |frame| {
+        if (address == @as(usize, @intCast(frame.cpu))) return frame.device;
+    }
+    if (address == screen.fb.pixels) return screen.dcn.surface;
+    return mapRows(screen, table, bitmap, bitmap.height, busy);
+}
+
+/// The cursor as a band's pipe lays it: where the band's rows start, at
+/// its scale, on the part of its buffer it reads.
+fn bandCursor(one: BandPlane) CursorPlane {
+    const place = one.band.place;
+    return .{
+        .index = one.index,
+        .view = .{ .x = place.view_x, .y = place.view_y, .width = place.width, .height = place.height },
+        .left = 0,
+        .top = @intCast(one.band.origin),
+        .times = one.band.times,
+        .row = place.view_y,
+    };
+}
+
+/// The cursor laid by the bands' pipes `over` from now on - by the
+/// picture's fetcher on all of the picture for none - and switched off
+/// on the planes that laid it and lay it no more. Holding `pipe_lock`.
+fn bandCursors(screen: *Screen, over: []const CursorPlane) void {
+    if (screen.cursor_memory == null) return;
+    const engine = screen.dcn;
+    screen.sys.ObtainSemaphore(&screen.cursor_lock);
+    defer screen.sys.ReleaseSemaphore(&screen.cursor_lock);
+    const output = mode.outputOf(engine, engine.pipe);
+    next: for (screen.band_cursors[0..screen.band_cursor_count]) |was| {
+        if (was.index == engine.fetcher) continue;
+        for (over) |still| {
+            if (still.index == was.index) continue :next;
+        }
+        var off = screen.cursor_told;
+        off.shown = false;
+        cursor.write(engine, was.index, output, off, was.view);
+    }
+    @memcpy(screen.band_cursors[0..over.len], over);
+    screen.band_cursor_count = @intCast(over.len);
+    writeCursor(screen);
+}
+
+/// The display back on a whole picture from the bands it read: the
+/// frame or buffer at the device's `address`, its rows `pitch` bytes
+/// apart, read by the picture's fetcher with all of the picture as its
+/// place, unscaled; the bands' planes out of the blender's tree and the
+/// cursor laid by the picture's fetcher alone, at one update - or, `now`,
+/// the address at once; then the planes taken down. Holding `pipe_lock`.
+fn leaveBands(screen: *Screen, address: u64, pitch: u32, now: bool) void {
+    const engine = screen.dcn;
+    const output = mode.outputOf(engine, engine.pipe);
+    const whole = plane.Place{
+        .address = address,
+        .pitch = pitch / screen.bytes,
+        .width = screen.width,
+        .height = screen.height,
+        .mirror_x = screen.turn_x,
+        .mirror_y = screen.turn_y,
+    };
+    const planes = screen.band_planes[1..@max(screen.band_count, 1)];
+    plane.lock(engine, engine.pipe);
+    plane.writePlace(engine, engine.fetcher, &whole);
+    dcn.flip(engine, address, now);
+    plane.stack(engine, output, screen.overlay_pipe, &.{}, engine.fetcher);
+    for (planes) |one| plane.release(engine, one.index);
+    bandCursors(screen, &.{});
+    plane.unlock(engine, engine.pipe);
+    for (planes) |one| plane.shut(engine, one.index);
+    screen.band_count = 0;
+    screen.bands_handed = 0;
+    screen.scan_pitch = pitch;
+}
+
+/// Bands the display reads given up for the firmware's framebuffer, read
+/// whole: before the pipe goes down or is set anew, and as the board
+/// goes. Holding `pipe_lock`.
+fn dropBands(screen: *Screen) void {
+    if (screen.band_count == 0) return;
+    leaveBands(screen, screen.dcn.surface, screen.fb.pitch, false);
+    screen.flip_wanted = screen.dcn.surface;
+    screen.scanning = screen.fb.pixels;
 }
 
 /// The display told to read `frame` from its next frame on: one of the
@@ -570,7 +829,7 @@ fn flipAmd(screen: *Screen, frame: *const rtg.RtgBitMap) i32 {
 fn giveUpFlipping(screen: *Screen) void {
     const found = screen.dcn;
     screen.amd_flipping = false;
-    screen.board.info.flags &= ~rtg.boards.RTGBF_DIRECT_FLIP;
+    screen.board.info.flags &= ~(rtg.boards.RTGBF_DIRECT_FLIP | rtg.boards.RTGBF_SCALES);
     tell(screen, found.surface, screen.fb.pitch, true);
     exec.kprintf(screen.sys, "%s: the display did not take the flip to 0x%lx, so the picture goes into the firmware's framebuffer again\n", .{ MODULE_NAME, screen.flip_wanted });
     screen.scanning = screen.fb.pixels;
@@ -625,7 +884,7 @@ fn giveAmdFrame(screen: *Screen) void {
     var frame = screen.amd_frame orelse return;
     screen.amd_frame = null;
     screen.amd_flipping = false;
-    screen.board.info.flags &= ~rtg.boards.RTGBF_DIRECT_FLIP;
+    screen.board.info.flags &= ~(rtg.boards.RTGBF_DIRECT_FLIP | rtg.boards.RTGBF_SCALES);
     const found = screen.dcn;
     tell(screen, found.surface, screen.fb.pitch, true);
     var looks: u32 = 0;
@@ -765,13 +1024,13 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, device_tags: ?[*]const
 
     // At most as many pictures of the mode as the board asks for, each
     // taken by the library as it is allocated. Not cleared: each is
-    // cleared before it is first shown. No band is read by the display
-    // itself.
+    // cleared before it is first shown. With the page table, bands as
+    // many as the engine's pipes are read by the display itself.
     const frame: usize = @as(usize, screen.pitch) * height;
     // As many as the settings say of the device, else as the part does.
     const part_buffers = rb.GetRtgTagData(tags.RTGA_Buffers, 1, tag_list);
     screen.buffers = @max(@as(u32, @truncate(rb.GetRtgTagData(tags.RTGA_Buffers, part_buffers, device_tags))), 1);
-    board.direct_bands = 0;
+    board.direct_bands = if (screen.gart != null) pipe_count else 0;
     board.region = .{
         .size = screen.buffers * frame,
         .alignment = screen.alignment,
@@ -795,7 +1054,7 @@ fn readBuffers(screen: *Screen) void {
         return;
     };
     gart.reach(found, found.fetcher);
-    screen.board.info.flags |= rtg.boards.RTGBF_DIRECT_FLIP;
+    screen.board.info.flags |= rtg.boards.RTGBF_DIRECT_FLIP | rtg.boards.RTGBF_SCALES;
     exec.kprintf(screen.sys, "%s: the display reads a program's buffers through a page table at 0x%lx in the machine\n", .{ MODULE_NAME, screen.gart.?.machine });
 }
 
@@ -839,6 +1098,9 @@ fn tellConnector(screen: *const Screen) void {
 /// the server, which giving it back waits by. The device is
 /// amdgpu.resource's, which is never given back.
 fn halt(screen: *Screen) void {
+    screen.sys.ObtainSemaphore(&screen.pipe_lock);
+    dropBands(screen);
+    screen.sys.ReleaseSemaphore(&screen.pipe_lock);
     if (screen.overlay_memory) |*memory| {
         screen.sys.ObtainSemaphore(&screen.pipe_lock);
         dropOverlay(screen);
@@ -895,10 +1157,19 @@ fn rowBytes(screen: *const Screen, width: u32) u32 {
 /// mode where the library says it is to be - set where the pipe scans
 /// another - the display reading the first of its two frames, which
 /// rtg.library has made the whole picture in. Its pictures after that
-/// reach it through `flipOp`.
+/// reach it through `flipOp`, but for bands the library hands over to be
+/// read by the display itself (`showBands`).
 fn showOp(board: *rtg.RtgBoard, what: *const rtg.RtgShow) callconv(.c) i32 {
-    if (what.flags & rtg.boards.RTGSHOW_MODE_CHANGED == 0) return err.RTGERR_OK;
     const screen = screenOf(board);
+    if (what.flags & rtg.boards.RTGSHOW_MODE_CHANGED == 0) {
+        // In the mode it is in: bands handed over to be read by the
+        // display itself, or nothing to do.
+        if (what.flags & rtg.boards.RTGSHOW_DIRECT == 0 or what.count < 2) return err.RTGERR_OK;
+        const bands = what.bands orelse return err.RTGERR_BAD_ARG;
+        screen.sys.ObtainSemaphore(&screen.pipe_lock);
+        defer screen.sys.ReleaseSemaphore(&screen.pipe_lock);
+        return showBands(screen, bands[0..what.count]);
+    }
     const shown = what.mode;
     // A row as the library makes one of a buffer.
     if (shown.format != screen.format or shown.pitch != rowBytes(screen, shown.width)) return err.RTGERR_BAD_MODE;
@@ -962,14 +1233,28 @@ fn writeCursor(screen: *Screen) void {
     const engine = screen.dcn;
     screen.cursor_told.pixel_hz = screen.timings.pixel_clock_hz;
     const output = mode.outputOf(engine, engine.pipe);
-    cursor.write(engine, engine.fetcher, output, screen.cursor_told, .{ .width = screen.width, .height = screen.height });
+    // On all of the picture, or where the display reads bands, by each
+    // band's pipe on its band.
+    if (screen.band_cursor_count == 0) {
+        cursor.write(engine, engine.fetcher, output, screen.cursor_told, .{ .width = screen.width, .height = screen.height });
+    } else {
+        for (screen.band_cursors[0..screen.band_cursor_count]) |over| layCursor(screen, output, over);
+    }
     // Over the overlay's plane, whose stage is above the picture's, its
     // own pipe's cursor: its place from the part of the overlay shown.
-    const over = screen.cursor_plane orelse return;
+    if (screen.cursor_plane) |over| layCursor(screen, output, over);
+}
+
+/// The cursor laid by plane `over`'s pipe, where it falls on the part of
+/// the plane's surface shown. A scaled plane lays its image at the
+/// plane's scale: the pipe's cursor is drawn in its surface's pixels.
+/// Holding `cursor_lock`.
+fn layCursor(screen: *Screen, output: u32, over: CursorPlane) void {
     var on_plane = screen.cursor_told;
-    on_plane.left -= over.left;
-    on_plane.top -= over.top;
-    cursor.write(engine, over.index, output, on_plane, over.view);
+    const times: i32 = @intCast(over.times);
+    on_plane.left = @divFloor(on_plane.left - over.left, times);
+    on_plane.top = @divFloor(on_plane.top - over.top, times) - @as(i32, @intCast(over.row));
+    cursor.write(screen.dcn, over.index, output, on_plane, over.view);
 }
 
 /// A new image, or none: copied into the image the cursor does not read,
@@ -1017,9 +1302,24 @@ fn mirrorOp(board: *rtg.RtgBoard, x: bool, y: bool) callconv(.c) i32 {
     const screen = screenOf(board);
     const sys = screen.sys;
     sys.ObtainSemaphore(&screen.pipe_lock);
-    mode.writeTurn(screen.dcn, screen.dcn.fetcher, x, y);
+    const was_x = screen.turn_x;
+    const was_y = screen.turn_y;
     screen.turn_x = x;
     screen.turn_y = y;
+    // Bands the display reads are laid again, turned; the picture's
+    // fetcher is turned with the first.
+    if (screen.band_count != 0) {
+        const kept = screen.bands;
+        const code = showBands(screen, kept[0..screen.bands_handed]);
+        if (code != err.RTGERR_OK) {
+            screen.turn_x = was_x;
+            screen.turn_y = was_y;
+            sys.ReleaseSemaphore(&screen.pipe_lock);
+            return code;
+        }
+    } else {
+        mode.writeTurn(screen.dcn, screen.dcn.fetcher, x, y);
+    }
     showOverlay(screen);
     sys.ReleaseSemaphore(&screen.pipe_lock);
     sys.ObtainSemaphore(&screen.cursor_lock);
@@ -1123,7 +1423,7 @@ fn showOverlay(screen: *Screen) void {
     var where = plane.placeOf(screen.overlay_left, screen.overlay_top, one.width, one.height, screen.width, screen.height, screen.turn_x, screen.turn_y) orelse return dropOverlay(screen);
     where.address = memory.device + @as(u64, screen.overlay_turn) * overlay_image_bytes;
     where.pitch = overlay_pitch;
-    const held = planeHeld(screen) orelse return dropOverlay(screen);
+    const held = planeHeld(screen, overlay_pitch) orelse return dropOverlay(screen);
     const schedule = mode.planeSchedule(screen.timings, where.width, held, mode.vstartupOf(engine, engine.pipe)) orelse return dropOverlay(screen);
     const view: cursor.View = .{ .x = where.view_x, .y = where.view_y, .width = where.width, .height = where.height };
     const left = screen.overlay_left + @as(i32, @intCast(where.view_x));
@@ -1177,19 +1477,30 @@ fn dropOverlay(screen: *Screen) void {
 
 /// The first pipe free for a plane, other than the picture's.
 fn freePipe(engine: dcn.Engine) ?u32 {
+    return freePipeBut(engine, &.{});
+}
+
+/// The first pipe free for a plane, other than the picture's and those
+/// `taken`.
+fn freePipeBut(engine: dcn.Engine, taken: []const u32) ?u32 {
     var index: u32 = 0;
-    while (index < pipe_count) : (index += 1) {
-        if (index != engine.fetcher and plane.isFree(engine, index)) return index;
+    next: while (index < pipe_count) : (index += 1) {
+        if (index == engine.fetcher) continue;
+        if (!plane.isFree(engine, index)) continue;
+        for (taken) |one| {
+            if (one == index) continue :next;
+        }
+        return index;
     }
     return null;
 }
 
 /// What a plane is worked out at: the display's clocks held at their
 /// top - the first time, one asker at a time at the mailbox, as a mode
-/// set holds them - as they then run, the hub's watermarks and the
-/// overlay's rows; at the top of the clocks' levels where they cannot be
-/// held. Null where neither can be read.
-fn planeHeld(screen: *Screen) ?mode.Held {
+/// set holds them - as they then run, the hub's watermarks and its
+/// surface's rows, `pitch` pixels apart; at the top of the clocks'
+/// levels where they cannot be held. Null where neither can be read.
+fn planeHeld(screen: *Screen, pitch: u32) ?mode.Held {
     if (screen.held_display_khz == 0) {
         screen.sys.ObtainSemaphore(&screen.smu_lock);
         var clocks: rtg.tags.RtgAmdClocks = .{};
@@ -1204,7 +1515,7 @@ fn planeHeld(screen: *Screen) ?mode.Held {
         mode.heldOf(screen.dcn, screen.dcn.fetcher, screen.held_display_khz, screen.held_pipes_khz)
     else
         topHeld(screen) orelse return null;
-    held.pitch = overlay_pitch;
+    held.pitch = pitch;
     return held;
 }
 
@@ -1438,6 +1749,7 @@ fn ddcTransfer(hook: *utility.Hook, _: ?*anyopaque, message: ?*anyopaque) callco
 fn sleepLink(screen: *Screen, pixel_hz: u32) i32 {
     if (screen.asleep) return err.RTGERR_OK;
     dropOverlay(screen);
+    dropBands(screen);
     sound.soundDown(screen.dcn);
     var stage: u32 = 0;
     const started = screen.sys.UptimeUs();
@@ -1537,6 +1849,7 @@ fn setMode(screen: *Screen, timings: *const rtg.RtgTimings) i32 {
     };
     // A plane goes down with the pipe; the show lights it again.
     dropOverlay(screen);
+    dropBands(screen);
     const code = pipe.set(screen.dcn, &screen.controller, screen.connector, &new, hdmi, if (sends_avi) &avi else null, screen.pixel_clock_hz, &screen.last_set);
     const done = &screen.last_set;
     if (code != err.RTGERR_OK) {
@@ -1551,6 +1864,7 @@ fn setMode(screen: *Screen, timings: *const rtg.RtgTimings) i32 {
     sleep_at = timings.pixel_clock_hz;
     crc.fit(screen.dcn);
     if (screen.gart != null) gart.reach(screen.dcn, screen.dcn.fetcher);
+    screen.bands_refused = false;
     exec.kprintf(sys, "%s: the display set to %dx%d at %d kHz on %s, display clock %d kHz, down for %d us%s\n", .{
         MODULE_NAME,
         new.width,
