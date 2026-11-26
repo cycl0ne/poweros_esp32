@@ -7215,4 +7215,46 @@ pub const LIBRARY_VERSION = 1;
 /// board's to see: FacetBoth 1.77's "shipped stored" writes "stored"'s
 /// texels by glslc's imageStore and samples them. Read from the code and
 /// the host's tests: not yet on a board, the CM5 being off.
-pub const LIBRARY_REVISION = 218;
+/// 219: **imageLoad, imageStore and imageSize in the V3D's fragment
+/// programs (docs/facet-vulkan10.md item 57, step 3).** A fragment shader
+/// that reads or writes an R8G8B8A8 storage image is drawn by the QPUs,
+/// and a compute or fragment shader may ask a storage image's size.
+///
+/// The walk takes a fragment program's OpImageRead and OpImageWrite as a
+/// compute program's (`compile.takesStorage`); a vertex program's stays
+/// refused, as vertexPipelineStoresAndAtomics is false on every device. A
+/// store is written under the TMU's per-pixel mask, so a helper pixel
+/// writes nothing (p1_unpacked_default, v3d_tex.c:64-66). A load leaves
+/// the helper pixels out where nothing derived from it wants them, as
+/// nir_opt_load_skip_helpers marks an image_load through v3d's
+/// intrinsic_try_skip_helpers (vir.c:1937-1951): `lanes` marks it as it
+/// marks a sample. One that keeps them writes P1 with the mask off, the
+/// constant 0 (v3d_tex.c:576-579, :645-646). OpImageQuerySize is an
+/// `image_size` step, ntq_emit_image_size's IMAGE_WIDTH, IMAGE_HEIGHT and
+/// IMAGE_DEPTH or IMAGE_ARRAY_SIZE (nir_to_vir.c:2653-2679), which the
+/// stream answers as a texture's sizes. A program that loads a storage
+/// image or an input attachment has info.num_images not 0, so the early
+/// test is not promoted and the program writes the rasterizer's Z
+/// (nir_to_vir.c:2073-2137; `Work.uses_images`). That changes 1.215's
+/// subpassLoad program too: nir_shader_gather_info counts the input
+/// attachment's image variable (nir_gather_info.c:1086-1099) before v3dv
+/// lowers it (v3dv_pipeline.c:1875), where 1.215 promoted the test. A
+/// constant texel stored folds to one word, each channel a constant of its
+/// own. A draw binds its storage images as a dispatch does
+/// (`_play.sampledBy`, `storageBy`), kept to be dropped from the CPU's
+/// caches after the frame.
+///
+/// Four host tests are new and two changed. A fragment program's store,
+/// a load that keeps the helper pixels and one that skips them, and
+/// imageSize of a 2D array and a 3D image compile to Mesa's code
+/// instruction for instruction or in their uniforms; a vertex program's
+/// store, where the refusal test had the fragment program's, and a size
+/// of the wrong width are refused; the subpassLoad program writes Z. The
+/// draw's binding has no host test. Eight mutations each fail one, the
+/// one that lets a vertex program's store through by an abort in
+/// `to_qpu`, the vertex path not being looked at yet. The draw is the
+/// board's to see: FacetBoth 1.78's "shipped drawn stored" writes
+/// "stored"'s texels from a fragment program, then samples them. Read
+/// from the code and the host's tests: not yet on a board, the CM5 being
+/// off.
+pub const LIBRARY_REVISION = 219;

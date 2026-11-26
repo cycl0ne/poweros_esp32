@@ -35,7 +35,10 @@
 //! the function runs on the cores, which write each texel where its TMU
 //! reads it, and the draw samples it there. The shipped stored texture
 //! (since 1.77) is the same texels, glslc's imageStore into an R8G8B8A8
-//! storage image, which the V3D compiles and writes through its TMU.
+//! storage image, which the V3D compiles and writes through its TMU; the
+//! shipped drawn stored one (since 1.78) the same texels written by a
+//! draw, glslc's imageStore in a fragment program at each pixel's place
+//! modulo 64, which the V3D's TMU writes under its per-pixel mask.
 //! The cases of
 //! no colour (since 1.18) draw a depth alone, then look at it in a pass of
 //! colour: a shadow map sampled, or a subpass after it tested against it;
@@ -163,7 +166,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.77 (26.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.78 (26.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -2908,6 +2911,8 @@ const shipped_entries = [_]shader.Entry{
     // "stored"'s texels through a storage image, 8x8 a group, as the
     // words' local size is (since 1.77).
     shader.computeGroup("shipped stored", &shippedStored, .{ stored_group, stored_group, 1 }, 0),
+    // The same texels by a draw, each pixel its own (since 1.78).
+    shader.fragment("shipped drawn stored", &drawnStoredFragment, 4),
 };
 const shipped_words = [_]shader.Spirv{
     .{},                                            .{},                                        .{},                                           .{},
@@ -2938,6 +2943,7 @@ const shipped_words = [_]shader.Spirv{
     shader.Spirv.of(&shipped_determinant4),         shader.Spirv.of(&shipped_bits),             shader.Spirv.of(&shipped_vertex_branch),       shader.Spirv.of(&shipped_branches),
     shader.Spirv.of(&shipped_outputs),              shader.Spirv.of(&shipped_vertex_outputs),   Shipped.NestedKept.spirv,                      Shipped.SelectsKept.spirv,
     Shipped.CollapsedKept.spirv,                    shader.Spirv.of(&shipped_fetch_four),       shader.Spirv.of(&shipped_subpass),             shader.Spirv.of(&shipped_stored),
+    shader.Spirv.of(&shipped_drawn_stored),
 };
 
 /// glslc's own output, at -O, for a sample of an image of four at the
@@ -3125,6 +3131,90 @@ const shipped_stored = [_]u32{
     0x00070050, 0x0000003D, 0x0000003E, 0x00000047, 0x0000003A, 0x0000003B,
     0x0000003C, 0x00050085, 0x0000003D, 0x00000040, 0x0000003E, 0x0000004A,
     0x00040063, 0x00000032, 0x00000035, 0x00000040, 0x000100FD, 0x00010038,
+};
+
+/// glslc's own output, at -O: `drawnStoredFragment`, "stored"'s texels
+/// written by a draw, each pixel the texel at its place modulo 64, through
+/// an R8G8B8A8 storage image by imageStore, and the colour as it comes:
+/// OpImageWrite in a fragment program, which the V3D writes through its
+/// TMU under the per-pixel mask, so that a helper pixel writes nothing
+/// (v3d_vir_emit_image_load_store, v3d_tex.c:564-655). The image is named,
+/// so the early Z test is off and the program writes the rasterizer's Z
+/// (nir_to_vir.c:2073-2137; facet 1.219).
+///
+/// ```glsl
+/// #version 450
+/// // FacetBoth's "shipped drawn stored" (facet 1.219): "stored"'s texels
+/// // written by a draw, each pixel the texel at its place modulo 64,
+/// // through an R8G8B8A8 storage image, and the colour as it comes.
+/// layout(set = 0, binding = 0, rgba8) uniform writeonly image2D target;
+/// layout(location = 0) in vec4 color;
+/// layout(location = 0) out vec4 outColor;
+/// void main() {
+///     uvec2 at = uvec2(gl_FragCoord.xy) & 63u;
+///     bool check = (((at.x >> 3) ^ (at.y >> 3)) & 1u) != 0u;
+///     float red = check ? 224.0 : float(at.x * 4u);
+///     imageStore(target, ivec2(at), vec4(red, float(at.y * 4u), 128.0, 255.0) / 255.0);
+///     outColor = color;
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=frag shipped_drawn_stored.frag -o shipped_drawn_stored.spv   # 306 words
+/// spirv-val --target-env vulkan1.0 shipped_drawn_stored.spv   # no output, and 0
+/// ```
+const shipped_drawn_stored = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000052, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0008000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000D, 0x00000046, 0x00000047,
+    0x00030010, 0x00000004, 0x00000007, 0x00040047, 0x0000000D, 0x0000000B,
+    0x0000000F, 0x00030047, 0x00000036, 0x00000019, 0x00040047, 0x00000036,
+    0x00000021, 0x00000000, 0x00040047, 0x00000036, 0x00000022, 0x00000000,
+    0x00040047, 0x00000046, 0x0000001E, 0x00000000, 0x00040047, 0x00000047,
+    0x0000001E, 0x00000000, 0x00020013, 0x00000002, 0x00030021, 0x00000003,
+    0x00000002, 0x00040015, 0x00000006, 0x00000020, 0x00000000, 0x00040017,
+    0x00000007, 0x00000006, 0x00000002, 0x00030016, 0x0000000A, 0x00000020,
+    0x00040017, 0x0000000B, 0x0000000A, 0x00000004, 0x00040020, 0x0000000C,
+    0x00000001, 0x0000000B, 0x0004003B, 0x0000000C, 0x0000000D, 0x00000001,
+    0x00040017, 0x0000000E, 0x0000000A, 0x00000002, 0x0004002B, 0x00000006,
+    0x00000012, 0x0000003F, 0x00020014, 0x00000015, 0x0004002B, 0x00000006,
+    0x00000018, 0x00000000, 0x00040015, 0x0000001C, 0x00000020, 0x00000001,
+    0x0004002B, 0x0000001C, 0x0000001D, 0x00000003, 0x0004002B, 0x00000006,
+    0x0000001F, 0x00000001, 0x0004002B, 0x0000000A, 0x0000002C, 0x43600000,
+    0x0004002B, 0x00000006, 0x00000030, 0x00000004, 0x00090019, 0x00000034,
+    0x0000000A, 0x00000001, 0x00000000, 0x00000000, 0x00000000, 0x00000002,
+    0x00000004, 0x00040020, 0x00000035, 0x00000000, 0x00000034, 0x0004003B,
+    0x00000035, 0x00000036, 0x00000000, 0x00040017, 0x00000039, 0x0000001C,
+    0x00000002, 0x0004002B, 0x0000000A, 0x00000040, 0x43000000, 0x0004002B,
+    0x0000000A, 0x00000041, 0x437F0000, 0x00040020, 0x00000045, 0x00000003,
+    0x0000000B, 0x0004003B, 0x00000045, 0x00000046, 0x00000003, 0x0004003B,
+    0x0000000C, 0x00000047, 0x00000001, 0x0005002C, 0x00000007, 0x0000004E,
+    0x00000012, 0x00000012, 0x0004002B, 0x0000000A, 0x00000050, 0x3B808081,
+    0x0007002C, 0x0000000B, 0x00000051, 0x00000050, 0x00000050, 0x00000050,
+    0x00000050, 0x00050036, 0x00000002, 0x00000004, 0x00000000, 0x00000003,
+    0x000200F8, 0x00000005, 0x0004003D, 0x0000000B, 0x0000000F, 0x0000000D,
+    0x0007004F, 0x0000000E, 0x00000010, 0x0000000F, 0x0000000F, 0x00000000,
+    0x00000001, 0x0004006D, 0x00000007, 0x00000011, 0x00000010, 0x000500C7,
+    0x00000007, 0x00000014, 0x00000011, 0x0000004E, 0x00050051, 0x00000006,
+    0x0000001B, 0x00000014, 0x00000000, 0x000500C2, 0x00000006, 0x0000001E,
+    0x0000001B, 0x0000001D, 0x00050051, 0x00000006, 0x00000021, 0x00000014,
+    0x00000001, 0x000500C2, 0x00000006, 0x00000022, 0x00000021, 0x0000001D,
+    0x000500C6, 0x00000006, 0x00000023, 0x0000001E, 0x00000022, 0x000500C7,
+    0x00000006, 0x00000024, 0x00000023, 0x0000001F, 0x000500AB, 0x00000015,
+    0x00000025, 0x00000024, 0x00000018, 0x000300F7, 0x0000002B, 0x00000000,
+    0x000400FA, 0x00000025, 0x0000002A, 0x0000002D, 0x000200F8, 0x0000002A,
+    0x000200F9, 0x0000002B, 0x000200F8, 0x0000002D, 0x00050084, 0x00000006,
+    0x00000031, 0x0000001B, 0x00000030, 0x00040070, 0x0000000A, 0x00000032,
+    0x00000031, 0x000200F9, 0x0000002B, 0x000200F8, 0x0000002B, 0x000700F5,
+    0x0000000A, 0x0000004D, 0x0000002C, 0x0000002A, 0x00000032, 0x0000002D,
+    0x0004003D, 0x00000034, 0x00000037, 0x00000036, 0x0004007C, 0x00000039,
+    0x0000003A, 0x00000014, 0x00050084, 0x00000006, 0x0000003E, 0x00000021,
+    0x00000030, 0x00040070, 0x0000000A, 0x0000003F, 0x0000003E, 0x00070050,
+    0x0000000B, 0x00000042, 0x0000004D, 0x0000003F, 0x00000040, 0x00000041,
+    0x00050085, 0x0000000B, 0x00000044, 0x00000042, 0x00000051, 0x00040063,
+    0x00000037, 0x0000003A, 0x00000044, 0x0004003D, 0x0000000B, 0x00000048,
+    0x00000047, 0x0003003E, 0x00000046, 0x00000048, 0x000100FD, 0x00010038,
 };
 
 /// glslc's own output, at -O, for a discard in an `if` of no `else` all
@@ -9347,6 +9437,32 @@ fn shippedStored(groups: *const shader.Groups) callconv(.c) void {
         storeTexel(image, groups.group[0] * stored_group + @as(u32, @intCast(i)), groups.group[1] * stored_group + @as(u32, @intCast(j)));
     };
 }
+
+/// What `shipped_drawn_stored` computes, for the cores: by each pixel
+/// inside the triangle - a helper pixel writes nothing, as the V3D's TMU
+/// writes under its per-pixel mask - "stored"'s texel at its place modulo
+/// 64 into the storage image at set 0, binding 0, the pixels of a place
+/// modulo 64 writing the same texel; and the colour as it is interpolated
+/// (since 1.78).
+fn drawnStoredFragment(fragments: *const shader.Fragments) callconv(.c) void {
+    const image = fragments.resources.written(0, 0, 0) orelse return shader.fill(fragments, shader.missing);
+    @setRuntimeSafety(false);
+    var rows = shader.Rows(5).of(fragments);
+    for (fragments.quads[0..fragments.count], fragments.colors[0..fragments.count]) |quad, *out| {
+        inline for (0..4) |i| {
+            if (quad.covered & @as(u8, 1) << i != 0) {
+                const x = fragments.x + @as(u32, quad.x) + @as(u32, i & 1);
+                const y = fragments.y + @as(u32, quad.y) + @as(u32, i >> 1);
+                storeTexel(image, x & (stored_side - 1), y & (stored_side - 1));
+            }
+        }
+        const planes = rows.at(quad);
+        const over = @as(shader.Pixels, @splat(1)) / planes[0];
+        var bytes: [4]@Vector(4, u32) = undefined;
+        inline for (&bytes, 0..) |*channel, c| channel.* = channelOf(planes[1 + c] * over);
+        out.* = bytes[3] << @splat(24) | bytes[0] << @splat(16) | bytes[1] << @splat(8) | bytes[2];
+    }
+}
 const picture_usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_TRANSFER_SRC | facet.IMAGE_USAGE_TRANSFER_DST;
 const texture_levels = 7;
 const formats = [_]facet.Format{ .b8g8r8a8_unorm, .r8g8b8a8_unorm, .r5g6b5_unorm_pack16 };
@@ -10405,7 +10521,8 @@ const Side = struct {
         const device = side.device.?;
         try side.image(.{ .format = formats[0], .extent = .{ .width = stored_side, .height = stored_side }, .usage = facet.IMAGE_USAGE_STORAGE | facet.IMAGE_USAGE_SAMPLED }, 0, &side.stored);
         side.stored_view = try side.view(side.stored.?, formats[0], facet.IMAGE_ASPECT_COLOR, 1);
-        const binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .storage_image, .stage_flags = facet.SHADER_STAGE_COMPUTE };
+        // A fragment program's too, "shipped drawn stored"'s (since 1.78).
+        const binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .storage_image, .stage_flags = facet.SHADER_STAGE_COMPUTE | facet.SHADER_STAGE_FRAGMENT };
         try expect(fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&binding) }, &side.stored_set_layout), error.Refused);
         try expect(fb.CreatePipelineLayout(device, &.{ .set_layout_count = 1, .set_layouts = @ptrCast(&side.stored_set_layout) }, &side.stored_layout), error.Refused);
         const info = facet.ComputePipelineCreateInfo{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = side.module.?, .name = "stored" }, .layout = side.stored_layout.? };
@@ -12641,6 +12758,30 @@ const Cases = struct {
         const groups = stored_side / stored_group;
         try storedThenDrawn(side, side.rgba_stored_pipeline.?, side.rgba_stored_set.?, side.rgba_stored_sampled.?, .{ groups, groups });
     }
+    /// The same texels written by a draw over the quad, glslc's
+    /// imageStore in a fragment program at each pixel's place modulo 64,
+    /// then drawn as "shipped stored" draws them: on the V3D the fragment
+    /// program writes each texel through its TMU under the per-pixel mask,
+    /// and the frame sends what it wrote out of the CPU's caches before
+    /// the next samples it (docs/facet-vulkan10.md item 57 step 3; facet
+    /// 1.219).
+    fn shippedDrawnStored(side: *Side) Failure!void {
+        const fb = side.fb;
+        const commands = side.commands.?;
+        side.begin(.{});
+        fb.CmdBindDescriptorSets(commands, .graphics, side.stored_layout.?, 0, 1, @ptrCast(&side.rgba_stored_set), 0, null);
+        try side.use(.{ .vertex = "shipped as it is", .fragment = "shipped drawn stored", .layout = side.stored_layout.? });
+        side.draw(quad_at, 6);
+        side.end();
+        // The sample after the draw's writes, as Vulkan asks.
+        const written = facet.MemoryBarrier{ .src_access_mask = facet.ACCESS_SHADER_WRITE, .dst_access_mask = facet.ACCESS_SHADER_READ };
+        fb.CmdPipelineBarrier(commands, facet.PIPELINE_STAGE_FRAGMENT_SHADER, facet.PIPELINE_STAGE_FRAGMENT_SHADER, 0, 1, @ptrCast(&written), 0, null, 0, null);
+        side.begin(.{});
+        fb.CmdBindDescriptorSets(commands, .graphics, side.layout.?, 0, 1, @ptrCast(&side.rgba_stored_sampled), 0, null);
+        try side.use(.{ .vertex = "texture", .fragment = "nearest" });
+        side.draw(quad_at, 6);
+        side.end();
+    }
     /// `pipeline` dispatched over `groups` with `set` bound, writing the
     /// storage image, and the quad drawn with the image sampled through
     /// `sampled`, nearest.
@@ -12958,6 +13099,9 @@ const cases = [_]Case{
     // 1.77: the same texels by glslc's imageStore, which the V3D compiles
     // since facet 1.218 (item 57 step 2).
     .{ .name = "shipped stored", .run = &Cases.shippedStored },
+    // 1.78: the same texels by a draw's imageStore, which the V3D compiles
+    // since facet 1.219 (item 57 step 3).
+    .{ .name = "shipped drawn stored", .run = &Cases.shippedDrawnStored },
     // No colour (since 1.18), which the V3D draws since facet 1.150: a
     // shadow map drawn in a pass of it alone, and a depth drawn in a
     // subpass of its own before the colour is, as a pre-pass is.

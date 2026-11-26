@@ -301,10 +301,11 @@ is left out:
   device keeps it (`texture.Texture.place`, `_image.deviceTexels`), so a
   function run on the cores beside the V3D writes it where the TMU reads
   it. Since 1.218 a compute program of the V3D's reads and writes an
-  R8G8B8A8 one through its TMU, and a compute shader of any other format
-  runs its function on the cores. A fragment or vertex program that uses
-  one is refused there, and the cores draw (docs/facet-vulkan10.md item
-  57, step 3).
+  R8G8B8A8 one through its TMU, and since 1.219 a fragment program does
+  too, and either asks its size; a shader of any other format runs its
+  function on the cores, or the cores draw. A vertex program that uses
+  one is refused there, as no device takes vertexPipelineStoresAndAtomics
+  (docs/facet-vulkan10.md item 57).
 - **Nothing orders two writes.** A frame's work is shared between the
   cores, and groups run in no order, so two functions writing the same texel
   is for the program to avoid - as it is in Vulkan, there being no barrier

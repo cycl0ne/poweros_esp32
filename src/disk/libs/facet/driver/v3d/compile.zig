@@ -563,15 +563,16 @@ pub const profile: spirv.Profile = .{
         .image_sample_explicit_lod,    .image_sample_dref_explicit_lod,
         // An input attachment read where the pixel is, a subpassLoad
         // (since 1.215), or a storage image's texel; and one written
-        // (since 1.218).
+        // (since 1.218); and a storage image's size (since 1.219).
         .image_read,                     .image_write,
+        .image_query_size,
         // The bit operations, as nir_lower_alu and nir_opt_algebraic lower
         // them for a device of no BFE, BFM or BFI (since 1.202).
-        .bit_field_insert,             .bit_field_s_extract,            .bit_field_u_extract,            .bit_reverse,
-        .bit_count,
+                    .bit_field_insert,               .bit_field_s_extract,            .bit_field_u_extract,
+        .bit_reverse,                  .bit_count,
         // A compute program's workgroup waiting for all its invocations
         // (since 1.203).
-                           .control_barrier,
+                             .control_barrier,
     },
     // Workgroup: a compute program's shared memory (since 1.203).
     .storage_classes = &.{ .input, .output, .function, .uniform_constant, .push_constant, .uniform, .workgroup },
@@ -812,6 +813,11 @@ pub const Tag = enum {
     /// (v3d_nir_lower_image_load_store.c:354-394), `b`'s kind as many
     /// words as it is. It makes no value (since 1.218).
     image_store,
+    /// NIR's image_size: the sizes of the storage image `at` names, as
+    /// many integers as `kind` is, each a uniform of the view's: its
+    /// width, its height, and a 3D image's depth or an array's layers
+    /// (ntq_emit_image_size, nir_to_vir.c:2653-2679; since 1.219).
+    image_size,
     /// A vertex program's float `a` written to the VPM at `at`, one
     /// float as v3d_nir_store_output stores each (v3d_nir_lower_io.c:
     /// 72-92): a varying where the fragment program reads it, or one of
@@ -1320,7 +1326,7 @@ pub const Word = union(enum) {
     /// A size of the view a unit samples, or its levels: Mesa's
     /// QUNIFORM_TEXTURE_WIDTH, _HEIGHT, _DEPTH, _ARRAY_SIZE and _LEVELS,
     /// which v3dv writes from the view's extent, layers and levels
-    /// (get_texture_size_from_image_view, v3dv_uniforms.c:378-414; since
+    /// (get_texture_size_from_image_view, v3dv_uniforms.c:378-416; since
     /// 1.181).
     texture_size: TextureSize,
     /// The state of a unit's storage image, as a load's or a store's
@@ -1641,6 +1647,12 @@ pub const Work = struct {
     /// is not 0, the variables vtn keeps being those the body names
     /// (spirv_to_nir.c:7533-7551; since 1.168).
     uses_ssbo: bool = false,
+    /// The body loads a storage image's variable or an input
+    /// attachment's: info.num_images is not 0, as nir_shader_gather_info
+    /// counts the image variables vtn keeps (nir_gather_info.c:1086-1099)
+    /// before v3dv lowers them to units (pipeline_lower_nir,
+    /// v3dv_pipeline.c:1875; since 1.219).
+    uses_images: bool = false,
     /// The bytes of shared memory a workgroup has: info.shared_size, the
     /// Workgroup variables laid out one after another, each at its
     /// alignment (lower_vars_to_explicit, nir_lower_explicit_io.c:
@@ -1965,7 +1977,7 @@ pub fn compile(work: *Work, words: []const u32) Error!Code {
     // reads it once.
     if (work.sample_count > 1) return Error.Samplers;
     for (work.program()) |each| switch (each.tag) {
-        .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier, .scratch, .scratch_indirect, .scratch_store, .shared, .shared_store, .shared_atomic, .control_barrier, .image_load, .image_store => return Error.Storage,
+        .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier, .scratch, .scratch_indirect, .scratch_store, .shared, .shared_store, .shared_atomic, .control_barrier, .image_load, .image_store, .image_size => return Error.Storage,
         .discard => return Error.Discards,
         .sample_compared => return Error.Samplers,
         // Every one reads a 2D texture at s and t (since 1.179), at the
@@ -2170,6 +2182,13 @@ fn compileRead(work: *Work, allocator: std.mem.Allocator, compiler: *const vir.C
             .texture_depth => .{ .texture_size = .{ .unit = try units.at(data), .field = .depth } },
             .texture_array_size => .{ .texture_size = .{ .unit = try units.at(data), .field = .array_size } },
             .texture_levels => .{ .texture_size = .{ .unit = try units.at(data), .field = .levels } },
+            // A storage image's, which v3dv answers as a texture's
+            // (get_texture_size_from_image_view, v3dv_uniforms.c:378-416;
+            // since 1.219).
+            .image_width => .{ .texture_size = .{ .unit = try units.at(data), .field = .width } },
+            .image_height => .{ .texture_size = .{ .unit = try units.at(data), .field = .height } },
+            .image_depth => .{ .texture_size = .{ .unit = try units.at(data), .field = .depth } },
+            .image_array_size => .{ .texture_size = .{ .unit = try units.at(data), .field = .array_size } },
             else => return Error.Invalid,
         };
     }
@@ -2266,10 +2285,10 @@ const Units = struct {
         // comparison is in (since 1.181); and so does a fetch, whose P1
         // is a constant (v3d_tex.c:350-354; since 1.182).
         // A storage image's load and store read no sampler state either
-        // (since 1.218).
+        // (since 1.218), nor its size (since 1.219).
         for (work.program()) |each| {
             const fetches = each.tag == .sample and each.lookup.fetches();
-            const storage = each.tag == .image_load or each.tag == .image_store;
+            const storage = each.tag == .image_load or each.tag == .image_store or each.tag == .image_size;
             if (each.tag != .texture_size and each.tag != .texture_levels and !fetches and !storage) continue;
             if (units.of_declared[each.at] != no_unit) continue;
             const declared = work.samplers[each.at];
@@ -3621,6 +3640,8 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                             texture = true;
                         },
                         .image_write => selection.keep(),
+                        // And an image_size (since 1.219).
+                        .image_query_size => selection.keep(),
                         // An atomic or a barrier is neither either: it
                         // would run where the arm is not taken (since
                         // 1.169).
@@ -4552,7 +4573,7 @@ fn loopCost(work: *const Work, from: u16, to: u16) u32 {
                 cost += each.kind.parts();
                 continue;
             },
-            .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier, .scratch, .scratch_indirect, .scratch_store, .shared, .shared_store, .shared_atomic, .control_barrier, .discard, .sample, .sample_compared, .output, .viewport, .system, .image_load, .image_store => {
+            .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier, .scratch, .scratch_indirect, .scratch_store, .shared, .shared_store, .shared_atomic, .control_barrier, .discard, .sample, .sample_compared, .output, .viewport, .system, .image_load, .image_store, .image_size => {
                 cost += 1;
                 continue;
             },
@@ -6066,8 +6087,9 @@ fn armCost(work: *const Work, from: u16, to: u16) u32 {
             // load_scratch is made of later, is let through by none
             // (nir_opt_peephole_select.c:109-129), nor is a store_deref
             // (since 1.177).
-            // An image_load and an image_store neither (since 1.218).
-            .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier, .scratch, .scratch_indirect, .scratch_store, .shared, .shared_store, .shared_atomic, .control_barrier, .image_load, .image_store => return std.math.maxInt(u32),
+            // An image_load and an image_store neither (since 1.218), nor
+            // an image_size (since 1.219).
+            .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier, .scratch, .scratch_indirect, .scratch_store, .shared, .shared_store, .shared_atomic, .control_barrier, .image_load, .image_store, .image_size => return std.math.maxInt(u32),
             // ineg and iabs are move-like, as fneg and fabs are
             // (nir_opt_peephole_select.c:251-264; since 1.165).
             .integer => switch (@as(Integer, @enumFromInt(each.at))) {
@@ -7415,6 +7437,7 @@ fn readsOf(each: Step) [4]?u16 {
         // A storage image's coordinate, and a store's texel (since 1.218).
         .image_load => .{ each.a, null, null, null },
         .image_store => .{ each.a, each.b, null, null },
+        .image_size => .{ null, null, null, null },
     };
 }
 
@@ -7814,6 +7837,8 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
                 // texture the TMU is to be pointed at, and the only
                 // instruction that may read it is a sample.
                 work.sampler_of[id] = work.sampler_of[from];
+                const declared = work.samplers[work.sampler_of[from]];
+                if (declared.storage or declared.input_attachment) work.uses_images = true;
                 return;
             }
             if (work.class[from] != @intFromEnum(spirv.StorageClass.input)) return Error.Body;
@@ -8706,6 +8731,7 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
         // An input attachment's subpassLoad, or a storage image's texel
         // (since 1.218).
         .image_read => if (storageOf(work, operands, 2) != null) try readStorage(work, operands) else try readSubpass(work, operands),
+        .image_query_size => try sizeOfStorage(work, operands),
         .image_write => try writeStorage(work, operands),
         .image => {
             // ResultType, Result, SampledImage: the image of a sampled
@@ -9240,8 +9266,10 @@ fn lanes(work: *Work) void {
     }
     for (steps, 0..) |each, k| switch (each.tag) {
         // v3d's callback lets a load_scratch skip them too
-        // (intrinsic_try_skip_helpers, vir.c:1937-1951; since 1.177).
-        .sample, .sample_compared, .ubo_indirect, .ssbo_indirect, .scratch, .scratch_indirect => work.skip_helpers[k] = work.divergent[k] and !needs[k],
+        // (intrinsic_try_skip_helpers, vir.c:1937-1951; since 1.177),
+        // and an image_load (since 1.219), which has no offset to want
+        // them (nir_get_io_offset_src_number, nir_lower_io.c:1002-1135).
+        .sample, .sample_compared, .ubo_indirect, .ssbo_indirect, .scratch, .scratch_indirect, .image_load => work.skip_helpers[k] = work.divergent[k] and !needs[k],
         else => {},
     };
 }
@@ -11328,14 +11356,15 @@ fn storageCoordinate(work: *Work, word: u32, which: u16) Error!u16 {
 /// nir_opt_algebraic.py:2271-2272), and the f2f32 of each, an FMOV of the
 /// low half (`half_float`). Its ImageOperands are refused: a Sample is an
 /// image of four's, which is refused, and no other is in the profile. A
-/// compute program's alone: a fragment program's per-pixel mask and its
-/// helper pixels are step 3 of docs/facet-vulkan10.md item 57 (since
-/// 1.218).
+/// compute program's (since 1.218) or a fragment program's (since 1.219),
+/// whose load leaves its helper pixels out where nothing derived from
+/// it wants them (`lanes`); a vertex program's is refused, the device
+/// taking no stores there (`vertexPipelineStoresAndAtomics`).
 fn readStorage(work: *Work, operands: []const u32) Error!void {
     // ResultType, Result, Image, Coordinate.
     if (operands.len < 4) return Error.Body;
     if (operands.len > 4) return Error.Operands;
-    if (work.stage != .gl_compute) return Error.Refused;
+    if (!takesStorage(work)) return Error.Refused;
     const type_id = try idOf(operands[0]);
     const id = try idOf(operands[1]);
     if (try kindOf(work, type_id) != .f32x4) return Error.Type;
@@ -11363,23 +11392,69 @@ fn readStorage(work: *Work, operands: []const u32) Error!void {
 /// the two pairs the four bytes of one word (pack_4x16_to_4x8_v3d,
 /// V8PACK). Each a constant where its floats are, as
 /// nir_opt_constant_folding makes it (`Order.fold`). A compute program's
-/// alone, as `readStorage` (since 1.218).
+/// or a fragment program's, as `readStorage`; a fragment program's is
+/// written where the pixel is covered alone, the TMU's per-pixel mask
+/// leaving its helper pixels out (p1_unpacked_default, v3d_tex.c:64-66;
+/// since 1.219).
 fn writeStorage(work: *Work, operands: []const u32) Error!void {
     // Image, Coordinate, Texel.
     if (operands.len < 3) return Error.Body;
     if (operands.len > 3) return Error.Operands;
-    if (work.stage != .gl_compute) return Error.Refused;
+    if (!takesStorage(work)) return Error.Refused;
     const which = storageOf(work, operands, 0) orelse return Error.Body;
     const coordinate = try storageCoordinate(work, operands[1], which);
     // Each channel a float of its own, so that a pair of constants is
-    // packed to one by the folding of the loop of passes (`Order.fold`).
+    // packed to one by the folding of the loop of passes (`Order.fold`);
+    // a channel of a constant vector a constant of its own, which
+    // nir_opt_constant_folding folds as it folds a vec of them (since
+    // 1.219).
     const texel = try operand(work, operands[2], .f32x4);
     var channels: [4]u16 = undefined;
-    for (&channels, 0..) |*each, k| each.* = try floatOf(work, partOf(work, texel, @intCast(k)));
+    for (&channels, 0..) |*each, k| {
+        const part = partOf(work, texel, @intCast(k));
+        each.* = if (floatBits(work, part)) |bits| try wordConstant(work, bits) else try floatOf(work, part);
+    }
     const low = try integerOf(work, .pack_unorm_8, try integerOf(work, .pack_half, channels[0], channels[1]), null);
     const high = try integerOf(work, .pack_unorm_8, try integerOf(work, .pack_half, channels[2], channels[3]), null);
     const word = try integerOf(work, .pack_4x8, low, high);
     _ = try put(work, .{ .tag = .image_store, .kind = .f32x1, .a = coordinate, .b = word, .at = which });
+}
+
+/// Whether the program's stage reads and writes storage images: a
+/// compute program's (since 1.218) and a fragment program's (since
+/// 1.219).
+fn takesStorage(work: *const Work) bool {
+    return work.stage == .gl_compute or work.stage == .fragment;
+}
+
+/// OpImageQuerySize of a storage image, vtn's image_deref_size, which
+/// nir_lower_image makes an image_size of the image's unit
+/// (spirv_to_nir.c:6444-6451; vtn_handle_image, :3885-3893, :4080-4082):
+/// as many integers as the result names, two for a 2D image and a cube,
+/// three for a 3D image and a 2D array, the array's layers last. Its level
+/// is 0, which ntq_emit_image_size asserts (nir_to_vir.c:2653-2679; since
+/// 1.219).
+fn sizeOfStorage(work: *Work, operands: []const u32) Error!void {
+    // ResultType, Result, Image.
+    if (operands.len != 3) return Error.Body;
+    if (!takesStorage(work)) return Error.Refused;
+    const type_id = try idOf(operands[0]);
+    if (!isIntegerType(work, type_id)) return Error.Type;
+    const id = try idOf(operands[1]);
+    const which = storageOf(work, operands, 2) orelse return Error.Body;
+    const kind = try kindOf(work, type_id);
+    // A cube is its faces' layers here (`Sampler.storage`), its size two
+    // integers, a 2D array's three: of layers either is taken, the two
+    // being told apart by nothing here, and the third, where there is
+    // one, is the layers (ntq_emit_image_size's is_array).
+    const fits = switch (work.samplers[which].dim) {
+        .flat => kind == .f32x2,
+        .layers => kind == .f32x2 or kind == .f32x3,
+        .volume => kind == .f32x3,
+        .cube => false,
+    };
+    if (!fits) return Error.Type;
+    work.step_of[id] = try put(work, .{ .tag = .image_size, .kind = kind, .at = which });
 }
 
 /// lower_gradient (nir_lower_tex.c:855-912): the level a gradient's
@@ -11672,7 +11747,7 @@ fn settle(work: *Work) Error!void {
             // are already in registers, so neither costs an instruction.
             .input, .component, .construct => {},
             // Refused by `compile` before the plan is laid out.
-            .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier, .scratch, .scratch_indirect, .scratch_store, .shared, .shared_store, .shared_atomic, .control_barrier, .image_load, .image_store => return Error.Storage,
+            .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier, .scratch, .scratch_indirect, .scratch_store, .shared, .shared_store, .shared_atomic, .control_barrier, .image_load, .image_store, .image_size => return Error.Storage,
             .compare, .discard => return Error.Discards,
             .sample_compared, .texture_size, .texture_levels => return Error.Samplers,
             .begin_if, .begin_else, .end_if, .phi => return Error.Branches,
@@ -22744,7 +22819,10 @@ test "through Mesa's back end, a subpassLoad is a fetch where the pixel is: Frag
     // and S last at TMUSF (handle_tex_src, v3d_tex.c:99-150;
     // can_reorder_tmu_write, qpu_schedule.c:243-246). The layer's ldvary
     // is the program's one varying, and flat: C's MOV (emit_flat_varying,
-    // nir_to_vir.c:1049-1121). No sampler: P0 alone (since 1.215).
+    // nir_to_vir.c:1049-1121). No sampler: P0 alone (since 1.215). The
+    // input attachment is an image variable, which info.num_images counts,
+    // so early_fragment_tests is not promoted and the program writes the
+    // rasterizer's Z through TLBU (nir_to_vir.c:2073-2137; since 1.219).
     var work: Work = .{};
     const code = try throughMesa(&work, &reference.glslc_subpass);
     try expectText(code, &.{
@@ -22755,7 +22833,7 @@ test "through Mesa's back end, a subpassLoad is a fetch where the pixel is: Frag
         text("nop", "mov tmut, rf9", "thrsw"),
         text("nop", "mov tmui, rf7", "thrsw"),
         text("nop", "mov tmusf, rf8", ""),
-        text("nop", "nop", "ldtmu.rf10"),
+        text("nop", "mov tlbu, rf5", "ldtmu.rf10"),
         text("nop", "nop", "ldtmu.rf11"),
         text("nop", "fmul rf12, rf10.l, 0x3f000000", ""),
         text("nop", "fmul rf13, rf10.h, 0x3f000000", ""),
@@ -22769,9 +22847,10 @@ test "through Mesa's back end, a subpassLoad is a fetch where the pixel is: Frag
     try testing.expect(code.reads_layer);
     try testing.expectEqual(@as(u32, 1), code.flat_shade_flags);
     try testing.expectEqual(@as(u32, 0), code.noperspective_flags);
-    try testing.expectEqualSlices(Word, &.{.{ .texture = 0 }}, code.stream());
-    // Only FragCoord's x and y: no Z read, so none written, and no W.
-    try testing.expect(!code.writes_z);
+    try expectStream(&.{ .{ .texture = 0 }, wordOf(0xFFFF_FF84) }, code.stream());
+    // Only FragCoord's x and y: no Z read and no W, but Z written, and the
+    // early test off (`uses_images`).
+    try testing.expect(code.writes_z and code.disable_ez);
     try testing.expect(!code.center_w);
     try testing.expectEqual(@as(u32, 1), code.sampler_count);
 }
@@ -22969,11 +23048,11 @@ test "a storage image's texel packs as the V3D's VFTOUNORM8 and V8PACK do: 0 bel
     try testing.expectEqual(@as(u32, 0x1122_FF80), @as(u32, @bitCast(work.pool[work.steps[word].at])));
 }
 
-test "a storage image in a fragment program, of four samples, of a format other than Rgba8, or with an image operand, is refused" {
-    // A fragment program's stores are step 3 of docs/facet-vulkan10.md
-    // item 57: its per-pixel mask and helper pixels (since 1.218).
+test "a storage image in a vertex program, of four samples, of a format other than Rgba8, or with an image operand, is refused" {
+    // A vertex program's store asks for vertexPipelineStoresAndAtomics,
+    // which the device does not take (since 1.219).
     var work: Work = .{};
-    try expectRefusal(Error.Refused, compile(&work, &reference.glslc_storage_fragment));
+    try expectRefusal(Error.Refused, vertexThroughMesa(&work, &reference.glslc_storage_vertex, .{}));
     work = .{};
     try expectRefusal(Error.Refused, computeThroughMesa(&work, &comptime patched(&reference.glslc_storage_store, .type_image, 0, 5, 1)));
     // Rgba32f, which the V3D's profile does not take (`storage_formats`).
@@ -22990,4 +23069,162 @@ test "a storage image in a fragment program, of four samples, of a format other 
 /// instead: a Code's units past its count are undefined.
 fn expectRefusal(expected: anyerror, made: anyerror!Code) !void {
     if (made) |_| return error.TestExpectedError else |err| try testing.expectEqual(expected, err);
+}
+
+test "through Mesa's back end, a fragment program's imageStore is x at TMUSF, y at TMUT and its constant texel one word at TMUD, under the per-pixel mask, and the program writes the rasterizer's Z, an image being named" {
+    // vir_image_emit_register_writes (v3d_tex.c:440-518) of FragCoord's
+    // x and y made integers, and the texel (1, 0.5, 0.25, 1) packed to
+    // 0xFF4080FF by nir_opt_constant_folding. P1 is the default, the
+    // per-pixel mask on, a store never being one of the helper pixels
+    // (:576-579, :645-646). info.num_images is not 0, so
+    // early_fragment_tests is not promoted and Z is written (nir_to_vir.c:
+    // 2073-2137); the store leaves the job's caches to be cleaned
+    // (:625-626; since 1.219).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_storage_fragment);
+    try expectText(code, &.{
+        text("fycd rf5", "nop", "ldunif"),
+        text("ftoiz rf7, rf5", "nop", "wrtmuc"),
+        text("fxcd rf4", "mov tmut, rf7", "thrsw"),
+        text("ftoiz rf6, rf4", "mov tmud, rf0", "thrsw"),
+        text("nop", "mov tmusf, rf6", ""),
+        text("tmuwt -", "mov tlbu, rf5", ""),
+        text("nop", "nop", "thrsw; ldunif"),
+        text("nop", "mov tlb, rf0", ""),
+        text("nop", "mov tlb, rf0", ""),
+    });
+    try expectStream(&.{
+        wordOf(0xFF40_80FF),
+        .{ .image = .{ .unit = 0, .bits = 0 } },
+        wordOf(0xFFFF_FF84),
+        wordOf(0x3800_3800),
+    }, code.stream());
+    try testing.expect(code.tmu_dirty_rcl);
+    try testing.expect(code.writes_z and code.disable_ez);
+    try testing.expectEqual(Sampler{ .set = 0, .binding = 0, .storage = true }, code.sampled()[0]);
+}
+
+test "through Mesa's back end, a fragment program's imageLoad that a sample's coordinate is keeps the quad's helper pixels, P1 the constant 0, and one that is the colour leaves them out, P1 the default" {
+    // nir_opt_load_skip_helpers with v3d's intrinsic_try_skip_helpers
+    // (vir.c:1937-1951): the sample's coordinate wants the helper pixels
+    // for its derivatives, so the load it is made of keeps them, its
+    // per-pixel mask off and P1 written (v3d_tex.c:576-579, :645-646);
+    // the sample's own result wants none, so it skips them, as it did
+    // (since 1.177). A load that is the colour is wanted by nothing that
+    // reads a neighbour, so it skips them, and P0 is its one word (since
+    // 1.219).
+    var work: Work = .{};
+    const kept = try throughMesa(&work, &reference.glslc_storage_helpers);
+    try expectText(kept, &.{
+        text("fycd rf5", "nop", "wrtmuc"),
+        text("fxcd rf4", "nop", "wrtmuc"),
+        text("ftoiz rf7, rf5", "nop", "thrsw"),
+        text("ftoiz rf6, rf4", "mov tmut, rf7", ""),
+        text("nop", "mov tmusf, rf6", ""),
+        text("nop", "nop", "ldtmu.rf8; wrtmuc"),
+        text("fmov rf10, rf8.l", "fmov rf11, rf8.h", "thrsw; ldtmu.rf9; wrtmuc"),
+        text("nop", "mov tmut, rf11", "thrsw"),
+        text("nop", "mov tmus, rf10", ""),
+        text("nop", "mov tlbu, rf5", "thrsw; ldtmu.rf12"),
+        text("vfpack tlb, rf12.l, rf12.h", "nop", "ldtmu.rf13"),
+        text("vfpack tlb, rf13.l, rf13.h", "nop", ""),
+    });
+    try expectStream(&.{
+        .{ .image = .{ .unit = 1, .bits = to_vir.texel_words } },
+        wordOf(0),
+        .{ .texture = 0 },
+        .{ .sampler = .{ .unit = 0, .bits = per_pixel_mask } },
+        wordOf(0xFFFF_FF84),
+    }, kept.stream());
+    try testing.expect(!kept.tmu_dirty_rcl);
+    try testing.expectEqual(Sampler{ .set = 0, .binding = 1 }, kept.sampled()[0]);
+    try testing.expectEqual(Sampler{ .set = 0, .binding = 0, .storage = true }, kept.sampled()[1]);
+
+    work = .{};
+    const skipped = try throughMesa(&work, &reference.glslc_storage_read);
+    try expectText(skipped, &.{
+        text("fycd rf5", "nop", "wrtmuc"),
+        text("fxcd rf4", "nop", ""),
+        text("ftoiz rf7, rf5", "nop", "thrsw"),
+        text("ftoiz rf6, rf4", "mov tmut, rf7", "thrsw"),
+        text("nop", "mov tmusf, rf6", ""),
+        text("nop", "mov tlbu, rf5", "thrsw; ldtmu.rf8"),
+        text("vfpack tlb, rf8.l, rf8.h", "nop", "ldtmu.rf9"),
+        text("vfpack tlb, rf9.l, rf9.h", "nop", ""),
+    });
+    try expectStream(&.{
+        .{ .image = .{ .unit = 0, .bits = to_vir.texel_words } },
+        wordOf(0xFFFF_FF84),
+    }, skipped.stream());
+    try testing.expect(skipped.writes_z and skipped.disable_ez);
+}
+
+test "through Mesa's back end, imageSize of a storage image is its view's width, height and layers as uniforms, and a 3D image's depth third" {
+    // ntq_emit_image_size (nir_to_vir.c:2653-2679): IMAGE_WIDTH,
+    // IMAGE_HEIGHT and, of an array, IMAGE_ARRAY_SIZE, which v3dv answers
+    // from the view as it answers a texture's (v3dv_uniforms.c:378-416).
+    // The last layer, the layers less one, goes to TMUI; the place over
+    // the size is each float times the size's reciprocal (lower_fdiv).
+    // Of a 3D image the third is IMAGE_DEPTH, and the slice goes to TMUR
+    // (v3d_tex.c:466-487; since 1.219).
+    var work: Work = .{};
+    const code = try computeThroughMesa(&work, &reference.glslc_storage_size);
+    try expectText(code, &.{
+        text("nop", "nop", "ldunifrf.rf4"),
+        text("itof rf22, rf4", "nop", "ldunifrf.rf5"),
+        text("itof rf23, rf5", "nop", "ldunifrf.rf6"),
+        text("recip rf24, rf22", "nop", "ldunif"),
+        text("and rf7, rf3, rf0", "nop", "ldunif"),
+        text("shr rf8, rf3, rf0", "nop", "ldunif"),
+        text("recip rf25, rf23", "add rf9, rf7, rf0", "ldunif"),
+        text("add rf10, rf8, rf0", "nop", "ldunif"),
+        text("shr rf11, rf2, rf0", "sub rf19, rf6, 1", ""),
+        text("shr rf13, rf11, 3", "mov tmui, rf19", ""),
+        text("shl rf15, rf9, 3", "nop", ""),
+        text("shl rf17, rf10, 3", "nop", ""),
+        text("and rf12, rf11, 7", "nop", ""),
+        text("and rf14, rf13, 7", "add rf16, rf15, rf12", ""),
+        text("itof rf20, rf16", "add rf18, rf17, rf14", "ldunif"),
+        text("itof rf21, rf18", "fmul rf26, rf20, rf24", "wrtmuc"),
+        text("mov tmut, rf18", "fmul rf27, rf21, rf25", ""),
+        text("vfpack rf28, rf26, rf27", "nop", ""),
+        text("nop", "vftounorm8 rf29, rf28", ""),
+        text("v8pack rf30, rf29, rf0", "nop", "thrsw"),
+        text("nop", "mov tmud, rf30", "thrsw"),
+        text("nop", "mov tmusf, rf16", ""),
+        text("tmuwt -", "nop", "thrsw"),
+        text("nop", "nop", ""),
+        text("nop", "nop", ""),
+    });
+    try expectStream(&.{
+        .{ .texture_size = .{ .unit = 0, .field = .width } },
+        .{ .texture_size = .{ .unit = 0, .field = .height } },
+        .{ .texture_size = .{ .unit = 0, .field = .array_size } },
+        wordOf(0xFFFF),
+        wordOf(16),
+        .{ .work_group_base = 0 },
+        .{ .work_group_base = 1 },
+        wordOf(26),
+        wordOf(0x00FF_0080),
+        .{ .image = .{ .unit = 0, .bits = 0 } },
+    }, code.stream());
+    try testing.expectEqual(Sampler{ .set = 0, .binding = 0, .dim = .layers, .storage = true }, code.sampled()[0]);
+
+    // The image 3D, not arrayed: Dim 3D (2) and Arrayed 0.
+    work = .{};
+    const volume = try computeThroughMesa(&work, &comptime patched(&patched(&reference.glslc_storage_size, .type_image, 0, 2, 2), .type_image, 0, 4, 0));
+    try testing.expectEqual(Word{ .texture_size = .{ .unit = 0, .field = .depth } }, volume.stream()[2]);
+    try testing.expectEqual(@as(usize, 1), countOf(volume, "mov tmur"));
+    try testing.expectEqual(@as(usize, 0), countOf(volume, "mov tmui"));
+    try testing.expectEqual(Sampler{ .set = 0, .binding = 0, .dim = .volume, .storage = true }, volume.sampled()[0]);
+}
+
+test "imageSize of a 3D storage image as two integers, or as floats, is refused" {
+    // A 3D image's size is three integers (since 1.219): its ResultType
+    // made %24, an ivec2, or %47, a vec4.
+    const volume = comptime patched(&patched(&reference.glslc_storage_size, .type_image, 0, 2, 2), .type_image, 0, 4, 0);
+    var work: Work = .{};
+    try expectRefusal(Error.Type, computeThroughMesa(&work, &comptime patched(&volume, .image_query_size, 0, 0, 24)));
+    work = .{};
+    try expectRefusal(Error.Type, computeThroughMesa(&work, &comptime patched(&volume, .image_query_size, 0, 0, 47)));
 }
