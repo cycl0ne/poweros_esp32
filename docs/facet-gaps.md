@@ -313,8 +313,10 @@ is left out:
 - **The formats are a texture's**: `rgba8888`, `rgb565`, the two smaller
   ones of 1.48 - an 8888 texel kept in its word, and one byte of red, which
   takes the colour's red alone - and since 1.57 the float ones, kept as
-  their floats where the device keeps them (`kept_floats`) and written one
-  texel at a time by `texture.Texture.setParts` from four floats, with
+  their floats where the device keeps them (`kept_floats`; storage formats
+  only there since 1.220, so not on the V3D, which unpacks them: item 57)
+  and written one texel at a time by `texture.Texture.setParts` from four
+  floats, with
   `partsAt` reading them back. `r32_sfloat` is one of them, one float a
   texel, sampled as (red, 0, 0, 1). Since 1.69 the channels a texture
   keeps as its own are among them as well (`wide_channels`): a function

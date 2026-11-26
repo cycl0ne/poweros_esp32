@@ -166,12 +166,14 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.78 (26.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.79 (26.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
 
-const Failure = error{ NoMemory, NoDevice, Refused, DeviceLost };
+/// `Blocks` is a side's own table of memory blocks full, which is not the
+/// device's memory running out (since 1.79).
+const Failure = error{ NoMemory, Blocks, NoDevice, Refused, DeviceLost };
 
 const Vertex = extern struct {
     p: [4]f32,
@@ -10052,7 +10054,9 @@ const Side = struct {
     memory: facet.PhysicalDeviceMemoryProperties = undefined,
     device: ?*facet.Device = null,
     queue: *facet.Queue = undefined,
-    blocks: [40]?*facet.DeviceMemory = @splat(null),
+    /// Every block `up` allocates, which were 43 a side by 1.78: 40
+    /// stopped it at `upInput` from 1.75 on (since 1.79).
+    blocks: [64]?*facet.DeviceMemory = @splat(null),
     block_count: u32 = 0,
     vertices: ?*facet.Buffer = null,
     places: ?*facet.Buffer = null,
@@ -10927,7 +10931,7 @@ const Side = struct {
     }
 
     fn allocate(side: *Side, needs: facet.MemoryRequirements, wanted: u32) Failure!*facet.DeviceMemory {
-        if (side.block_count == side.blocks.len) return error.NoMemory;
+        if (side.block_count == side.blocks.len) return error.Blocks;
         for (side.memory.memory_types[0..side.memory.memory_type_count], 0..) |kind, k| {
             if (needs.memory_type_bits & @as(u32, 1) << @intCast(k) != 0 and kind.property_flags & wanted == wanted) {
                 const slot = &side.blocks[side.block_count];
@@ -13345,6 +13349,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     return runAll(dl, &cores, &gpu, only) catch |err| {
         _ = Printf(dl, "It stopped: %s\n", .{@as([*:0]const u8, switch (err) {
             error.NoMemory => "not enough memory",
+            error.Blocks => "its table of memory blocks is full",
             error.NoDevice => "no device",
             error.Refused => "facet.library refused something",
             error.DeviceLost => "the device is lost",

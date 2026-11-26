@@ -60,6 +60,14 @@ fn describe(can: *const _instance.Capabilities, format: facet.Format) facet.Form
     // The formats a texture is kept in are the ones a function can write
     // through as well; the unpacked ones are not, being kept as 8888.
     const storage = facet.FORMAT_FEATURE_STORAGE_IMAGE;
+    // A float format is written through only where its floats are kept
+    // (`Capabilities.kept_floats`): unpacked into 8888, as the V3D keeps
+    // one, a texel would hold 1.5 as 1 and a half below 0 as 0. v3dv keeps
+    // each in its own format (v3dvx_formats.c:136, :142, :181, :201) and
+    // writes it through (v3dv_formats.c:188-202). Since 1.220: until 1.217
+    // the V3D took no storage image at all, and from then a float one it
+    // took kept its texels in 8 bits a channel.
+    const float_storage = if (can.kept_floats) storage else 0;
     // What a depth image adds on a device that samples one where its rows
     // lie (`Capabilities.sampled_depth`).
     // Filtered where the device filters a depth (`Capabilities.filtered_depth`,
@@ -197,37 +205,39 @@ fn describe(can: *const _instance.Capabilities, format: facet.Format) facet.Form
             .buffer_features = 0,
         },
         // Float: sampled, and written through by a function since 1.57
-        // (`texture.Texture.setParts`), and read back as well where the
-        // floats are kept, there being something of the format to read.
+        // (`texture.Texture.setParts`) and read back as well, both where
+        // the floats are kept, there being something of the format to
+        // write and to read (`float_storage`).
         // And a texel buffer of either since 1.68, read where it lies by
         // the same code a texture of the format is read with
         // (`shader.TexelFormat.rg11b10f`, `rgb9e5`).
         .b10g11r11_ufloat_pack32, .e5b9g9r9_ufloat_pack32 => .{
             .linear_tiling_features = 0,
-            .optimal_tiling_features = sampled | storage | facet.FORMAT_FEATURE_TRANSFER_DST |
+            .optimal_tiling_features = sampled | float_storage | facet.FORMAT_FEATURE_TRANSFER_DST |
                 if (can.kept_floats) facet.FORMAT_FEATURE_TRANSFER_SRC else 0,
             .buffer_features = texels,
         },
         // The same, and a texel buffer of half-floats as well since 1.54.
         .r16g16b16a16_sfloat => .{
             .linear_tiling_features = 0,
-            .optimal_tiling_features = sampled | storage | facet.FORMAT_FEATURE_TRANSFER_DST |
+            .optimal_tiling_features = sampled | float_storage | facet.FORMAT_FEATURE_TRANSFER_DST |
                 if (can.kept_floats) facet.FORMAT_FEATURE_TRANSFER_SRC else 0,
             .buffer_features = texels,
         },
         .r32g32b32a32_sfloat => .{
             .linear_tiling_features = 0,
-            .optimal_tiling_features = sampled | storage | facet.FORMAT_FEATURE_TRANSFER_DST |
+            .optimal_tiling_features = sampled | float_storage | facet.FORMAT_FEATURE_TRANSFER_DST |
                 if (can.kept_floats) facet.FORMAT_FEATURE_TRANSFER_SRC else 0,
             .buffer_features = vertices | texels,
         },
         // One float a texel as an image since 1.57, sampled as
         // (red, 0, 0, 1) and written through by a function
         // (`texture.Texture.setParts`): kept as the float where the
-        // device keeps floats, and unpacked to 8888 where it does not.
+        // device keeps floats, and unpacked to 8888, and so not written
+        // through, where it does not.
         .r32_sfloat => .{
             .linear_tiling_features = 0,
-            .optimal_tiling_features = sampled | storage | facet.FORMAT_FEATURE_TRANSFER_DST |
+            .optimal_tiling_features = sampled | float_storage | facet.FORMAT_FEATURE_TRANSFER_DST |
                 if (can.kept_floats) facet.FORMAT_FEATURE_TRANSFER_SRC else 0,
             .buffer_features = vertices | texels,
         },
@@ -411,6 +421,11 @@ test "each of the four kept features answers for its own formats" {
     try testing.expectEqual(src, describe(&keeping, .bc1_rgb_unorm_block).optimal_tiling_features & src);
     try testing.expectEqual(@as(u32, 0), describe(&unpacking, .r16g16b16a16_sfloat).optimal_tiling_features & src);
     try testing.expectEqual(src, describe(&keeping, .r16g16b16a16_sfloat).optimal_tiling_features & src);
+    // And only one that keeps the floats writes them through (since 1.220).
+    for ([5]facet.Format{ .r16g16b16a16_sfloat, .r32g32b32a32_sfloat, .b10g11r11_ufloat_pack32, .e5b9g9r9_ufloat_pack32, .r32_sfloat }) |format| {
+        try testing.expectEqual(@as(u32, 0), describe(&unpacking, format).optimal_tiling_features & facet.FORMAT_FEATURE_STORAGE_IMAGE);
+        try testing.expectEqual(facet.FORMAT_FEATURE_STORAGE_IMAGE, describe(&keeping, format).optimal_tiling_features & facet.FORMAT_FEATURE_STORAGE_IMAGE);
+    }
 
     // A texture's own channels and its whole numbers are not an image at all
     // on a device that keeps neither, which is the CreateImage there.

@@ -7257,4 +7257,36 @@ pub const LIBRARY_VERSION = 1;
 /// "stored"'s texels from a fragment program, then samples them. Read
 /// from the code and the host's tests: not yet on a board, the CM5 being
 /// off.
-pub const LIBRARY_REVISION = 219;
+/// 220: **A float format is a storage format only where its floats are
+/// kept, and item 57 on the CM5.** R16G16B16A16_SFLOAT,
+/// R32G32B32A32_SFLOAT, B10G11R11_UFLOAT_PACK32, E5B9G9R9_UFLOAT_PACK32
+/// and R32_SFLOAT say STORAGE_IMAGE where the device keeps floats
+/// (`Capabilities.kept_floats`; `_format.describe`'s `float_storage`). The
+/// V3D keeps none and unpacks a float texture into 8 bits a channel, so
+/// from 1.217, when it took storage images, a storage image of floats
+/// there held 1.5 as 1, which FacetProbe found on the board. v3dv keeps
+/// each in its own format (v3dvx_formats.c:136, :142, :181, :201) and
+/// writes it through (v3dv_formats.c:188-202); keeping them is the V3D's
+/// gap now, of the 16 storage formats item 37 counts. CreateImage and the
+/// query still make such an image with SAMPLED beside STORAGE, unpacked, as
+/// they make a compressed one: item 94.
+///
+/// On the CM5, with exec 1.46, steps 1 to 3 of item 57 ran for the first
+/// time. FacetBoth 1.79's "stored by a function", "shipped stored" and
+/// "shipped drawn stored" are each 0 of 230400 pixels apart, and "shipped
+/// input attachment" (1.216) is 11 apart, the edge every case of that
+/// geometry has. Of its 316 cases three are over one in a thousand, each
+/// as it was recorded: textureLod at the nearest level (270), the bias
+/// (3660, at most 5 a channel) and textureGrad at the nearest (429).
+/// FacetBoth 1.75 to 1.78 had run nowhere: a side's table of 40 memory
+/// blocks filled at `upInput`, which said "not enough memory"; 1.79 has 64
+/// and says so when they are full. FacetProbe 1.49 is 923 of 923: three of
+/// 1.48's checks ran on the V3D for the first time and expected the
+/// cores' answers - every float format a storage one, a subpass that
+/// reads what it draws made (refused there since 1.216, item 56), and an
+/// input attachment in rows made (the V3D keeps one in its texture
+/// layout, as v3dv_formats.c:512-516 has it).
+///
+/// One host test grew: a device that unpacks floats says no
+/// STORAGE_IMAGE of the five, and one that keeps them says it of each.
+pub const LIBRARY_REVISION = 220;
