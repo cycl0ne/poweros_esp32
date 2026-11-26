@@ -805,7 +805,8 @@ the watchdog armed. `RTGCTRL_AMD_CONTROLLER` fills an `RtgAmdController`
 with the display controller's registers - the engine's own processor:
 whether it runs its firmware, its boot options, its rings, the windows it
 reaches memory through, its faults - and only reads (`C:test/Gpu DMCUB`).
-`RTGCTRL_AMD_START_CONTROLLER` starts it with its firmware from
+The board starts it as it is made, and `RTGCTRL_AMD_START_CONTROLLER`
+starts it again with its firmware from
 `DEVS:firmware/amdgpu/` (`dcn_3_1_4_dmcub.bin`, loaded by the device's
 security processor): the running controller stopped and held in reset,
 the memory it runs with given - a copy of the video BIOS, its command
@@ -843,8 +844,8 @@ board's pipe down and brings it up again in the mode it is in
 (`RtgAmdPipe`): an HDMI monitor muted, the timing generator stopped, the
 link's front end let go, then the PHY switched off and its PLL powered
 down by the video BIOS's command tables - the transmitter's and the
-pixel clock's, which on this engine the display controller runs, so
-`DMCUB START` comes first - and all of it the other way, the front end's
+pixel clock's, which on this engine the display controller runs - and
+all of it the other way, the front end's
 stream set up by the encoder's table. Nothing new is chosen: the
 timing generator keeps its timing, the pixel clock is the mode's, and
 the stream's kind, deep colour and packets are put back as they were
@@ -1680,13 +1681,19 @@ senses a monitor and its EDID - on HDMI and DVI over the DDC line by
 the display engine's I2C engine, on DisplayPort by I2C over the line's
 AUX channel, 16 bytes at a time - so `C:Rtg` and
 `GetBoardMonitor` name the monitor; a monitor plugged in or pulled out
-raises the line's interrupt, which has the library look again. Until
-the display controller runs (`C:test/Gpu DMCUB START`) the board makes
-one timing, the firmware's: of the timings the monitor names,
-`check_mode` takes the one with the picture, line and frame the pipe
-scans, and the board stays in it.
+raises the line's interrupt, which has the library look again.
 
-Once the controller runs, `check_mode` takes every progressive timing
+The board starts the display controller as it is made, before the
+library first looks at the monitor: its firmware
+(`DEVS:firmware/amdgpu/dcn_3_1_4_dmcub.bin`, `scripts/fetch-amdgpu.sh`)
+loaded by the device's security processor. Where it does not start -
+the board made in a task, which reads no files, the firmware's files
+missing, a controller that does not come up - the log says why and the
+board makes one timing, the firmware's: of the timings the monitor
+names, `check_mode` takes the one with the picture, line and frame the
+pipe scans, and the board stays in it.
+
+While the controller runs, `check_mode` takes every progressive timing
 the monitor names whose picture fits the frames the board reads from,
 up to 340 MHz on HDMI and 165 MHz on DVI, and a show in another mode
 sets the pipe to it. The display's clocks are held at the top of their
@@ -1705,7 +1712,10 @@ in the hub's 24 MHz reference. The hub's watermarks stay as the firmware
 set them, the fetcher's time to urgency switched off as it left it. A
 mode set is said on the log, with how long the pipe was down; the
 frames keep their size and rows, so a mode larger than the firmware's
-is not offered.
+is not offered. The firmware's picture stays until the board is first
+shown in another mode: the mode its settings' line names
+(`Rtg amd.0 SET MODE=1920x1080@60 SAVE`), else the one the monitor
+prefers.
 
 **Video layers.** On the VisionFive 2 the layer is the DC8200's first
 overlay: NV12 and I420, BT.601 and BT.709, video's range and the whole

@@ -58,9 +58,13 @@
 //! the display's own mailbox, and read from the engine (`smu.zig`) - on
 //! request only, through the board's controls (RTGCTRL_AMD_*).
 //!
-//! The display controller - the engine's own processor - is read, and
-//! started with its firmware, the same way and only on request
-//! (`dmub.zig`): the memory it runs with stays the board's once given.
+//! The display controller - the engine's own processor - is started with
+//! its firmware as the board is made, before the library first looks at
+//! the monitor (`dmub.zig`), and read, or started again, through the
+//! board's controls: the memory it runs with stays the board's once
+//! given. Where it does not start - in a task, which reads no files,
+//! without the firmware's files, or with a controller that does not come
+//! up - the board stays in the pipe the firmware lit, its one mode.
 //! The picture's checksum, as the timing generator sums it, is a test
 //! tool asked for the same way (`crc.zig`). The engine's hot-plug lines
 //! (`hpd.zig`) are listened to from the board's start, the controller's
@@ -108,7 +112,7 @@ const mode = @import("mode.zig");
 const MODULE_NAME = "rtg-amd";
 const DRIVER_NAME = "amd";
 const VERSION = 1;
-const REVISION = 11;
+const REVISION = 12;
 const BUILD_DATE = "26.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -511,6 +515,9 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, device_tags: ?[*]const
     // Its hot-plug lines listened to from the start, so a monitor that
     // comes or goes has the library look at the connector again.
     listen(screen);
+    // The display controller started before the library first looks at
+    // the monitor, so the board offers every mode it can set.
+    startController(screen);
     // The board's buffers start, and their rows are rounded, as its tags
     // say; whole cache lines where they say nothing.
     const asked_alignment: u32 = @truncate(rb.GetRtgTagData(tags.RTGA_Alignment, 0, tag_list));
@@ -548,6 +555,25 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, device_tags: ?[*]const
     board.info.buffers = screen.buffers;
     device.driver_data = screen;
     return err.RTGERR_OK;
+}
+
+/// The display controller started with its firmware as the board is
+/// made, so the board can set modes (`dmub.start`). Where it cannot be -
+/// in a task, which reads no files, without the firmware's files, or with
+/// a controller that does not come up - the board stays in the pipe the
+/// firmware lit, and the log says why.
+fn startController(screen: *Screen) void {
+    const sys = screen.sys;
+    if (sys.FindTask(null).?.node.type != .process) {
+        exec.kprintf(sys, "%s: the board is made in a task, which reads no files: the display controller is not started, and the display stays in the firmware's mode\n", .{MODULE_NAME});
+        return;
+    }
+    sys.ObtainSemaphore(&screen.controller_lock);
+    defer sys.ReleaseSemaphore(&screen.controller_lock);
+    var started: rtg.tags.RtgAmdController = .{};
+    const result = dmub.start(screen.dcn, &screen.controller, &started);
+    if (result == err.RTGERR_OK) return;
+    exec.kprintf(sys, "%s: the display controller did not start (%ld, at stage %d): the display stays in the firmware's mode\n", .{ MODULE_NAME, @as(i64, result), started.stage });
 }
 
 /// The board's connector on the boot's lines.

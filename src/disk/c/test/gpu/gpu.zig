@@ -33,8 +33,9 @@
 //! processor - as its registers read (RTGCTRL_AMD_CONTROLLER): whether
 //! it is enabled, in reset, running its firmware (its clock read twice),
 //! its boot status and options, its rings, the windows it reaches memory
-//! through, its last faults. Read only, no watchdog wanted. With START
-//! the board starts it (RTGCTRL_AMD_START_CONTROLLER): the firmware
+//! through, its last faults. Read only, no watchdog wanted. The board
+//! starts it as it is made; with START the board starts it again
+//! (RTGCTRL_AMD_START_CONTROLLER): the firmware
 //! dcn_<version>_dmcub.bin loaded by the security processor, the memory
 //! it runs with set up, the controller let out of reset and asked what
 //! it can do; printed are how far that got, the controller as it then
@@ -60,8 +61,8 @@
 //! AUX reads LENGTH bytes (16 unless given, at most 16) at ADDRESS (0
 //! unless given) through the socket's AUX channel AUX - its DDC line's
 //! number - by the channel's own AUX engine (RTGCTRL_AMD_AUX), or with
-//! CONTROLLER by the display controller, which DMCUB START must have
-//! started: the sink's own registers, or with I2C its I2C bus. Printed
+//! CONTROLLER by the display controller, which must run: the sink's own
+//! registers, or with I2C its I2C bus. Printed
 //! are the result, the sink's reply, the bytes and the channel's
 //! registers before and after. The watchdog is armed for it.
 //!
@@ -78,8 +79,7 @@
 //! again in the mode it is in (RTGCTRL_AMD_PIPE): the timing generator
 //! stopped, the link's front end let go, the PHY switched off and its PLL
 //! powered down by the video BIOS's command tables, which the display
-//! controller runs - DMCUB START must have started it - then all of it
-//! the other way. Printed are what was taken (the pipe, the link's ends,
+//! controller runs, then all of it the other way. Printed are what was taken (the pipe, the link's ends,
 //! the PHY, the link's kind, its deep colour and its clocks), how far it
 //! got and how long the pipe was down, the pipe's registers before, while
 //! down and after, and the picture's checksum before and after, which
@@ -91,8 +91,8 @@
 //! MODES puts the display's board in each mode it offers, in turn, and
 //! back in the one it was in. First the board's settings line is applied
 //! as it stands (SetBoardSettings), which has the board's modes made
-//! again of what the monitor names - all it can make once DMCUB START has
-//! started the display controller, the one it scans before. Each mode is
+//! again of what the monitor names - all it can make while the display
+//! controller runs, the one it scans where it does not. Each mode is
 //! shown with a picture of its own size: eight bars of colour, a white
 //! frame round the edge. Printed for each are the mode, how its set went
 //! (RTGCTRL_AMD_MODE: the link, the pixel clock, how far it got, how long
@@ -164,7 +164,7 @@ const rtg = sdk.rtg;
 const RtgBase = sdk.interface.rtg.RtgBase;
 
 pub const COMMAND_NAME = "Gpu";
-const VERSION_STRING = "\x00$VER: Gpu 1.10 (26.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Gpu 1.11 (26.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,WATCHDOG/K/N";
@@ -571,7 +571,7 @@ fn events(sys: *ExecBase, dl: *DosBase, millis: u32, line: u32) i32 {
     }
     _ = Printf(dl, "The board's connector looked at %u times\n", .{found.connector_looks});
     if (found.controller_heard == 0) {
-        _ = Printf(dl, "The controller is not listened to: it does not run (DMCUB START)\n", .{});
+        _ = Printf(dl, "The controller is not listened to: it does not run (DMCUB START starts it)\n", .{});
     } else {
         _ = Printf(dl, "Controller: %u interrupts, %u notifications - %u AUX replies, %u hot plugs, %u others\n", .{
             found.controller_interrupts, found.notes, found.aux_replies, found.hot_plug_notes, found.other_notes,
@@ -595,7 +595,7 @@ fn auxRead(sys: *ExecBase, dl: *DosBase, millis: u32, request: *rtg.tags.RtgAmdA
     if (result != rtg.errors.RTGERR_OK) {
         _ = Printf(dl, "No reply: error %ld%s\n", .{
             @as(i64, result),
-            @as([*:0]const u8, if (result == rtg.errors.RTGERR_NOT_SUPPORTED) " - the controller does not run (DMCUB START)" else ""),
+            @as([*:0]const u8, if (result == rtg.errors.RTGERR_NOT_SUPPORTED) " - the controller does not run (DMCUB START starts it)" else ""),
         });
         return dos.RETURN_ERROR;
     }

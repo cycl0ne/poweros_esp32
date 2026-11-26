@@ -178,8 +178,9 @@ pub const RTGCTRL_AMD_CLOCKS: u32 = RTGCTRL_DRIVER + 33;
 /// runs the engine's command tables and its own firmware. Read only;
 /// RTGERR_OK.
 pub const RTGCTRL_AMD_CONTROLLER: u32 = RTGCTRL_DRIVER + 34;
-/// The display controller started with its firmware from
-/// DEVS:firmware/amdgpu/ (loaded by the device's security processor),
+/// The display controller started again with its firmware from
+/// DEVS:firmware/amdgpu/ (loaded by the device's security processor) -
+/// the board starts it as it is made -
 /// and asked one question that changes nothing; `value` an
 /// `*RtgAmdController`, filled in as the controller then stands and with
 /// how far the start got (`stage`). RTGERR_OK once it answered;

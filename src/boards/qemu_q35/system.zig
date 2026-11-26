@@ -30,13 +30,6 @@ const Tag = sdk.utility.FixedTagItem;
 /// The machine, as QEMU names it.
 const name = "QEMU q35";
 
-/// The picture the firmware lights on this machine, for whoever draws on
-/// it later. The handover carries the figures the firmware actually chose.
-const screen = struct {
-    pub const width: u32 = 1280;
-    pub const height: u32 = 800;
-};
-
 // **The USB buses are not here.** A controller of this machine's is an
 // xHCI function on PCI, which usb.library finds for itself: the sockets
 // of a PC are in groups with a controller each - some at the front,
@@ -93,8 +86,9 @@ pub const root = [_]Tag{
     // start the others.
     .value(st.SYSTAG_Cores, 0),
     .pointer(st.SYSTAG_BootStart, &boot_start),
-    .value(st.SYSTAG_ScreenWidth, screen.width),
-    .value(st.SYSTAG_ScreenHeight, screen.height),
+    // No screen size: a PC's display is a monitor that says what it
+    // takes, or the picture its firmware lit, whose figures the handover
+    // carries - the first screen is the board's default mode.
     .done,
 };
 
