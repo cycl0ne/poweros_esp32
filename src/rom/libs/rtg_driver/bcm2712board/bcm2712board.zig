@@ -79,7 +79,8 @@ const ExecBase = sdk.interface.exec.ExecBase;
 const RtgBase = sdk.interface.rtg.RtgBase;
 const RtgDriverBase = sdk.interface.rtgdriver.RtgDriverBase;
 const rtg = sdk.rtg;
-const TagItem = sdk.utility.TagItem;
+const utility = sdk.utility;
+const TagItem = utility.TagItem;
 const err = rtg.errors;
 const st = sdk.expansion.systemtags;
 const tags = rtg.tags;
@@ -92,8 +93,8 @@ const list = @import("list.zig");
 const MODULE_NAME = "rtg-bcm2712";
 const DRIVER_NAME = "bcm2712";
 const VERSION = 1;
-const REVISION = 7;
-const BUILD_DATE = "17.11.2026";
+const REVISION = 8;
+const BUILD_DATE = "26.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ VERSION, REVISION }) ++
@@ -457,7 +458,8 @@ fn power(board: *rtg.RtgBoard, state: u32) callconv(.c) i32 {
     return @intCast(if (asleep) rtg.boards.RTGPWR_ASLEEP else rtg.boards.RTGPWR_ON);
 }
 
-/// The monitor's brightness set over DDC/CI, `percent` of its largest:
+/// The monitor's brightness set over DDC/CI (rtg.library's
+/// GetMonitorControl and SetMonitorControl), `percent` of its largest:
 /// RTGERR_IO where it does not answer. The board's lock, which the
 /// library holds around this, keeps the port's other talk on the DDC
 /// away - a look at the connector, a start of the port - and the port's
@@ -465,11 +467,12 @@ fn power(board: *rtg.RtgBoard, state: u32) callconv(.c) i32 {
 /// second, and the pictures go on being flipped to meanwhile.
 fn setBrightness(board: *rtg.RtgBoard, percent: u32) callconv(.c) i32 {
     const screen = screenOf(board);
-    const waiter = Waiter{ .screen = screen };
-    const now = ddc.feature(&screen.port, ddc.VCP_BRIGHTNESS, waiter) orelse return err.RTGERR_IO;
-    const value: u16 = @intCast((percent * now.most + 50) / 100);
-    if (!ddc.setFeature(&screen.port, ddc.VCP_BRIGHTNESS, value, waiter)) return err.RTGERR_IO;
-    return err.RTGERR_OK;
+    var hook: utility.Hook = .{ .entry = &ddcTransfer, .data = screen };
+    var value: u32 = 0;
+    var most: u32 = 0;
+    const asked = drivers(screen).GetMonitorControl(rtg.modes.RTGVCP_BRIGHTNESS, &hook, &value, &most);
+    if (asked != err.RTGERR_OK) return asked;
+    return drivers(screen).SetMonitorControl(rtg.modes.RTGVCP_BRIGHTNESS, (percent * most + 50) / 100, &hook);
 }
 
 /// The monitor's brightness as it answers over DDC/CI, in per cent of
@@ -478,10 +481,23 @@ fn setBrightness(board: *rtg.RtgBoard, percent: u32) callconv(.c) i32 {
 /// without the port's, as `setBrightness`.
 fn brightness(board: *rtg.RtgBoard) callconv(.c) i32 {
     const screen = screenOf(board);
-    const now = ddc.feature(&screen.port, ddc.VCP_BRIGHTNESS, Waiter{ .screen = screen }) orelse return err.RTGERR_IO;
-    const most: u32 = now.most;
-    const value: u32 = @min(now.value, now.most);
-    return @intCast((value * 100 + most / 2) / most);
+    var hook: utility.Hook = .{ .entry = &ddcTransfer, .data = screen };
+    var value: u32 = 0;
+    var most: u32 = 0;
+    const asked = drivers(screen).GetMonitorControl(rtg.modes.RTGVCP_BRIGHTNESS, &hook, &value, &most);
+    if (asked != err.RTGERR_OK) return asked;
+    return @intCast((@min(value, most) * 100 + most / 2) / most);
+}
+
+/// The hook rtg.library's DDC/CI calls hand their transfers to: each on
+/// the port's DDC (`ddc.transfer`), RTGERR_IO where the monitor did not
+/// answer.
+fn ddcTransfer(hook: *utility.Hook, _: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
+    const screen: *Screen = @ptrCast(@alignCast(hook.data.?));
+    const move: *const rtg.RtgDdcTransfer = @ptrCast(@alignCast(message.?));
+    const bytes = (move.bytes orelse return @bitCast(@as(isize, err.RTGERR_BAD_ARG)))[0..move.count];
+    const done = ddc.transfer(&screen.port, @intCast(move.address & 0x7F), move.read != 0, bytes, Waiter{ .screen = screen });
+    return @bitCast(@as(isize, if (done) err.RTGERR_OK else err.RTGERR_IO));
 }
 
 // --- the board -------------------------------------------------------------------

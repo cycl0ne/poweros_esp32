@@ -186,6 +186,9 @@ test {
     _ = @import("monitor/findstandardtimings.zig");
     _ = @import("monitor/getboardmonitor.zig");
     _ = @import("monitor/hdmiaudioclock.zig");
+    _ = @import("monitor/getmonitorcontrol.zig");
+    _ = @import("monitor/setmonitorcontrol.zig");
+    _ = @import("monitor/_ddcci.zig");
     _ = @import("monitor/monitorchanged.zig");
     _ = @import("monitor/readboardedid.zig");
     _ = @import("pointer/moveboardoverlay.zig");

@@ -48,6 +48,13 @@
 //! WaitVBlank wait for it; where the ring cannot be had, the library
 //! waits as long as a frame takes.
 //!
+//! The monitor's brightness is its own, asked for and set over its DDC
+//! with DDC/CI - its control 0x10, in per cent of its largest - by
+//! rtg.library's GetMonitorControl and SetMonitorControl, each transfer
+//! a transaction of the I2C engine's on the connector's DDC line. A
+//! monitor without DDC/CI, or with it switched off in its menu, answers
+//! nothing; a DisplayPort connector has none of it yet.
+//!
 //! Asleep (`power`), the monitor is sent nothing, which it sleeps at:
 //! the pipe goes down in its mode - an HDMI monitor muted, the timing
 //! generator stopped, the link let go of, the PHY off and its PLL
@@ -105,7 +112,8 @@ const ExecBase = sdk.interface.exec.ExecBase;
 const RtgBase = sdk.interface.rtg.RtgBase;
 const RtgDriverBase = sdk.interface.rtgdriver.RtgDriverBase;
 const rtg = sdk.rtg;
-const TagItem = sdk.utility.TagItem;
+const utility = sdk.utility;
+const TagItem = utility.TagItem;
 const err = rtg.errors;
 const st = sdk.expansion.systemtags;
 const tags = rtg.tags;
@@ -119,13 +127,14 @@ const crc = @import("crc.zig");
 const hpd = @import("hpd.zig");
 const aux = @import("aux.zig");
 const monitor = @import("monitor.zig");
+const i2c = @import("i2c.zig");
 const pipe = @import("pipe.zig");
 const mode = @import("mode.zig");
 
 const MODULE_NAME = "rtg-amd";
 const DRIVER_NAME = "amd";
 const VERSION = 1;
-const REVISION = 14;
+const REVISION = 15;
 const BUILD_DATE = "26.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -206,8 +215,11 @@ const Screen = struct {
     /// time at the I2C engine.
     connector: monitor.Connector = .{},
     ddc_lock: exec.SignalSemaphore = .{},
-    /// How many times the library has looked at it.
+    /// How many times the library has looked at it, and whether the
+    /// monitor answered its brightness when last asked - null before it
+    /// was.
     looks: u32 = 0,
+    ddcci_heard: ?bool = null,
     /// The lock a flip and the pipe taken down and up take, one at a time.
     pipe_lock: exec.SignalSemaphore = .{},
     /// What the last mode set did.
@@ -520,6 +532,8 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, device_tags: ?[*]const
         .instance_size = @sizeOf(Screen),
         // The display runs as the firmware lit it: its mode is kept.
         .flags = rtg.boards.RTGBF_ADOPTED,
+        // The monitor on its connector takes a brightness in per cent.
+        .brightness_steps = 101,
         .format = format,
     }) orelse return err.RTGERR_NO_MEMORY;
     const screen = screenOf(board);
@@ -799,6 +813,71 @@ fn powerOp(board: *rtg.RtgBoard, state: u32) callconv(.c) i32 {
     return @intCast(if (asleep) rtg.boards.RTGPWR_ASLEEP else rtg.boards.RTGPWR_ON);
 }
 
+/// The monitor's brightness set over DDC/CI (rtg.library's
+/// GetMonitorControl and SetMonitorControl), `percent` of its largest:
+/// RTGERR_IO where it does not answer, RTGERR_NOT_SUPPORTED on a
+/// connector whose DDC the I2C engine does not reach. The DDC's lock
+/// keeps a look at the connector off the bus meanwhile; the pipe's is
+/// not taken, so the pictures go on being flipped to for the tenth of a
+/// second the question and its answer take.
+fn setBrightnessOp(board: *rtg.RtgBoard, percent: u32) callconv(.c) i32 {
+    const screen = screenOf(board);
+    if (!monitor.readsOverI2c(screen.connector)) return err.RTGERR_NOT_SUPPORTED;
+    screen.sys.ObtainSemaphore(&screen.ddc_lock);
+    defer screen.sys.ReleaseSemaphore(&screen.ddc_lock);
+    var hook: utility.Hook = .{ .entry = &ddcTransfer, .data = screen };
+    var value: u32 = 0;
+    var most: u32 = 0;
+    const asked = drivers(screen).GetMonitorControl(rtg.modes.RTGVCP_BRIGHTNESS, &hook, &value, &most);
+    heard(screen, asked, value, most);
+    if (asked != err.RTGERR_OK) return asked;
+    return drivers(screen).SetMonitorControl(rtg.modes.RTGVCP_BRIGHTNESS, (percent * most + 50) / 100, &hook);
+}
+
+/// The monitor's brightness as it answers over DDC/CI, in per cent of
+/// its largest - set with its own buttons, or by `setBrightnessOp`:
+/// RTGERR_IO where it does not answer. Under the DDC's lock, as
+/// `setBrightnessOp`.
+fn brightnessOp(board: *rtg.RtgBoard) callconv(.c) i32 {
+    const screen = screenOf(board);
+    if (!monitor.readsOverI2c(screen.connector)) return err.RTGERR_NOT_SUPPORTED;
+    screen.sys.ObtainSemaphore(&screen.ddc_lock);
+    defer screen.sys.ReleaseSemaphore(&screen.ddc_lock);
+    var hook: utility.Hook = .{ .entry = &ddcTransfer, .data = screen };
+    var value: u32 = 0;
+    var most: u32 = 0;
+    const asked = drivers(screen).GetMonitorControl(rtg.modes.RTGVCP_BRIGHTNESS, &hook, &value, &most);
+    heard(screen, asked, value, most);
+    if (asked != err.RTGERR_OK) return asked;
+    return @intCast((@min(value, most) * 100 + most / 2) / most);
+}
+
+/// Whether the monitor answered its brightness over DDC/CI said on the
+/// log the first time it is asked, and again each time that changes.
+fn heard(screen: *Screen, asked: i32, value: u32, most: u32) void {
+    const answers = asked == err.RTGERR_OK;
+    if (screen.ddcci_heard != null and screen.ddcci_heard.? == answers) return;
+    screen.ddcci_heard = answers;
+    if (answers) {
+        exec.kprintf(screen.sys, "%s: the monitor answers DDC/CI, its brightness at %d of %d\n", .{ MODULE_NAME, value, most });
+    } else {
+        exec.kprintf(screen.sys, "%s: the monitor does not answer DDC/CI: %s\n", .{ MODULE_NAME, screen.rtg_base.RtgErrorText(asked) });
+    }
+}
+
+/// The hook rtg.library's DDC/CI calls hand their transfers to: each a
+/// transaction of its own on the connector's DDC line, by the I2C engine
+/// (`i2c.transfer`); RTGERR_IO where the monitor did not answer, or the
+/// engine could not be had.
+fn ddcTransfer(hook: *utility.Hook, _: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
+    const screen: *Screen = @ptrCast(@alignCast(hook.data.?));
+    const move: *const rtg.RtgDdcTransfer = @ptrCast(@alignCast(message.?));
+    const bytes = (move.bytes orelse return @bitCast(@as(isize, err.RTGERR_BAD_ARG)))[0..move.count];
+    const messages = [_]i2c.Message{.{ .address = @intCast(move.address & 0x7F), .read = move.read != 0, .bytes = bytes }};
+    const result = i2c.transfer(screen.dcn, screen.connector.ddc_line, &messages);
+    return @bitCast(@as(isize, if (result == .ok) err.RTGERR_OK else err.RTGERR_IO));
+}
+
 /// The link put to sleep, the controller's and the pipe's locks held, in
 /// the mode the pipe scans at `pixel_hz`: its sound off first. A step
 /// that fails has the pipe brought up again.
@@ -1059,6 +1138,8 @@ const ops = rtg.boards.RtgBoardOps{
     .detect = &detectOp,
     .check_mode = &checkModeOp,
     .power = &powerOp,
+    .set_brightness = &setBrightnessOp,
+    .brightness = &brightnessOp,
 };
 
 const driver_ops = rtg.RtgDriverOps{ .attach = &attach, .detach = &detach };

@@ -20,6 +20,7 @@ Generated from the source by `./zig build autodoc`.
 - [DeleteBoard](#deleteboard) - Gives a board back: stops it and frees everything it held.
 - [FindStandardTimings](#findstandardtimings) - Looks up the timings a standard gives a picture of a size at a refresh.
 - [FrameDone](#framedone) - Says that a frame of a board's display ended.
+- [GetMonitorControl](#getmonitorcontrol) - Asks a monitor for one of its own controls over its DDC.
 - [GetRtgTagData](#getrtgtagdata) - Returns a tag's data from a list, or a default.
 - [HdmiAudioClock](#hdmiaudioclock) - Works out N and CTS for a link's sound: the two numbers a monitor rebuilds the sample clock from.
 - [MonitorChanged](#monitorchanged) - Has a board's connector looked at again.
@@ -30,6 +31,7 @@ Generated from the source by `./zig build autodoc`.
 - [RtgDelay](#rtgdelay) - Waits `micros` microseconds.
 - [RunPanelSequence](#runpanelsequence) - Sends a panel's bring-up, step by step, each with its wait.
 - [RxParam](#rxparam) - Sends a command and reads bytes back from the part on a bus.
+- [SetMonitorControl](#setmonitorcontrol) - Sets one of a monitor's own controls over its DDC.
 - [TxColor](#txcolor) - Sends a command and a run of pixels to the part on a bus.
 - [TxParam](#txparam) - Sends a command and its parameters to the part on a bus.
 
@@ -749,6 +751,92 @@ None known.
 panel.rtg_base.FrameDone(panel.board);
 ```
 
+## GetMonitorControl
+
+Asks a monitor for one of its own controls over its DDC.
+
+**SYNOPSIS**
+
+```zig
+fn GetMonitorControl(rb: *RtgBase, code: u32, transfer: *utility.Hook, value: *u32, most: *u32) i32
+```
+
+**SINCE**
+
+1.44. LVO -336.
+
+**INPUTS**
+
+- `code` - the control, by MCCS's code: `RTGVCP_BRIGHTNESS`,
+  `RTGVCP_CONTRAST` or another below 256.
+- `transfer` - the driver's hook, called with null as its object and
+  an `RtgDdcTransfer` as its message for each transfer on the bus: the
+  question written, then the answer read. It answers `RTGERR_OK` once
+  the bytes went or came, `RTGERR_IO` where the monitor did not
+  answer.
+- `value` - where the control's value goes.
+- `most` - where its largest value goes.
+
+**RESULT**
+
+`RTGERR_OK`, and both written. `RTGERR_NOT_SUPPORTED` for a control
+the monitor says it has not got, or one whose largest value it says
+is 0. `RTGERR_IO` where its answer is not one DDC/CI answers with -
+a monitor that is not ready, a checksum that does not add up, an
+answer about another control. `RTGERR_BAD_ARG` for a code past 255.
+Otherwise what the hook answered. Neither is written but on
+`RTGERR_OK`.
+
+**BEHAVIOR**
+
+The question is five bytes written to the monitor at 0x37: the host's
+address, the length, the opcode, the control and the checksum. The
+monitor is given 40 ms to answer (`RtgDelay`), and its eleven bytes
+are read: the length, the reply's opcode, whether it has the
+control, the control, its kind, its largest value and its value, each
+high byte first, and the checksum.
+
+**CONTEXT**
+
+- Waits: yes, the 40 ms, and as long as the hook does.
+- Interrupts: no.
+- Locks: no spinlock may be held; the driver keeps other talk on the
+  bus away, its own lock held around the call.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The transfers live on this call's stack, for the hook's call alone.
+
+**NOTES**
+
+A monitor that does not take DDC/CI at all - or has it switched off
+in its own menu - answers nothing, and the hook says `RTGERR_IO`.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`SetMonitorControl`, `RtgDelay`
+
+**EXAMPLES**
+
+```zig
+fn transfer(hook: *utility.Hook, _: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
+    const port: *Port = @ptrCast(@alignCast(hook.data.?));
+    const move: *const rtg.RtgDdcTransfer = @ptrCast(@alignCast(message.?));
+    const done = port.i2c(move.address, move.read != 0, move.bytes.?[0..move.count]);
+    return @bitCast(@as(isize, if (done) rtg.errors.RTGERR_OK else rtg.errors.RTGERR_IO));
+}
+
+var hook: utility.Hook = .{ .entry = &transfer, .data = port };
+var value: u32 = 0;
+var most: u32 = 0;
+const code = rb.GetMonitorControl(rtg.modes.RTGVCP_BRIGHTNESS, &hook, &value, &most);
+```
+
 ## GetRtgTagData
 
 Returns a tag's data from a list, or a default.
@@ -1382,6 +1470,80 @@ None known.
 ```zig
 var id: [3]u8 = undefined;
 _ = rb.RxParam(io, 0x04, &id, id.len);
+```
+
+## SetMonitorControl
+
+Sets one of a monitor's own controls over its DDC.
+
+**SYNOPSIS**
+
+```zig
+fn SetMonitorControl(rb: *RtgBase, code: u32, value: u32, transfer: *utility.Hook) i32
+```
+
+**SINCE**
+
+1.44. LVO -340.
+
+**INPUTS**
+
+- `code` - the control, by MCCS's code: `RTGVCP_BRIGHTNESS`,
+  `RTGVCP_CONTRAST` or another below 256.
+- `value` - what it is set to, at most the largest
+  `GetMonitorControl` answers for it.
+- `transfer` - the driver's hook, called with null as its object and
+  an `RtgDdcTransfer` as its message, the setting written. It answers
+  `RTGERR_OK` once the bytes went, `RTGERR_IO` where the monitor did
+  not answer.
+
+**RESULT**
+
+`RTGERR_OK` once the monitor took the message; `RTGERR_BAD_ARG` for a
+code past 255 or a value past 65535, and nothing is sent; otherwise
+what the hook answered.
+
+**BEHAVIOR**
+
+The setting is seven bytes written to the monitor at 0x37: the host's
+address, the length, the opcode, the control, the value high byte
+first, and the checksum. The monitor does not answer it; the 50 ms
+it wants before it is spoken to again are waited out (`RtgDelay`),
+whatever the hook answered, so the next question finds it ready.
+
+**CONTEXT**
+
+- Waits: yes, the 50 ms, and as long as the hook does.
+- Interrupts: no.
+- Locks: no spinlock may be held; the driver keeps other talk on the
+  bus away, its own lock held around the call.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The transfer lives on this call's stack, for the hook's call alone.
+
+**NOTES**
+
+A value past the control's largest is the monitor's to take or leave;
+a driver works out its values from the largest it was answered.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`GetMonitorControl`, `RtgDelay`
+
+**EXAMPLES**
+
+```zig
+var value: u32 = 0;
+var most: u32 = 0;
+if (rb.GetMonitorControl(rtg.modes.RTGVCP_BRIGHTNESS, &hook, &value, &most) == rtg.errors.RTGERR_OK) {
+    _ = rb.SetMonitorControl(rtg.modes.RTGVCP_BRIGHTNESS, (percent * most + 50) / 100, &hook);
+}
 ```
 
 ## TxColor

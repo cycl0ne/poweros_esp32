@@ -1292,7 +1292,15 @@ range said (`RTGAVI_RANGE_LIMITED`, `RTGAVI_RANGE_FULL`) and the number
 left out (`RTGAVI_NO_VIC`) - as `RTG_AVI_BYTES` bytes the driver puts
 where its link takes them; and `HdmiAudioClock(pixel_clock_hz,
 sample_rate, &n, &cts)` answers the two numbers a monitor rebuilds the
-sample clock from. A board whose `show` sends the colour range its info
+sample clock from. A monitor's own controls - its brightness above all
+(`RTGVCP_BRIGHTNESS`), by MCCS's codes - are asked for and set over its
+DDC with DDC/CI: `GetMonitorControl(code, &hook, &value, &most)` and
+`SetMonitorControl(code, value, &hook)` write the messages, wait the
+40 ms the monitor takes to answer and the 50 ms it wants after a
+setting, and check its answer; the driver's hook moves the bytes, each
+`RtgDdcTransfer` a transaction of its own to the monitor at 0x37 on
+the bus, so a driver's `set_brightness` and `brightness` are the two
+calls and a hook on its I2C master. A board whose `show` sends the colour range its info
 asks for (`RtgBoardInfo.color_range`) says `RTGBC_COLOR_RANGE` in its
 description, and is shown again when the range changes.
 
@@ -1732,6 +1740,13 @@ blanking has no room for, its speakers, maker, product and name - which
 the audio driver reads from the codec when a stream starts. A monitor
 that plays no sound, and a link driven as DVI, carry none: the endpoint
 says nothing is there, and the machine plays elsewhere.
+
+The monitor's brightness (`RTGBC_BRIGHTNESS`, `C:Backlight`) is its
+own, asked for and set over DDC/CI on an HDMI or DVI connector by the
+display engine's I2C engine, in per cent of its largest; the log says
+the first time whether the monitor answers, and again when that
+changes. A monitor without DDC/CI, or with it switched off in its menu,
+answers nothing, and the library keeps what was last heard or set.
 
 Asleep (`RTGBC_POWER`, the Blanker's sleep), the monitor is sent
 nothing, which it sleeps at: the pipe goes down in its mode as

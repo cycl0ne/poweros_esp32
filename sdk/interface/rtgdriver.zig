@@ -39,6 +39,8 @@ pub const LVO = struct {
     pub const HdmiAudioClock = libraries.lvo(80);
     pub const RunPanelSequence = libraries.lvo(81);
     pub const RtgDelay = libraries.lvo(82);
+    pub const GetMonitorControl = libraries.lvo(83);
+    pub const SetMonitorControl = libraries.lvo(84);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -66,6 +68,8 @@ pub const Fn = struct {
     pub const HdmiAudioClock = *const fn (*RtgDriverBase, u32, u32, *u32, *u32) callconv(.c) bool;
     pub const RunPanelSequence = *const fn (*RtgDriverBase, [*]const u8, u32, *utility.Hook) callconv(.c) i32;
     pub const RtgDelay = *const fn (*RtgDriverBase, u32) callconv(.c) void;
+    pub const GetMonitorControl = *const fn (*RtgDriverBase, u32, *utility.Hook, *u32, *u32) callconv(.c) i32;
+    pub const SetMonitorControl = *const fn (*RtgDriverBase, u32, u32, *utility.Hook) callconv(.c) i32;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -241,5 +245,25 @@ pub const RtgDriverBase = opaque {
     /// interrupts.
     pub fn RtgDelay(self: *RtgDriverBase, micros: u32) void {
         return libraries.call(self, LVO.RtgDelay, Fn.RtgDelay, .{micros});
+    }
+
+    /// A monitor's own control (VESA's DDC/CI: RTGVCP_BRIGHTNESS and the
+    /// other codes of MCCS) asked for over its DDC, each transfer handed to
+    /// `transfer`, the driver's hook, with an RtgDdcTransfer as its message:
+    /// its value and its largest into `value` and `most`. RTGERR_OK;
+    /// RTGERR_NOT_SUPPORTED for a control the monitor has not got;
+    /// RTGERR_IO where it did not answer, or not as DDC/CI answers; else the
+    /// hook's answer. Takes some 50 ms. Not from interrupts.
+    pub fn GetMonitorControl(self: *RtgDriverBase, code: u32, transfer: *utility.Hook, value: *u32, most: *u32) i32 {
+        return libraries.call(self, LVO.GetMonitorControl, Fn.GetMonitorControl, .{ code, transfer, value, most });
+    }
+
+    /// A monitor's own control set to `value` over its DDC, the transfer
+    /// handed to `transfer` as GetMonitorControl hands it, and the 50 ms the
+    /// monitor wants before it is spoken to again waited out. RTGERR_OK
+    /// once the monitor took the message, else the hook's answer. Not from
+    /// interrupts.
+    pub fn SetMonitorControl(self: *RtgDriverBase, code: u32, value: u32, transfer: *utility.Hook) i32 {
+        return libraries.call(self, LVO.SetMonitorControl, Fn.SetMonitorControl, .{ code, value, transfer });
     }
 };

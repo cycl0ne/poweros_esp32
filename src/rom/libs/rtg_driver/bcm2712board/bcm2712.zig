@@ -69,7 +69,8 @@
 //! go on sending the picture.)
 //!
 //! **The monitor's brightness** is its own, asked over the DDC with VESA's
-//! DDC/CI (`ddc.feature`, `ddc.setFeature`): its MCCS control 0x10, which a
+//! DDC/CI (rtg.library's GetMonitorControl and SetMonitorControl, each
+//! transfer on the DDC by `ddc.transfer`): its MCCS control 0x10, which a
 //! monitor that takes DDC/CI at all has. One that does not answers
 //! nothing.
 //!

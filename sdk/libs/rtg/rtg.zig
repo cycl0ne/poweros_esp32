@@ -82,6 +82,7 @@ pub const RtgMode = modes.RtgMode;
 pub const RtgTimings = modes.RtgTimings;
 pub const RtgDetect = modes.RtgDetect;
 pub const RtgMonitorInfo = modes.RtgMonitorInfo;
+pub const RtgDdcTransfer = modes.RtgDdcTransfer;
 pub const RtgNotify = boards.RtgNotify;
 pub const RTG_ANY = modes.RTG_ANY;
 pub const RtgRegion = boards.RtgRegion;

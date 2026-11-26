@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 //! The DDC of the BCM2712's first HDMI port: the I2C master the monitor
-//! is asked over - its EDID, and with DDC/CI what it keeps itself, its
-//! brightness - and told over, where it takes HDMI 2.0's scrambling.
+//! is asked over - its EDID, and any transfer rtg.library's DDC/CI calls
+//! hand the driver (`transfer`) - and told over, where it takes HDMI
+//! 2.0's scrambling.
 //!
 //! The master is a block of its own beside the HDMI controller's
 //! (`bcm2712.zig`), which holds the port's other registers and brings
@@ -47,32 +48,6 @@ const COND_RESTART: u32 = 1 << 6;
 const bsc_chunk = 32;
 
 const EDID_ADDRESS: u32 = 0x50;
-
-/// The monitor's own controls over the DDC (VESA's DDC/CI): its address,
-/// the host's in a message, the opcodes - a control asked for, its
-/// answer, a control set - and the address each checksum starts from,
-/// the monitor's when it is written to and the host's when it answers.
-/// The monitor wants 40 ms to answer and 50 ms after a control is set.
-const DDCCI_ADDRESS: u32 = 0x37;
-
-const DDCCI_HOST: u8 = 0x51;
-
-const DDCCI_GET: u8 = 0x01;
-
-const DDCCI_REPLY: u8 = 0x02;
-
-const DDCCI_SET: u8 = 0x03;
-
-const DDCCI_WRITTEN_SUM: u8 = 0x6E;
-
-const DDCCI_ANSWER_SUM: u8 = 0x50;
-
-const ddcci_answer_us = 40_000;
-
-const ddcci_set_us = 50_000;
-
-/// MCCS's control for the brightness: the luminance.
-pub const VCP_BRIGHTNESS: u8 = 0x10;
 
 /// What each piece of a read of `length` bytes is to end and start with,
 /// as Linux's brcmstb_i2c_xfer has a read after its write: the first
@@ -175,67 +150,26 @@ pub fn scdcScrambling(port: *const bcm2712.Port, on: bool, waiter: anytype) bool
     return scdcWrite(port, SCDC_TMDS_CONFIG, if (on) config | both else config & ~both, waiter);
 }
 
-/// A control's value as the monitor answers it, and its largest.
-const Feature = struct { value: u16, most: u16 };
-
-/// What a message's checksum makes of `from` and its bytes: each XORed
-/// in.
-fn checksum(from: u8, bytes: []const u8) u8 {
-    var sum = from;
-    for (bytes) |byte| sum ^= byte;
-    return sum;
-}
-
-/// The message that asks for control `code`: from the host, two bytes
-/// long, the opcode and the control, and the checksum.
-fn askFor(code: u8) [5]u8 {
-    var message = [5]u8{ DDCCI_HOST, 0x80 | 2, DDCCI_GET, code, 0 };
-    message[4] = checksum(DDCCI_WRITTEN_SUM, message[0..4]);
-    return message;
-}
-
-/// The message that sets control `code` to `value`, high byte first.
-fn setTo(code: u8, value: u16) [7]u8 {
-    var message = [7]u8{ DDCCI_HOST, 0x80 | 4, DDCCI_SET, code, @truncate(value >> 8), @truncate(value), 0 };
-    message[6] = checksum(DDCCI_WRITTEN_SUM, message[0..6]);
-    return message;
-}
-
-/// The monitor's answer about control `code`: from the monitor, eight
-/// bytes long, a reply that it has the control, its largest value and
-/// its value, and a checksum that adds up. Null for anything else - a
-/// monitor that has not got the control, or was not ready.
-fn answerOf(answer: *const [11]u8, code: u8) ?Feature {
-    if (answer[0] != DDCCI_WRITTEN_SUM or answer[1] != 0x80 | 8) return null;
-    if (answer[2] != DDCCI_REPLY or answer[3] != 0 or answer[4] != code) return null;
-    if (checksum(DDCCI_ANSWER_SUM, answer[0..10]) != answer[10]) return null;
-    const most = @as(u16, answer[6]) << 8 | answer[7];
-    if (most == 0) return null;
-    return .{ .value = @as(u16, answer[8]) << 8 | answer[9], .most = most };
-}
-
-/// The monitor's control `code`, asked for over the DDC: null when it
-/// does not answer. Takes some 50 ms.
-pub fn feature(port: *const bcm2712.Port, code: u8, waiter: anytype) ?Feature {
-    if (!bcm2712.on_bcm2712) return null;
-    bcm2712.at(port.blocks.ddc, BSC_CHIP_ADDRESS).* = DDCCI_ADDRESS << 1;
-    if (!send(port, 0, &askFor(code), waiter)) return null;
-    waiter.wait(ddcci_answer_us);
-    bcm2712.at(port.blocks.ddc, BSC_CHIP_ADDRESS).* = DDCCI_ADDRESS << 1 | 1;
-    var answer: [11]u8 = undefined;
-    if (!receive(port, readCondition(true, true), &answer, waiter)) return null;
-    return answerOf(&answer, code);
-}
-
-/// The monitor's control `code` set to `value`, and the time it wants
-/// before it is spoken to again waited out: false when it did not take
-/// the message.
-pub fn setFeature(port: *const bcm2712.Port, code: u8, value: u16, waiter: anytype) bool {
-    if (!bcm2712.on_bcm2712) return false;
-    bcm2712.at(port.blocks.ddc, BSC_CHIP_ADDRESS).* = DDCCI_ADDRESS << 1;
-    const taken = send(port, 0, &setTo(code, value), waiter);
-    waiter.wait(ddcci_set_us);
-    return taken;
+/// `bytes` written to the 7-bit `address` in one transaction - a start,
+/// the address, the bytes, a stop - or read from it into `bytes`, in
+/// pieces of 32 bytes the last of which ends with the stop. False when
+/// the target did not answer, and for a write of more than 32 bytes,
+/// which is not sent.
+pub fn transfer(port: *const bcm2712.Port, address: u8, read: bool, bytes: []u8, waiter: anytype) bool {
+    if (!bcm2712.on_bcm2712 or bytes.len == 0) return false;
+    if (!read) {
+        if (bytes.len > bsc_chunk) return false;
+        bcm2712.at(port.blocks.ddc, BSC_CHIP_ADDRESS).* = @as(u32, address) << 1;
+        return send(port, 0, bytes, waiter);
+    }
+    bcm2712.at(port.blocks.ddc, BSC_CHIP_ADDRESS).* = @as(u32, address) << 1 | 1;
+    var done: usize = 0;
+    while (done < bytes.len) : (done += bsc_chunk) {
+        const piece = @min(bsc_chunk, bytes.len - done);
+        const condition = readCondition(done == 0, done + piece >= bytes.len);
+        if (!receive(port, condition, bytes[done .. done + piece], waiter)) return false;
+    }
+    return true;
 }
 
 /// How many blocks of a monitor's EDID the port reads: the two halves of
@@ -245,28 +179,6 @@ pub const edid_blocks: u32 = 2;
 // --- tests (host: ./zig build test) -----------------------------------------
 
 const testing = @import("std").testing;
-
-test "the monitor's controls: DDC/CI's messages and answers" {
-    // The brightness asked for, and set to 50: the checksum starts from
-    // the monitor's address, 0x6E.
-    try testing.expectEqualSlices(u8, &.{ 0x51, 0x82, 0x01, 0x10, 0xAC }, &askFor(VCP_BRIGHTNESS));
-    try testing.expectEqualSlices(u8, &.{ 0x51, 0x84, 0x03, 0x10, 0x00, 0x32, 0x9A }, &setTo(VCP_BRIGHTNESS, 50));
-    // The answer: 50 of 100, its checksum from the host's 0x50.
-    var answer = [11]u8{ 0x6E, 0x88, 0x02, 0x00, 0x10, 0x00, 0x00, 0x64, 0x00, 0x32, 0xF2 };
-    const got = answerOf(&answer, VCP_BRIGHTNESS).?;
-    try testing.expectEqual(@as(u16, 50), got.value);
-    try testing.expectEqual(@as(u16, 100), got.most);
-    // A checksum that does not add up, a control the monitor has not got.
-    answer[10] ^= 1;
-    try testing.expect(answerOf(&answer, VCP_BRIGHTNESS) == null);
-    answer[10] ^= 1;
-    answer[3] = 1;
-    answer[10] ^= 1;
-    try testing.expect(answerOf(&answer, VCP_BRIGHTNESS) == null);
-    // Not ready: the null message.
-    const nothing = [11]u8{ 0x6E, 0x80, 0xBE, 0, 0, 0, 0, 0, 0, 0, 0 };
-    try testing.expect(answerOf(&nothing, VCP_BRIGHTNESS) == null);
-}
 
 test "the BCM2712's DDC: how the pieces of a read end and start" {
     try testing.expectEqual(COND_NOSTOP, readCondition(true, false));

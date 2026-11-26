@@ -151,7 +151,10 @@ pub const LIBRARY_VERSION = 1;
 /// 43: GetBoardMonitor describes the monitor's sound - its channels,
 /// rates, sample sizes and speakers, from its audio and speaker
 /// allocation blocks.
-pub const LIBRARY_REVISION = 43;
+/// 44: GetMonitorControl and SetMonitorControl: a monitor's own controls
+/// - its brightness - asked for and set over its DDC by DDC/CI, the bus
+/// reached through the driver's hook, for every driver.
+pub const LIBRARY_REVISION = 44;
 const BUILD_DATE = "26.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

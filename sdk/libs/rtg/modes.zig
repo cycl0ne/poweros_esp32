@@ -231,3 +231,21 @@ pub const RTGMON_SCDC: u32 = 1 << 6;
 /// It is an HDMI 2.0 monitor: it takes CEA's numbers above 64 in the AVI
 /// infoframe.
 pub const RTGMON_HDMI2: u32 = 1 << 7;
+
+/// One transfer on a monitor's DDC, as `GetMonitorControl` and
+/// `SetMonitorControl` hand it to the driver's hook, whose message it
+/// is: `count` bytes written to the bus's 7-bit `address`, or read from
+/// it into `bytes` where `read` is set, in a transaction of their own - a
+/// start, the address, the bytes, a stop. The hook answers RTGERR_OK
+/// once they went or came, RTGERR_IO where the monitor did not answer.
+pub const RtgDdcTransfer = extern struct {
+    address: u32 = 0,
+    read: u32 = 0,
+    bytes: ?[*]u8 = null,
+    count: u32 = 0,
+};
+
+/// A monitor's own controls over its DDC (VESA's DDC/CI), by MCCS's
+/// codes: the brightness - its luminance - and the contrast.
+pub const RTGVCP_BRIGHTNESS: u32 = 0x10;
+pub const RTGVCP_CONTRAST: u32 = 0x12;
