@@ -6043,6 +6043,12 @@ test "four samples a pixel in colour attachments drawn together: each attachment
 /// depth's units before it is rounded: the plane through the corners
 /// there.
 fn depthThere(corners: [3][2]i64, depths: [3]f32, at: [2]i64) f64 {
+    return depthThereIn(corners, depths, at, 65535);
+}
+
+/// The same in a depth of `units`: 65535, or 16777215 for 24 bits (since
+/// 1.223).
+fn depthThereIn(corners: [3][2]i64, depths: [3]f32, at: [2]i64, units: f64) f64 {
     const twice = (corners[1][0] - corners[0][0]) * (corners[2][1] - corners[0][1]) - (corners[1][1] - corners[0][1]) * (corners[2][0] - corners[0][0]);
     var value: f64 = 0;
     for (0..3) |i| {
@@ -6051,7 +6057,7 @@ fn depthThere(corners: [3][2]i64, depths: [3]f32, at: [2]i64) f64 {
         const cross = (to[0] - from[0]) * (at[1] - from[1]) - (to[1] - from[1]) * (at[0] - from[0]);
         value += @as(f64, @floatFromInt(cross)) / @as(f64, @floatFromInt(twice)) * @as(f64, depths[i]);
     }
-    return value * 65535;
+    return value * units;
 }
 
 /// Where sample `sample` of pixel (x, y) is, in 1/256ths of a pixel:
@@ -6062,6 +6068,11 @@ fn samplePlace(x: u32, y: u32, sample: u32) [2]i64 {
 
 /// A depth as a 16-bit depth keeps it: to the nearest unit, a half up.
 fn unitsOf(value: f64) u16 {
+    return @intFromFloat(@floor(value + 0.5));
+}
+
+/// The same of any width (since 1.223).
+fn wholeUnitsOf(value: f64) u32 {
     return @intFromFloat(@floor(value + 0.5));
 }
 
@@ -6160,8 +6171,19 @@ fn depthsBySample(format: facet.Format) !void {
     const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
     try testing.expect(physical.can.multisampling);
     const image_zig = @import("../image/_image.zig");
-    const stenciled = format == .d16_unorm_s8_uint;
-    const stride: u32 = if (stenciled) 4 else 2;
+    const stenciled = format == .d16_unorm_s8_uint or format == .d24_unorm_s8_uint;
+    const stride = image_zig.bytesOf(format);
+    // A depth of 24 bits in the top three bytes of its word, the stencil
+    // in the low one (since 1.223); one of 16 in two, the stencil after.
+    const deep = image_zig.depthBits(format) == 24;
+    const units: f64 = if (deep) 16777215 else 65535;
+    const furthest: u32 = if (deep) 0xFF_FFFF else 0xFFFF;
+    const stencil_at: usize = if (deep) 0 else 2;
+    const depthIn = struct {
+        fn of(bytes: [*]const u8, wide: bool) u32 {
+            return if (wide) std.mem.readInt(u32, bytes[0..4], .little) >> 8 else std.mem.readInt(u16, bytes[0..2], .little);
+        }
+    }.of;
 
     // Four tiles of 64, of colour and of depth at four samples a pixel.
     const side = 128;
@@ -6213,7 +6235,14 @@ fn depthsBySample(format: facet.Format) !void {
     defer fb.DestroyPipeline(device, again);
     try testing.expectEqual(facet.Result.success, again_result);
 
-    const corners, const vertices = crossedCorners();
+    const corners, const crossed_vertices = crossedCorners();
+    // At 24 bits the third, flat, at 0.4 rather than 0.5: 0.5 is 8388607.5
+    // steps, a half that the plane's rounding may take either way, where
+    // 0.4 is 6710886.6 (since 1.223).
+    var vertices = crossed_vertices;
+    if (deep) for (vertices[6..9]) |*vertex| {
+        vertex[2] = 0.4;
+    };
     const vertex_buffer, const vertex_bytes = try bench.buffer(@sizeOf(@TypeOf(vertices)), facet.BUFFER_USAGE_VERTEX_BUFFER);
     @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(vertices))], std.mem.asBytes(&vertices));
     const offset: u64 = 0;
@@ -6265,14 +6294,14 @@ fn depthsBySample(format: facet.Format) !void {
             const sample: u32 = @intCast(s);
             const bit = @as(u4, 1) << @intCast(s);
             var color = background;
-            var depth: u16 = 0xFFFF;
+            var depth: u32 = furthest;
             if (first & bit != 0) {
                 color = cut_color;
-                depth = unitsOf(depthThere(corners[0], crossed_depths[0], samplePlace(x, y, sample)));
+                depth = wholeUnitsOf(depthThereIn(corners[0], crossed_depths[0], samplePlace(x, y, sample), units));
                 samples += 1;
             }
             if (second & bit != 0) {
-                const value = unitsOf(depthThere(corners[1], crossed_depths[1], samplePlace(x, y, sample)));
+                const value = wholeUnitsOf(depthThereIn(corners[1], crossed_depths[1], samplePlace(x, y, sample), units));
                 if (first & bit != 0) {
                     winners |= @as(u2, if (value < depth) 2 else 1);
                     const centre = [2]i64{ @as(i64, x) * 256 + 128, @as(i64, y) * 256 + 128 };
@@ -6288,9 +6317,9 @@ fn depthsBySample(format: facet.Format) !void {
             }
             try testing.expectEqual(color, sampleTexel(colors, sample, 0, x, y).*);
             const bytes = sampleDepthBytes(depths, stride, sample, x, y);
-            const found = std.mem.readInt(u16, bytes[0..2], .little);
-            if (depth == 0xFFFF) try testing.expectEqual(depth, found) else try testing.expectApproxEqAbs(@as(f64, @floatFromInt(depth)), @as(f64, @floatFromInt(found)), 1);
-            if (stenciled) try testing.expectEqual(@as(u8, 0x3C), bytes[2]);
+            const found = depthIn(bytes, deep);
+            if (depth == furthest) try testing.expectEqual(depth, found) else try testing.expectApproxEqAbs(@as(f64, @floatFromInt(depth)), @as(f64, @floatFromInt(found)), 1);
+            if (stenciled) try testing.expectEqual(@as(u8, 0x3C), bytes[stencil_at]);
         }
         split += @intFromBool(winners == 3);
         quad_covered[y / 2][x / 2] += @intFromBool(second != 0);
@@ -6333,7 +6362,7 @@ fn depthsBySample(format: facet.Format) !void {
     fb.CmdEndRenderPass(commands);
     fb.CmdEndQuery(commands, occlusion, 0);
     try bench.submit();
-    const half: u16 = 32768;
+    const half: u32 = if (deep) depthLeft(0.4, units) else 32768;
     var touched: [4]bool = @splat(false);
     var passed: u64 = 0;
     var mixed: u32 = 0;
@@ -6347,7 +6376,7 @@ fn depthsBySample(format: facet.Format) !void {
             const sample: u32 = @intCast(s);
             const color_at = @intFromPtr(sampleTexel(colors, sample, 0, x, y)) - @intFromPtr(colors.data.?);
             const depth_at = @intFromPtr(sampleDepthBytes(depths, stride, sample, x, y)) - @intFromPtr(depths.data.?);
-            const before = std.mem.readInt(u16, kept_depths[depth_at..][0..2], .little);
+            const before = depthIn(kept_depths[depth_at..].ptr, deep);
             const covered = third >> @intCast(s) & 1 != 0;
             const passes = covered and half < before;
             if (covered) outcomes |= @as(u2, if (passes) 2 else 1);
@@ -6355,8 +6384,8 @@ fn depthsBySample(format: facet.Format) !void {
             const color = if (passes) flat_colors[1] else std.mem.readInt(u32, kept_colors[color_at..][0..4], .little);
             try testing.expectEqual(color, sampleTexel(colors, sample, 0, x, y).*);
             const bytes = sampleDepthBytes(depths, stride, sample, x, y);
-            try testing.expectEqual(if (passes) half else before, std.mem.readInt(u16, bytes[0..2], .little));
-            if (stenciled) try testing.expectEqual(kept_depths[depth_at + 2], bytes[2]);
+            try testing.expectEqual(if (passes) half else before, depthIn(bytes, deep));
+            if (stenciled) try testing.expectEqual(kept_depths[depth_at + stencil_at], bytes[stencil_at]);
         }
         mixed += @intFromBool(outcomes == 3);
     };
@@ -6365,9 +6394,11 @@ fn depthsBySample(format: facet.Format) !void {
     try testing.expectEqual(passed, try queryValue(&bench, occlusion, 0));
 }
 
-test "four samples a pixel tested in depth: each sample keeps whichever triangle is nearer at its own place, a depth held back for a fragment function that drops pixels written for the samples left, and every plane loaded, tested and stored" {
+test "four samples a pixel tested in depth: each sample keeps whichever triangle is nearer at its own place, a depth held back for a fragment function that drops pixels written for the samples left, and every plane loaded, tested and stored, of 16 bits and of 24 (since 1.223)" {
     try depthsBySample(.d16_unorm);
     try depthsBySample(.d16_unorm_s8_uint);
+    try depthsBySample(.x8_d24_unorm_pack32);
+    try depthsBySample(.d24_unorm_s8_uint);
 }
 
 test "four samples a pixel in stencil: each sample's stencil tested and changed in a plane of its own, as its own depth test says, and loaded and tested again" {
@@ -9775,18 +9806,20 @@ test "a device that samples no depth, as the V3D sampled none until 1.142: the f
     }
 }
 
-test "depths in order: nearer kept whatever was drawn first, with the depth pre-pass or without; a scissor and a render area cut what is drawn" {
-    for ([_]u32{ 0, facet.PIPELINE_CREATE_DEPTH_PREPASS }) |flags| try depthsInOrder(flags);
+test "depths in order: nearer kept whatever was drawn first, with the depth pre-pass or without; a scissor and a render area cut what is drawn; of 16 bits of depth and of 24 (since 1.223)" {
+    for ([_]facet.Format{ .d16_unorm, .x8_d24_unorm_pack32 }) |format| {
+        for ([_]u32{ 0, facet.PIPELINE_CREATE_DEPTH_PREPASS }) |flags| try depthsInOrder(flags, format);
+    }
 }
 
-fn depthsInOrder(flags: u32) !void {
+fn depthsInOrder(flags: u32, format: facet.Format) !void {
     var bench = try Bench.up();
     defer bench.down();
     const fb = bench.rig.fb;
     const device = bench.device;
     const picture = try Picture.of(&bench, 64, 64);
-    _, const depth = try bench.image(.{ .format = .d16_unorm, .extent = .{ .width = 64, .height = 64 }, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT }, true);
-    const pass = try renderPass(&bench, .clear, true);
+    _, const depth = try bench.image(.{ .format = format, .extent = .{ .width = 64, .height = 64 }, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT }, true);
+    const pass = if (format == .d16_unorm) try renderPass(&bench, .clear, true) else try deepPass(&bench, format, .clear, .dont_care);
     defer fb.DestroyRenderPass(device, pass);
     const frame = try framebuffer(&bench, pass, &.{ picture.view, depth }, 64, 64);
     defer fb.DestroyFramebuffer(device, frame);
@@ -12043,7 +12076,7 @@ test "a depth and a stencil read as Vulkan reads them: (D, 0, 0, 1) and (S, 0, 0
     try testing.expect(_objects.of(image_zig.ImageView, stencil).swizzle.isIdentity());
 }
 
-test "a depth attachment read as an input attachment: what the subpass before drew, plane by plane" {
+test "a depth attachment read as an input attachment: what the subpass before drew, plane by plane, of 16 bits of depth and of 24 (since 1.223)" {
     var bench = try Bench.up();
     defer bench.down();
     const fb = bench.rig.fb;
@@ -12059,6 +12092,11 @@ test "a depth attachment read as an input attachment: what the subpass before dr
     const both_image, const both_view = try bench.image(.{ .format = .d16_unorm_s8_uint, .extent = side, .usage = depth_usage }, false);
     // The stencil of that same image: the other plane of the same rows.
     const stencil_view = try bench.viewOf(.{ .image = both_image, .format = .d16_unorm_s8_uint, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_STENCIL } });
+    // And the two of 24 bits of depth (since 1.223): the depth in the top
+    // three bytes of the word, and the stencil in its low one.
+    _, const deep_view = try bench.image(.{ .format = .x8_d24_unorm_pack32, .extent = side, .usage = depth_usage }, false);
+    const deep_both_image, const deep_both_view = try bench.image(.{ .format = .d24_unorm_s8_uint, .extent = side, .usage = depth_usage }, false);
+    const deep_stencil_view = try bench.viewOf(.{ .image = deep_both_image, .format = .d24_unorm_s8_uint, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_STENCIL } });
 
     // A depth read pixel by pixel wants memory behind it, so a transient
     // one is refused.
@@ -12082,19 +12120,22 @@ test "a depth attachment read as an input attachment: what the subpass before dr
     const layout = try pipelineLayout(&bench, &.{set_layout.?}, 0);
     defer fb.DestroyPipelineLayout(device, layout);
     var pool: ?*facet.DescriptorPool = null;
-    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorPool(device, &.{ .max_sets = 3 }, &pool));
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorPool(device, &.{ .max_sets = 6 }, &pool));
     defer fb.DestroyDescriptorPool(device, pool);
-    const layouts = [3]*facet.DescriptorSetLayout{ set_layout.?, set_layout.?, set_layout.? };
-    var sets: [3]?*facet.DescriptorSet = undefined;
-    try testing.expectEqual(facet.Result.success, fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = pool.?, .descriptor_set_count = 3, .set_layouts = &layouts }, &sets));
-    const infos = [3]facet.DescriptorImageInfo{
+    const layouts: [6]*facet.DescriptorSetLayout = @splat(set_layout.?);
+    var sets: [6]?*facet.DescriptorSet = undefined;
+    try testing.expectEqual(facet.Result.success, fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = pool.?, .descriptor_set_count = 6, .set_layouts = &layouts }, &sets));
+    const infos = [6]facet.DescriptorImageInfo{
         .{ .image_view = plain_view, .image_layout = .general },
         .{ .image_view = both_view, .image_layout = .general },
         .{ .image_view = stencil_view, .image_layout = .general },
+        .{ .image_view = deep_view, .image_layout = .general },
+        .{ .image_view = deep_both_view, .image_layout = .general },
+        .{ .image_view = deep_stencil_view, .image_layout = .general },
     };
-    var writes: [3]facet.WriteDescriptorSet = undefined;
+    var writes: [6]facet.WriteDescriptorSet = undefined;
     for (&writes, 0..) |*one, k| one.* = .{ .dst_set = sets[k].?, .dst_binding = 0, .descriptor_type = .input_attachment, .image_info = @ptrCast(&infos[k]) };
-    fb.UpdateDescriptorSets(device, 3, &writes, 0, null);
+    fb.UpdateDescriptorSets(device, 6, &writes, 0, null);
 
     const vertex_buffer, const vertex_bytes = try bench.buffer(@sizeOf(@TypeOf(DepthRead.half)) * 2, facet.BUFFER_USAGE_VERTEX_BUFFER);
     const quad_bytes = @sizeOf(@TypeOf(DepthRead.half));
@@ -12116,15 +12157,18 @@ test "a depth attachment read as an input attachment: what the subpass before dr
     // The depth of a format of depth alone, then the two planes of one
     // that holds both: the depth every four bytes, and the stencil beside
     // it.
-    for ([3]struct { facet.Format, *facet.ImageView, u32, [*:0]const u8, u32, u32 }{
+    for ([6]struct { facet.Format, *facet.ImageView, u32, [*:0]const u8, u32, u32 }{
         .{ .d16_unorm, plain_view, 0, "depth", 0xFF40_0000, 0xFFFF_0000 },
         .{ .d16_unorm_s8_uint, both_view, 1, "depth", 0xFF40_0000, 0xFFFF_0000 },
         .{ .d16_unorm_s8_uint, both_view, 2, "stencil", 0xFF30_0000, 0xFF00_0000 },
+        .{ .x8_d24_unorm_pack32, deep_view, 3, "depth", 0xFF40_0000, 0xFFFF_0000 },
+        .{ .d24_unorm_s8_uint, deep_both_view, 4, "depth", 0xFF40_0000, 0xFFFF_0000 },
+        .{ .d24_unorm_s8_uint, deep_both_view, 5, "stencil", 0xFF30_0000, 0xFF00_0000 },
     }) |one| {
         const format, const view, const which, const name, const left, const right = one;
         // The stencil's own two ops are for a format that has one: a
         // store asked of a format without it is refused.
-        const has_stencil = format == .d16_unorm_s8_uint;
+        const has_stencil = format == .d16_unorm_s8_uint or format == .d24_unorm_s8_uint;
         const attachments = [2]facet.AttachmentDescription{
             .{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .general },
             .{
@@ -18325,23 +18369,25 @@ test "a depth of 24 bits, alone and with a stencil: each aspect copied in and ou
         }
     }.of;
 
-    // Neither format draws yet: no attachment of either, and no pass.
+    // Each an attachment on the cores since 1.223, which draw a depth of
+    // 24 bits (`Capabilities.depth24`); neither was before, and a pass of
+    // either was refused. The V3D's answer is `_format`'s test.
     for ([_]facet.Format{ .x8_d24_unorm_pack32, .d24_unorm_s8_uint }) |format| {
         var properties: facet.FormatProperties = undefined;
         fb.GetPhysicalDeviceFormatProperties(bench.physical, format, &properties);
-        try testing.expectEqual(@as(u32, 0), properties.optimal_tiling_features & facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT);
+        try testing.expect(properties.optimal_tiling_features & facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT != 0);
         try testing.expect(properties.optimal_tiling_features & facet.FORMAT_FEATURE_SAMPLED_IMAGE != 0);
         try testing.expectEqual(@as(u32, 0), properties.linear_tiling_features);
         var image_properties: facet.ImageFormatProperties = undefined;
-        try testing.expectEqual(facet.Result.error_format_not_supported, fb.GetPhysicalDeviceImageFormatProperties(bench.physical, format, .@"2d", .optimal, facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT, 0, &image_properties));
+        try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(bench.physical, format, .@"2d", .optimal, facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT, 0, &image_properties));
         try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(bench.physical, format, .@"2d", .optimal, facet.IMAGE_USAGE_SAMPLED | transfers, 0, &image_properties));
         const attachments = [2]facet.AttachmentDescription{ .{ .format = .b8g8r8a8_unorm, .final_layout = .general }, .{ .format = format, .final_layout = .general } };
         const color = facet.AttachmentReference{ .attachment = 0, .layout = .color_attachment_optimal };
         const depth = facet.AttachmentReference{ .attachment = 1, .layout = .depth_stencil_attachment_optimal };
         const subpass = facet.SubpassDescription{ .color_attachment_count = 1, .color_attachments = @ptrCast(&color), .depth_stencil_attachment = &depth };
         var pass: ?*facet.RenderPass = null;
-        try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateRenderPass(bench.device, &.{ .attachment_count = 2, .attachments = &attachments, .subpass_count = 1, .subpasses = @ptrCast(&subpass) }, &pass));
-        try testing.expect(pass == null);
+        try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(bench.device, &.{ .attachment_count = 2, .attachments = &attachments, .subpass_count = 1, .subpasses = @ptrCast(&subpass) }, &pass));
+        fb.DestroyRenderPass(bench.device, pass);
     }
 
     // The depths into a D24_UNORM_S8_UINT, in a buffer's low 24 bits with
@@ -18475,4 +18521,331 @@ test "each aspect of a D16_UNORM_S8_UINT copied as a buffer holds it: two bytes 
     try bench.submit();
     for (0..side * side) |k| try testing.expectEqual(0x1000 + @as(u16, @intCast(k)), std.mem.readInt(u16, backed[k * 2 ..][0..2], .little));
     try testing.expectEqual(@as(u8, 0xAA), backed[side * side * 2]);
+}
+
+// --- 1.223: a depth of 24 bits drawn (item 35, step 2) -----------------------
+
+/// A pass of one colour attachment, cleared and stored, and a depth one of
+/// `format` loaded or cleared and stored as `load` and `store` say, its
+/// stencil the same where the format holds one.
+fn deepPass(bench: *Bench, format: facet.Format, load: facet.AttachmentLoadOp, store: facet.AttachmentStoreOp) !*facet.RenderPass {
+    const stencil = format == .d24_unorm_s8_uint;
+    const attachments = [2]facet.AttachmentDescription{
+        .{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .general },
+        .{
+            .format = format,
+            .load_op = load,
+            .store_op = store,
+            .stencil_load_op = if (stencil) load else .dont_care,
+            .stencil_store_op = if (stencil) store else .dont_care,
+            .final_layout = .general,
+        },
+    };
+    const color = facet.AttachmentReference{ .attachment = 0, .layout = .color_attachment_optimal };
+    const depth = facet.AttachmentReference{ .attachment = 1, .layout = .depth_stencil_attachment_optimal };
+    const subpass = facet.SubpassDescription{ .color_attachment_count = 1, .color_attachments = @ptrCast(&color), .depth_stencil_attachment = &depth };
+    var made: ?*facet.RenderPass = null;
+    try testing.expectEqual(facet.Result.success, bench.rig.fb.CreateRenderPass(bench.device, &.{ .attachment_count = 2, .attachments = &attachments, .subpass_count = 1, .subpasses = @ptrCast(&subpass) }, &made));
+    return made.?;
+}
+
+/// The depth a draw at `z` leaves in a buffer of `units`, as the tiles
+/// round it: half a unit up and the fraction cut off.
+fn depthLeft(z: f32, units: f64) u32 {
+    return @intFromFloat(@floor(@as(f64, z) * units + 0.5));
+}
+
+test "a depth of 24 bits drawn: two depths less than a 16-bit step apart told apart, cleared, stored at all 24 bits beside a stencil, loaded again and tested at all 24, moved by a bias and held to bounds in 24-bit steps (since 1.223)" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    const can = _objects.of(_instance.PhysicalDevice, bench.physical).can;
+    try testing.expect(can.depth24 and can.stored_both and can.depth_bounds);
+    const picture = try Picture.of(&bench, 64, 64);
+    const flat = try module(&bench, &Flat.code);
+    defer fb.DestroyShaderModule(device, flat);
+    const layout = try pipelineLayout(&bench, &.{}, 4);
+    defer fb.DestroyPipelineLayout(device, layout);
+    const usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_TRANSFER_SRC | facet.IMAGE_USAGE_TRANSFER_DST;
+    const extent = facet.Extent3D{ .width = 64, .height = 64 };
+    const area = facet.Rect2D{ .extent = .{ .width = 64, .height = 64 } };
+    const units24 = 16777215.0;
+    const offset: u64 = 0;
+    const green: u32 = 0xFF00_FF00;
+    const red: u32 = 0xFFFF_0000;
+    const blue: u32 = 0xFF00_00FF;
+    const back, const back_bytes = try bench.buffer(64 * 64 * 4, facet.BUFFER_USAGE_TRANSFER_DST);
+    const depth_copy = facet.BufferImageCopy{ .image_extent = extent, .image_subresource = .{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH } };
+    const stencil_copy = facet.BufferImageCopy{ .image_extent = extent, .image_subresource = .{ .aspect_mask = facet.IMAGE_ASPECT_STENCIL } };
+    const wordAt = struct {
+        fn of(bytes: [*]const u8, x: u32, y: u32) u32 {
+            return std.mem.readInt(u32, bytes[(y * 64 + x) * 4 ..][0..4], .little);
+        }
+    }.of;
+    const tested = facet.PipelineDepthStencilStateCreateInfo{ .depth_test_enable = true, .depth_write_enable = true, .depth_compare_op = .less };
+    const vertex_buffer, const vertex_bytes = try bench.buffer(6 * 3 * 4, facet.BUFFER_USAGE_VERTEX_BUFFER);
+    const Draw = struct {
+        fn whole(bytes: [*]u8, z: f32) void {
+            const over = [3][3]f32{ .{ -1, -1, z }, .{ 3, -1, z }, .{ -1, 3, z } };
+            @memcpy(bytes[0..@sizeOf(@TypeOf(over))], std.mem.asBytes(&over));
+        }
+    };
+
+    // Two triangles over the whole picture, the second 5e-6 nearer: less
+    // than a step of 16 bits apart, which the two round to the same 26214
+    // of, and 84 steps of 24. A depth of 16 bits keeps the first; one of 24
+    // the second, as llvmpipe tests a depth at its format's own width
+    // (lp_bld_depth.c:1067-1095).
+    const first: f32 = 0.4;
+    const second: f32 = 0.4 - 5e-6;
+    for ([2]facet.Format{ .d16_unorm, .x8_d24_unorm_pack32 }, [2]u32{ green, red }) |format, shown| {
+        const image, const view = try bench.image(.{ .format = format, .extent = extent, .usage = usage }, false);
+        const pass = try deepPass(&bench, format, .clear, .store);
+        defer fb.DestroyRenderPass(device, pass);
+        const frame = try framebuffer(&bench, pass, &.{ picture.view, view }, 64, 64);
+        defer fb.DestroyFramebuffer(device, frame);
+        const made, const drawing = makePipeline(&bench, .{ .module = flat, .layout = layout, .pass = pass, .depth = tested });
+        try testing.expectEqual(facet.Result.success, made);
+        defer fb.DestroyPipeline(device, drawing);
+        const values = clears(blue);
+        // Both in the one pass, the second's vertices after the first's:
+        // the first's depth is in the tile when the second is tested.
+        const both_buffer, const both_bytes = try bench.buffer(6 * 3 * 4, facet.BUFFER_USAGE_VERTEX_BUFFER);
+        Draw.whole(both_bytes, first);
+        Draw.whole(both_bytes + 36, second);
+        const commands = try bench.record();
+        fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = frame, .render_area = area, .clear_value_count = 2, .clear_values = &values }, .@"inline");
+        fb.CmdBindPipeline(commands, .graphics, drawing.?);
+        fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&both_buffer), @ptrCast(&offset));
+        fb.CmdPushConstants(commands, layout, facet.SHADER_STAGE_FRAGMENT, 0, 4, &green);
+        fb.CmdDraw(commands, 3, 1, 0, 0);
+        fb.CmdPushConstants(commands, layout, facet.SHADER_STAGE_FRAGMENT, 0, 4, &red);
+        fb.CmdDraw(commands, 3, 1, 3, 0);
+        fb.CmdEndRenderPass(commands);
+        @memset(back_bytes[0 .. 64 * 64 * 4], 0xAA);
+        fb.CmdCopyImageToBuffer(commands, image, .general, back, 1, @ptrCast(&depth_copy));
+        try bench.submit();
+        try testing.expectEqual(shown, picture.at(20, 20));
+        try testing.expectEqual(shown, picture.at(63, 63));
+        if (format == .x8_d24_unorm_pack32) {
+            // The second's depth at all 24 bits, in the low ones of four
+            // bytes and the top one nothing, as a buffer holds the aspect.
+            try testing.expectEqual(depthLeft(second, units24), wordAt(back_bytes, 20, 20));
+            try testing.expectEqual(depthLeft(second, units24), wordAt(back_bytes, 63, 63));
+            try testing.expect(depthLeft(second, units24) < depthLeft(first, units24));
+            // And in the image as the V3D keeps one: the top three bytes.
+            const kept = _objects.of(@import("../image/_image.zig").Image, image);
+            try testing.expectEqual(depthLeft(second, units24) << 8, std.mem.readInt(u32, kept.data.?[0..4], .little) & 0xFFFF_FF00);
+        } else {
+            try testing.expectEqual(@as(u16, @intCast(depthLeft(first, 65535))), depthAt(back_bytes, 20, 20));
+        }
+    }
+
+    // D24_UNORM_S8_UINT: cleared to 0.75 and 0x11, the top left half drawn
+    // at 0.375 with its stencil replaced by 0x5A, and both stored.
+    const both_image, const both_view = try bench.image(.{ .format = .d24_unorm_s8_uint, .extent = extent, .usage = usage }, false);
+    const storing = try deepPass(&bench, .d24_unorm_s8_uint, .clear, .store);
+    defer fb.DestroyRenderPass(device, storing);
+    const loading = try deepPass(&bench, .d24_unorm_s8_uint, .load, .store);
+    defer fb.DestroyRenderPass(device, loading);
+    const stored_frame = try framebuffer(&bench, storing, &.{ picture.view, both_view }, 64, 64);
+    defer fb.DestroyFramebuffer(device, stored_frame);
+    const loaded_frame = try framebuffer(&bench, loading, &.{ picture.view, both_view }, 64, 64);
+    defer fb.DestroyFramebuffer(device, loaded_frame);
+    const marking = facet.StencilOpState{ .pass_op = .replace, .compare_op = .always, .compare_mask = 0xFF, .write_mask = 0xFF, .reference = 0x5A };
+    const marked = facet.StencilOpState{ .compare_op = .equal, .compare_mask = 0xFF, .write_mask = 0, .reference = 0x5A };
+    const made_mark, const mark = makePipeline(&bench, .{ .module = flat, .layout = layout, .pass = storing, .depth = .{ .depth_test_enable = true, .depth_write_enable = true, .depth_compare_op = .less, .stencil_test_enable = true, .front = marking, .back = marking } });
+    try testing.expectEqual(facet.Result.success, made_mark);
+    defer fb.DestroyPipeline(device, mark);
+    const made_over, const over = makePipeline(&bench, .{ .module = flat, .layout = layout, .pass = loading, .depth = .{ .depth_test_enable = true, .depth_write_enable = true, .depth_compare_op = .less, .stencil_test_enable = true, .front = marked, .back = marked } });
+    try testing.expectEqual(facet.Result.success, made_over);
+    defer fb.DestroyPipeline(device, over);
+    const half = [3][3]f32{ .{ -1, -1, 0.375 }, .{ 1, -1, 0.375 }, .{ -1, 1, 0.375 } };
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(half))], std.mem.asBytes(&half));
+    var starts = clears(blue);
+    starts[1] = .{ .depth_stencil = .{ .depth = 0.75, .stencil = 0x11 } };
+    var commands = try bench.record();
+    fb.CmdBeginRenderPass(commands, &.{ .render_pass = storing, .framebuffer = stored_frame, .render_area = area, .clear_value_count = 2, .clear_values = &starts }, .@"inline");
+    fb.CmdBindPipeline(commands, .graphics, mark.?);
+    fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+    fb.CmdPushConstants(commands, layout, facet.SHADER_STAGE_FRAGMENT, 0, 4, &green);
+    fb.CmdDraw(commands, 3, 1, 0, 0);
+    fb.CmdEndRenderPass(commands);
+    fb.CmdCopyImageToBuffer(commands, both_image, .general, back, 1, @ptrCast(&depth_copy));
+    try bench.submit();
+    const drawn_depth = depthLeft(0.375, units24);
+    // The clear's 0.75 at all 24 bits, rounded as a clear value is.
+    const cleared_depth: u32 = @intFromFloat(@round(0.75 * units24));
+    try testing.expectEqual(drawn_depth, wordAt(back_bytes, 4, 4));
+    try testing.expectEqual(cleared_depth, wordAt(back_bytes, 60, 60));
+    // The stencil beside it, a byte a pixel in the buffer, and in the
+    // image the word's low byte under the depth's three.
+    commands = try bench.record();
+    fb.CmdCopyImageToBuffer(commands, both_image, .general, back, 1, @ptrCast(&stencil_copy));
+    try bench.submit();
+    try testing.expectEqual(@as(u8, 0x5A), back_bytes[4 * 64 + 4]);
+    try testing.expectEqual(@as(u8, 0x11), back_bytes[60 * 64 + 60]);
+    const both_kept = _objects.of(@import("../image/_image.zig").Image, both_image);
+    try testing.expectEqual(drawn_depth << 8 | 0x5A, std.mem.readInt(u32, both_kept.data.?[0..4], .little));
+
+    // Loaded again and drawn over the whole picture at 0.375 - 3e-7, where
+    // the stencil is 0x5A: nearer by 5 steps of 24 bits and by none of 16,
+    // so only a depth loaded and tested at all 24 bits lets it through.
+    // Where the stencil is not 0x5A nothing is drawn.
+    Draw.whole(vertex_bytes, 0.375 - 3e-7);
+    commands = try bench.record();
+    fb.CmdBeginRenderPass(commands, &.{ .render_pass = loading, .framebuffer = loaded_frame, .render_area = area, .clear_value_count = 2, .clear_values = &starts }, .@"inline");
+    fb.CmdBindPipeline(commands, .graphics, over.?);
+    fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+    fb.CmdPushConstants(commands, layout, facet.SHADER_STAGE_FRAGMENT, 0, 4, &red);
+    fb.CmdDraw(commands, 3, 1, 0, 0);
+    fb.CmdEndRenderPass(commands);
+    fb.CmdCopyImageToBuffer(commands, both_image, .general, back, 1, @ptrCast(&depth_copy));
+    try bench.submit();
+    try testing.expectEqual(red, picture.at(4, 4));
+    try testing.expectEqual(blue, picture.at(60, 60));
+    try testing.expectEqual(depthLeft(0.375 - 3e-7, units24), wordAt(back_bytes, 4, 4));
+    try testing.expectEqual(drawn_depth - 5, wordAt(back_bytes, 4, 4));
+    try testing.expectEqual(cleared_depth, wordAt(back_bytes, 60, 60));
+    // The stencil the depth was stored beside is left as it was.
+    try testing.expectEqual(drawn_depth - 5 << 8 | 0x5A, std.mem.readInt(u32, both_kept.data.?[0..4], .little));
+
+    // A bias of 7 of the smallest differences the depth holds is 7 steps
+    // of 24 bits, as llvmpipe's unit is 1 / (2^24 - 1) of a D24 format
+    // (`util_get_depth_format_mrd`, u_format.c:387-412).
+    const deep_image, const deep_view = try bench.image(.{ .format = .x8_d24_unorm_pack32, .extent = extent, .usage = usage }, false);
+    const deep_pass = try deepPass(&bench, .x8_d24_unorm_pack32, .load, .store);
+    defer fb.DestroyRenderPass(device, deep_pass);
+    const deep_frame = try framebuffer(&bench, deep_pass, &.{ picture.view, deep_view }, 64, 64);
+    defer fb.DestroyFramebuffer(device, deep_frame);
+    const made_biased, const biased = makePipeline(&bench, .{ .module = flat, .layout = layout, .pass = deep_pass, .depth = .{ .depth_test_enable = true, .depth_write_enable = true, .depth_compare_op = .always }, .raster = .{ .depth_bias_enable = true, .depth_bias_constant_factor = 7 } });
+    try testing.expectEqual(facet.Result.success, made_biased);
+    defer fb.DestroyPipeline(device, biased);
+    Draw.whole(vertex_bytes, 0.375);
+    commands = try bench.record();
+    fb.CmdBeginRenderPass(commands, &.{ .render_pass = deep_pass, .framebuffer = deep_frame, .render_area = area }, .@"inline");
+    fb.CmdBindPipeline(commands, .graphics, biased.?);
+    fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+    fb.CmdPushConstants(commands, layout, facet.SHADER_STAGE_FRAGMENT, 0, 4, &green);
+    fb.CmdDraw(commands, 3, 1, 0, 0);
+    fb.CmdEndRenderPass(commands);
+    fb.CmdCopyImageToBuffer(commands, deep_image, .general, back, 1, @ptrCast(&depth_copy));
+    try bench.submit();
+    try testing.expectEqual(drawn_depth + 7, wordAt(back_bytes, 30, 30));
+    // And held by a clamp of 5.25 of those steps, which in 65535ths would
+    // have held it to nothing.
+    const made_held, const held = makePipeline(&bench, .{ .module = flat, .layout = layout, .pass = deep_pass, .depth = .{ .depth_test_enable = true, .depth_write_enable = true, .depth_compare_op = .always }, .raster = .{ .depth_bias_enable = true, .depth_bias_constant_factor = 7, .depth_bias_clamp = @floatCast(5.25 / units24) } });
+    try testing.expectEqual(facet.Result.success, made_held);
+    defer fb.DestroyPipeline(device, held);
+    commands = try bench.record();
+    fb.CmdBeginRenderPass(commands, &.{ .render_pass = deep_pass, .framebuffer = deep_frame, .render_area = area }, .@"inline");
+    fb.CmdBindPipeline(commands, .graphics, held.?);
+    fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+    fb.CmdPushConstants(commands, layout, facet.SHADER_STAGE_FRAGMENT, 0, 4, &green);
+    fb.CmdDraw(commands, 3, 1, 0, 0);
+    fb.CmdEndRenderPass(commands);
+    fb.CmdCopyImageToBuffer(commands, deep_image, .general, back, 1, @ptrCast(&depth_copy));
+    try bench.submit();
+    try testing.expectEqual(drawn_depth + 5, wordAt(back_bytes, 30, 30));
+
+    // The depth clamp in steps of 24 bits: a triangle in front of the
+    // near plane drawn all the same, its depth held at the viewport's
+    // nearest, 0.25, rounded as the range is.
+    const made_clamped, const clamped = makePipeline(&bench, .{ .module = flat, .layout = layout, .pass = deep_pass, .depth = .{ .depth_test_enable = true, .depth_write_enable = true, .depth_compare_op = .always }, .raster = .{ .depth_clamp_enable = true }, .min_depth = 0.25, .max_depth = 0.75 });
+    try testing.expectEqual(facet.Result.success, made_clamped);
+    defer fb.DestroyPipeline(device, clamped);
+    Draw.whole(vertex_bytes, -0.5);
+    commands = try bench.record();
+    fb.CmdBeginRenderPass(commands, &.{ .render_pass = deep_pass, .framebuffer = deep_frame, .render_area = area }, .@"inline");
+    fb.CmdBindPipeline(commands, .graphics, clamped.?);
+    fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+    fb.CmdPushConstants(commands, layout, facet.SHADER_STAGE_FRAGMENT, 0, 4, &green);
+    fb.CmdDraw(commands, 3, 1, 0, 0);
+    fb.CmdEndRenderPass(commands);
+    fb.CmdCopyImageToBuffer(commands, deep_image, .general, back, 1, @ptrCast(&depth_copy));
+    try bench.submit();
+    try testing.expectEqual(green, picture.at(30, 30));
+    try testing.expectEqual(@as(u32, @intFromFloat(@round(0.25 * units24))), wordAt(back_bytes, 30, 30));
+    // Back to the bias's depth for the bounds.
+    Draw.whole(vertex_bytes, 0.375);
+    commands = try bench.record();
+    fb.CmdBeginRenderPass(commands, &.{ .render_pass = deep_pass, .framebuffer = deep_frame, .render_area = area }, .@"inline");
+    fb.CmdBindPipeline(commands, .graphics, biased.?);
+    fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+    fb.CmdPushConstants(commands, layout, facet.SHADER_STAGE_FRAGMENT, 0, 4, &green);
+    fb.CmdDraw(commands, 3, 1, 0, 0);
+    fb.CmdEndRenderPass(commands);
+    try bench.submit();
+
+    // The bounds test of the depth there, drawn + 7, in steps of 24 bits:
+    // bounds from six tenths of a step above it keep nothing, and from six
+    // tenths below keep every pixel.
+    const there: f64 = @floatFromInt(drawn_depth + 7);
+    for ([2]f64{ there + 0.6, there - 0.6 }, [2]u32{ 0, blue }) |low, shown| {
+        const made_bounded, const bounded = makePipeline(&bench, .{ .module = flat, .layout = layout, .pass = deep_pass, .depth = .{ .depth_bounds_test_enable = true, .min_depth_bounds = @floatCast(low / units24), .max_depth_bounds = 1 } });
+        try testing.expectEqual(facet.Result.success, made_bounded);
+        defer fb.DestroyPipeline(device, bounded);
+        commands = try bench.record();
+        fb.CmdBeginRenderPass(commands, &.{ .render_pass = deep_pass, .framebuffer = deep_frame, .render_area = area }, .@"inline");
+        fb.CmdBindPipeline(commands, .graphics, bounded.?);
+        fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+        fb.CmdPushConstants(commands, layout, facet.SHADER_STAGE_FRAGMENT, 0, 4, &blue);
+        fb.CmdDraw(commands, 3, 1, 0, 0);
+        fb.CmdEndRenderPass(commands);
+        try bench.submit();
+        // The pass clears the colour to black, given no clear value; what
+        // the bounds keep out stays that.
+        try testing.expectEqual(if (shown == blue) blue else @as(u32, 0xFF00_0000), picture.at(30, 30));
+    }
+}
+
+test "a framebuffer's second layer of D24_UNORM_S8_UINT cleared past the tiles at all 24 bits, by the load op and by CmdClearAttachments, its stencil beside each depth left to its own clear (since 1.223)" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    const image_zig = @import("../image/_image.zig");
+    const side = facet.Extent3D{ .width = 64, .height = 64 };
+    const colors = try bench.bareImage(.{ .format = .b8g8r8a8_unorm, .extent = side, .array_layers = 2, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT }, false);
+    const color_view = try bench.viewOf(.{ .image = colors, .format = .b8g8r8a8_unorm, .view_type = .@"2d_array", .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_COLOR } });
+    const depths = try bench.bareImage(.{ .format = .d24_unorm_s8_uint, .extent = side, .array_layers = 2, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT }, false);
+    const depth_view = try bench.viewOf(.{ .image = depths, .format = .d24_unorm_s8_uint, .view_type = .@"2d_array", .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH | facet.IMAGE_ASPECT_STENCIL } });
+    const kept = _objects.of(image_zig.Image, depths);
+    const pass = try deepPass(&bench, .d24_unorm_s8_uint, .clear, .store);
+    defer fb.DestroyRenderPass(device, pass);
+    var frame: ?*facet.Framebuffer = null;
+    const views = [2]*facet.ImageView{ color_view, depth_view };
+    try testing.expectEqual(facet.Result.success, fb.CreateFramebuffer(device, &.{ .render_pass = pass, .attachment_count = 2, .attachments = &views, .width = 64, .height = 64, .layers = 2 }, &frame));
+    defer fb.DestroyFramebuffer(device, frame);
+
+    // Cleared to a quarter and 0x33, and the depth alone to a half over a
+    // corner of the second layer.
+    var values = clears(0xFF33_6699);
+    values[1] = .{ .depth_stencil = .{ .depth = 0.25, .stencil = 0x33 } };
+    const commands = try bench.record();
+    fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = frame.?, .render_area = .{ .extent = .{ .width = 64, .height = 64 } }, .clear_value_count = 2, .clear_values = &values }, .@"inline");
+    const halfway = facet.ClearAttachment{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH, .clear_value = .{ .depth_stencil = .{ .depth = 0.5 } } };
+    const corner = facet.ClearRect{ .rect = .{ .extent = .{ .width = 16, .height = 16 } }, .base_array_layer = 1, .layer_count = 1 };
+    fb.CmdClearAttachments(commands, 1, @ptrCast(&halfway), 1, @ptrCast(&corner));
+    fb.CmdEndRenderPass(commands);
+    try bench.submit();
+
+    const wordAt = struct {
+        fn of(image: *const image_zig.Image, layer: u32, x: u32, y: u32) u32 {
+            const rows = image_zig.rowsAt(image, 0, layer);
+            return std.mem.readInt(u32, image.data.?[rows.at + @as(usize, y) * rows.pitch + @as(usize, x) * 4 ..][0..4], .little);
+        }
+    }.of;
+    const quarter: u32 = @intFromFloat(@round(0.25 * 16777215.0));
+    const half: u32 = @intFromFloat(@round(0.5 * 16777215.0));
+    // The first layer is the tiles' store, the second the clear past
+    // them: each depth in the word's top three bytes, the stencil in its
+    // low one.
+    for ([2]u32{ 0, 1 }) |layer| try testing.expectEqual(quarter << 8 | 0x33, wordAt(kept, layer, 40, 40));
+    try testing.expectEqual(quarter << 8 | 0x33, wordAt(kept, 0, 4, 4));
+    // The corner of the second at a half, its stencil left as it was.
+    try testing.expectEqual(half << 8 | 0x33, wordAt(kept, 1, 4, 4));
+    try testing.expectEqual(half << 8 | 0x33, wordAt(kept, 1, 15, 15));
+    try testing.expectEqual(quarter << 8 | 0x33, wordAt(kept, 1, 16, 15));
 }

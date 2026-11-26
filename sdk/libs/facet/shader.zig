@@ -616,6 +616,12 @@ pub const TexelFormat = enum(u8) {
     /// bytes a texel is what almost no hardware carries either.
     rgb32u = 50,
     rgb32i = 51,
+    /// The depth of X8_D24_UNORM_PACK32 and D24_UNORM_S8_UINT as an
+    /// input attachment reads it, since 1.223: the top 24 bits of the
+    /// pixel's word, 0 to 1 over 16777215, nearest first. Its low byte,
+    /// the stencil or nothing, is not read: the stencil of
+    /// D24_UNORM_S8_UINT is its own plane, read as `r8u`.
+    d24 = 52,
 
     /// The bytes one texel takes; 0 for `.none`.
     pub fn bytes(format: TexelFormat) u32 {
@@ -646,6 +652,7 @@ pub const TexelFormat = enum(u8) {
             .r8n, .r16n, .r8srgb => 1,
             .rg8n, .rg16n, .rg8srgb => 2,
             .rg11b10f, .rgb9e5, .rgb32u, .rgb32i => 3,
+            .d24 => 1,
             .rgba8n, .rgba16n, .rgba8srgb, .bgra8srgb => 4,
             .rgb10a2, .bgr10a2, .rgb10a2u, .bgr10a2u => 4,
         };
@@ -667,6 +674,7 @@ pub const TexelFormat = enum(u8) {
             .r8n, .rg8n, .rgba8n, .r8srgb, .rg8srgb, .rgba8srgb, .bgra8srgb => 8,
             .r16n, .rg16n, .rgba16n => 16,
             .rgb10a2, .bgr10a2, .rgb10a2u, .bgr10a2u, .rg11b10f, .rgb9e5, .rgb32u, .rgb32i => 32,
+            .d24 => 32,
         };
     }
 
@@ -684,7 +692,7 @@ pub const TexelFormat = enum(u8) {
             // (`rg11b10f`, `rgb9e5`).
             .r8n, .rg8n, .rgba8n, .r16n, .rg16n, .rgba16n => .snorm,
             .r8srgb, .rg8srgb, .rgba8srgb, .bgra8srgb => .srgb,
-            .rgb10a2, .bgr10a2, .rgb10a2u, .bgr10a2u, .rg11b10f, .rgb9e5 => .packed_bits,
+            .rgb10a2, .bgr10a2, .rgb10a2u, .bgr10a2u, .rg11b10f, .rgb9e5, .d24 => .packed_bits,
             .rgb32u => .uint,
             .rgb32i => .sint,
         };
@@ -716,6 +724,8 @@ pub const TexelFormat = enum(u8) {
             .bgr10a2 => .{ .at = .{ 20, 10, 0, 30 }, .bits = .{ 10, 10, 10, 2 } },
             .rgb10a2u => .{ .at = .{ 0, 10, 20, 30 }, .bits = .{ 10, 10, 10, 2 }, .whole = true },
             .bgr10a2u => .{ .at = .{ 20, 10, 0, 30 }, .bits = .{ 10, 10, 10, 2 }, .whole = true },
+            // The word's top 24 bits (since 1.223).
+            .d24 => .{ .at = .{ 8, 0, 0, 0 }, .bits = .{ 24, 0, 0, 0 } },
             else => null,
         };
     }
@@ -1166,7 +1176,8 @@ pub const Texels = struct {
 ///
 /// Since 1.62 a depth attachment that is kept is read this way too: one
 /// plane of it, the one the view's aspect names, as `r16` - the depth 0
-/// to 1, nearest first, which `at` gives as x - or as `r8u`, the stencil
+/// to 1, nearest first, which `at` gives as x; since 1.223 as `d24`, of a
+/// depth of 24 bits - or as `r8u`, the stencil
 /// as the whole number it is. A format holding both is the two planes
 /// inside the same rows, four bytes from one pixel to the next
 /// (`stride`), and the view says which of them this is.

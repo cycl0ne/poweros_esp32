@@ -7346,4 +7346,44 @@ pub const LIBRARY_VERSION = 1;
 /// bits. Six mutations each fail a test. On the CM5 (package f227),
 /// FacetProbe is 947 of 947, the V3D comparing an X8_D24 at all 24 bits
 /// through DEPTH24_X8, and FacetBoth's 316 cases are each as at 1.221.
-pub const LIBRARY_REVISION = 222;
+/// 223: **The cores draw a depth of 24 bits (docs/facet-vulkan10.md item
+/// 35, step 2 of four).** X8_D24_UNORM_PACK32 and D24_UNORM_S8_UINT are
+/// depth attachments where the device says `Capabilities.depth24`, the
+/// cores: tested, stored and loaded at all 24 bits, as llvmpipe takes a
+/// fragment's z to its format's own width before it tests it
+/// (`lp_build_depth_stencil_test`, lp_bld_depth.c:1067-1095). The tile
+/// keeps a depth at its attachment's width (`Attachments.Depth.bits`):
+/// a D16 one in 16 bits as before, a D24 one in 32, the buffer having
+/// room for the wider so that a D16 frame touches what it touched.
+/// `setup.Depth` carries its buffer's units, 65535 or 16777215, and the
+/// bias's unit, the clamp and the bounds are in those, as llvmpipe's
+/// unit is 1 / (2^bits - 1) (`util_get_depth_format_mrd`,
+/// u_format.c:387-412). The walk is made at compile time for either
+/// width (`batched.Rasterize`'s `Kept`, `prepass.DepthOnly`), a draw that
+/// tests no depth walking the one way. A store writes the word's top three
+/// bytes and leaves the stencil in its low one; a clear value, a frame's
+/// later layers and CmdClearAttachments past the first layer keep a depth
+/// at its width (`_render.Part.depth_bits`, `fillDepth`). An input
+/// attachment reads it as `shader.TexelFormat.d24`, added at the enum's
+/// end. `raster.Pipeline`, made at compile time for C:test/Raster and the
+/// cube, tests a depth of 16 bits alone, the width its targets keep. The
+/// V3D says no attachment of either yet (step 3).
+///
+/// Three host tests are new: the two drawn - depths less than a 16-bit
+/// step apart told apart, cleared, stored beside a stencil, loaded and
+/// tested at all 24, a bias, the clamp and the bounds in 24-bit steps;
+/// a later layer of D24_UNORM_S8_UINT cleared past the tiles; and the
+/// device's format answer by `depth24`. Three grew to the two formats:
+/// four samples a pixel with a cut-out holding its depths back, the
+/// depths in order with the pre-pass and without, and the depth input
+/// attachment; and two of 1.222 that had both refused as attachments
+/// take them. FacetProbe 1.51 draws an
+/// X8_D24 on the cores, reads it back and samples it at all 24 bits, and
+/// checks the V3D says no attachment. Ten mutations each fail a test.
+/// facet.library grows from 563688 bytes to 839256 on the CM5: each walk
+/// is made again for the wider depth, as large as its 16-bit one (the
+/// four-sample stencil walk 83560 bytes), the 16-bit walks as they were.
+/// On the CM5 (package f228), FacetProbe is 951 of 951, the cores drawing
+/// an X8_D24 at all 24 bits, and FacetBoth's 316 cases are each as at
+/// 1.222.
+pub const LIBRARY_REVISION = 223;

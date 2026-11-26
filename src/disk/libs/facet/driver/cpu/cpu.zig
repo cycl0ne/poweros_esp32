@@ -164,6 +164,9 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // A pixel's depth and its stencil are written where they lie in
         // its four bytes, so a format of both keeps either (since 1.47).
         .stored_both = true,
+        // A depth of 24 bits, kept in the tiles at 32 bits a pixel and
+        // tested at all 24 (since 1.223).
+        .depth24 = true,
         // Both go by the pixel at a time way the stencil test goes by:
         // the clamp holds a pixel's depth inside the viewport's range,
         // and the bounds test reads the depth already there.

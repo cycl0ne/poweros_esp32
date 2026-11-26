@@ -93,8 +93,9 @@ comptime {
     // (`Tile.extra_colors`): it has to be a batch's worth exactly.
     if (target_zig.batch_color_words != batch_quads * 4) @compileError("a tile's batch colours are not a batch's");
     // And for a batch's depths at four samples a pixel
-    // (`Tile.batch_depths`, since 1.105): sixteen 16-bit ones a quad.
-    if (target_zig.batch_depth_words != batch_quads * 16 / 2) @compileError("a tile's batch depths are not a batch's");
+    // (`Tile.batch_depths`, since 1.105): sixteen 32-bit ones a quad
+    // (16-bit until 1.223).
+    if (target_zig.batch_depth_words != batch_quads * 16) @compileError("a tile's batch depths are not a batch's");
 }
 
 /// How a depth is compared with the one kept: the pixel passes where it
@@ -153,19 +154,19 @@ pub const StencilFace = struct {
 /// is given in place of a test of its own.
 const keeping = StencilFace{ .compare = .always, .compare_mask = 0, .write_mask = 0 };
 
-/// Two depths, 0 to 1, in the units the depth attachment holds: what the
-/// walk compares a pixel's with. Held inside the range, and the wrong way
-/// round where the two are, which then keeps nothing.
-fn boundsOf(asked: [2]f32) [2]u64 {
-    const whole: f32 = 65535;
-    const low = @round(std.math.clamp(asked[0], 0, 1) * whole);
-    const high = @round(std.math.clamp(asked[1], 0, 1) * whole);
+/// Two depths, 0 to 1, in `whole`, the units the depth attachment holds
+/// (`setup.Depth.units`; 65535 alone until 1.223): what the walk compares
+/// a pixel's with. Held inside the range, and the wrong way round where
+/// the two are, which then keeps nothing.
+fn boundsOf(asked: [2]f32, whole: f64) [2]u64 {
+    const low = @round(std.math.clamp(@as(f64, asked[0]), 0, 1) * whole);
+    const high = @round(std.math.clamp(@as(f64, asked[1]), 0, 1) * whole);
     return .{ @intFromFloat(low), @intFromFloat(high) };
 }
 
 /// Whether a stored depth lies between the bounds; nothing lies between
 /// them where they are the wrong way round, as in Vulkan.
-inline fn within(there: u16, bounds: [2]u64) bool {
+inline fn within(there: u32, bounds: [2]u64) bool {
     return there >= bounds[0] and there <= bounds[1];
 }
 
@@ -426,12 +427,18 @@ test "a clip bucket holds what it is asked for, and the narrowest is what 1.89 c
 const Test = enum { off, less, less_or_equal, masked, second, second_or_equal, stencil };
 
 /// A triangle in the pre-pass: its depth alone, then its quads tested as
-/// `second` says. Only at one sample a pixel: the pre-pass's walk is of
-/// pixels (`walk.runs`).
-fn TwoPasses(comptime second: Test) type {
+/// `second` says, in a tile that keeps its depth as `Kept`. Only at one
+/// sample a pixel: the pre-pass's walk is of pixels (`walk.runs`).
+fn TwoPasses(comptime second: Test, comptime Kept: type) type {
     return struct {
-        const passes = bins.Prepass{ .depth = &prepass.DepthOnly(Triangle).raster, .shade = &Rasterize(second, 1).raster };
+        const passes = bins.Prepass{ .depth = &prepass.DepthOnly(Triangle, Kept).raster, .shade = &Rasterize(second, 1, Kept).raster };
     };
+}
+
+/// How a tile keeps a depth of `bits`: 16 bits in a `u16`, and 24 in a
+/// `u32` (since 1.223).
+fn KeptOf(comptime bits: u32) type {
+    return if (bits == 24) u32 else u16;
 }
 
 /// `State.sample_mask`'s four samples, each bit spread over the four
@@ -461,8 +468,9 @@ fn setUpAll(target: *Target, state: *const State, vertices: []const f32, stride:
     // the viewport's range. Either goes by the pixel at a time way, as a
     // stencil test does, and a draw with none of the three keeps its fast
     // path untouched.
-    const bounds: ?[2]u64 = if (state.depth_bounds) |asked| boundsOf(asked) else null;
-    const clamp: ?[2]u64 = if (state.depth_clamp) boundsOf(.{ state.min_depth, state.max_depth }) else null;
+    const whole = setup.Depth.unitsOf(target.attachments.depth.bits);
+    const bounds: ?[2]u64 = if (state.depth_bounds) |asked| boundsOf(asked, whole) else null;
+    const clamp: ?[2]u64 = if (state.depth_clamp) boundsOf(.{ state.min_depth, state.max_depth }, whole) else null;
     // The bounds test is of the depth already there, which a pass with a
     // depth attachment has whether this draw tests it or not, as in
     // Vulkan.
@@ -511,18 +519,26 @@ fn setUpAll(target: *Target, state: *const State, vertices: []const f32, stride:
         .less_or_equal => .less_or_equal,
         else => .masked,
     };
+    // A tile keeps a depth of 24 bits in 32 (since 1.223), and a draw
+    // that tests none walks it the one way whatever the frame keeps.
+    const wide = target.attachments.depth.bits == 24;
     const raster = switch (samples) {
         inline 1, 4 => |n| switch (test_kind) {
-            inline .off, .less, .less_or_equal, .masked, .stencil => |kind| &Rasterize(kind, n).raster,
+            .off => &Rasterize(.off, n, u16).raster,
+            inline .less, .less_or_equal, .masked, .stencil => |kind| switch (wide) {
+                inline else => |is_wide| &Rasterize(kind, n, KeptOf(if (is_wide) 24 else 16)).raster,
+            },
             .second, .second_or_equal => unreachable,
         },
         else => unreachable,
     };
     const two = samples == 1 and state.prepass and shading.depth_write and state.blend == .off;
-    const passes: ?*const bins.Prepass = if (!two) null else switch (test_kind) {
-        .less => &TwoPasses(.second).passes,
-        .less_or_equal => &TwoPasses(.second_or_equal).passes,
-        else => null,
+    const passes: ?*const bins.Prepass = if (!two) null else switch (wide) {
+        inline else => |is_wide| switch (test_kind) {
+            .less => &TwoPasses(.second, KeptOf(if (is_wide) 24 else 16)).passes,
+            .less_or_equal => &TwoPasses(.second_or_equal, KeptOf(if (is_wide) 24 else 16)).passes,
+            else => null,
+        },
     };
     const codes = target.arena.alloc(u8, count) orelse return error.OutOfMemory;
     const guard = setup.Guard.of(state.viewport);
@@ -687,7 +703,7 @@ const SetUp = struct {
                 .prepass = set.prepass,
             },
             .shading = set.shading,
-            .depth = if (set.depth) depthOf(&made, projected, state) else undefined,
+            .depth = if (set.depth) depthOf(&made, projected, state, setup.Depth.unitsOf(target.attachments.depth.bits)) else undefined,
             .least_inverse_w = @min(projected[0].inverse_w, projected[1].inverse_w, projected[2].inverse_w),
             .face = faceOf(&projected, state.front),
         };
@@ -705,8 +721,9 @@ fn faceOf(p: *const [3]setup.Projected, front: setup.Winding) u8 {
     return @intFromBool(clockwise != (front == .clockwise));
 }
 
-/// The depth of a triangle, its vertices' z moved into the depth range.
-fn depthOf(made: *const setup.Triangle, projected: [3]setup.Projected, state: *const State) setup.Depth {
+/// The depth of a triangle, its vertices' z moved into the depth range, in
+/// the units of the frame's depth, `whole` of them (since 1.223).
+fn depthOf(made: *const setup.Triangle, projected: [3]setup.Projected, state: *const State, whole: f64) setup.Depth {
     var ranged = projected;
     if (state.min_depth != 0 or state.max_depth != 1) {
         // A draw that clamps keeps the triangle's own plane: what lies
@@ -717,7 +734,7 @@ fn depthOf(made: *const setup.Triangle, projected: [3]setup.Projected, state: *c
             vertex.z = if (state.depth_clamp) moved else std.math.clamp(moved, 0, 1);
         }
     }
-    const depth: setup.Depth = .of(made, &ranged);
+    const depth: setup.Depth = .of(made, &ranged, whole);
     return if (state.depth_bias) |bias| depth.biased(bias) else depth;
 }
 
@@ -742,8 +759,11 @@ fn planeOf(made: *const setup.Triangle, values: [3]f64) shader.Plane {
 
 /// How the tiles draw a draw's triangles, testing the depth as `kind`
 /// says, at `samples` samples a pixel: 1, or 4 (since 1.103), each
-/// tested at its own depth in its own planes (since 1.105).
-fn Rasterize(comptime kind: Test, comptime samples: u32) type {
+/// tested at its own depth in its own planes (since 1.105), against a
+/// tile that keeps its depth as `Kept`, at the attachment's own width as
+/// llvmpipe tests one (lp_bld_depth.c:1067-1095): `u16` for 16 bits,
+/// `u32` for 24 (since 1.223).
+fn Rasterize(comptime kind: Test, comptime samples: u32, comptime Kept: type) type {
     return struct {
         // On a cache line, as a segment is loaded on one: placed wherever
         // the code before it ended, the quads' loops took the cube up to
@@ -765,7 +785,7 @@ fn Rasterize(comptime kind: Test, comptime samples: u32) type {
             // themselves (`Shading.late`, `flush`).
             batch.deferred_depth = triangle.shading.discards and tested_here and !second_here and triangle.shading.depth_write;
             walk.quads(samples, tile, header, Walker{ .tile = tile, .batch = &batch, .depth = triangle.depth, .shading = triangle.shading, .face = triangle.face }, Walker.run);
-            batch.flush(samples);
+            batch.flush(samples, Kept);
         }
 
         /// A row's runs as the walk hands them on: its one, or one for
@@ -814,7 +834,7 @@ fn Rasterize(comptime kind: Test, comptime samples: u32) type {
                 // pixel and from where its own run starts (since 1.105).
                 var z_upper: Depths = if (tested) (if (samples == 1) walker.rowDepth(upper, x, y, free) else walker.sampleDepths(upper_runs, x, y, free)) else no_depths;
                 var z_lower: Depths = if (tested) (if (samples == 1) walker.rowDepth(lower, x, y + 1, free) else walker.sampleDepths(lower_runs, x, y + 1, free)) else no_depths;
-                const depths = walker.tile.depthRow(y);
+                const depths = walker.tile.depthRow(Kept, y);
                 const second = kind == .second or kind == .second_or_equal;
                 const write = tested and !second and walker.shading.depth_write;
                 // The batch's count held here while the row is walked:
@@ -883,7 +903,7 @@ fn Rasterize(comptime kind: Test, comptime samples: u32) type {
                     count += 1;
                     if (count == batch_quads) {
                         batch.count = count;
-                        batch.flush(samples);
+                        batch.flush(samples, Kept);
                         count = 0;
                     }
                 }
@@ -902,7 +922,7 @@ fn Rasterize(comptime kind: Test, comptime samples: u32) type {
                 return start -% @as(i64, span.left - x) *% walker.depth.step;
             }
 
-            inline fn passes(walker: Walker, near: u64, kept: u16) bool {
+            inline fn passes(walker: Walker, near: u64, kept: Kept) bool {
                 return switch (kind) {
                     .off => true,
                     .less => near < kept,
@@ -945,7 +965,7 @@ fn Rasterize(comptime kind: Test, comptime samples: u32) type {
                     const bits: u4 = @truncate(mask >> (4 * sample));
                     if (bits != 0) {
                         const near = walker.nearOf(z_upper[sample], z_lower[sample], step, tested);
-                        const depths = walker.tile.depthRowOf(sample, y);
+                        const depths = walker.tile.depthRowOf(Kept, sample, y);
                         var kept = bits;
                         if (kind == .stencil) {
                             const holding = &walker.tile.batch_depths.?[count];
@@ -997,7 +1017,9 @@ fn Rasterize(comptime kind: Test, comptime samples: u32) type {
 /// four samples a pixel (since 1.105), and `seen` the triangle's face. A
 /// depth that passes is written with `write_depth`; without, it is held
 /// for after the fragment function (`Batch.putDepths`, since 1.107).
-inline fn stenciled(shading: *const Shading, seen: u8, x: u32, covered: u4, near: [4]u64, values: [*]u8, depths: [*]u16, write_depth: bool) u4 {
+/// `depths` are the tile's as it keeps them, of 16 bits or of 32 (since
+/// 1.223).
+inline fn stenciled(shading: *const Shading, seen: u8, x: u32, covered: u4, near: [4]u64, values: [*]u8, depths: anytype, write_depth: bool) u4 {
     const face = &shading.stencil[seen];
     var kept: u4 = 0;
     inline for (0..4) |i| {
@@ -1067,8 +1089,9 @@ const Batch = struct {
     /// Each quad's four depths, held while the fragment function runs where
     /// it may drop pixels: written after it, for those it left. At one
     /// sample a pixel; at four the tile's `batch_depths` hold sixteen a
-    /// quad (since 1.105).
-    depths: [batch_quads][4]u16,
+    /// quad (since 1.105). In the depth's units, 32 bits each (since
+    /// 1.223).
+    depths: [batch_quads][4]u32,
     /// Whether that is what happens, worked out once a triangle.
     deferred_depth: bool,
     /// The face of the triangle seen, for the tests made after the
@@ -1154,15 +1177,15 @@ const Batch = struct {
     /// The quads gathered coloured by the fragment function, and the
     /// pixels kept put into the tile: into each of its `samples`
     /// samples' planes, at more than one, under that sample's bits.
-    fn flush(batch: *Batch, comptime samples: u32) void {
+    fn flush(batch: *Batch, comptime samples: u32, comptime Kept: type) void {
         if (batch.count == 0) return;
         batch.fragments.count = batch.count;
         batch.shading.fragment(&batch.fragments);
         if (batch.shading.alpha_to_coverage) batch.coverByAlpha(samples);
         // After it, not before: the quads' `kept` is what the function left.
         if (batch.shading.late) {
-            batch.testLate(samples);
-        } else if (batch.deferred_depth) batch.putDepths(samples);
+            batch.testLate(samples, Kept);
+        } else if (batch.deferred_depth) batch.putDepths(samples, Kept);
         if (batch.shading.fragments != null or batch.shading.samples != null) batch.countPixels(samples);
         // The colours the function wrote: each attachment's `count` of
         // them after the one before (`shader.Fragments.colorsOf`), and
@@ -1222,14 +1245,14 @@ const Batch = struct {
     /// `batch_depths`, as llvmpipe writes each sample's depth after its
     /// shader under that sample's mask ANDed with the shader's
     /// (lp_state_fs.c:1321-1334, :1426-1440; since 1.105).
-    inline fn putDepths(batch: *Batch, comptime samples: u32) void {
+    inline fn putDepths(batch: *Batch, comptime samples: u32, comptime Kept: type) void {
         @setRuntimeSafety(false);
         if (samples == 1) {
-            const depths: [*]u16 = &batch.tile.buffer.depth;
+            const depths = batch.tile.depthPlane(Kept, 0);
             for (batch.quads[0..batch.count], batch.depths[0..batch.count]) |quad, near| {
                 const at = depths + @as(u32, quad.y) * tile_size + quad.x;
                 inline for (0..4) |i| {
-                    if (quad.kept >> i & 1 != 0) at[offset(i)] = near[i];
+                    if (quad.kept >> i & 1 != 0) at[offset(i)] = @truncate(near[i]);
                 }
             }
             return;
@@ -1237,10 +1260,10 @@ const Batch = struct {
         const kept_depths = batch.tile.batch_depths.?;
         for (batch.quads[0..batch.count], 0..) |quad, k| {
             inline for (0..samples) |sample| {
-                const at = batch.tile.depthPlane(sample) + @as(u32, quad.y) * tile_size + quad.x;
+                const at = batch.tile.depthPlane(Kept, sample) + @as(u32, quad.y) * tile_size + quad.x;
                 const bits = batch.bitsOf(samples, sample, k);
                 inline for (0..4) |i| {
-                    if (bits >> i & 1 != 0) at[offset(i)] = kept_depths[k][4 * sample + i];
+                    if (bits >> i & 1 != 0) at[offset(i)] = @truncate(kept_depths[k][4 * sample + i]);
                 }
             }
         }
@@ -1284,13 +1307,13 @@ const Batch = struct {
     /// quad's mask cut to those that pass. As llvmpipe's late test, under
     /// the mask the shader left and at the depths taken in the walk
     /// (lp_state_fs.c:1331-1334, :1366-1424). (Since 1.107.)
-    fn testLate(batch: *Batch, comptime samples: u32) void {
+    fn testLate(batch: *Batch, comptime samples: u32, comptime Kept: type) void {
         @setRuntimeSafety(false);
         const tile = batch.tile;
         if (samples == 1) {
             for (batch.quads[0..batch.count], batch.depths[0..batch.count]) |*quad, near| {
                 const depths = [4]u64{ near[0], near[1], near[2], near[3] };
-                quad.kept = stenciled(batch.shading, batch.face, quad.x, @truncate(quad.kept), depths, tile.stencilRow(quad.y), tile.depthRow(quad.y), true);
+                quad.kept = stenciled(batch.shading, batch.face, quad.x, @truncate(quad.kept), depths, tile.stencilRow(quad.y), tile.depthRow(Kept, quad.y), true);
             }
             return;
         }
@@ -1302,7 +1325,7 @@ const Batch = struct {
                 if (bits != 0) {
                     const near = kept_depths[k][4 * sample ..][0..4];
                     const depths = [4]u64{ near[0], near[1], near[2], near[3] };
-                    passed |= @as(u16, stenciled(batch.shading, batch.face, quad.x, @truncate(bits), depths, tile.stencilRowOf(sample, quad.y), tile.depthRowOf(sample, quad.y), true)) << (4 * sample);
+                    passed |= @as(u16, stenciled(batch.shading, batch.face, quad.x, @truncate(bits), depths, tile.stencilRowOf(sample, quad.y), tile.depthRowOf(Kept, sample, quad.y), true)) << (4 * sample);
                 }
             }
             batch.masks[k] = passed;

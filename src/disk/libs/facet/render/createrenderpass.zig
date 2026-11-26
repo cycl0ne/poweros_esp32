@@ -445,6 +445,7 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
             continue;
         }
         var depth_index: ?u32 = null;
+        var depth_bits: u32 = 16;
         var tests_depth = false;
         var tests_stencil = false;
         var loads_depth = false;
@@ -458,6 +459,8 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
                 const depth = attachments[reference.attachment];
                 tests_depth = _image.hasDepth(depth.format);
                 tests_stencil = _image.hasStencil(depth.format);
+                // A depth of 24 bits is kept as one (since 1.223).
+                if (_image.depthBits(depth.format) == 24) depth_bits = 24;
                 // VUID-VkSubpassDescription-pDepthStencilAttachment-02650.
                 if (!tests_depth and !tests_stencil) return .error_validation_failed;
                 samples = depth.samples;
@@ -506,8 +509,9 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
                 if ((loads_depth or stores_depth or loads_stencil or stores_stencil or shared != null) and
                     tests_depth and tests_stencil and !owner.physical.can.stored_both) return .error_validation_failed;
                 // And of a format the device draws a depth or a stencil of
-                // at all (the same VUID, since 1.222): not yet one of 24
-                // bits of depth (docs/facet-vulkan10.md item 35). The two
+                // at all (the same VUID, since 1.222): one of 24 bits of
+                // depth only where it draws that (`Capabilities.depth24`,
+                // since 1.223; docs/facet-vulkan10.md item 35). The two
                 // formats a device says no attachment of where it keeps
                 // their stencil nowhere, S8_UINT and D16_UNORM_S8_UINT, are
                 // drawn in its tiles alone all the same, as above.
@@ -551,6 +555,7 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
         var whole = _render.Part{
             .color_count = 0,
             .depth = depth_index,
+            .depth_bits = depth_bits,
             .tests_depth = tests_depth,
             .tests_stencil = tests_stencil,
             .loads_depth = loads_depth,

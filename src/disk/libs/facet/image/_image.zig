@@ -1343,9 +1343,6 @@ pub fn rowsAt(image: *const Image, level: u32, layer: u32) struct { at: usize, p
 pub fn depthRows(image: *const Image, aspect: u32, level: u32, first_layer: u32) ?shader.Attachment {
     const data = image.data orelse return null;
     const plane = planeAt(image, aspect) orelse return null;
-    // A depth of 24 bits is read by nothing here yet: no device draws one,
-    // so none is an input attachment (`shapeFor`, since 1.222).
-    if (plane.depth and depthBits(image.format) != 16) return null;
     const rows = rowsAt(image, level, first_layer);
     const size = levelSize(image, level);
     const first = data + rows.at + plane.at;
@@ -1354,7 +1351,8 @@ pub fn depthRows(image: *const Image, aspect: u32, level: u32, first_layer: u32)
         .pitch = rows.pitch,
         .width = size[0],
         .height = size[1],
-        .format = if (plane.depth) .r16 else .r8u,
+        // A depth of 24 bits as the top of its word (since 1.223).
+        .format = if (!plane.depth) .r8u else if (depthBits(image.format) == 24) .d24 else .r16,
         .stride = plane.stride,
         .samples = image.samples,
         .sample_bytes = @intCast(image.sample_bytes),

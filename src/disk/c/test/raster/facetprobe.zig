@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetProbe";
-const VERSION_STRING = "\x00$VER: FacetProbe 1.50 (26.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetProbe 1.51 (26.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "CORES/S,V3D/S,QUIET/S";
@@ -106,6 +106,13 @@ const Can = struct {
     /// (docs/facet-vulkan10.md item 56). Vulkan has no feature for it, so
     /// it is read off the device's type, as `samplers` is (since 1.49).
     tile_inputs: bool,
+    /// Whether a depth of 24 bits is drawn into: X8_D24_UNORM_PACK32 and
+    /// D24_UNORM_S8_UINT depth attachments. The cores draw one since facet
+    /// 1.223; the V3D's frames are set up for 16 bits of depth, and it
+    /// says no such attachment (docs/facet-vulkan10.md item 35). Vulkan
+    /// has it as a format feature, which is what is checked against this,
+    /// so it is read off the device's type.
+    depth24: bool,
 
     fn formatOf(fb: *FacetBase, physical: *facet.PhysicalDevice, format: facet.Format) facet.FormatProperties {
         var said: facet.FormatProperties = undefined;
@@ -175,6 +182,7 @@ const Can = struct {
             .etc2_textures = formatOf(fb, physical, .etc2_r8g8b8_unorm_block).optimal_tiling_features != 0,
             .texel_offsets = limits.max_texel_offset != 0,
             .tile_inputs = properties.device_type == .cpu,
+            .depth24 = properties.device_type == .cpu,
         };
     }
 };
@@ -577,9 +585,14 @@ fn pipelineOf(probe: *Probe, pass: *facet.RenderPass, module: *facet.ShaderModul
 /// A pass of a colour attachment and a depth one, the depth kept as the ops
 /// say.
 fn passKeeping(probe: *Probe, color_load: facet.AttachmentLoadOp, load: facet.AttachmentLoadOp, store: facet.AttachmentStoreOp) ?*facet.RenderPass {
+    return passKeepingOf(probe, .d16_unorm, color_load, load, store);
+}
+
+/// The same of a depth attachment of `format` (since facet 1.223).
+fn passKeepingOf(probe: *Probe, format: facet.Format, color_load: facet.AttachmentLoadOp, load: facet.AttachmentLoadOp, store: facet.AttachmentStoreOp) ?*facet.RenderPass {
     const attachments = [2]facet.AttachmentDescription{
         .{ .format = .b8g8r8a8_unorm, .load_op = color_load, .store_op = .store, .final_layout = .color_attachment_optimal },
-        .{ .format = .d16_unorm, .load_op = load, .store_op = store, .final_layout = .depth_stencil_attachment_optimal },
+        .{ .format = format, .load_op = load, .store_op = store, .final_layout = .depth_stencil_attachment_optimal },
     };
     const color = facet.AttachmentReference{ .attachment = 0, .layout = .color_attachment_optimal };
     const depth = facet.AttachmentReference{ .attachment = 1, .layout = .depth_stencil_attachment_optimal };
@@ -2838,18 +2851,23 @@ fn sampledDepthChecks(probe: *Probe) void {
     }
 
     // --- facet 1.222: a depth of 24 bits, sampled at all 24 ---
-    // X8_D24_UNORM_PACK32, filled by a copy and then by clears, no device
-    // drawing one yet. Its texels are 0x040000, a 64th; a reference three
+    // X8_D24_UNORM_PACK32, filled by a copy and then by clears. Its
+    // texels are 0x040000, a 64th; a reference three
     // quarters of a 24-bit step nearer passes and one a quarter further
     // does not, which a depth read at 16 bits could not tell apart. The
     // V3D reads one as DEPTH24_X8, as v3dv does (v3dvx_formats.c:206).
     deep: {
         const transfers = facet.IMAGE_USAGE_TRANSFER_SRC | facet.IMAGE_USAGE_TRANSFER_DST;
         for ([2]facet.Format{ .x8_d24_unorm_pack32, .d24_unorm_s8_uint }) |format| {
+            // An attachment where the device draws one: the cores since
+            // facet 1.223, and not the V3D yet.
             const features = Can.formatOf(fb, probe.physical, format).optimal_tiling_features;
-            probe.check(features & facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT == 0, "a depth of 24 bits says no attachment, nothing drawing one yet");
-            var refused: ?*facet.Image = null;
-            probe.check(fb.CreateImage(device, &.{ .format = format, .extent = extent, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT }, &refused) != .success and refused == null, "and an attachment of one is refused");
+            const attaches = features & facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT != 0;
+            probe.check(attaches == probe.can.depth24, if (probe.can.depth24) "a depth of 24 bits is an attachment" else "a depth of 24 bits says no attachment, this device drawing none yet");
+            var attachment: ?*facet.Image = null;
+            const result = fb.CreateImage(device, &.{ .format = format, .extent = extent, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT }, &attachment);
+            probe.check((result == .success) == probe.can.depth24 and (attachment != null) == probe.can.depth24, if (probe.can.depth24) "and an attachment of one is made" else "and an attachment of one is refused");
+            fb.DestroyImage(device, attachment);
         }
         const deep = probe.bound(.{ .format = .x8_d24_unorm_pack32, .extent = extent, .usage = facet.IMAGE_USAGE_SAMPLED | transfers }, 0) orelse {
             probe.check(false, "a sampled depth image of 24 bits, only copied into");
@@ -2899,6 +2917,67 @@ fn sampledDepthChecks(probe: *Probe) void {
         if (!probe.submit()) break :deep;
         probe.checkEqual(0x04_0000, std.mem.readInt(u32, backed[(8 * side + 16) * 4 ..][0..4], .little), "its depth read back in a buffer's low 24 bits");
         probe.checkEqual(0x04_0000, std.mem.readInt(u32, backed[(side * side - 1) * 4 ..][0..4], .little), "to the last pixel");
+    }
+
+    // --- facet 1.223: a depth of 24 bits drawn ---
+    // Two triangles over the picture, the second 5e-6 nearer: less than a
+    // step of 16 bits apart and 84 of 24. A device that draws a depth of
+    // 24 bits keeps the second's, tested and stored at all 24, as
+    // llvmpipe tests a depth at its format's own width (lp_bld_depth.c:
+    // 1067-1095), and a sample compares it at all 24.
+    drawn24: {
+        if (!probe.can.depth24) break :drawn24;
+        const drawn_usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_SRC;
+        const kept = probe.bound(.{ .format = .x8_d24_unorm_pack32, .extent = extent, .usage = drawn_usage }, 0) orelse {
+            probe.check(false, "a depth attachment of 24 bits, sampled as well");
+            break :drawn24;
+        };
+        const kept_view = probe.viewed(.{ .image = kept, .format = .x8_d24_unorm_pack32, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH } }) orelse {
+            probe.check(false, "a view of it");
+            break :drawn24;
+        };
+        const deep_pass = passKeepingOf(probe, .x8_d24_unorm_pack32, .clear, .clear, .store) orelse {
+            probe.check(false, "a pass that stores a depth of 24 bits");
+            break :drawn24;
+        };
+        const deep_frame = probe.framebuffer(deep_pass, &.{ color[1], kept_view }) orelse {
+            probe.check(false, "a framebuffer over it");
+            break :drawn24;
+        };
+        const deep_list = flatPipeline(probe, deep_pass, flat.?, flat_layout.?) orelse {
+            probe.check(false, "a pipeline that draws it");
+            break :drawn24;
+        };
+        const first: f32 = 0.4;
+        const second: f32 = 0.4 - 5e-6;
+        const both = [6][3]f32{
+            .{ -1, -1, first },  .{ 3, -1, first },  .{ -1, 3, first },
+            .{ -1, -1, second }, .{ 3, -1, second }, .{ -1, 3, second },
+        };
+        @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(both))], std.mem.asBytes(&both));
+        const back, const backed = probe.buffer(side * side * 4, facet.BUFFER_USAGE_TRANSFER_DST) orelse break :drawn24;
+        @memset(backed[0 .. side * side * 4], 0xAA);
+        commands = probe.record() orelse break :drawn24;
+        fb.CmdBeginRenderPass(commands, &.{ .render_pass = deep_pass, .framebuffer = deep_frame, .render_area = area, .clear_value_count = 2, .clear_values = &clears }, .@"inline");
+        fb.CmdBindPipeline(commands, .graphics, deep_list);
+        fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+        fb.CmdPushConstants(commands, flat_layout.?, facet.SHADER_STAGE_FRAGMENT, 0, 4, &red);
+        fb.CmdDraw(commands, 6, 1, 0, 0);
+        fb.CmdEndRenderPass(commands);
+        fb.CmdCopyImageToBuffer(commands, kept, .general, back, 1, @ptrCast(&facet.BufferImageCopy{ .image_subresource = .{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH }, .image_extent = extent }));
+        if (!probe.submit()) {
+            probe.check(false, "a depth of 24 bits drawn and read back");
+            break :drawn24;
+        }
+        const whole: f64 = 0xFF_FFFF;
+        const left: u32 = @intFromFloat(@floor(@as(f64, second) * whole + 0.5));
+        probe.checkEqual(left, std.mem.readInt(u32, backed[(8 * side + 16) * 4 ..][0..4], .little), "a depth of 24 bits drawn: the nearer of two less than a 16-bit step apart kept, at all 24 bits");
+        probe.checkEqual(left, std.mem.readInt(u32, backed[(side * side - 1) * 4 ..][0..4], .little), "to the last pixel");
+        const left_f: f64 = @floatFromInt(left);
+        const nearer: f32 = @floatCast((left_f - 0.75) / whole);
+        const further: f32 = @floatCast((left_f + 0.25) / whole);
+        probe.checkEqual(white, sampledWith(probe, kept_view, sampler.?, sets[0].?, layout.?, reading, onto, shade, vertex_buffer, vertex_bytes, pixels, pitch, nearer), "and sampled where the pass stored it, a reference a step nearer passes");
+        probe.checkEqual(black, sampledWith(probe, kept_view, sampler.?, sets[0].?, layout.?, reading, onto, shade, vertex_buffer, vertex_bytes, pixels, pitch, further), "and a quarter of a step further does not");
     }
 
     // --- 1.58: the planes a view names, and layers ---

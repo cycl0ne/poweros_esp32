@@ -189,6 +189,15 @@ pub const Capabilities = extern struct {
     /// depth as it does their colour - one plane an image, so `stored_both`
     /// is what a pass keeping depth and stencil together asks for.
     stored_depth: bool = false,
+    /// A depth of 24 bits is drawn into: X8_D24_UNORM_PACK32, and
+    /// D24_UNORM_S8_UINT with its stencil, are depth attachments
+    /// (FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT), tested, stored and loaded
+    /// at all 24 bits, which Vulkan has one of each pair hold
+    /// (docs/facet-vulkan10.md item 35). The cores have it since 1.223,
+    /// keeping it in their tiles at 32 bits a pixel; the V3D has not, its
+    /// frames being set up for 16 bits of depth. False where neither is
+    /// an attachment and CreateRenderPass refuses one.
+    depth24: bool = false,
     /// `input_attachment` descriptors and `SubpassDescription`'s
     /// `input_attachments`: an attachment a later subpass reads pixel by
     /// pixel, out of the image's memory, which is how a deferred pass

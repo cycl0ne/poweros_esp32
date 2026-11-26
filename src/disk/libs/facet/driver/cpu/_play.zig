@@ -475,7 +475,7 @@ fn clearLayers(layered: Layered, part: *const _render.Part, command: *const _com
     for (1..framebuffer.layers) |layer| for (0..view.image.samples) |sample| {
         const at: u32 = @intCast(layer);
         const plane_of: u32 = @intCast(sample);
-        if (clears_depth) if (planeAt(view, .depth, at, plane_of)) |plane| raster.fillDepth(plane, layered.area, @intCast(command.clear_depth));
+        if (clears_depth) if (planeAt(view, .depth, at, plane_of)) |plane| raster.fillDepth(plane, layered.area, command.clear_depth, part.depth_bits);
         if (clears_stencil) if (planeAt(view, .stencil, at, plane_of)) |plane| raster.fillStencil(plane, layered.area, @intCast(command.clear_stencil));
     };
 }
@@ -539,7 +539,10 @@ pub fn clearRectangle(player: *const Player, command: *const _command.ClearAttac
         const view = framebuffer.depth orelse continue;
         for (0..view.image.samples) |sample| {
             const plane_of: u32 = @intCast(sample);
-            if (depth) if (planeAt(view, .depth, at, plane_of)) |plane| raster.fillDepth(plane, cut, _render.depthOf(.{ .depth = command.depth, .stencil = 0 }));
+            if (depth) if (planeAt(view, .depth, at, plane_of)) |plane| {
+                const bits = _image.depthBits(view.image.format);
+                raster.fillDepth(plane, cut, _render.depthOfBits(.{ .depth = command.depth, .stencil = 0 }, bits), bits);
+            };
             if (stencil) if (planeAt(view, .stencil, at, plane_of)) |plane| raster.fillStencil(plane, cut, @truncate(command.stencil));
         }
     }
@@ -598,7 +601,8 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, part
         .samples = render_pass.samples,
         .depth = .{
             .used = render_pass.tests_depth,
-            .clear = @intCast(command.clear_depth),
+            .clear = command.clear_depth,
+            .bits = render_pass.depth_bits,
             .plane = plane,
             .load = if (render_pass.loads_depth and plane != null) .keep else .clear,
             .store = render_pass.stores_depth and plane != null,

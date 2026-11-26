@@ -379,8 +379,12 @@ pub const Plane = struct {
     }
 };
 
-/// A triangle's depth - z / w, 0 to 1 - as the 0 to 65535 of a Z16
-/// buffer, over the pixels. Kept as a plane in whole units, half a unit
+/// A triangle's depth - z / w, 0 to 1 - as the whole units of the depth
+/// buffer it is tested against, over the pixels: 0 to 65535 of a Z16 one,
+/// and since 1.223 0 to 16777215 of a Z24 one (`units`), as llvmpipe
+/// takes a fragment's z to its depth format's own width before it tests
+/// it (`lp_build_depth_stencil_test`, src/gallium/drivers/llvmpipe/
+/// lp_bld_depth.c:1067-1095). Kept as a plane in whole units, half a unit
 /// up so that cutting off the fraction rounds, and worked out once a run
 /// (`at`); along the run it goes up by `step`, in 1/2^24ths of a unit.
 ///
@@ -391,8 +395,11 @@ pub const Plane = struct {
 /// inside: a triangle that changes faster has one pixel a row at most, and
 /// never steps.
 /// What a triangle adds to its depth before it is tested and written:
-/// `constant` of the smallest difference the depth holds - one unit of
-/// 65535 - and `slope` of its steepest slope, held inside `clamp` of the
+/// `constant` of the smallest difference the depth holds - one unit, of
+/// 65535 or of 16777215, as llvmpipe's is 1 / (2^bits - 1) of the
+/// format's own bits (`util_get_depth_format_mrd`,
+/// src/util/format/u_format.c:387-412) - and `slope` of its steepest
+/// slope, held inside `clamp` of the
 /// whole range where that is not 0 (a positive one the most it may be
 /// moved, a negative one the least). Vulkan's depth bias, in its terms.
 pub const Bias = struct {
@@ -404,21 +411,34 @@ pub const Bias = struct {
 pub const Depth = struct {
     plane: Linear,
     step: i64,
+    /// The whole units the buffer holds, the most of them: `units16` or
+    /// `units24` (since 1.223). At 24 bits a depth in 1/2^24ths of a unit
+    /// is under 2^49 even held four times the range wide (`atFree`), and
+    /// stepped along a row of a tile it stays far inside 64 bits.
+    units: f64 = units16,
 
     /// 1/2^24ths of a unit.
     pub const fraction = 24;
-    const units: f64 = 65535;
-    const most_step: f64 = units * (1 << fraction);
+    pub const units16: f64 = 65535;
+    pub const units24: f64 = 16777215;
 
-    /// The depth of `made`, whose vertices are `vertices` as they came.
-    pub fn of(made: *const Triangle, vertices: *const [3]Projected) Depth {
+    /// The units of a buffer of `bits` bits of depth: 16 or 24.
+    pub fn unitsOf(bits: u32) f64 {
+        return if (bits == 24) units24 else units16;
+    }
+
+    /// The depth of `made`, whose vertices are `vertices` as they came,
+    /// in a buffer of `units`.
+    pub fn of(made: *const Triangle, vertices: *const [3]Projected, units: f64) Depth {
         var values: [3]f64 = undefined;
         for (&values, made.inOrder(vertices)) |*value, vertex| value.* = vertex.z * units;
         var plane = Linear.of(made, values);
         plane.origin += 0.5;
+        const most_step = units * (1 << fraction);
         return .{
             .plane = plane,
             .step = @intFromFloat(std.math.clamp(plane.dx * (1 << fraction), -most_step, most_step)),
+            .units = units,
         };
     }
 
@@ -430,7 +450,7 @@ pub const Depth = struct {
     pub fn biased(depth: Depth, bias: Bias) Depth {
         const steepest = @max(@abs(depth.plane.dx), @abs(depth.plane.dy));
         var offset = steepest * bias.slope + @as(f64, bias.constant);
-        const limit = @as(f64, bias.clamp) * units;
+        const limit = @as(f64, bias.clamp) * depth.units;
         if (bias.clamp > 0) offset = @min(offset, limit) else if (bias.clamp < 0) offset = @max(offset, limit);
         var made = depth;
         made.plane.origin += offset;
@@ -438,10 +458,10 @@ pub const Depth = struct {
     }
 
     /// At pixel (x, y)'s centre, in 1/2^24ths of a unit: its whole units,
-    /// `>> fraction`, are 0 to 65535.
+    /// `>> fraction`, are 0 to `units`.
     pub inline fn at(depth: Depth, x: u32, y: u32) i64 {
         const value = depth.plane.at(@floatFromInt(x), @floatFromInt(y));
-        return @intFromFloat(std.math.clamp(value, 0, units + 0.5) * (1 << fraction));
+        return @intFromFloat(std.math.clamp(value, 0, depth.units + 0.5) * (1 << fraction));
     }
 
     /// The same without holding it inside the depth's range: what a draw
@@ -450,7 +470,7 @@ pub const Depth = struct {
     /// walk's fixed point to stay well inside 64 bits.
     pub inline fn atFree(depth: Depth, x: u32, y: u32) i64 {
         const value = depth.plane.at(@floatFromInt(x), @floatFromInt(y));
-        return @intFromFloat(std.math.clamp(value, -4 * units, 4 * units) * (1 << fraction));
+        return @intFromFloat(std.math.clamp(value, -4 * depth.units, 4 * depth.units) * (1 << fraction));
     }
 
     /// At the sample of pixel (x, y) `offset` from its centre, in
@@ -460,13 +480,13 @@ pub const Depth = struct {
     /// (lp_state_fs.c:946-956). (Since 1.105.)
     pub inline fn atSample(depth: Depth, x: u32, y: u32, offset: [2]i64) i64 {
         const value = depth.plane.at(placeOf(x, offset[0]), placeOf(y, offset[1]));
-        return @intFromFloat(std.math.clamp(value, 0, units + 0.5) * (1 << fraction));
+        return @intFromFloat(std.math.clamp(value, 0, depth.units + 0.5) * (1 << fraction));
     }
 
     /// The same held as `atFree` holds a centre's. (Since 1.105.)
     pub inline fn atSampleFree(depth: Depth, x: u32, y: u32, offset: [2]i64) i64 {
         const value = depth.plane.at(placeOf(x, offset[0]), placeOf(y, offset[1]));
-        return @intFromFloat(std.math.clamp(value, -4 * units, 4 * units) * (1 << fraction));
+        return @intFromFloat(std.math.clamp(value, -4 * depth.units, 4 * depth.units) * (1 << fraction));
     }
 };
 

@@ -877,9 +877,10 @@ test "an image: a texture, rows or a depth, by what it is for" {
         try testing.expect(image == null);
     }
     // A depth only sampled, and one only copied, since 1.222: Vulkan has
-    // D16_UNORM sampled, which no attachment has to be, and a depth of 24
-    // bits is no attachment while nothing draws one (item 35). An
-    // attachment of one is refused, its format saying no such feature.
+    // D16_UNORM sampled, which no attachment has to be. A depth of 24 bits
+    // is an attachment where the device draws one (item 35): the cores,
+    // since 1.223; until then it was refused, its format saying no such
+    // feature.
     for ([_]facet.ImageCreateInfo{
         .{ .format = .d16_unorm, .extent = .{ .width = 64, .height = 64 }, .usage = facet.IMAGE_USAGE_SAMPLED },
         .{ .format = .x8_d24_unorm_pack32, .extent = .{ .width = 64, .height = 64 }, .usage = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST },
@@ -889,8 +890,8 @@ test "an image: a texture, rows or a depth, by what it is for" {
         rig.fb.DestroyImage(device, image);
     }
     for ([_]facet.Format{ .x8_d24_unorm_pack32, .d24_unorm_s8_uint }) |format| {
-        try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.CreateImage(device, &.{ .format = format, .extent = .{ .width = 64, .height = 64 }, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT }, &image));
-        try testing.expect(image == null);
+        try testing.expectEqual(facet.Result.success, rig.fb.CreateImage(device, &.{ .format = format, .extent = .{ .width = 64, .height = 64 }, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT }, &image));
+        rig.fb.DestroyImage(device, image);
     }
 }
 
