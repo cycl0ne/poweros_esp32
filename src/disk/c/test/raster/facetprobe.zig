@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetProbe";
-const VERSION_STRING = "\x00$VER: FacetProbe 1.53 (26.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetProbe 1.54 (26.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "CORES/S,V3D/S,QUIET/S";
@@ -112,6 +112,13 @@ const Can = struct {
     /// Vulkan has it as a format feature, which is what is checked
     /// against this, so it is not read off that.
     depth24: bool,
+    /// Whether the fourteen colour attachments of 0 to 1 and of floats
+    /// Vulkan asks for past the three of 8 bits a channel are drawn: the
+    /// cores' since facet 1.226, kept in their own bytes, and not the
+    /// V3D's yet (docs/facet-vulkan10.md item 36). Read off the device's
+    /// type, as `tile_inputs` is, the format features being what is
+    /// checked against it.
+    texel_targets: bool,
 
     fn formatOf(fb: *FacetBase, physical: *facet.PhysicalDevice, format: facet.Format) facet.FormatProperties {
         var said: facet.FormatProperties = undefined;
@@ -182,6 +189,7 @@ const Can = struct {
             .texel_offsets = limits.max_texel_offset != 0,
             .tile_inputs = properties.device_type == .cpu,
             .depth24 = true,
+            .texel_targets = properties.device_type == .cpu,
         };
     }
 };
@@ -4606,7 +4614,10 @@ fn smallChecks(probe: *Probe) void {
     fb.GetPhysicalDeviceFormatProperties(probe.physical, .r8_unorm, &properties);
     const reads = properties.optimal_tiling_features & facet.FORMAT_FEATURE_SAMPLED_IMAGE != 0;
     probe.check(reads, "one byte of red is a format a texture may be of");
-    probe.check(properties.optimal_tiling_features & facet.FORMAT_FEATURE_COLOR_ATTACHMENT == 0, "and not one an image is drawn into");
+    // An attachment as well where the tiles keep it in its own byte
+    // (since facet 1.226, docs/facet-vulkan10.md item 36).
+    const attaches = properties.optimal_tiling_features & facet.FORMAT_FEATURE_COLOR_ATTACHMENT != 0;
+    probe.check(attaches == probe.can.texel_targets, if (probe.can.texel_targets) "and one an image is drawn into" else "and not one an image is drawn into");
 
     if (!small) {
         var refused: ?*facet.Image = null;
@@ -6853,6 +6864,7 @@ fn probeDevice(fb: *FacetBase, dl: *DosBase, instance: *facet.Instance, physical
     cacheChecks(&probe);
     mutableChecks(&probe);
     levelClearChecks(&probe);
+    targetChecks(&probe);
     return .{ probe.passed, probe.failed };
 }
 
@@ -6908,4 +6920,134 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     }
     _ = Printf(dl, "%u checks passed, %u failed\n", .{ passed, failed });
     return if (failed == 0) dos.RETURN_OK else dos.RETURN_WARN;
+}
+
+// --- facet 1.226: colour attachments kept in their own bytes ---------------
+
+/// Four floats a pixel, the push constants' first sixteen bytes
+/// (`shader.Written.floats`): what a colour attachment of floats is drawn
+/// with on the cores, past 1 and below 0 (since facet 1.226).
+const Wider = struct {
+    fn fragment(fragments: *const facet.shader.Fragments) callconv(.c) void {
+        const words: [4]u32 = @bitCast(fragments.resources.push[0..16].*);
+        for (fragments.values[0..fragments.count]) |*quad| quad.* = @splat(words);
+    }
+
+    const entries = [_]facet.shader.Entry{
+        facet.shader.vertex("main", &Flat.vertex, 0),
+        facet.shader.fragmentWriting("main", &fragment, 0, 1, .floats),
+    };
+    const code = facet.shader.Code{ .entry_count = entries.len, .entries = &entries };
+};
+
+/// The fourteen, as docs/facet-vulkan10.md item 36 names them.
+const texel_targets = [14]facet.Format{
+    .r8_unorm,      .r8g8_unorm,           .a8b8g8r8_unorm_pack32,    .r8g8b8a8_srgb,
+    .b8g8r8a8_srgb, .a8b8g8r8_srgb_pack32, .a2b10g10r10_unorm_pack32, .a1r5g5b5_unorm_pack16,
+    .r16_sfloat,    .r16g16_sfloat,        .r16g16b16a16_sfloat,      .r32_sfloat,
+    .r32g32_sfloat, .r32g32b32a32_sfloat,
+};
+
+fn targetChecks(probe: *Probe) void {
+    const fb = probe.fb;
+    const device = probe.device.?;
+    defer probe.give();
+    const wanted = facet.FORMAT_FEATURE_COLOR_ATTACHMENT | facet.FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND | facet.FORMAT_FEATURE_BLIT_DST |
+        facet.FORMAT_FEATURE_TRANSFER_SRC | facet.FORMAT_FEATURE_TRANSFER_DST;
+    var said = true;
+    var passes = true;
+    for (texel_targets) |format| {
+        const features = Can.formatOf(fb, probe.physical, format).optimal_tiling_features;
+        said = said and if (probe.can.texel_targets)
+            features & wanted == wanted
+        else
+            features & (facet.FORMAT_FEATURE_COLOR_ATTACHMENT | facet.FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND) == 0;
+        const description = facet.AttachmentDescription{ .format = format, .load_op = .clear, .store_op = .store, .final_layout = .color_attachment_optimal };
+        const color = facet.AttachmentReference{ .attachment = 0, .layout = .color_attachment_optimal };
+        const subpass = facet.SubpassDescription{ .color_attachment_count = 1, .color_attachments = @ptrCast(&color) };
+        var pass: ?*facet.RenderPass = null;
+        const result = fb.CreateRenderPass(device, &.{ .attachment_count = 1, .attachments = @ptrCast(&description), .subpass_count = 1, .subpasses = @ptrCast(&subpass) }, &pass);
+        fb.DestroyRenderPass(device, pass);
+        passes = passes and (result == .success) == probe.can.texel_targets and (pass != null) == probe.can.texel_targets;
+    }
+    if (!probe.can.texel_targets) {
+        probe.check(said, "none of the fourteen colour attachments of 0 to 1 and of floats past the three says COLOR_ATTACHMENT, this device drawing none yet");
+        return probe.check(passes, "and a pass of each is refused");
+    }
+    probe.check(said, "the fourteen colour attachments of 0 to 1 and of floats each say COLOR_ATTACHMENT, its blend, BLIT_DST and both copies");
+    probe.check(passes, "and a pass of each is made");
+
+    var module: ?*facet.ShaderModule = null;
+    if (fb.CreateShaderModule(device, &.{ .code = &Wider.code }, &module) != .success) return probe.check(false, "the shader module");
+    _ = Probe.keep(&probe.modules, module);
+    const range = facet.PushConstantRange{ .size = 16 };
+    var layout: ?*facet.PipelineLayout = null;
+    if (fb.CreatePipelineLayout(device, &.{ .push_constant_range_count = 1, .push_constant_ranges = @ptrCast(&range) }, &layout) != .success) return probe.check(false, "the pipeline layout");
+    _ = Probe.keep(&probe.layouts, layout);
+    // The top left's triangle: (0, 0) inside it, (63, 63) outside.
+    const vertices = [3][3]f32{ .{ -1, -1, 0.5 }, .{ 1, -1, 0.5 }, .{ -1, 1, 0.5 } };
+    const vertex_buffer, const vertex_bytes = probe.buffer(@sizeOf(@TypeOf(vertices)), facet.BUFFER_USAGE_VERTEX_BUFFER) orelse
+        return probe.check(false, "a vertex buffer");
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(vertices))], std.mem.asBytes(&vertices));
+    const offset: u64 = 0;
+    const extent = facet.Extent3D{ .width = side, .height = side };
+    const area = facet.Rect2D{ .extent = .{ .width = side, .height = side } };
+    const drawn = [4]f32{ 2.5, 0.125, -1, 0.5 };
+    const additive = facet.PipelineColorBlendAttachmentState{ .blend_enable = true, .dst_color_blend_factor = .one, .dst_alpha_blend_factor = .one };
+
+    // Halves cleared past 1 and below 0, drawn and drawn again added on:
+    // what the format holds of each, read back as it lies.
+    // R8G8B8A8_SRGB cleared and drawn once, through the sRGB curve.
+    const Case = struct { format: facet.Format, bytes: u32, clear: [4]f32, twice: bool, inside: [8]u8, outside: [8]u8, says: [*:0]const u8 };
+    const cases = [2]Case{
+        .{
+            .format = .r16g16b16a16_sfloat,
+            .bytes = 8,
+            .clear = .{ 1.5, -2, 0.25, 4 },
+            .twice = true,
+            // 5, 0.25, -2 and 1 as halves; 1.5, -2, 0.25 and 4.
+            .inside = .{ 0x00, 0x45, 0x00, 0x34, 0x00, 0xC0, 0x00, 0x3C },
+            .outside = .{ 0x00, 0x3E, 0x00, 0xC0, 0x00, 0x34, 0x00, 0x44 },
+            .says = "R16G16B16A16_SFLOAT: cleared past 1 and below 0, drawn and added on in floats, each half as it should be",
+        },
+        .{
+            .format = .r8g8b8a8_srgb,
+            .bytes = 4,
+            .clear = .{ 0.25, 0.5, 0.75, 1 },
+            .twice = false,
+            .inside = .{ 255, 99, 0, 128, 0, 0, 0, 0 },
+            .outside = .{ 137, 188, 225, 255, 0, 0, 0, 0 },
+            .says = "R8G8B8A8_SRGB: cleared and drawn through the sRGB curve, the alpha straight",
+        },
+    };
+    for (cases) |one| {
+        const color = probe.image(.{ .format = one.format, .extent = extent, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_TRANSFER_SRC }, 0) orelse
+            return probe.check(false, "a colour attachment of the format");
+        const description = facet.AttachmentDescription{ .format = one.format, .load_op = .clear, .store_op = .store, .final_layout = .color_attachment_optimal };
+        const reference = facet.AttachmentReference{ .attachment = 0, .layout = .color_attachment_optimal };
+        const subpass = facet.SubpassDescription{ .color_attachment_count = 1, .color_attachments = @ptrCast(&reference) };
+        const pass = probe.renderPass(.{ .attachment_count = 1, .attachments = @ptrCast(&description), .subpass_count = 1, .subpasses = @ptrCast(&subpass) }) orelse
+            return probe.check(false, "a pass of it");
+        const frame = probe.framebuffer(pass, &.{color[1]}) orelse return probe.check(false, "a framebuffer over it");
+        const plain = pipelineOf(probe, pass, module.?, layout.?, .{}) orelse return probe.check(false, "a pipeline that draws floats into it");
+        const added = pipelineOf(probe, pass, module.?, layout.?, .{ .blends = &.{additive} }) orelse return probe.check(false, "and one that adds them on");
+        const back, const backed = probe.buffer(side * side * 8, facet.BUFFER_USAGE_TRANSFER_DST) orelse return probe.check(false, "a buffer to read it into");
+        @memset(backed[0 .. side * side * 8], 0xAA);
+        const clears = [1]facet.ClearValue{.{ .color = .{ .float32 = one.clear } }};
+        const commands = probe.record() orelse return probe.check(false, "a recording");
+        fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = frame, .render_area = area, .clear_value_count = 1, .clear_values = &clears }, .@"inline");
+        fb.CmdBindPipeline(commands, .graphics, plain);
+        fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+        fb.CmdPushConstants(commands, layout.?, facet.SHADER_STAGE_FRAGMENT, 0, 16, &drawn);
+        fb.CmdDraw(commands, 3, 1, 0, 0);
+        if (one.twice) {
+            fb.CmdBindPipeline(commands, .graphics, added);
+            fb.CmdDraw(commands, 3, 1, 0, 0);
+        }
+        fb.CmdEndRenderPass(commands);
+        fb.CmdCopyImageToBuffer(commands, color[0], .general, back, 1, @ptrCast(&facet.BufferImageCopy{ .image_extent = extent }));
+        if (!probe.submit()) return probe.check(false, "the frame submitted");
+        const last = (side * side - 1) * one.bytes;
+        probe.check(std.mem.eql(u8, one.inside[0..one.bytes], backed[0..one.bytes]) and std.mem.eql(u8, one.outside[0..one.bytes], backed[last..][0..one.bytes]), one.says);
+    }
 }

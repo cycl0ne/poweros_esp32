@@ -8,6 +8,7 @@ const std = @import("std");
 const sdk = @import("sdk");
 const facet = sdk.facet;
 const texture = facet.texture;
+const shader = facet.shader;
 const raster = @import("raster");
 const _buffer = @import("../buffer/_buffer.zig");
 const _command = @import("../command/_command.zig");
@@ -231,7 +232,7 @@ pub fn resolveImage(command: *const _command.ResolveImage) void {
     // a format of 24 bits of depth is four bytes a pixel too (since 1.222).
     if (_image.hasDepth(source.format) or _image.hasStencil(source.format)) return;
     const pixel = _image.bytesOf(source.format);
-    if (pixel != 4 and source.format != .r5g6b5_unorm_pack16) return;
+    if (pixel != 4 and source.format != .r5g6b5_unorm_pack16 and !_image.drawnRows(source)) return;
     for (_stream.items(_command.ResolveImage, facet.ImageResolve, command, command.count)) |*region| {
         const to_level = region.dst_subresource.mip_level;
         if (region.src_subresource.mip_level != 0 or to_level >= destination.levels) continue;
@@ -260,14 +261,33 @@ pub fn resolveImage(command: *const _command.ResolveImage) void {
 /// region, every sample read where its image keeps it (`_image.sampleOf`),
 /// and what the V3D does after a pass whose resolve it cannot do in its
 /// tiles (since 1.148). Both of one format of 8888 or 565, the source of
-/// four samples, and the rectangle inside both.
+/// four samples, and the rectangle inside both; or of a format the tiles
+/// keep in its own bytes, whose four samples are read as floats, averaged
+/// and written back in the format, as a pass resolves one
+/// (`raster.resolveTexels`, since 1.226).
 pub fn resolveRectangle(source: *const Image, from_layer: u32, from: [2]u32, destination: *Image, to_level: u32, to_layer: u32, to: [2]u32, width: u32, height: u32) void {
     const pixel = _image.bytesOf(source.format);
     var planes: [4]Image = undefined;
     for (&planes, 0..) |*plane, sample| plane.* = _image.sampleOf(source, @intCast(sample));
+    const texels = if (_image.drawnRows(source)) _image.targetTexels(source.format) else shader.TexelFormat.none;
     for (0..height) |row| for (0..width) |column| {
         const x: u32 = @intCast(column);
         const y: u32 = @intCast(row);
+        if (texels != .none) {
+            var sum: [4]f32 = .{ 0, 0, 0, 0 };
+            for (&planes) |*plane| {
+                var bytes: [16]u8 = @splat(0);
+                _image.readTexel(plane, 0, from_layer, from[0] + x, from[1] + y, &bytes);
+                const one = shader.Texels{ .bytes = &bytes, .count = 1, .format = texels, .writable = false };
+                for (&sum, one.at(0)) |*total, part| total.* += part;
+            }
+            for (&sum) |*total| total.* *= 0.25;
+            var bytes: [16]u8 = @splat(0);
+            var one = shader.Texels{ .bytes = &bytes, .count = 1, .format = texels, .writable = true };
+            one.set(0, sum);
+            _image.writeTexel(destination, to_level, to_layer, to[0] + x, to[1] + y, bytes[0..pixel]);
+            continue;
+        }
         var words: [4]u32 = undefined;
         for (&planes, &words) |*plane, *word| {
             var bytes: [4]u8 = @splat(0);
@@ -595,7 +615,10 @@ fn texelOf(image: *const Image, color: u32, parts: [4]f32, words: [4]u32) ?Texel
             .b8g8r8a8_unorm => .{ .four = color },
             .r8g8b8a8_unorm => .{ .four = color & 0xFF00_FF00 | (color >> 16 & 0xFF) | (color & 0xFF) << 16 },
             .r5g6b5_unorm_pack16 => .{ .two = narrow(color) },
-            else => null,
+            // A colour attachment the tiles keep in its own bytes (since
+            // 1.226): the clear's floats in the format, as a tile's clear
+            // writes them (`raster.encodeWords`).
+            else => partsTexel(_image.targetTexels(image.format), parts),
         },
         // On a device of a layout of its own a texel is kept as a buffer
         // holds it in the image's format (`_image.readTexel`), not as the
@@ -657,6 +680,25 @@ fn texelOf(image: *const Image, color: u32, parts: [4]f32, words: [4]u32) ?Texel
     };
 }
 
+/// The four floats of a clear written as one texel of `format`, for a fill:
+/// held to 0 to 1 for a format of those, an sRGB one's through the
+/// transfer function, and a float format's as they are at its width.
+/// Null for `.none`. (Since 1.226.)
+fn partsTexel(format: shader.TexelFormat, parts: [4]f32) ?Texel {
+    if (format == .none) return null;
+    var bytes: [16]u8 = @splat(0);
+    var one = shader.Texels{ .bytes = &bytes, .count = 1, .format = format, .writable = true };
+    one.set(0, parts);
+    return switch (format.bytes()) {
+        1 => .{ .one = bytes[0] },
+        2 => .{ .two = std.mem.readInt(u16, bytes[0..2], .little) },
+        4 => .{ .four = std.mem.readInt(u32, bytes[0..4], .little) },
+        8 => .{ .eight = std.mem.readInt(u64, bytes[0..8], .little) },
+        16 => .{ .sixteen = std.mem.readInt(u128, bytes[0..16], .little) },
+        else => null,
+    };
+}
+
 /// A float format's texel as the word a fill writes over and over: the
 /// channels put into the format's own bytes, red first, which is the same
 /// encoder a copy into such an image uses. (Since 1.61.)
@@ -708,7 +750,7 @@ pub fn blitImage(command: *const _command.BlitImage) void {
     if (depth or destination.kind == .depth) {
         if (source.format != destination.format) return;
         if (source.format != .d16_unorm and source.format != .x8_d24_unorm_pack32) return;
-    } else if (_image.blocked(destination) or _image.keptTexels(destination)) {
+    } else if ((_image.blocked(destination) or _image.keptTexels(destination)) and !_image.drawnRows(destination)) {
         // A compressed source is read block by block and scaled like any
         // other, and a float one texel by texel; nothing here compresses
         // or makes floats, so a destination that keeps what it was given
@@ -759,7 +801,8 @@ pub fn blitImage(command: *const _command.BlitImage) void {
                         const lower = mixed(colorAt(source, from_level, from_layer, held(first_u, from_size[0]), held(first_v + 1, from_size[1])), colorAt(source, from_level, from_layer, held(first_u + 1, from_size[0]), held(first_v + 1, from_size[1])), across);
                         break :linear mixed(upper, lower, low_v - whole_v);
                     } else colorAt(source, from_level, from_layer, held(@intFromFloat(@floor(u)), from_size[0]), held(@intFromFloat(@floor(v)), from_size[1]));
-                    var texel: [4]u8 = undefined;
+                    // Room for the widest, four floats (since 1.226).
+                    var texel: [16]u8 = undefined;
                     _image.bytesOfColor(destination.format, color, &texel);
                     _image.writeTexel(destination, to_level, to_layer, @intCast(x), @intCast(y), &texel);
                 }

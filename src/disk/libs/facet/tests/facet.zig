@@ -865,16 +865,42 @@ test "an image: a texture, rows or a depth, by what it is for" {
         .{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 64, .height = 64 }, .usage = sampled | facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_STORAGE },
         .{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 64, .height = 64 }, .tiling = .linear, .usage = sampled },
         .{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 64, .height = 64 }, .mip_levels = 8, .usage = sampled },
-        .{ .format = .r32_sfloat, .extent = .{ .width = 64, .height = 64 }, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT },
+        // A colour attachment of 16 bits a channel of 0 to 1, which
+        // Vulkan asks of no device and no device here draws (one of a
+        // float until 1.226, when the cores draw R32_SFLOAT).
+        .{ .format = .r16g16b16a16_unorm, .extent = .{ .width = 64, .height = 64 }, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT },
         .{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 64, .height = 64, .depth = 2 }, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT },
         .{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 64, .height = 64 }, .samples = 2, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT },
         .{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 64, .height = 64 }, .samples = 8, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT },
-        .{ .format = .r32g32_sfloat, .extent = .{ .width = 64, .height = 64 }, .usage = facet.IMAGE_USAGE_TRANSFER_DST },
+        // Three floats a texel, which no image here is.
+        .{ .format = .r32g32b32_sfloat, .extent = .{ .width = 64, .height = 64 }, .usage = facet.IMAGE_USAGE_TRANSFER_DST },
         .{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 16384, .height = 64 }, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT },
     };
     for (refused) |info| {
         try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.CreateImage(device, &info, &image));
         try testing.expect(image == null);
+    }
+    // A float colour attachment, and one of two floats only copied, on the
+    // cores since 1.226 (`Capabilities.texel_targets`): rows of the
+    // format's own bytes, four and eight a pixel. A device whose tiles keep
+    // none of them, as the V3D's, makes neither, as before.
+    {
+        const held = _objects.of(_instance.PhysicalDevice, physical);
+        const drawn = [_]facet.ImageCreateInfo{
+            .{ .format = .r32_sfloat, .extent = .{ .width = 64, .height = 64 }, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT },
+            .{ .format = .r32g32_sfloat, .extent = .{ .width = 64, .height = 64 }, .usage = facet.IMAGE_USAGE_TRANSFER_DST },
+        };
+        for (drawn, [2]u32{ 256, 512 }) |info, pitch| {
+            try testing.expectEqual(facet.Result.success, rig.fb.CreateImage(device, &info, &image));
+            const made = _objects.of(_image.Image, image.?);
+            try testing.expectEqual(_image.Kind.rows, made.kind);
+            try testing.expectEqual(pitch, made.pitch);
+            rig.fb.DestroyImage(device, image);
+            held.can.texel_targets = false;
+            defer held.can.texel_targets = true;
+            try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.CreateImage(device, &info, &image));
+            try testing.expect(image == null);
+        }
     }
     // A depth only sampled, and one only copied, since 1.222: Vulkan has
     // D16_UNORM sampled, which no attachment has to be. A depth of 24 bits

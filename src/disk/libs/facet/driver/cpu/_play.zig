@@ -127,7 +127,10 @@ pub const Player = struct {
         if (blend == .general) {
             // What is there has no alpha: it reads as wholly opaque.
             if (player.target_opaques[at]) mixing = _draw.mixingOf(&asked.overOpaque());
-            mixing.constant = _draw.constantOf(asked.constants orelse player.attachment_constants[at] orelse player.blend_constants);
+            const constants = asked.constants orelse player.attachment_constants[at] orelse player.blend_constants;
+            mixing.constant = _draw.constantOf(constants);
+            // As given, for an attachment blended in floats (since 1.226).
+            mixing.constants = constants;
         }
         return .{ blend, mixing };
     }
@@ -390,6 +393,9 @@ fn surfaceAt(view: *const _image.ImageView, layer: u32, sample: u32) ?raster.Sur
     const plane = @as(usize, sample) * @as(usize, @intCast(image.sample_bytes));
     const rows = _image.rowsAt(image, view.base_level, view.base_layer + layer);
     const size = _image.levelSize(image, view.base_level);
+    // A format the tiles keep in its own bytes (since 1.226): `texels`
+    // says what its pixels are, and `format` is not read of it.
+    const texels = _image.targetTexels(view.format);
     return .{
         .pixels = data + plane + rows.at,
         .pitch = rows.pitch,
@@ -399,9 +405,10 @@ fn surfaceAt(view: *const _image.ImageView, layer: u32, sample: u32) ?raster.Sur
             .b8g8r8a8_unorm => .bgra32,
             .r8g8b8a8_unorm => .rgba32,
             .r5g6b5_unorm_pack16 => .rgb565,
-            else => unreachable,
+            else => if (texels != .none) .bgra32 else unreachable,
         },
         .sample_bytes = @intCast(image.sample_bytes),
+        .texels = texels,
     };
 }
 
@@ -461,11 +468,11 @@ fn clearLayers(layered: Layered, part: *const _render.Part, command: *const _com
     if (framebuffer.layers <= 1) return;
     for (0..layered.colors) |k| {
         if (part.color_loads[k] != .clear) continue;
-        const color = command.clear_colors[@min(first_clear + k, _render.most_colors - 1)];
+        const at = @min(first_clear + k, _render.most_colors - 1);
         const held = framebuffer.colors[k];
         for (1..framebuffer.layers) |layer| for (0..held.image.samples) |sample| {
             const surface = surfaceAt(held, @intCast(layer), @intCast(sample)) orelse break;
-            raster.fillSurface(surface, layered.area, color);
+            raster.fillSurface(surface, layered.area, command.clear_colors[at], command.clear_values[at]);
         };
     }
     const view = framebuffer.depth orelse return;
@@ -533,7 +540,7 @@ pub fn clearRectangle(player: *const Player, command: *const _command.ClearAttac
         if (color) {
             const held = framebuffer.colors[0];
             for (0..held.image.samples) |sample| {
-                if (surfaceAt(held, at, @intCast(sample))) |surface| raster.fillSurface(surface, cut, command.color);
+                if (surfaceAt(held, at, @intCast(sample))) |surface| raster.fillSurface(surface, cut, command.color, command.words);
             }
         }
         const view = framebuffer.depth orelse continue;
@@ -595,6 +602,7 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, part
         .color = .{
             .load = if (render_pass.color_loads[0] == .clear) .clear else .keep,
             .clear = command.clear_colors[@min(first_clear, _render.most_colors - 1)],
+            .clear_words = command.clear_values[@min(first_clear, _render.most_colors - 1)],
             .resolve = resolveOf(framebuffer, 0),
         },
         .color_count = colors,
@@ -620,6 +628,7 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, part
     for (1..@max(colors, 1)) |k| attachments.more[k - 1] = .{
         .load = if (render_pass.color_loads[k] == .clear) .clear else .keep,
         .clear = command.clear_colors[@min(first_clear + k, _render.most_colors - 1)],
+        .clear_words = command.clear_values[@min(first_clear + k, _render.most_colors - 1)],
         .resolve = resolveOf(framebuffer, @intCast(k)),
     };
     player.display = displayOf(framebuffer);

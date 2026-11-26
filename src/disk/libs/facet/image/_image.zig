@@ -281,6 +281,37 @@ pub fn rowFormat(format: facet.Format) shader.TexelFormat {
         .b8g8r8a8_unorm => .bgra8888,
         .r8g8b8a8_unorm => .rgba8888,
         .r5g6b5_unorm_pack16 => .rgb565,
+        // And a colour attachment the tiles keep in its own bytes, read
+        // as they lie (since 1.226).
+        else => targetTexels(format),
+    };
+}
+
+/// The texel format a colour attachment of `format` is kept in by the
+/// tiles of a device with `Capabilities.texel_targets`, its own bytes, a
+/// fragment's colour blended against what they hold in floats and
+/// written back at the format's width, as llvmpipe draws into a surface
+/// of its format (`generate_unswizzled_blend`, src/gallium/drivers/
+/// llvmpipe/lp_state_fs.c); `.none` for the three of 8 bits a channel a
+/// display has, which the tiles keep as 0xAARRGGBB, and for any format
+/// that is no colour attachment. A8B8G8R8_UNORM_PACK32 is R8G8B8A8_UNORM's
+/// bytes, and A8B8G8R8_SRGB_PACK32 R8G8B8A8_SRGB's. (Since 1.226,
+/// docs/facet-vulkan10.md item 36.)
+pub fn targetTexels(format: facet.Format) shader.TexelFormat {
+    return switch (format) {
+        .r8_unorm => .r8,
+        .r8g8_unorm => .rg8,
+        .a8b8g8r8_unorm_pack32 => .rgba8888,
+        .r8g8b8a8_srgb, .a8b8g8r8_srgb_pack32 => .rgba8srgb,
+        .b8g8r8a8_srgb => .bgra8srgb,
+        .a2b10g10r10_unorm_pack32 => .rgb10a2,
+        .a1r5g5b5_unorm_pack16 => .a1rgb5,
+        .r16_sfloat => .r16f,
+        .r16g16_sfloat => .rg16f,
+        .r16g16b16a16_sfloat => .rgba16f,
+        .r32_sfloat => .r32f,
+        .r32g32_sfloat => .rg32f,
+        .r32g32b32a32_sfloat => .rgba32f,
         else => .none,
     };
 }
@@ -351,7 +382,13 @@ pub fn sampledRows(image: *const Image) bool {
 pub fn sampledRowFormat(format: facet.Format) ?texture.Format {
     return switch (format) {
         .r8g8b8a8_unorm => .rgba8,
-        else => rowTexture(format),
+        // A colour attachment the tiles keep in its own bytes, as a
+        // texture of the format reads them where they lie, where there
+        // is one (since 1.226): R8_UNORM, R8G8_UNORM and the floats of
+        // four channels and of one. A sampler reads none of the others
+        // yet, which their formats do not say SAMPLED_IMAGE of (items 34
+        // and 37).
+        else => if (targetTexels(format) != .none) lyingFormat(format) else rowTexture(format),
     };
 }
 
@@ -389,6 +426,11 @@ pub fn bytesOf(format: facet.Format) u32 {
         // The float formats a texture keeps as they lie (since 1.45), and
         // the vertex ones, which are the same sizes.
         .b10g11r11_ufloat_pack32, .e5b9g9r9_ufloat_pack32 => 4,
+        // The colour attachments the tiles keep in their own bytes
+        // (`targetTexels`, since 1.226) that were not here already.
+        .a1r5g5b5_unorm_pack16, .r16_sfloat => 2,
+        .r8g8b8a8_srgb, .b8g8r8a8_srgb, .a8b8g8r8_unorm_pack32, .a8b8g8r8_srgb_pack32 => 4,
+        .a2b10g10r10_unorm_pack32, .r16g16_sfloat => 4,
         .r16g16b16a16_sfloat, .r32g32_sfloat => 8,
         .r32g32b32_sfloat => 12,
         .r32g32b32a32_sfloat => 16,
@@ -737,6 +779,15 @@ fn laidOut(physical: *_instance.PhysicalDevice, info: *const facet.ImageCreateIn
     // and a texel of one byte of red. Both are for an image a function
     // reads or writes; nothing else is kept in a texture's layout.
     const in_texels = info.usage & (facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_STORAGE) != 0;
+    // An image of a format the tiles keep in its own bytes, on a device
+    // whose tiles do (`targetTexels`, `Capabilities.texel_targets`, since
+    // 1.226): rows of those bytes where it is drawn into or read as an
+    // input attachment, whatever a texture of the format would do, and
+    // where it is only copied, which the format's TRANSFER_SRC and
+    // TRANSFER_DST say it is. One sampled and not drawn is the texture
+    // it always was.
+    const drawn_texels = physical.can.texel_targets and targetTexels(info.format) != .none and
+        (info.usage & (facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_INPUT_ATTACHMENT) != 0 or !in_texels);
     const packed_texels = info.flags & facet.IMAGE_CREATE_PACKED_TEXELS != 0;
     const packs = switch (info.format) {
         .r8g8b8a8_unorm, .b8g8r8a8_unorm => true,
@@ -747,13 +798,13 @@ fn laidOut(physical: *_instance.PhysicalDevice, info: *const facet.ImageCreateIn
     // texels are kept as they lie and each such format reads the same
     // bytes its own way.
     const mutable = info.flags & facet.IMAGE_CREATE_MUTABLE_FORMAT != 0;
-    if (info.format == .r8_unorm and !(physical.can.small_texels and in_texels)) return null;
+    if (info.format == .r8_unorm and !(physical.can.small_texels and in_texels) and !drawn_texels) return null;
     // A texture whose channels are its own, kept as they lie
     // (`Capabilities.wide_channels`, since 1.69): two bytes of
     // red and green, or 16 bits a channel. Such an image is for a
     // function to read or to write, as a small texel is, and a device
     // that keeps 8 bits a channel refuses it.
-    if (wideChannels(info.format) and !(physical.can.wide_channels and in_texels)) return null;
+    if (wideChannels(info.format) and !(physical.can.wide_channels and in_texels) and !drawn_texels) return null;
     // And a texture of whole numbers, which a function reads with
     // `texture.Texture.wholesAt` and writes with `setWholes`
     // (`Capabilities.whole_textures`, since 1.70): no colour
@@ -786,7 +837,7 @@ fn laidOut(physical: *_instance.PhysicalDevice, info: *const facet.ImageCreateIn
     // through, since 1.57: `texture.Texture.setParts` writes one texel of
     // floats, where nothing writes one texel of a compressed block.
     const keeps_floats = physical.can.kept_floats and _decode.texelBytes(info.format) != 0;
-    const kept_format: facet.Format = if (_decode.unpacks(info.format) and !(keeps_blocks or keeps_floats)) .r8g8b8a8_unorm else info.format;
+    const kept_format: facet.Format = if (_decode.unpacks(info.format) and !(keeps_blocks or keeps_floats) and !drawn_texels) .r8g8b8a8_unorm else info.format;
     // What is unpacked on the way in is unpacked to be sampled: a format
     // kept as it lies - a compressed image's blocks, a float one's floats
     // - is not (since 1.57, where a float image written through keeps its
@@ -998,11 +1049,13 @@ fn laidOut(physical: *_instance.PhysicalDevice, info: *const facet.ImageCreateIn
         image.texels = texelsOver(&image, @ptrFromInt(_memory.alignment)) catch return null;
         return withPlanes(image, info.samples);
     }
-    if (info.usage & facet.IMAGE_USAGE_COLOR_ATTACHMENT != 0 and !drawable(info.format)) return null;
+    if (info.usage & facet.IMAGE_USAGE_COLOR_ATTACHMENT != 0 and !drawable(info.format) and !drawn_texels) return null;
     // Rows of a colour format, a layer's rows after the layer before
     // (since 1.91): `rowsAt` finds a layer's first row, and a
-    // framebuffer's view the layer a pass begins at.
-    if (textureFormat(info.format) == null) return null;
+    // framebuffer's view the layer a pass begins at. Of a format the
+    // tiles keep in its own bytes as well, which no texture may read
+    // (since 1.226).
+    if (textureFormat(info.format) == null and !drawn_texels) return null;
     // And levels since 1.119, as a depth attachment's: each in rows of its
     // own after the level before (`levelAt`), a pass drawing into the one
     // its framebuffer's view names. Vulkan has an optimal image's
@@ -1433,6 +1486,13 @@ pub fn floatTexels(image: *const Image) bool {
 /// colour word of 8 bits a channel: a float one's, and a texture whose
 /// channels are its own (`wideChannels`, since 1.69). Both keep what they
 /// were copied in as, so a copy out reads it back unchanged.
+/// Whether an image is rows of a colour attachment the tiles keep in its
+/// own bytes (`targetTexels`): what a blit writes into texel by texel,
+/// whatever else its format keeps. (Since 1.226.)
+pub fn drawnRows(image: *const Image) bool {
+    return image.kind == .rows and targetTexels(image.format) != .none;
+}
+
 pub fn keptTexels(image: *const Image) bool {
     return floatTexels(image) or wideChannels(image.format) or wholeNumbers(image.format);
 }
@@ -1790,6 +1850,13 @@ pub fn colorOfBytes(format: facet.Format, bytes: []const u8) u32 {
         },
         // Red alone, as Vulkan reads a one-channel format.
         .r8_unorm => texture.redOf8(bytes[0]),
+        // A1R5G5B5 in rows of its 16 bits, a colour attachment of the
+        // cores' (since 1.226): as a texture of it is unpacked, each
+        // channel widened by repeating its bits (`_decode.texel`).
+        .a1r5g5b5_unorm_pack16 => color: {
+            const rgba = _decode.texel(format, bytes);
+            break :color @as(u32, rgba[3]) << 24 | @as(u32, rgba[0]) << 16 | @as(u32, rgba[1]) << 8 | rgba[2];
+        },
         // The channels a texture keeps as they lie, as the colour of
         // their top 8 bits (since 1.69).
         .r8g8_unorm, .r16_unorm, .r16g16_unorm, .r16g16b16a16_unorm => texture.channelColor(keptFormat(format, false).?, bytes.ptr),
@@ -1827,6 +1894,13 @@ pub fn bytesOfColor(format: facet.Format, color: u32, into: []u8) void {
             std.mem.writeInt(u16, into[0..2], @intCast(r << 11 | g << 5 | b), .little);
         },
         .r8_unorm => into[0] = @truncate(color >> 16),
-        else => {},
+        // A colour attachment the tiles keep in its own bytes, the colour
+        // written in them: its 0 to 255 a channel as 0 to 1 (since 1.226).
+        else => {
+            const texels = targetTexels(format);
+            if (texels == .none) return;
+            var one = shader.Texels{ .bytes = into.ptr, .count = 1, .format = texels, .writable = true };
+            one.setColor(0, color);
+        },
     }
 }

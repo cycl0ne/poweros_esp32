@@ -402,6 +402,9 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
         .line_width = 1,
         .mixings = @splat(.{}),
         .outputs = outputs,
+        // What it writes, which the function of no fragment stage is
+        // 0xAARRGGBB of, writing none (since 1.226).
+        .written = if (fragment == null) .colors else fragment_entry.written(),
         .colorless = pass.parts[subpass.first_part].color_count == 0,
         .replayed = subpass.part_count > 1,
         .fragment_stage = fragment != null,

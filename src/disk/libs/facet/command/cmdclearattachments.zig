@@ -69,6 +69,7 @@ pub fn CmdClearAttachments(base: *FacetBase, buffer: *facet.CommandBuffer, attac
             .aspect_mask = aspect,
             .rect = rect.rect,
             .color = if (aspect & facet.IMAGE_ASPECT_COLOR != 0) _render.colorOf(attachment.clear_value.color) else 0,
+            .words = if (aspect & facet.IMAGE_ASPECT_COLOR != 0) attachment.clear_value.color.uint32 else .{ 0, 0, 0, 0 },
             .depth = if (aspect & (facet.IMAGE_ASPECT_DEPTH | facet.IMAGE_ASPECT_STENCIL) != 0) attachment.clear_value.depth_stencil.depth else 0,
             .stencil = if (aspect & (facet.IMAGE_ASPECT_DEPTH | facet.IMAGE_ASPECT_STENCIL) != 0) attachment.clear_value.depth_stencil.stencil else 0,
             .output = attachment.color_attachment,

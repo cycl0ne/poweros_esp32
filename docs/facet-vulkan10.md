@@ -1458,13 +1458,126 @@ Still left out. Each is marked *facet-wide* or *V3D-only*:
 
 ### 36. Make the mandatory colour-attachment formats drawable
 
-*formats / colour attachments* &mdash; conformance-blocking, large
+*formats / colour attachments* &mdash; conformance-blocking, large &mdash; **step 1 done in 1.226: the cores draw the fourteen of 0 to 1 and of floats**; the twenty-one of whole numbers, and the V3D's, still to come
 
 Vulkan mandates COLOR_ATTACHMENT for 38 formats and COLOR_ATTACHMENT_BLEND for 14. facet provides 3 of each, hard-coded in a two-line `drawable()` and enforced by CreateImage. The missing 35 are the integer attachments, the three sRGB words, the half- and single-float forms, a2b10g10r10 both ways, a8b8g8r8_*_pack32 and a1r5g5b5. This is the largest piece in the formats strand: the tile buffer keeps 8 bits a channel of BGRA, dithered to 565 on store, so each new format needs a tile representation, a store, a load, a clear and — for the 11 blendable ones — a blend unit at that width. On the V3D the render-target config packets must name the format too. The same fix closes the colour-input-attachment gap, since an input attachment must be of a format rowFormat knows, which is the same three. Since 1.126 (item 32) BLIT_DST rides on this as well, set beside COLOR_ATTACHMENT as v3dv sets it: each format made an attachment here becomes a blit's destination, so the blit, which carries 8 bits a channel, has to write it at its own width - a float as a float, a whole number as it is. Since 1.127 (item 31) the A8B8G8R8 whole numbers are their R8G8B8A8 forms under another name, so each follows its form here with one name more; A1R5G5B5 is unpacked as it is copied in, so its attachment needs a tile format of its own and a store that packs it.
 
 > Verified verbatim: src/disk/libs/facet/surface/_surface.zig:78-80 `return format == .b8g8r8a8_unorm or format == .r8g8b8a8_unorm or format == .r5g6b5_unorm_pack16;`; image/_image.zig:498 `if (info.usage & facet.IMAGE_USAGE_COLOR_ATTACHMENT != 0 and !drawable(info.format)) return null;`; driver/_format.zig:45-58 are the only arms setting `attachment`; render/createrenderpass.zig:238 for the input-attachment half.
 
 Found independently by: formats, conformance-path, semantics (3 strands).
+
+**The port, in four steps.** Mesa's two drivers draw every one of the 38
+(lvp_formats.c:176-181, COLOR_ATTACHMENT for each render target format
+and BLEND for each that is not whole numbers; v3dvx_formats.c:124-201,
+each format with an `rt_type`). llvmpipe draws into a surface of the
+format's own bytes and blends a fragment's colour against what it reads
+back of them, converted to floats, sRGB through its transfer function, and
+written back at the format's width (`generate_unswizzled_blend`,
+src/gallium/drivers/llvmpipe/lp_state_fs.c); the V3D's tile buffer keeps
+each render target at one of nine internal types, 8 bits, 16-bit floats,
+32-bit floats or whole numbers of 8, 16 and 32 bits, sRGB and 10-bit
+formats among the 16-bit floats, and converts at the tile's store and
+load (`get_internal_type_bpp_for_output_format`, v3dvx_formats.c:
+338-468). The steps, in lines of facet:
+
+- **Step 1, the cores draw the fourteen of 0 to 1 and of floats**
+  (R8_UNORM, R8G8_UNORM, A8B8G8R8_UNORM_PACK32, the three sRGB words,
+  A2B10G10R10_UNORM_PACK32, A1R5G5B5_UNORM_PACK16, and the three of 16-bit
+  floats and of 32-bit), about 1,500: a fragment function that writes
+  floats rather than 0xAARRGGBB (`shader.Written`, `Fragments.values`),
+  each attachment's plane of the tile in the format's own bytes, blended
+  in floats as llvmpipe blends, cleared, loaded, stored, resolved, cleared
+  past the first layer and read as an input attachment there, the clear
+  values carried at their own width, and the blit and CmdClearColorImage
+  writing each one where it lies.
+- **Step 2, the cores draw the twenty-one of whole numbers**, about 700:
+  a function that writes them (`Written.sints`, `.uints`), their clears
+  read as `int32` and `uint32`, no blend (no BLEND, and a pipeline that
+  blends one refused, VUID-VkGraphicsPipelineCreateInfo-blendEnable-04717),
+  a resolve that keeps sample 0 as lavapipe's nearest blit does
+  (lvp_execute.c:1802), and a blit between two of one sign.
+- **Step 3, the V3D draws the fourteen**, about 900: its render target
+  of each type and size, the clear colour packed for it, the tile size
+  its bits a pixel give (`v3d_choose_tile_size`), its stores and loads of
+  each output format, a program writing 32 bits a channel into a target
+  of 32-bit floats (`vir_emit_tlb_color_write`, nir_to_vir.c), and
+  blending held to the types of 8 bits and of 16-bit floats
+  (`format_supports_blending`, v3dvx_formats.c:494-517).
+- **Step 4, the V3D draws the twenty-one**, about 600: the six whole
+  number types, their clears and their writes, and those images kept as
+  their numbers lie.
+
+**Step 1, in 1.226: the cores draw the fourteen.** About 1,530 lines, 590
+of them host tests. Each is COLOR_ATTACHMENT, its BLEND, BLIT_DST and
+both copies where the device says `Capabilities.texel_targets`, the
+cores (driver/_format.zig), and the image is kept in rows of its own
+bytes, as llvmpipe draws into a surface of the format's
+(`_image.targetTexels`, which names the `shader.TexelFormat` of each;
+A1R5G5B5 is `.a1rgb5`, new). A fragment function may say what it writes
+(`shader.fragmentWriting`, `Entry.written()`): 0xAARRGGBB as before, or
+four floats a pixel into `Fragments.values`, the part's room for them in
+the tile (`Tile.batch_values`). A pipeline keeps its function's
+(`Pipeline.written`). The tile keeps such an attachment in a plane of its
+format's bytes, 16 a pixel of room (`Tile.texelPlane`, `texel_plane_words`),
+cleared, loaded and stored a row at a time as they are
+(`clearTexels`, `loadTexels`, `storeTexels`). A batch's fragments are
+put into it through `shader.Texels`, the format's own encoder: floats
+as they are written, or a colour's bytes over 255, and blended in floats
+as llvmpipe blends against what it reads back
+(`generate_unswizzled_blend`, lp_state_fs.c; `lp_build_blend_aos`,
+lp_bld_blend_aos.c): the source and the constants held to 0 to 1 for a
+format of 0 to 1 and not for floats, sRGB read and written through its
+curve, a ZERO or ONE factor multiplying nothing
+(`pipeline.Mixing.mixedFloats`). Floats written into an attachment of 8
+bits a channel are held to 0 to 1 and rounded, as Vulkan converts a
+float to UNORM. A clear value is carried at its own width
+(`BeginRenderPass.clear_values`, `ClearAttachment.words`) and encoded
+for the format once a pass (`Target.clear_texels`); CmdClearAttachments
+draws its words as floats (`_draw.clearValues`), past the first layer
+as well. Four samples resolve as the mean of their floats, in a pass
+and in CmdResolveImage (`raster.resolveTexels`,
+`_transfer.resolveRectangle`). A subpass reads its own attachment of the format, or
+one an earlier subpass drew, through the tile's plane or the image's
+rows as the format's texels. CmdClearColorImage and the blit write each
+format where it lies (`_transfer.partsTexel`), and A1R5G5B5 is read as
+it lies (`_image.colorOfBytes`). An image of one of them both sampled
+and drawn is R8_UNORM, R8G8_UNORM, or of floats of one or four
+channels: a sampler reads none of the others where they lie yet.
+CreateRenderPass holds a colour attachment and an input attachment to
+the format's COLOR_ATTACHMENT (VUID-VkSubpassDescription-pColorAttachments-02648,
+-pInputAttachments-02647), so the V3D, which says it of none of them,
+refuses each. Four host tests are new (each of the fourteen cleared,
+drawn, added on, masked, cleared in the pass and outside it, read back
+by hand; four samples resolved by the pass and by CmdResolveImage,
+of halves and of one float; two layers; an input attachment of
+halves read by the next subpass and by its own; floats into
+B8G8R8A8_UNORM; the V3D refusing all fourteen) and seven were turned to
+formats still refused. FacetProbe 1.54 checks each format's features and
+pass on both devices, and on the cores draws R16G16B16A16_SFLOAT past 1
+and below 0, added on, and R8G8B8A8_SRGB through its curve; its check of
+1.48 that R8_UNORM is no attachment is turned round on the cores. Sixteen
+of seventeen mutations each fail a test; the one left, blending where the
+pipeline does not, is ONE, ZERO and ADD, which gives back the source. On
+the CM5 (packages f232 and f233) FacetProbe is 1004 of 1004 and
+FacetBoth's 316 cases are each as at 1.225.
+
+Still left out after step 1. Each is marked *facet-wide* or *V3D-only*:
+- **The twenty-one of whole numbers** are not drawn yet (step 2):
+  `Written.sints` and `.uints` are there and nothing reads them.
+  *Facet-wide*.
+- **The V3D draws none of the fourteen** (steps 3 and 4): it says no
+  COLOR_ATTACHMENT for them, so CreateImage and CreateRenderPass refuse
+  each. *V3D-only*.
+- **A format of the fourteen that a sampler does not read where it
+  lies** (the sRGB words, A1R5G5B5, A2B10G10R10, R16_SFLOAT,
+  R16G16_SFLOAT, R32G32_SFLOAT) may not be both sampled and drawn into:
+  CreateImage refuses SAMPLED beside COLOR_ATTACHMENT, until items 34
+  and 37 sample them. *Facet-wide*.
+- **The cores blend these a pixel at a time** through `shader.Texels`,
+  where llvmpipe blends a whole row of four in vectors at the format's
+  width: correct, and slower than the three formats of 8 bits a channel
+  the tile blends a quad at a time. *Facet-wide* in that a Radeon blends
+  in its own hardware; the cores' alone.
 
 ### 37. Sample the _snorm and half-float formats, and fill the storage-image gaps
 

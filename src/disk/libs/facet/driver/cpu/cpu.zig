@@ -167,6 +167,10 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // A depth of 24 bits, kept in the tiles at 32 bits a pixel and
         // tested at all 24 (since 1.223).
         .depth24 = true,
+        // And the colour attachments of 0 to 1 and of floats past the
+        // three of 8 bits a channel, each kept in the tiles in its own
+        // bytes (since 1.226).
+        .texel_targets = true,
         // Both go by the pixel at a time way the stencil test goes by:
         // the clamp holds a pixel's depth inside the viewport's range,
         // and the bounds test reads the depth already there.

@@ -199,6 +199,17 @@ pub const Capabilities = extern struct {
     /// in the low byte, either plane or both. False where neither is an
     /// attachment and CreateRenderPass refuses one.
     depth24: bool = false,
+    /// The colour attachments of 0 to 1 and of floats past the three of 8
+    /// bits a channel a display has (`_image.targetTexels`): R8_UNORM,
+    /// R8G8_UNORM, A8B8G8R8_UNORM_PACK32, the three sRGB words,
+    /// A2B10G10R10_UNORM_PACK32, A1R5G5B5_UNORM_PACK16, and the half-float
+    /// and float formats of one channel, two and four, which Vulkan has
+    /// every device draw (docs/facet-vulkan10.md item 36). The tiles keep
+    /// each in its own bytes, a fragment's colour blended against what
+    /// they hold in floats and written back at the format's width, as
+    /// llvmpipe draws into a surface of its format. The cores have it since
+    /// 1.226. False where none of them is an attachment.
+    texel_targets: bool = false,
     /// `input_attachment` descriptors and `SubpassDescription`'s
     /// `input_attachments`: an attachment a later subpass reads pixel by
     /// pixel, out of the image's memory, which is how a deferred pass

@@ -747,6 +747,53 @@ pub const Mixing = struct {
     constant: u32 = 0,
     /// The bits of 0xAARRGGBB written.
     mask: u32 = 0xFFFF_FFFF,
+    /// The constant as it was given, red, green, blue and alpha, for an
+    /// attachment the tiles keep in its own bytes (`mixedFloats`, since
+    /// 1.226).
+    constants: [4]f32 = .{ 0, 0, 0, 0 },
+
+    /// A pixel's colour, four floats red first, put over `under` in
+    /// floats: what an attachment the tiles keep in its own bytes is
+    /// blended in (`Surface.texels`, since 1.226). Vulkan's blend
+    /// equations ("Blend Factors", "Blend Operations"), as llvmpipe builds
+    /// them: the source and the constant held to 0 to 1 first where
+    /// `held` says the format is of those (`lp_build_blend_aos`,
+    /// src/gallium/auxiliary/gallivm/lp_bld_blend_aos.c), a factor of ZERO
+    /// or ONE no multiply at all (`lp_build_mul` of a constant 0 or 1,
+    /// gallivm/lp_bld_arit.c), so an infinite destination times ZERO is
+    /// nothing rather than a NaN, and the channels `mask` leaves out
+    /// kept as they were.
+    pub fn mixedFloats(mixing: *const Mixing, color: [4]f32, under: [4]f32, held: bool) [4]f32 {
+        const src = if (held) heldAll(color) else color;
+        const constant = if (held) heldAll(mixing.constants) else mixing.constants;
+        const dst = under;
+        var out: [4]f32 = undefined;
+        inline for (0..3) |k| {
+            const saturate = @min(src[3], 1 - dst[3]);
+            out[k] = togetherFloats(
+                mixing.color_op,
+                src[k],
+                mixing.src_color,
+                factorFloat(mixing.src_color, src[k], dst[k], src[3], dst[3], constant[k], constant[3], saturate),
+                dst[k],
+                mixing.dst_color,
+                factorFloat(mixing.dst_color, src[k], dst[k], src[3], dst[3], constant[k], constant[3], saturate),
+            );
+        }
+        out[3] = togetherFloats(
+            mixing.alpha_op,
+            src[3],
+            mixing.src_alpha,
+            factorFloat(mixing.src_alpha, src[3], dst[3], src[3], dst[3], constant[3], constant[3], 1),
+            dst[3],
+            mixing.dst_alpha,
+            factorFloat(mixing.dst_alpha, src[3], dst[3], src[3], dst[3], constant[3], constant[3], 1),
+        );
+        inline for (0..4, [4]u32{ 0x00FF_0000, 0x0000_FF00, 0x0000_00FF, 0xFF00_0000 }) |k, bits| {
+            if (mixing.mask & bits == 0) out[k] = under[k];
+        }
+        return out;
+    }
 
     /// A pixel's colour put over `under`.
     pub fn mixed(mixing: *const Mixing, color: u32, under: u32) u32 {
@@ -778,6 +825,55 @@ pub const Mixing = struct {
         return (out & mixing.mask) | (under & ~mixing.mask);
     }
 };
+
+/// Each of four floats held to 0 to 1, a NaN as 0. (Since 1.226.)
+fn heldAll(parts: [4]f32) [4]f32 {
+    var made: [4]f32 = undefined;
+    for (&made, parts) |*one, part| one.* = if (part >= 0) @min(part, 1) else 0;
+    return made;
+}
+
+/// `factorValue` in floats, 1 for 255. (Since 1.226.)
+inline fn factorFloat(factor: Factor, src: f32, dst: f32, src_alpha: f32, dst_alpha: f32, constant: f32, constant_alpha: f32, saturate: f32) f32 {
+    return switch (factor) {
+        .zero => 0,
+        .one => 1,
+        .src_color => src,
+        .one_minus_src_color => 1 - src,
+        .dst_color => dst,
+        .one_minus_dst_color => 1 - dst,
+        .src_alpha => src_alpha,
+        .one_minus_src_alpha => 1 - src_alpha,
+        .dst_alpha => dst_alpha,
+        .one_minus_dst_alpha => 1 - dst_alpha,
+        .constant_color => constant,
+        .one_minus_constant_color => 1 - constant,
+        .constant_alpha => constant_alpha,
+        .one_minus_constant_alpha => 1 - constant_alpha,
+        .src_alpha_saturate => saturate,
+    };
+}
+
+/// A channel times its factor, ZERO nothing and ONE the channel itself.
+/// (Since 1.226.)
+inline fn scaled(value: f32, factor: Factor, by: f32) f32 {
+    return switch (factor) {
+        .zero => 0,
+        .one => value,
+        else => value * by,
+    };
+}
+
+/// `together` in floats. MIN and MAX take no factors. (Since 1.226.)
+inline fn togetherFloats(operation: Operation, src: f32, src_factor: Factor, src_by: f32, dst: f32, dst_factor: Factor, dst_by: f32) f32 {
+    return switch (operation) {
+        .add => scaled(src, src_factor, src_by) + scaled(dst, dst_factor, dst_by),
+        .subtract => scaled(src, src_factor, src_by) - scaled(dst, dst_factor, dst_by),
+        .reverse_subtract => scaled(dst, dst_factor, dst_by) - scaled(src, src_factor, src_by),
+        .min => @min(src, dst),
+        .max => @max(src, dst),
+    };
+}
 
 inline fn factorValue(factor: Factor, src: u32, dst: u32, src_alpha: u32, dst_alpha: u32, constant: u32, constant_alpha: u32, saturate: u32) u32 {
     return switch (factor) {
@@ -836,6 +932,29 @@ test "a mixing's channels" {
     try std.testing.expectEqual(@as(u32, 0xFF20_2020), mixed(.{ .src_color = .src_alpha_saturate }, 0xFFFF_FFFF, 0xDF00_0000));
     // Only the red written.
     try std.testing.expectEqual(@as(u32, 0x11FF_3344), mixed(.{ .mask = 0x00FF_0000 }, 0xFFFF_FFFF, 0x1122_3344));
+}
+
+test "a mixing's channels in floats: past 1 where the format holds it, held where it does not, and an infinity times ZERO nothing (since 1.226)" {
+    const testing = std.testing;
+    // One and one, past the top: a float format keeps it, one of 0 to 1
+    // has its source held first.
+    const adding = Mixing{ .dst_color = .one, .dst_alpha = .one };
+    try testing.expectEqual([4]f32{ 3, 0.5, 0.25, 1.5 }, adding.mixedFloats(.{ 2, 0.25, 0, 1 }, .{ 1, 0.25, 0.25, 0.5 }, false));
+    try testing.expectEqual([4]f32{ 2, 0.5, 0.25, 1.5 }, adding.mixedFloats(.{ 2, 0.25, 0, 1 }, .{ 1, 0.25, 0.25, 0.5 }, true));
+    // Over by the source's alpha.
+    const over = Mixing{ .src_color = .src_alpha, .dst_color = .one_minus_src_alpha, .src_alpha = .one, .dst_alpha = .one_minus_src_alpha };
+    try testing.expectEqual([4]f32{ 0.75, 0.25, 0.5, 1 }, over.mixedFloats(.{ 1, 0, 0.5, 0.5 }, .{ 0.5, 0.5, 0.5, 1 }, true));
+    // What is there infinite, and its factor ZERO: replaced, not a NaN.
+    const replacing = Mixing{};
+    const inf = std.math.inf(f32);
+    try testing.expectEqual([4]f32{ 0.5, 0.5, 0.5, 1 }, replacing.mixedFloats(.{ 0.5, 0.5, 0.5, 1 }, .{ inf, inf, inf, inf }, false));
+    // By the constant, held for a format of 0 to 1.
+    const by_constant = Mixing{ .src_color = .constant_color, .constants = .{ 4, 0.5, -1, 1 } };
+    try testing.expectEqual([4]f32{ 4, 0.5, -1, 1 }, by_constant.mixedFloats(.{ 1, 1, 1, 1 }, .{ 0, 0, 0, 0 }, false));
+    try testing.expectEqual([4]f32{ 1, 0.5, 0, 1 }, by_constant.mixedFloats(.{ 1, 1, 1, 1 }, .{ 0, 0, 0, 0 }, true));
+    // Only green written, and the least and the most take no factor.
+    try testing.expectEqual([4]f32{ 9, 2, 9, 9 }, (Mixing{ .mask = 0x0000_FF00 }).mixedFloats(.{ 2, 2, 2, 2 }, .{ 9, 9, 9, 9 }, false));
+    try testing.expectEqual([4]f32{ -3, 1, 0.5, 1 }, (Mixing{ .color_op = .min, .alpha_op = .max, .src_color = .zero }).mixedFloats(.{ -3, 1, 0.5, 1 }, .{ 2, 2, 2, 0.5 }, false));
 }
 
 /// How much 1 / w may change from a pixel to the next aslant, as a part

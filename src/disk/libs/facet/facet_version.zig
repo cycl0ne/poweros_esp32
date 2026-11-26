@@ -7441,4 +7441,41 @@ pub const LIBRARY_VERSION = 1;
 /// a D16S8 attachment kept nowhere and its image. On the CM5 (package
 /// f231) FacetProbe is 998 of 998 and FacetBoth's 316 cases are each as at
 /// 1.224, the eighteen on D24_UNORM_S8_UINT.
-pub const LIBRARY_REVISION = 225;
+/// 226: **The cores draw the fourteen colour attachments of 0 to 1 and of
+/// floats (docs/facet-vulkan10.md item 36, step 1 of four).** R8_UNORM,
+/// R8G8_UNORM, A8B8G8R8_UNORM_PACK32, the three sRGB words,
+/// A2B10G10R10_UNORM_PACK32, A1R5G5B5_UNORM_PACK16 and the three of 16-bit
+/// and of 32-bit floats are COLOR_ATTACHMENT, its BLEND, BLIT_DST and both
+/// copies where the device says `Capabilities.texel_targets`, the cores,
+/// as lavapipe has each (lvp_formats.c:176-181). Each is kept in rows of
+/// its own bytes (`_image.targetTexels`; `shader.TexelFormat.a1rgb5` is
+/// new) and the tile keeps it in a plane of those bytes, cleared, loaded
+/// and stored a row at a time. A fragment function may write four floats
+/// a pixel into `Fragments.values` (`shader.fragmentWriting`,
+/// `shader.Written`), and a pipeline keeps what its function writes. The
+/// fragments are put into the plane through `shader.Texels` and blended
+/// in floats, as llvmpipe blends against what it reads back of the
+/// format (`generate_unswizzled_blend`, lp_state_fs.c;
+/// `lp_build_blend_aos`, lp_bld_blend_aos.c): source and constants held to
+/// 0 to 1 for a format of 0 to 1, sRGB through its curve
+/// (`pipeline.Mixing.mixedFloats`). Floats into an attachment of 8 bits a
+/// channel are held and rounded. Clear values are carried at their own
+/// width (`BeginRenderPass.clear_values`, `ClearAttachment.words`), four
+/// samples resolve as the mean of their floats, in a pass and in
+/// CmdResolveImage, an input attachment of
+/// the format is read as its texels from the tile or the rows, and
+/// CmdClearColorImage and the blit write each where it lies.
+/// CreateRenderPass holds colour and input attachments to the format's
+/// COLOR_ATTACHMENT (VUID-VkSubpassDescription-pColorAttachments-02648,
+/// -pInputAttachments-02647), which the V3D says of none of them yet.
+///
+/// Four host tests are new and seven were turned to formats still
+/// refused. Sixteen of seventeen mutations each fail one; the one left,
+/// blending where the pipeline does not, is ONE, ZERO and ADD, which
+/// gives back the source. FacetProbe 1.54 checks the fourteen's features and
+/// passes on both devices and, on the cores, draws R16G16B16A16_SFLOAT
+/// past 1 and below 0, added on, and R8G8B8A8_SRGB through its curve, and
+/// has its check of 1.48 that R8_UNORM is no attachment turned round on
+/// the cores. On the CM5 (packages f232 and f233) FacetProbe is 1004 of
+/// 1004 and FacetBoth's 316 cases are each as at 1.225.
+pub const LIBRARY_REVISION = 226;
