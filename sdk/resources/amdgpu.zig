@@ -214,8 +214,10 @@ pub const GPUINT_DISPLAY_FLIP: u32 = 0x4f;
 pub const GPUINT_DISPLAY_HOT_PLUG: u32 = 0x09;
 pub const GPUINT_DISPLAY_CONTROLLER: u32 = 0x68;
 
-/// A piece of the device's own memory, from AllocGPUMemory: where the CPU
-/// reaches it, where the device's blocks reach it, and how many bytes it
+/// A piece of the device's own memory, from AllocGPUMemory, or of the
+/// machine's mapped for the graphics block's engines, from MapGPUMemory:
+/// where the CPU reaches it, where the device's blocks reach it - the
+/// graphics block's engines alone, for a mapping - and how many bytes it
 /// is.
 pub const GPUMemory = extern struct {
     cpu: u64 align(4) = 0,

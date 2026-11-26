@@ -24,6 +24,8 @@ const StartGPUDMA = @import("dma/startgpudma.zig").StartGPUDMA;
 const SendGPUDMA = @import("dma/sendgpudma.zig").SendGPUDMA;
 const WaitGPUDMA = @import("dma/waitgpudma.zig").WaitGPUDMA;
 const GetGPUDMAState = @import("dma/getgpudmastate.zig").GetGPUDMAState;
+const MapGPUMemory = @import("memory/mapgpumemory.zig").MapGPUMemory;
+const UnmapGPUMemory = @import("memory/unmapgpumemory.zig").UnmapGPUMemory;
 
 /// amdgpu.resource's interface, as the SDK generates it from
 /// sdk/fd/amdgpu_lib.fd.
@@ -64,6 +66,8 @@ const contract_files = [_][]const u8{
     @embedFile("dma/sendgpudma.zig"),
     @embedFile("dma/waitgpudma.zig"),
     @embedFile("dma/getgpudmastate.zig"),
+    @embedFile("memory/mapgpumemory.zig"),
+    @embedFile("memory/unmapgpumemory.zig"),
 };
 
 fn lvoGetGPUInfo(ab: *AMDGPUBase, info: *amdgpu.GPUInfo) callconv(.c) bool {
@@ -114,6 +118,12 @@ fn lvoWaitGPUDMA(ab: *AMDGPUBase, job: u32, most_ms: u32) callconv(.c) bool {
 fn lvoGetGPUDMAState(ab: *AMDGPUBase, state: *amdgpu.GPUDMAState) callconv(.c) bool {
     return GetGPUDMAState(ab, state);
 }
+fn lvoMapGPUMemory(ab: *AMDGPUBase, address: *anyopaque, bytes: u32, memory: *amdgpu.GPUMemory) callconv(.c) bool {
+    return MapGPUMemory(ab, address, bytes, memory);
+}
+fn lvoUnmapGPUMemory(ab: *AMDGPUBase, memory: *amdgpu.GPUMemory) callconv(.c) void {
+    UnmapGPUMemory(ab, memory);
+}
 
 /// The jump table, in slot order: a resource has no standard vectors, so
 /// its first function is in the first slot.
@@ -134,4 +144,6 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoSendGPUDMA),
     vec(lvoWaitGPUDMA),
     vec(lvoGetGPUDMAState),
+    vec(lvoMapGPUMemory),
+    vec(lvoUnmapGPUMemory),
 };

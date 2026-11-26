@@ -23,7 +23,9 @@ const _arena = @import("_arena.zig");
 ///
 /// BEHAVIOR:
 /// The piece's place is free for the next AllocGPUMemory. A zero piece,
-/// or one the resource did not hand out, is cleared and nothing else.
+/// or one the resource did not hand out, is cleared and nothing else. A
+/// mapping from MapGPUMemory given here by mistake is unmapped, as
+/// UnmapGPUMemory does, so that its entries are not lost.
 ///
 /// CONTEXT:
 /// - Waits: for another task handing out or giving back.
@@ -42,7 +44,7 @@ const _arena = @import("_arena.zig");
 /// None known.
 ///
 /// SEE ALSO:
-/// `AllocGPUMemory`
+/// `AllocGPUMemory`, `UnmapGPUMemory`
 ///
 /// EXAMPLES:
 /// ```zig
@@ -50,6 +52,10 @@ const _arena = @import("_arena.zig");
 /// ```
 pub fn FreeGPUMemory(ab: *AMDGPUBase, memory: *amdgpu.GPUMemory) void {
     defer memory.* = .{};
+    if (ab.gart_bytes != 0 and memory.device >= ab.gart_start and memory.device - ab.gart_start < ab.gart_bytes) {
+        const gpu: *sdk.interface.amdgpu.AMDGPUBase = @ptrCast(&ab.lib);
+        return gpu.UnmapGPUMemory(memory);
+    }
     if (memory.bytes == 0 or memory.device < ab.memory_device) return;
     const sys = ab.sys_base;
     sys.ObtainSemaphore(&ab.arena_lock);

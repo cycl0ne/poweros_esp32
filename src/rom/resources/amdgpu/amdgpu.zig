@@ -20,7 +20,9 @@
 //! (`graphics/_graphics.zig`). The block's DMA engine runs one queue of
 //! jobs for every driver (`dma/_dma.zig`): StartGPUDMA starts it,
 //! SendGPUDMA puts a job of its packets on it, WaitGPUDMA waits for one
-//! to be done, GetGPUDMAState says how far it is.
+//! to be done, GetGPUDMAState says how far it is. MapGPUMemory maps a
+//! range of the machine's memory into the hub's page table, so that the
+//! engines reach a buffer where it is, and UnmapGPUMemory takes it out.
 //!
 //! The device's video BIOS image - the copy the machine's firmware keeps
 //! in its tables (`device/_bios.zig`) - is the resource's to find too,
@@ -85,6 +87,8 @@ test {
     _ = @import("dma/sendgpudma.zig");
     _ = @import("dma/waitgpudma.zig");
     _ = @import("dma/getgpudmastate.zig");
+    _ = @import("memory/mapgpumemory.zig");
+    _ = @import("memory/unmapgpumemory.zig");
     _ = @import("device/_bios.zig");
     _ = @import("device/getgpubios.zig");
     _ = @import("device/_connectors.zig");
@@ -147,6 +151,12 @@ test "a machine without the device has the resource, and it answers false" {
     var state: amdgpu.GPUDMAState = .{ .sent = 7 };
     try testing.expect(!call(ab).GetGPUDMAState(&state));
     try testing.expectEqual(@as(u32, 7), state.sent);
+    var buffer: [64]u8 = @splat(0);
+    var mapped: amdgpu.GPUMemory = .{ .bytes = 7 };
+    try testing.expect(!call(ab).MapGPUMemory(&buffer, buffer.len, &mapped));
+    try testing.expectEqual(@as(u32, 7), mapped.bytes);
+    call(ab).UnmapGPUMemory(&mapped);
+    try testing.expectEqual(@as(u32, 0), mapped.bytes);
     call(ab).RemGPUIntServer(&server);
     try testing.expect(!ab.ih_running);
     try tearDown(ab);

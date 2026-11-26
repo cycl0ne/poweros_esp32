@@ -287,7 +287,7 @@ started.
 | A system disk | `pci.library` + `nvme.device`, or `sdcard.device` | the generic ECAM host is 18 lines; `nvme.device` claims its PCI class |
 | Network | one of `networks/` | `emac` (three machines' MACs), `intelnet` and `realnet` (Intel's and Realtek's controllers on PCI, found by their PCI IDs), `openeth`, `cyw43455`, `esp32s3wifi`, `aic8800`, and `usb/ecm.device` for any adapter |
 | Sound | `rta.library` + a sink, `audio.device` | the ESPs' I2S, HDMI, a PC's high definition audio controllers, USB audio, and the null and file sinks, which mean a program that plays sound still runs |
-| Accelerators | the resources | the P4's 2D engine and JPEG codec, the JH7110's JPEG, video decoder and crypto engine, the BCM2712's V3D through `facet.library`, an AMD graphics device's DMA engine, whose queue of jobs `amdgpu.resource` runs (`StartGPUDMA`, `SendGPUDMA`, `WaitGPUDMA`) |
+| Accelerators | the resources | the P4's 2D engine and JPEG codec, the JH7110's JPEG, video decoder and crypto engine, the BCM2712's V3D through `facet.library`, an AMD graphics device's DMA engine, whose queue of jobs `amdgpu.resource` runs (`StartGPUDMA`, `SendGPUDMA`, `WaitGPUDMA`) on the device's own memory or on the machine's, mapped where it is (`MapGPUMemory`) |
 
 ### How a part is found
 

@@ -35,6 +35,8 @@ pub const LVO = struct {
     pub const SendGPUDMA = libraries.lvo(13);
     pub const WaitGPUDMA = libraries.lvo(14);
     pub const GetGPUDMAState = libraries.lvo(15);
+    pub const MapGPUMemory = libraries.lvo(16);
+    pub const UnmapGPUMemory = libraries.lvo(17);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -56,6 +58,8 @@ pub const Fn = struct {
     pub const SendGPUDMA = *const fn (*AMDGPUBase, [*]const u32, u32) callconv(.c) u32;
     pub const WaitGPUDMA = *const fn (*AMDGPUBase, u32, u32) callconv(.c) bool;
     pub const GetGPUDMAState = *const fn (*AMDGPUBase, *amdgpu.GPUDMAState) callconv(.c) bool;
+    pub const MapGPUMemory = *const fn (*AMDGPUBase, *anyopaque, u32, *amdgpu.GPUMemory) callconv(.c) bool;
+    pub const UnmapGPUMemory = *const fn (*AMDGPUBase, *amdgpu.GPUMemory) callconv(.c) void;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -173,5 +177,19 @@ pub const AMDGPUBase = opaque {
     /// run.
     pub fn GetGPUDMAState(self: *AMDGPUBase, state: *amdgpu.GPUDMAState) bool {
         return libraries.call(self, LVO.GetGPUDMAState, Fn.GetGPUDMAState, .{state});
+    }
+
+    /// The machine's memory at `address`, `bytes` of it, mapped into the
+    /// graphics block's memory hub for its engines, into `memory` - its
+    /// `device` address is where they reach it; false where the hub is not
+    /// on, its page table has no room for it, or `bytes` is 0.
+    pub fn MapGPUMemory(self: *AMDGPUBase, address: *anyopaque, bytes: u32, memory: *amdgpu.GPUMemory) bool {
+        return libraries.call(self, LVO.MapGPUMemory, Fn.MapGPUMemory, .{ address, bytes, memory });
+    }
+
+    /// A mapping from MapGPUMemory taken out of the hub's page table;
+    /// `memory` is cleared.
+    pub fn UnmapGPUMemory(self: *AMDGPUBase, memory: *amdgpu.GPUMemory) void {
+        return libraries.call(self, LVO.UnmapGPUMemory, Fn.UnmapGPUMemory, .{memory});
     }
 };

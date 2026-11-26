@@ -8,12 +8,13 @@
 //! monitor put to sleep and woken, its colours' range tried, its security
 //! processor started and the video decoder's firmware loaded by it, the
 //! graphics block's firmware loaded, the block started and its memory
-//! hub turned on, its DMA engine's queue tried with jobs, the display's
+//! hub turned on, its DMA engine's queue tried with jobs in the device's
+//! memory and in the machine's mapped for it, the display's
 //! interrupt at each frame counted, or one flip of the picture the
 //! display reads. Built against the SDK only.
 //!
 //!   Gpu TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,
-//!       SLEEP/K/N,RANGE/S,POINTER/S,MIRROR/S,OVERLAY/S,DIRECT/S,BANDS/S,VIDEO/S,GFX/S,DMA/S,BLOCK/K/N,WATCHDOG/K/N
+//!       SLEEP/K/N,RANGE/S,POINTER/S,MIRROR/S,OVERLAY/S,DIRECT/S,BANDS/S,VIDEO/S,GFX/S,DMA/S,GART/S,BLOCK/K/N,WATCHDOG/K/N
 //!
 //! BIOS prints the device's video BIOS image (GetGPUBios): where it is
 //! and how long, its tables' header's version, the version of each of
@@ -260,9 +261,19 @@
 //! engine's registers are printed at the end, with the hub's. The
 //! watchdog is armed for it.
 //!
+//! GART does what GFX does, starts the queue and tries the machine's
+//! memory through the hub's page table (MapGPUMemory): 64 KiB of it,
+//! placed 100 bytes into a page, between guards of a page each way,
+//! mapped, filled in words through the mapping, unmapped and read back
+//! by the CPU; two buffers filled one after the other through mappings
+//! at the same place in the hub's range, each with its own value, so
+//! that the second fill reaches the second buffer only if the hub's TLB
+//! was dropped between them; and 16 MiB filled, timed. The queue and the
+//! hub's registers are printed at the end. The watchdog is armed for it.
+//!
 //! Without BIOS, CLOCKS, DMCUB, CRC, EVENTS, AUX, EDID, CYCLE, MODES,
 //! SLEEP, RANGE, POINTER, MIRROR, OVERLAY, DIRECT, BANDS, VIDEO, GFX,
-//! DMA, DUMP, FRAMES or FLIP the two files are read from
+//! DMA, GART, DUMP, FRAMES or FLIP the two files are read from
 //! DEVS:firmware/amdgpu/, named for the blocks that use them as the
 //! device's table gives their versions - psp_13_0_4_toc.bin for the
 //! security processor 13.0.4, vcn_4_0_2.bin for the video decoder 4.0.2 -
@@ -317,10 +328,10 @@ const RtgBase = sdk.interface.rtg.RtgBase;
 const TagItem = sdk.utility.TagItem;
 
 pub const COMMAND_NAME = "Gpu";
-const VERSION_STRING = "\x00$VER: Gpu 1.23 (26.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Gpu 1.24 (26.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,SLEEP/K/N,RANGE/S,POINTER/S,MIRROR/S,OVERLAY/S,DIRECT/S,BANDS/S,VIDEO/S,GFX/S,DMA/S,BLOCK/K/N,WATCHDOG/K/N";
+const template = "TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,SLEEP/K/N,RANGE/S,POINTER/S,MIRROR/S,OVERLAY/S,DIRECT/S,BANDS/S,VIDEO/S,GFX/S,DMA/S,GART/S,BLOCK/K/N,WATCHDOG/K/N";
 const arg_toc = 0;
 const arg_firmware = 1;
 const arg_frames = 2;
@@ -356,9 +367,10 @@ const arg_bands = 31;
 const arg_video = 32;
 const arg_gfx = 33;
 const arg_dma = 34;
-const arg_block = 35;
-const arg_watchdog = 36;
-const arg_count = 37;
+const arg_gart = 35;
+const arg_block = 36;
+const arg_watchdog = 37;
+const arg_count = 38;
 
 /// Where the files are.
 const directory = "DEVS:firmware/amdgpu/";
@@ -1284,10 +1296,14 @@ fn graphicsFile(sys: *ExecBase, dl: *DosBase, prefix: []const u8, block: amdgpu.
     return true;
 }
 
+/// What GFX, DMA and GART go on to once the block is started.
+const GraphicsThen = enum { nothing, dma, gart };
+
 /// The graphics block's firmware loaded, the block started and its hub
-/// turned on, its registers printed before and after - and with
-/// `dma_too`, its DMA engine's queue started and tried.
-fn graphicsStart(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUInfo, millis: u32, dma_too: bool) i32 {
+/// turned on, its registers printed before and after - and then its DMA
+/// engine's queue started and tried, on the device's memory or on the
+/// machine's, as `then` says.
+fn graphicsStart(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUInfo, millis: u32, then: GraphicsThen) i32 {
     var graphics: amdgpu.GPUBlock = .{};
     var dma: amdgpu.GPUBlock = .{};
     var security: amdgpu.GPUBlock = .{};
@@ -1348,8 +1364,11 @@ fn graphicsStart(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPU
     printGraphics(dl, info, graphics, &graphics_registers);
     _ = Printf(dl, "Its memory hub's:\n", .{});
     printGraphics(dl, info, graphics, &hub_registers);
-    if (!dma_too) return dos.RETURN_OK;
-    return dmaCheck(sys, dl, ab, info, graphics, wb);
+    return switch (then) {
+        .nothing => dos.RETURN_OK,
+        .dma => dmaCheck(sys, dl, ab, info, graphics, wb),
+        .gart => gartCheck(sys, dl, ab, info, graphics, wb),
+    };
 }
 
 /// The DMA engine's queue as it is, on one line.
@@ -1377,6 +1396,23 @@ fn dmaFailed(dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUInfo, graphics: amdg
 /// The words of a piece of the device's memory, as the CPU reaches them.
 fn wordsOf(piece: amdgpu.GPUMemory) [*]volatile u32 {
     return @ptrFromInt(@as(usize, @intCast(piece.cpu)));
+}
+
+/// What a fill between guards left: the first filled word, how many of
+/// the filled words are the same as it, and how many of the guards' words
+/// still hold `guard_value`.
+const FillSeen = struct { filled: u32, alike: u32, kept: u32 };
+
+fn fillSeen(words: [*]volatile u32, count: u32, guard_words: u32) FillSeen {
+    var seen: FillSeen = .{ .filled = words[guard_words], .alike = 0, .kept = 0 };
+    for (guard_words..count - guard_words) |index| {
+        if (words[index] == seen.filled) seen.alike += 1;
+    }
+    for (0..guard_words) |index| {
+        if (words[index] == guard_value) seen.kept += 1;
+        if (words[count - 1 - index] == guard_value) seen.kept += 1;
+    }
+    return seen;
 }
 
 /// A constant fill of `bytes` at the device's address `device`, in words
@@ -1440,21 +1476,12 @@ fn dmaCheck(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUInfo,
         const job = ab.SendGPUDMA(&fill, fill.len);
         if (job == 0 or !ab.WaitGPUDMA(job, dma_job_ms)) return dmaFailed(dl, ab, info, graphics, "A fill");
         const took = sys.UptimeUs() - began;
-        const filled = words[guard_words];
-        var alike: u32 = 0;
-        for (guard_words..count - guard_words) |index| {
-            if (words[index] == filled) alike += 1;
-        }
-        var kept: u32 = 0;
-        for (0..guard_words) |index| {
-            if (words[index] == guard_value) kept += 1;
-            if (words[count - 1 - index] == guard_value) kept += 1;
-        }
+        const seen = fillSeen(words, count, guard_words);
         const expected = if (size == amdgpu.GPUDMA_FILL_WORDS) fill_value else (fill_value & 0xff) * 0x0101_0101;
         _ = Printf(dl, "A fill of %u bytes with %08x, size %u: done in %lu us; %u of its %u words %08x (%08x meant), %u of the guards' %u kept\n", .{
-            fill_bytes, fill_value, size >> 30, took, alike, fill_bytes / 4, filled, expected, kept, 2 * guard_words,
+            fill_bytes, fill_value, size >> 30, took, seen.alike, fill_bytes / 4, seen.filled, expected, seen.kept, 2 * guard_words,
         });
-        if (filled != expected or alike != fill_bytes / 4 or kept != 2 * guard_words) all_right = false;
+        if (seen.filled != expected or seen.alike != fill_bytes / 4 or seen.kept != 2 * guard_words) all_right = false;
         wb.FeedWatchdog();
     }
 
@@ -1489,6 +1516,147 @@ fn dmaCheck(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUInfo,
     _ = Printf(dl, "At the end:\n", .{});
     printQueue(dl, ab);
     printGraphics(dl, info, graphics, &dma_registers);
+    _ = Printf(dl, "Its memory hub's:\n", .{});
+    printGraphics(dl, info, graphics, &hub_registers);
+    return if (all_right) dos.RETURN_OK else dos.RETURN_WARN;
+}
+
+/// Where GART puts its buffers of the machine's memory: so many bytes
+/// past a page's start, so that a mapping begins part way into a page;
+/// and how much its long fill fills.
+const ram_offset: usize = 100;
+const ram_long_bytes: u32 = 16 << 20;
+/// The values its two buffers are filled with, one each.
+const first_value: u32 = 0x1111_1111;
+const second_value: u32 = 0x2222_2222;
+
+/// A buffer of the machine's memory: `bytes` from `ram_offset` past a
+/// page's start, in an allocation of its own, and its words.
+const RamBuffer = struct {
+    allocation: *anyopaque,
+    at: [*]u8,
+    words: [*]volatile u32,
+};
+
+fn ramBuffer(sys: *ExecBase, bytes: u32) ?RamBuffer {
+    const allocation = sys.AllocVec(bytes + 2 * 4096, exec.MEMF_ANY) orelse return null;
+    const at = (@intFromPtr(allocation) + 4095 & ~@as(usize, 4095)) + ram_offset;
+    return .{ .allocation = allocation, .at = @ptrFromInt(at), .words = @ptrFromInt(at) };
+}
+
+/// `buffer`'s `bytes` mapped, a fill of what lies between its guards in
+/// words with `value` sent and waited for, and the mapping taken out
+/// again: the device's address it was mapped at, or null with why said.
+fn fillThroughMapping(dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUInfo, graphics: amdgpu.GPUBlock, buffer: RamBuffer, bytes: u32, value: u32) ?u64 {
+    var mapped: amdgpu.GPUMemory = .{};
+    if (!ab.MapGPUMemory(buffer.at, bytes, &mapped)) {
+        _ = Printf(dl, "%u bytes of the machine's memory at %lx are not mapped: see C:Log\n", .{ bytes, @as(u64, @intFromPtr(buffer.at)) });
+        return null;
+    }
+    defer ab.UnmapGPUMemory(&mapped);
+    const fill = fillPacket(mapped.device + guard_bytes, bytes - 2 * guard_bytes, value, amdgpu.GPUDMA_FILL_WORDS);
+    const job = ab.SendGPUDMA(&fill, fill.len);
+    if (job == 0 or !ab.WaitGPUDMA(job, dma_job_ms)) {
+        _ = dmaFailed(dl, ab, info, graphics, "A fill through a mapping");
+        return null;
+    }
+    return mapped.device;
+}
+
+/// The DMA engine's queue started and tried on the machine's memory,
+/// mapped into the hub's page table: a fill read back by the CPU, two
+/// fills through mappings at the same place, and a long fill.
+fn gartCheck(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUInfo, graphics: amdgpu.GPUBlock, wb: *WatchdogBase) i32 {
+    if (!ab.StartGPUDMA()) {
+        wb.FeedWatchdog();
+        _ = Printf(dl, "The DMA engine's queue does not run: see C:Log; its registers:\n", .{});
+        printGraphics(dl, info, graphics, &dma_registers);
+        return dos.RETURN_ERROR;
+    }
+    wb.FeedWatchdog();
+    _ = Printf(dl, "The DMA engine's queue runs\n", .{});
+    printQueue(dl, ab);
+
+    var all_right = true;
+    const piece_bytes = fill_bytes + 2 * guard_bytes;
+    const count = piece_bytes / 4;
+    const guard_words = guard_bytes / 4;
+    const first = ramBuffer(sys, piece_bytes) orelse {
+        _ = Printf(dl, "No memory for %u bytes\n", .{piece_bytes});
+        return dos.RETURN_FAIL;
+    };
+    defer sys.FreeVec(first.allocation);
+    const second = ramBuffer(sys, piece_bytes) orelse {
+        _ = Printf(dl, "No memory for %u bytes\n", .{piece_bytes});
+        return dos.RETURN_FAIL;
+    };
+    defer sys.FreeVec(second.allocation);
+
+    for (0..count) |index| first.words[index] = guard_value;
+    var began = sys.UptimeUs();
+    const device = fillThroughMapping(dl, ab, info, graphics, first, piece_bytes, fill_value) orelse return dos.RETURN_ERROR;
+    const took = sys.UptimeUs() - began;
+    const seen = fillSeen(first.words, count, guard_words);
+    _ = Printf(dl, "%u bytes of the machine's memory at %lx, mapped at %lx, filled in words with %08x and unmapped in %lu us: %u of %u words %08x, %u of the guards' %u kept\n", .{
+        fill_bytes, @as(u64, @intFromPtr(first.at)), device, fill_value, took, seen.alike, fill_bytes / 4, seen.filled, seen.kept, 2 * guard_words,
+    });
+    if (seen.filled != fill_value or seen.alike != fill_bytes / 4 or seen.kept != 2 * guard_words) all_right = false;
+    wb.FeedWatchdog();
+
+    for (0..count) |index| {
+        first.words[index] = guard_value;
+        second.words[index] = guard_value;
+    }
+    const first_device = fillThroughMapping(dl, ab, info, graphics, first, piece_bytes, first_value) orelse return dos.RETURN_ERROR;
+    const second_device = fillThroughMapping(dl, ab, info, graphics, second, piece_bytes, second_value) orelse return dos.RETURN_ERROR;
+    const first_seen = fillSeen(first.words, count, guard_words);
+    const second_seen = fillSeen(second.words, count, guard_words);
+    _ = Printf(dl, "Two buffers filled through mappings at %lx and %lx (%s): the first %u of %u words %08x (%08x meant), the second %u of %u words %08x (%08x meant), %u and %u of the guards' %u kept\n", .{
+        first_device,                                                                                      second_device,
+        @as([*:0]const u8, if (first_device == second_device) "the same place" else "not the same place"), first_seen.alike,
+        fill_bytes / 4,                                                                                    first_seen.filled,
+        first_value,                                                                                       second_seen.alike,
+        fill_bytes / 4,                                                                                    second_seen.filled,
+        second_value,                                                                                      first_seen.kept,
+        second_seen.kept,                                                                                  2 * guard_words,
+    });
+    if (first_seen.filled != first_value or first_seen.alike != fill_bytes / 4 or first_seen.kept != 2 * guard_words or
+        second_seen.filled != second_value or second_seen.alike != fill_bytes / 4 or second_seen.kept != 2 * guard_words)
+    {
+        all_right = false;
+    }
+    wb.FeedWatchdog();
+
+    const long = ramBuffer(sys, ram_long_bytes + 2 * guard_bytes) orelse {
+        _ = Printf(dl, "No memory for %u MiB\n", .{ram_long_bytes >> 20});
+        return dos.RETURN_FAIL;
+    };
+    defer sys.FreeVec(long.allocation);
+    const last = (ram_long_bytes + 2 * guard_bytes) / 4 - 1;
+    for ([_]u32{ guard_words, last / 2, last - guard_words }) |index| long.words[index] = guard_value;
+    long.words[guard_words - 1] = guard_value;
+    long.words[last - guard_words + 1] = guard_value;
+    var state: amdgpu.GPUDMAState = .{};
+    _ = ab.GetGPUDMAState(&state);
+    const traps = state.traps;
+    began = sys.UptimeUs();
+    _ = fillThroughMapping(dl, ab, info, graphics, long, ram_long_bytes + 2 * guard_bytes, fill_value) orelse return dos.RETURN_ERROR;
+    const long_took = @max(1, sys.UptimeUs() - began);
+    _ = ab.GetGPUDMAState(&state);
+    _ = Printf(dl, "%u MiB of the machine's memory filled through a mapping in %lu us, %lu MB/s: its first, middle and last words %08x %08x %08x, the guards beside them %08x %08x; %u interrupts\n", .{
+        ram_long_bytes >> 20,        long_took,                          @as(u64, ram_long_bytes) / long_took,
+        long.words[guard_words],     long.words[last / 2],               long.words[last - guard_words],
+        long.words[guard_words - 1], long.words[last - guard_words + 1], state.traps -% traps,
+    });
+    if (long.words[guard_words] != fill_value or long.words[last / 2] != fill_value or long.words[last - guard_words] != fill_value or
+        long.words[guard_words - 1] != guard_value or long.words[last - guard_words + 1] != guard_value)
+    {
+        all_right = false;
+    }
+    wb.FeedWatchdog();
+
+    _ = Printf(dl, "At the end:\n", .{});
+    printQueue(dl, ab);
     _ = Printf(dl, "Its memory hub's:\n", .{});
     printGraphics(dl, info, graphics, &hub_registers);
     return if (all_right) dos.RETURN_OK else dos.RETURN_WARN;
@@ -1583,7 +1751,10 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     if (argv[arg_bands] != 0) return bandsCheck(sys, dl, ab, info, millis);
     if (argv[arg_video] != 0) return videoCheck(sys, dl, ab, info, millis);
     if (argv[arg_sleep] != 0) return asleepFor(sys, dl, ab, info, millis, number(argv[arg_sleep]), argv[arg_modes] != 0);
-    if (argv[arg_gfx] != 0 or argv[arg_dma] != 0) return graphicsStart(sys, dl, ab, info, millis, argv[arg_dma] != 0);
+    if (argv[arg_gfx] != 0 or argv[arg_dma] != 0 or argv[arg_gart] != 0) {
+        const then: GraphicsThen = if (argv[arg_gart] != 0) .gart else if (argv[arg_dma] != 0) .dma else .nothing;
+        return graphicsStart(sys, dl, ab, info, millis, then);
+    }
     if (argv[arg_dump] != 0) {
         const length = if (argv[arg_length] != 0) number(argv[arg_length]) else 16;
         const id = if (argv[arg_block] != 0) number(argv[arg_block]) else amdgpu.GPUBLOCK_DISPLAY;

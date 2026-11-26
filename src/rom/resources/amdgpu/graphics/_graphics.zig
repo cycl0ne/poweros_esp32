@@ -31,6 +31,16 @@
 //! The other fifteen contexts are left off: nothing the system runs uses
 //! them. The bus block's doorbells are left as they are too: the queues
 //! are told of new work through their own registers.
+//!
+//! **A page of the machine's memory** is mapped into the table as the
+//! vendor's driver maps one into its GART (amdgpu_gart_map,
+//! amdgpu_ttm_tt_pte_flags): its machine address with the entry valid, in
+//! the machine's memory, snooped - so that the engines' reads and writes
+//! go through the CPUs' caches, and neither side needs one written back
+//! or dropped - readable, writable and executable, and uncached in the
+//! block. An entry taken out is written 0, which is not valid. After
+//! either, the first context's TLB is dropped, so that no engine keeps a
+//! translation of the old entries.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -149,9 +159,20 @@ const INVALIDATE_CONTEXT0: u32 = 1 << 0 | 0x1f << 19;
 /// The page table's entries: eight bytes each, one for each page of
 /// 4 KiB of the range. A table's base and an entry say they are valid in
 /// bit 0.
-const page_bytes: u64 = 4096;
+pub const page_bytes: u64 = 4096;
 const entry_bytes: u64 = 8;
 const valid: u64 = 1;
+
+// An entry's fields for a page of the machine's memory.
+const PTE_SYSTEM: u64 = 1 << 1;
+const PTE_SNOOPED: u64 = 1 << 2;
+const PTE_EXECUTABLE: u64 = 1 << 4;
+const PTE_READABLE: u64 = 1 << 5;
+const PTE_WRITEABLE: u64 = 1 << 6;
+const PTE_MTYPE_SHIFT = 48;
+const PTE_ADDRESS_MASK: u64 = 0x0000_ffff_ffff_f000;
+const system_page: u64 = valid | PTE_SYSTEM | PTE_SNOOPED | PTE_EXECUTABLE | PTE_READABLE | PTE_WRITEABLE |
+    @as(u64, MTYPE_UC) << PTE_MTYPE_SHIFT;
 
 /// The range the first context maps, as the vendor places it: 512 MiB at
 /// the top of the device's addresses below the hole at 2^47, started on
@@ -344,6 +365,7 @@ pub fn turnOnHub(ab: *AMDGPUBase) bool {
     ab.graphics_scratch = scratch;
     ab.gart_start = gart_start;
     ab.gart_bytes = gart_bytes;
+    ab.gart_arena = .{ .start = 0, .end = gart_bytes };
     exec.kprintf(sys, "%s: the graphics hub is on: the device's memory 0x%lx-0x%lx through its aperture, its page table of %ldK at 0x%lx for 0x%lx-0x%lx\n", .{
         owner, ab.memory_device, memory_end, table_bytes / 1024, table.device, gart_start, gart_end,
     });
@@ -368,6 +390,31 @@ pub fn dropTlb(ab: *AMDGPUBase) bool {
     return true;
 }
 
+/// The table's entry for the page of the machine's memory at `machine`.
+pub fn entryOf(machine: u64) u64 {
+    return machine & PTE_ADDRESS_MASK | system_page;
+}
+
+/// The pages a range of `bytes` at the machine's `machine` lies in: the
+/// first one's address and how many.
+pub const Pages = struct { first: u64, count: u64 };
+
+pub fn pagesOf(machine: u64, bytes: u64) Pages {
+    const first = machine & ~(page_bytes - 1);
+    return .{ .first = first, .count = (machine + bytes - first + page_bytes - 1) / page_bytes };
+}
+
+/// The table's entries from the `index`th on, `count` of them: each page
+/// of the machine's memory from `machine` on, one after another - or,
+/// with `machine` null, taken out. The TLB is not dropped here.
+pub fn writeEntries(ab: *AMDGPUBase, index: u64, count: u64, machine: ?u64) void {
+    const entries: [*]volatile u64 = @ptrFromInt(@as(usize, @intCast(ab.gart.cpu)));
+    var page: u64 = 0;
+    while (page < count) : (page += 1) {
+        entries[@intCast(index + page)] = if (machine) |first| entryOf(first + page * page_bytes) else 0;
+    }
+}
+
 // --- tests --------------------------------------------------------------------------------
 
 const testing = @import("std").testing;
@@ -376,6 +423,19 @@ test "the first context's range as the vendor places it" {
     try testing.expectEqual(@as(u64, 0x7fff_0000_0000), gart_start);
     try testing.expectEqual(@as(u64, 0x7fff_1fff_ffff), gart_start + gart_bytes - 1);
     try testing.expectEqual(@as(u64, 1024 * 1024), gart_bytes / page_bytes * entry_bytes);
+}
+
+test "a page of the machine's memory as the vendor maps one into its GART" {
+    // Valid, system, snooped, executable, readable, writable, uncached.
+    try testing.expectEqual(@as(u64, 0x0003_0001_2345_6077), entryOf(0x1_2345_6789));
+    try testing.expectEqual(@as(u64, 0x0003_0000_0000_0077), entryOf(0));
+}
+
+test "the pages a range lies in" {
+    try testing.expectEqual(Pages{ .first = 0x1000_0000, .count = 1 }, pagesOf(0x1000_0000, 4096));
+    try testing.expectEqual(Pages{ .first = 0x1000_0000, .count = 2 }, pagesOf(0x1000_0ffc, 8));
+    try testing.expectEqual(Pages{ .first = 0x1000_0000, .count = 1 }, pagesOf(0x1000_0ffc, 4));
+    try testing.expectEqual(Pages{ .first = 0x1000_0000, .count = 17 }, pagesOf(0x1000_0064, 65536));
 }
 
 test "the hub's control words as the vendor writes them" {

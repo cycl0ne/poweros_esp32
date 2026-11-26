@@ -9,12 +9,14 @@ amdgpu.resource/GetGPUConnector
 amdgpu.resource/GetGPUDMAState
 amdgpu.resource/GetGPUInfo
 amdgpu.resource/LoadGPUFirmware
+amdgpu.resource/MapGPUMemory
 amdgpu.resource/RemGPUIntServer
 amdgpu.resource/SendGPUDMA
 amdgpu.resource/SetGPUPower
 amdgpu.resource/StartGPUDMA
 amdgpu.resource/StartGPUGraphics
 amdgpu.resource/StartGPUSecurity
+amdgpu.resource/UnmapGPUMemory
 amdgpu.resource/WaitGPUDMA
 amdgpu.resource/AddGPUIntServer                amdgpu.resource/AddGPUIntServer
 
@@ -216,7 +218,9 @@ amdgpu.resource/WaitGPUDMA
 
    BEHAVIOR
 	The piece's place is free for the next AllocGPUMemory. A zero piece,
-	or one the resource did not hand out, is cleared and nothing else.
+	or one the resource did not hand out, is cleared and nothing else. A
+	mapping from MapGPUMemory given here by mistake is unmapped, as
+	UnmapGPUMemory does, so that its entries are not lost.
 
    CONTEXT
 	- Waits: for another task handing out or giving back.
@@ -235,7 +239,7 @@ amdgpu.resource/WaitGPUDMA
 	None known.
 
    SEE ALSO
-	`AllocGPUMemory`
+	`AllocGPUMemory`, `UnmapGPUMemory`
 
    EXAMPLES
 	    ab.FreeGPUMemory(&ring);
@@ -535,6 +539,71 @@ amdgpu.resource/WaitGPUDMA
 	    // inside the block.
 	    const writes = [_]u32{ 0xd6, 0x0ff00200 };
 	    _ = ab.LoadGPUFirmware(amdgpu.GPUFIRMWARE_VIDEO_REGISTERS, @ptrCast(&writes), 8, &at);
+amdgpu.resource/MapGPUMemory                      amdgpu.resource/MapGPUMemory
+
+   NAME
+	MapGPUMemory -- A range of the machine's memory mapped for the graphics block's engines: its pages written into the block's memory hub's page table, and where the engines reach it answered.
+
+   SYNOPSIS
+	    fn MapGPUMemory(ab: *AMDGPUBase, address: *anyopaque, bytes: u32, memory: *amdgpu.GPUMemory) bool
+
+   SINCE
+	1.11. LVO -68.
+
+   INPUTS
+	- `address` - the range's first byte, as the CPU reaches it: any
+	  memory of the machine's, at any byte.
+	- `bytes` - how long it is; more than 0.
+	- `memory` - where to say where it is.
+
+   RESULT
+	True with `memory` filled in: `cpu` the address given, `device` where
+	the graphics block's engines reach the same byte, `bytes` its length.
+	False, `memory` untouched, where StartGPUGraphics has not turned the
+	hub on, `bytes` is 0, the hub's page table has no room left for the
+	range - it maps 512 MiB, in at most 64 ranges at a time - or the hub
+	does not take its new entries; and on a machine without the device.
+
+   BEHAVIOR
+	The range is handed to CachePreDMA, which says where a device sees it.
+	Each page of 4 KiB it lies in, the first and the last whole, gets an
+	entry in the table, one after another in the first run of free
+	entries that holds them all, as the vendor's driver maps a page into
+	its GART: valid, in the machine's memory, snooped, readable, writable
+	and executable, uncached in the block. Then the hub's TLB is dropped
+	for its first context. The answer's `device` is the run's start, plus
+	the range's place in its first page.
+
+   CONTEXT
+	- Waits: for another task mapping or unmapping, and for the hub's
+	  acknowledgement, some microseconds.
+	- Interrupts: no.
+	- Locks: takes the mappings' lock.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The memory stays the caller's, and must stay where it is - not freed -
+	until UnmapGPUMemory has taken it out again. What the engines write
+	there is the CPU's to read at once, and what the CPU writes theirs:
+	the hub snoops the CPUs' caches, so nothing is written back or dropped
+	by hand around a job.
+
+   NOTES
+	Only the graphics block's engines reach a mapping - its DMA engine's
+	packets name it by `device`. The display and the video decoder read
+	through the other hub, and reach the device's own memory only.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`UnmapGPUMemory`, `AllocGPUMemory`, `SendGPUDMA`, `CachePreDMA`
+
+   EXAMPLES
+	    var mapped: amdgpu.GPUMemory = .{};
+	    if (!ab.MapGPUMemory(buffer.ptr, @intCast(buffer.len), &mapped)) return error.NoMapping;
+	    defer ab.UnmapGPUMemory(&mapped);
+	    // a job's packets name the buffer by mapped.device
 amdgpu.resource/RemGPUIntServer                amdgpu.resource/RemGPUIntServer
 
    NAME
@@ -939,6 +1008,55 @@ amdgpu.resource/WaitGPUDMA
    EXAMPLES
 	    const toc = try readWhole(dos, "DEVS:firmware/amdgpu/psp_13_0_4_toc.bin");
 	    if (!ab.StartGPUSecurity(toc.ptr, @intCast(toc.len))) return error.NoSecurity;
+amdgpu.resource/UnmapGPUMemory                  amdgpu.resource/UnmapGPUMemory
+
+   NAME
+	UnmapGPUMemory -- A range MapGPUMemory mapped taken out of the hub's page table again.
+
+   SYNOPSIS
+	    fn UnmapGPUMemory(ab: *AMDGPUBase, memory: *amdgpu.GPUMemory) void
+
+   SINCE
+	1.11. LVO -72.
+
+   INPUTS
+	- `memory` - a mapping from MapGPUMemory, or one all zero.
+
+   RESULT
+	None. `memory` is all zero after.
+
+   BEHAVIOR
+	The range's entries are written 0, which is not valid, as the vendor's
+	driver takes a page out of its GART, the hub's TLB is dropped for its
+	first context, and the entries are free for the next MapGPUMemory. An
+	engine that reaches the range after is sent to the hub's scratch page
+	and does not reach the memory. A zero piece, one not in the hub's
+	range or one it does not hold mapped is cleared and nothing else.
+
+   CONTEXT
+	- Waits: for another task mapping or unmapping, and for the hub's
+	  acknowledgement, some microseconds.
+	- Interrupts: no.
+	- Locks: takes the mappings' lock.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The memory is the caller's alone again, to free or to keep.
+
+   NOTES
+	Every job that names the range must be done first (WaitGPUDMA): one
+	still running when it is taken out reads the scratch page and writes
+	nowhere.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`MapGPUMemory`, `FreeGPUMemory`, `WaitGPUDMA`
+
+   EXAMPLES
+	    if (!ab.WaitGPUDMA(job, 1000)) return error.Late;
+	    ab.UnmapGPUMemory(&mapped);
 amdgpu.resource/WaitGPUDMA                          amdgpu.resource/WaitGPUDMA
 
    NAME
