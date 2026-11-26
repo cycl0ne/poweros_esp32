@@ -9,12 +9,14 @@
 //! processor started and the video decoder's firmware loaded by it, the
 //! graphics block's firmware loaded, the block started and its memory
 //! hub turned on, its DMA engine's queue tried with jobs in the device's
-//! memory and in the machine's mapped for it, the display's
-//! interrupt at each frame counted, or one flip of the picture the
-//! display reads. Built against the SDK only.
+//! memory and in the machine's mapped for it, its copies of rectangles
+//! tried and its fills and copies timed beside graphics.library's, the
+//! board's own fills and copies by that engine held to graphics.library's,
+//! the display's interrupt at each frame counted, or one flip of the
+//! picture the display reads. Built against the SDK only.
 //!
 //!   Gpu TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,
-//!       SLEEP/K/N,RANGE/S,POINTER/S,MIRROR/S,OVERLAY/S,DIRECT/S,BANDS/S,VIDEO/S,GFX/S,DMA/S,GART/S,BLOCK/K/N,WATCHDOG/K/N
+//!       SLEEP/K/N,RANGE/S,POINTER/S,MIRROR/S,OVERLAY/S,DIRECT/S,BANDS/S,VIDEO/S,GFX/S,DMA/S,GART/S,ENGINE/S,BLITS/S,BLOCK/K/N,WATCHDOG/K/N
 //!
 //! BIOS prints the device's video BIOS image (GetGPUBios): where it is
 //! and how long, its tables' header's version, the version of each of
@@ -271,9 +273,50 @@
 //! was dropped between them; and 16 MiB filled, timed. The queue and the
 //! hub's registers are printed at the end. The watchdog is armed for it.
 //!
+//! ENGINE does what GFX does, starts the queue and tries the engine's
+//! copies of rectangles on two buffers of the machine's memory, 2560 x
+//! 2880 pixels of four bytes, mapped for it, each painted with a pattern
+//! whose every pixel is its own: a copy between the two; one of two bytes
+//! a pixel, at odd columns; copies within one buffer whose source and
+//! destination overlap - moved down and right, up and right, right, left
+//! - each cut into bands whose own source and destination are apart,
+//! sent in the order that reads each band before another writes over it;
+//! for what the engine does with it, a copy over itself by a row and by a
+//! column in one packet, not counted; and fills copied from a row of the
+//! colour read one pixel on for each row, of four bytes a pixel and of
+//! two. Every pixel of the buffer written is checked. Then fills - a
+//! packet a row, and copied from a row - copies between the buffers and
+//! scrolls by 16 rows up and down, at 256 x 256, 1024 x 1024 and the
+//! buffers' width at 64 to 2864 rows, are timed by the engine, its job
+//! waited for and spun on, and by graphics.library on the same memory,
+//! with the rectangles just written by the CPU and with them out of its
+//! caches. The watchdog is armed for it.
+//!
+//! BLITS holds the board's own fills and copies (rtg.library's FillRect,
+//! CopyRect and CopyRects, which rtg-amd hands to the DMA engine where a
+//! job is more than the CPU's caches hold) to graphics.library's: two
+//! buffers of the machine's memory, 2560 x 2880 pixels of four bytes, are
+//! handed to the board (AttachBitMap), two more of plain memory are not,
+//! and before each job the four are painted alike, each pixel its own.
+//! Each job is done by the board on its two and by graphics.library on
+//! the plain two - fills of whole rows, of part of the rows and a small
+//! one; copies between the two, a small one and four at once; moves
+//! within one buffer - clear of where it starts, scrolls by 16 rows up
+//! and down and by one row, more bands than the board cuts a move into,
+//! by 100 rows and 37 columns down and right and up and left, and by 16
+//! columns right and left, which the board leaves to the cores; and of
+//! two bytes a pixel, the same memory
+//! as twice as many pixels, fills of whole rows and of part, a copy at
+//! odd columns and a scroll - and every pixel of the four is compared. A
+//! job the board does not take is done by graphics.library on the
+//! board's buffers, as the library does it, and said so. Last a fill
+//! and a copy are drawn through graphics.library into the board's buffer
+//! itself (RPTAG_BitMap), as a program draws, and held to the same. Each
+//! is timed beside graphics.library's. The watchdog is armed for it.
+//!
 //! Without BIOS, CLOCKS, DMCUB, CRC, EVENTS, AUX, EDID, CYCLE, MODES,
 //! SLEEP, RANGE, POINTER, MIRROR, OVERLAY, DIRECT, BANDS, VIDEO, GFX,
-//! DMA, GART, DUMP, FRAMES or FLIP the two files are read from
+//! DMA, GART, ENGINE, BLITS, DUMP, FRAMES or FLIP the two files are read from
 //! DEVS:firmware/amdgpu/, named for the blocks that use them as the
 //! device's table gives their versions - psp_13_0_4_toc.bin for the
 //! security processor 13.0.4, vcn_4_0_2.bin for the video decoder 4.0.2 -
@@ -326,12 +369,14 @@ const Printf = dos.stdio.Printf;
 const rtg = sdk.rtg;
 const RtgBase = sdk.interface.rtg.RtgBase;
 const TagItem = sdk.utility.TagItem;
+const graphics_library = sdk.graphics;
+const GraphicsBase = sdk.interface.graphics.GraphicsBase;
 
 pub const COMMAND_NAME = "Gpu";
-const VERSION_STRING = "\x00$VER: Gpu 1.24 (26.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Gpu 1.25 (26.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,SLEEP/K/N,RANGE/S,POINTER/S,MIRROR/S,OVERLAY/S,DIRECT/S,BANDS/S,VIDEO/S,GFX/S,DMA/S,GART/S,BLOCK/K/N,WATCHDOG/K/N";
+const template = "TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,SLEEP/K/N,RANGE/S,POINTER/S,MIRROR/S,OVERLAY/S,DIRECT/S,BANDS/S,VIDEO/S,GFX/S,DMA/S,GART/S,ENGINE/S,BLITS/S,BLOCK/K/N,WATCHDOG/K/N";
 const arg_toc = 0;
 const arg_firmware = 1;
 const arg_frames = 2;
@@ -368,9 +413,11 @@ const arg_video = 32;
 const arg_gfx = 33;
 const arg_dma = 34;
 const arg_gart = 35;
-const arg_block = 36;
-const arg_watchdog = 37;
-const arg_count = 38;
+const arg_engine = 36;
+const arg_blits = 37;
+const arg_block = 38;
+const arg_watchdog = 39;
+const arg_count = 40;
 
 /// Where the files are.
 const directory = "DEVS:firmware/amdgpu/";
@@ -1296,8 +1343,8 @@ fn graphicsFile(sys: *ExecBase, dl: *DosBase, prefix: []const u8, block: amdgpu.
     return true;
 }
 
-/// What GFX, DMA and GART go on to once the block is started.
-const GraphicsThen = enum { nothing, dma, gart };
+/// What GFX, DMA, GART and ENGINE go on to once the block is started.
+const GraphicsThen = enum { nothing, dma, gart, engine };
 
 /// The graphics block's firmware loaded, the block started and its hub
 /// turned on, its registers printed before and after - and then its DMA
@@ -1368,6 +1415,7 @@ fn graphicsStart(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPU
         .nothing => dos.RETURN_OK,
         .dma => dmaCheck(sys, dl, ab, info, graphics, wb),
         .gart => gartCheck(sys, dl, ab, info, graphics, wb),
+        .engine => engineCheck(sys, dl, ab, info, graphics, wb),
     };
 }
 
@@ -1662,6 +1710,877 @@ fn gartCheck(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUInfo
     return if (all_right) dos.RETURN_OK else dos.RETURN_WARN;
 }
 
+/// ENGINE's two buffers of the machine's memory: four bytes a pixel, two
+/// displays of 2560 x 1440 one over the other - more than the CPU's
+/// caches hold - rows of whole 256 bytes as the board makes its buffers;
+/// and how many times each timed job is done.
+const engine_width: u32 = 2560;
+const engine_height: u32 = 2880;
+const engine_pitch: u32 = engine_width * 4;
+const engine_bytes: u32 = engine_pitch * engine_height;
+const engine_rounds: u32 = 10;
+/// The rectangles jobs are timed at - two squares, then the buffers' whole
+/// width from a band to all but a scroll's rows - and the rows a scroll
+/// moves by: a line of text.
+const engine_sizes = [_][2]u32{ .{ 256, 256 }, .{ 1024, 1024 }, .{ 2560, 64 }, .{ 2560, 256 }, .{ 2560, 512 }, .{ 2560, 1024 }, .{ 2560, 1424 }, .{ 2560, 2048 }, .{ 2560, 2864 } };
+const scroll_rows: u32 = 16;
+/// The most words one of ENGINE's jobs takes - a fill of 1024 rows is
+/// five words a row, a scroll of 2864 rows 179 bands - and the colour its
+/// fills write.
+const engine_job_words: u32 = 8192;
+const engine_colour: u32 = 0xFF12_3456;
+
+/// A pixel of the pattern ENGINE paints its buffers with, each pixel its
+/// own and `seed` telling the buffers apart; and one of two bytes.
+fn patternAt(x: u32, y: u32, seed: u32) u32 {
+    return (x *% 0x9E37_79B1) ^ (y *% 0x85EB_CA77) ^ seed;
+}
+
+fn halfAt(x: u32, y: u32, seed: u32) u16 {
+    return @truncate(patternAt(x, y, seed) >> 7);
+}
+
+/// One of ENGINE's buffers: its allocation, its pixels on a page's start,
+/// and where the engine reaches them.
+const EngineBuffer = struct {
+    allocation: *anyopaque,
+    pixels: [*]u32,
+    mapped: amdgpu.GPUMemory = .{},
+
+    fn halves(buffer: EngineBuffer) [*]u16 {
+        return @ptrCast(buffer.pixels);
+    }
+
+    fn surface(buffer: EngineBuffer) rtg.Surface {
+        return .{ .pixels = @ptrCast(buffer.pixels), .width = engine_width, .height = engine_height, .pitch = engine_pitch, .size_bytes = engine_bytes, .format = .bgra32 };
+    }
+
+    fn paint(buffer: EngineBuffer, seed: u32) void {
+        for (0..engine_height) |y| {
+            for (0..engine_width) |x| buffer.pixels[y * engine_width + x] = patternAt(@intCast(x), @intCast(y), seed);
+        }
+    }
+
+    fn paintHalves(buffer: EngineBuffer, seed: u32) void {
+        const all = buffer.halves();
+        for (0..engine_height) |y| {
+            for (0..engine_width * 2) |x| all[y * engine_width * 2 + x] = halfAt(@intCast(x), @intCast(y), seed);
+        }
+    }
+
+    /// Where the engine reaches row `y`.
+    fn row(buffer: EngineBuffer, y: u32) u64 {
+        return buffer.mapped.device + @as(u64, y) * engine_pitch;
+    }
+};
+
+fn engineBuffer(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase) ?EngineBuffer {
+    const allocation = sys.AllocVec(engine_bytes + 4096, exec.MEMF_ANY) orelse {
+        _ = Printf(dl, "No memory for %u bytes\n", .{engine_bytes});
+        return null;
+    };
+    var buffer: EngineBuffer = .{ .allocation = allocation, .pixels = @ptrFromInt(@intFromPtr(allocation) + 4095 & ~@as(usize, 4095)) };
+    if (!ab.MapGPUMemory(buffer.pixels, engine_bytes, &buffer.mapped)) {
+        _ = Printf(dl, "%u bytes at %lx are not mapped: see C:Log\n", .{ engine_bytes, @as(u64, @intFromPtr(buffer.pixels)) });
+        sys.FreeVec(allocation);
+        return null;
+    }
+    return buffer;
+}
+
+fn freeEngineBuffer(sys: *ExecBase, ab: *AMDGPUBase, buffer: *EngineBuffer) void {
+    ab.UnmapGPUMemory(&buffer.mapped);
+    sys.FreeVec(buffer.allocation);
+}
+
+/// A copy of `width` x `height` pixels from `sx, sy` to `dx, dy`.
+const Copy = struct { sx: u32, sy: u32, width: u32, height: u32, dx: u32, dy: u32 };
+
+/// The pixels of a buffer painted with `dest_seed` that a copy from one
+/// painted with `src_seed` did not leave as it should: inside, the
+/// source's pattern where it came from; outside, the buffer's own. Of
+/// four bytes a pixel, or of two in `halves`.
+fn copyWrong(dest: [*]const u32, copy: Copy, src_seed: u32, dest_seed: u32) u32 {
+    var wrong: u32 = 0;
+    for (0..engine_height) |row_index| {
+        const y: u32 = @intCast(row_index);
+        for (0..engine_width) |column| {
+            const x: u32 = @intCast(column);
+            const inside = x >= copy.dx and x < copy.dx + copy.width and y >= copy.dy and y < copy.dy + copy.height;
+            const want = if (inside) patternAt(x - copy.dx + copy.sx, y - copy.dy + copy.sy, src_seed) else patternAt(x, y, dest_seed);
+            if (dest[y * engine_width + x] != want) wrong += 1;
+        }
+    }
+    return wrong;
+}
+
+fn copyWrongHalves(dest: [*]const u16, copy: Copy, src_seed: u32, dest_seed: u32) u32 {
+    var wrong: u32 = 0;
+    for (0..engine_height) |row_index| {
+        const y: u32 = @intCast(row_index);
+        for (0..engine_width * 2) |column| {
+            const x: u32 = @intCast(column);
+            const inside = x >= copy.dx and x < copy.dx + copy.width and y >= copy.dy and y < copy.dy + copy.height;
+            const want = if (inside) halfAt(x - copy.dx + copy.sx, y - copy.dy + copy.sy, src_seed) else halfAt(x, y, dest_seed);
+            if (dest[y * engine_width * 2 + x] != want) wrong += 1;
+        }
+    }
+    return wrong;
+}
+
+/// The engine's sub-window copy of `width` x `height` pixels between two
+/// linear surfaces of `1 << shift` bytes a pixel and `pitch` pixels a
+/// row, each named by the address of the first row the rectangle is in,
+/// the rectangle by its columns there.
+fn copyPacket(shift: u32, src: u64, dest: u64, pitch: u32, src_x: u32, dest_x: u32, width: u32, height: u32) [13]u32 {
+    return pitchedCopy(shift, src, pitch, src_x, dest, pitch, dest_x, width, height);
+}
+
+/// The same with a pitch of each surface's own: a source of one pixel a
+/// row reads each row one pixel on from the last.
+fn pitchedCopy(shift: u32, src: u64, src_pitch: u32, src_x: u32, dest: u64, dest_pitch: u32, dest_x: u32, width: u32, height: u32) [13]u32 {
+    return .{
+        amdgpu.GPUDMA_OP_COPY | amdgpu.GPUDMA_COPY_SUB_WINDOW | shift << amdgpu.GPUDMA_COPY_ELEMENT_SHIFT,
+        @truncate(src),
+        @truncate(src >> 32),
+        src_x,
+        (src_pitch - 1) << amdgpu.GPUDMA_COPY_PITCH_SHIFT,
+        src_pitch * height - 1,
+        @truncate(dest),
+        @truncate(dest >> 32),
+        dest_x,
+        (dest_pitch - 1) << amdgpu.GPUDMA_COPY_PITCH_SHIFT,
+        dest_pitch * height - 1,
+        (width - 1) | (height - 1) << 16,
+        0,
+    };
+}
+
+/// A packet's words put into a job's at `count`, which moves on past
+/// them.
+fn put(words: []u32, count: *u32, packet: anytype) void {
+    @memcpy(words[count.*..][0..packet.len], &packet);
+    count.* += packet.len;
+}
+
+/// `copy` within one of ENGINE's buffers as the engine's packets, into
+/// `words`: one sub-window copy where its source and destination are
+/// apart, else bands each of whose source and destination are - rows as
+/// high as the copy moves, from the bottom up when it moves down and the
+/// top down when it moves up, or columns as wide as it moves along its
+/// rows where it moves neither up nor down, from the right when it moves
+/// right. A job's packets run in order, so each band is read before the
+/// one after it writes over it. How many words, and how many bands.
+const Banded = struct { words: u32, bands: u32 };
+
+fn bandPackets(words: []u32, buffer: EngineBuffer, copy: Copy) Banded {
+    const apart_x = if (copy.dx > copy.sx) copy.dx - copy.sx else copy.sx - copy.dx;
+    const apart_y = if (copy.dy > copy.sy) copy.dy - copy.sy else copy.sy - copy.dy;
+    var count: u32 = 0;
+    if (apart_x >= copy.width or apart_y >= copy.height) {
+        put(words, &count, copyPacket(2, buffer.row(copy.sy), buffer.row(copy.dy), engine_width, copy.sx, copy.dx, copy.width, copy.height));
+        return .{ .words = count, .bands = 1 };
+    }
+    const across = apart_y != 0;
+    const step = if (across) apart_y else apart_x;
+    const length = if (across) copy.height else copy.width;
+    const bands = (length + step - 1) / step;
+    const backwards = if (across) copy.dy > copy.sy else copy.dx > copy.sx;
+    for (0..bands) |index| {
+        const band: u32 = @intCast(if (backwards) bands - 1 - index else index);
+        const first = band * step;
+        const size = @min(step, length - first);
+        const packet = if (across)
+            copyPacket(2, buffer.row(copy.sy + first), buffer.row(copy.dy + first), engine_width, copy.sx, copy.dx, copy.width, size)
+        else
+            copyPacket(2, buffer.row(copy.sy), buffer.row(copy.dy), engine_width, copy.sx + first, copy.dx + first, size, copy.height);
+        put(words, &count, packet);
+    }
+    return .{ .words = count, .bands = bands };
+}
+
+/// A fill of `width` x `height` pixels at `0, 0` with `engine_colour` as
+/// the engine's packets: one run where the rectangle is whole rows, else
+/// one a row. How many words.
+fn fillPackets(words: []u32, buffer: EngineBuffer, width: u32, height: u32) u32 {
+    var count: u32 = 0;
+    if (width == engine_width) {
+        put(words, &count, fillPacket(buffer.row(0), width * 4 * height, engine_colour, amdgpu.GPUDMA_FILL_WORDS));
+        return count;
+    }
+    for (0..height) |index| put(words, &count, fillPacket(buffer.row(@intCast(index)), width * 4, engine_colour, amdgpu.GPUDMA_FILL_WORDS));
+    return count;
+}
+
+/// `count` of `words` sent as one job and waited for: true once it is
+/// done.
+fn engineJob(ab: *AMDGPUBase, words: []const u32, count: u32) bool {
+    const job = ab.SendGPUDMA(words.ptr, count);
+    return job != 0 and ab.WaitGPUDMA(job, dma_job_ms);
+}
+
+/// The same, its fence looked at over and over instead of waited for,
+/// for at most `dma_job_ms`.
+fn engineJobSpun(sys: *ExecBase, ab: *AMDGPUBase, words: []const u32, count: u32) bool {
+    const job = ab.SendGPUDMA(words.ptr, count);
+    if (job == 0) return false;
+    const until = sys.UptimeUs() + @as(u64, dma_job_ms) * 1000;
+    while (!ab.WaitGPUDMA(job, 0)) {
+        if (sys.UptimeUs() > until) return false;
+    }
+    return true;
+}
+
+/// ENGINE: the queue started, the engine's copies of rectangles and its
+/// copied fills tried on the machine's memory, and fills and copies timed
+/// beside graphics.library's own on the same buffers.
+fn engineCheck(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUInfo, graphics: amdgpu.GPUBlock, wb: *WatchdogBase) i32 {
+    if (!ab.StartGPUDMA()) {
+        wb.FeedWatchdog();
+        _ = Printf(dl, "The DMA engine's queue does not run: see C:Log; its registers:\n", .{});
+        printGraphics(dl, info, graphics, &dma_registers);
+        return dos.RETURN_ERROR;
+    }
+    wb.FeedWatchdog();
+    _ = Printf(dl, "The DMA engine's queue runs\n", .{});
+    const library = sys.OpenLibrary("graphics.library", 0) orelse {
+        _ = Printf(dl, "No graphics.library\n", .{});
+        return dos.RETURN_FAIL;
+    };
+    defer sys.CloseLibrary(library);
+    const gb: *GraphicsBase = @ptrCast(library);
+    var first = engineBuffer(sys, dl, ab) orelse return dos.RETURN_FAIL;
+    defer freeEngineBuffer(sys, ab, &first);
+    var second = engineBuffer(sys, dl, ab) orelse return dos.RETURN_FAIL;
+    defer freeEngineBuffer(sys, ab, &second);
+    const words_memory = sys.AllocVec(engine_job_words * 4, exec.MEMF_ANY) orelse {
+        _ = Printf(dl, "No memory for a job's words\n", .{});
+        return dos.RETURN_FAIL;
+    };
+    defer sys.FreeVec(words_memory);
+    const words = @as([*]u32, @ptrCast(@alignCast(words_memory)))[0..engine_job_words];
+    _ = Printf(dl, "Two buffers of %u x %u, four bytes a pixel, at %lx and %lx, mapped at %lx and %lx\n", .{
+        engine_width,                        engine_height,
+        @as(u64, @intFromPtr(first.pixels)), @as(u64, @intFromPtr(second.pixels)),
+        first.mapped.device,                 second.mapped.device,
+    });
+
+    var all_right = true;
+    const between = Copy{ .sx = 13, .sy = 7, .width = 333, .height = 111, .dx = 101, .dy = 50 };
+    first.paint(1);
+    second.paint(2);
+    var count: u32 = 0;
+    put(words, &count, copyPacket(2, first.row(between.sy), second.row(between.dy), engine_width, between.sx, between.dx, between.width, between.height));
+    if (!engineJob(ab, words, count)) return dmaFailed(dl, ab, info, graphics, "A copy between two buffers");
+    var wrong = copyWrong(second.pixels, between, 1, 2);
+    _ = Printf(dl, "A copy of %u x %u from %u,%u of one buffer to %u,%u of the other, four bytes a pixel: %u of the buffer's %u pixels wrong\n", .{
+        between.width, between.height, between.sx, between.sy, between.dx, between.dy, wrong, engine_width * engine_height,
+    });
+    if (wrong != 0) all_right = false;
+    wb.FeedWatchdog();
+
+    const halves_copy = Copy{ .sx = 27, .sy = 9, .width = 401, .height = 77, .dx = 333, .dy = 100 };
+    first.paintHalves(3);
+    second.paintHalves(4);
+    count = 0;
+    put(words, &count, copyPacket(1, first.row(halves_copy.sy), second.row(halves_copy.dy), engine_width * 2, halves_copy.sx, halves_copy.dx, halves_copy.width, halves_copy.height));
+    if (!engineJob(ab, words, count)) return dmaFailed(dl, ab, info, graphics, "A copy of two bytes a pixel");
+    wrong = copyWrongHalves(second.halves(), halves_copy, 3, 4);
+    _ = Printf(dl, "A copy of %u x %u from %u,%u to %u,%u, two bytes a pixel: %u of the buffer's %u pixels wrong\n", .{
+        halves_copy.width, halves_copy.height, halves_copy.sx, halves_copy.sy, halves_copy.dx, halves_copy.dy, wrong, engine_width * 2 * engine_height,
+    });
+    if (wrong != 0) all_right = false;
+    wb.FeedWatchdog();
+
+    const Named = struct { name: [*:0]const u8, copy: Copy };
+    const overlaps = [_]Named{
+        .{ .name = "down 3 rows and right 5 columns", .copy = .{ .sx = 10, .sy = 10, .width = 300, .height = 200, .dx = 15, .dy = 13 } },
+        .{ .name = "up 3 rows and right 2 columns", .copy = .{ .sx = 10, .sy = 20, .width = 300, .height = 200, .dx = 12, .dy = 17 } },
+        .{ .name = "right 7 columns", .copy = .{ .sx = 10, .sy = 10, .width = 300, .height = 200, .dx = 17, .dy = 10 } },
+        .{ .name = "left 7 columns", .copy = .{ .sx = 17, .sy = 10, .width = 300, .height = 200, .dx = 10, .dy = 10 } },
+    };
+    for (overlaps) |overlap| {
+        first.paint(5);
+        const banded = bandPackets(words, first, overlap.copy);
+        if (!engineJob(ab, words, banded.words)) return dmaFailed(dl, ab, info, graphics, "A copy within one buffer");
+        wrong = copyWrong(first.pixels, overlap.copy, 5, 5);
+        _ = Printf(dl, "Within one buffer, %u x %u moved %s, in %u bands: %u pixels wrong\n", .{ overlap.copy.width, overlap.copy.height, overlap.name, banded.bands, wrong });
+        if (wrong != 0) all_right = false;
+        wb.FeedWatchdog();
+    }
+
+    const alone = [_]Named{
+        .{ .name = "up a row", .copy = .{ .sx = 0, .sy = 1, .width = engine_width, .height = 1000, .dx = 0, .dy = 0 } },
+        .{ .name = "down a row", .copy = .{ .sx = 0, .sy = 0, .width = engine_width, .height = 1000, .dx = 0, .dy = 1 } },
+        .{ .name = "left a column", .copy = .{ .sx = 1, .sy = 0, .width = 2000, .height = 100, .dx = 0, .dy = 0 } },
+        .{ .name = "right a column", .copy = .{ .sx = 0, .sy = 0, .width = 2000, .height = 100, .dx = 1, .dy = 0 } },
+    };
+    for (alone) |overlap| {
+        first.paint(6);
+        count = 0;
+        put(words, &count, copyPacket(2, first.row(overlap.copy.sy), first.row(overlap.copy.dy), engine_width, overlap.copy.sx, overlap.copy.dx, overlap.copy.width, overlap.copy.height));
+        if (!engineJob(ab, words, count)) return dmaFailed(dl, ab, info, graphics, "A copy over itself");
+        wrong = copyWrong(first.pixels, overlap.copy, 6, 6);
+        _ = Printf(dl, "One packet over itself, %u x %u moved %s: %u pixels wrong (the engine's own order, not counted)\n", .{ overlap.copy.width, overlap.copy.height, overlap.name, wrong });
+        wb.FeedWatchdog();
+    }
+
+    {
+        const scratch = scratchRow(sys, dl, ab) orelse return dos.RETURN_FAIL;
+        defer {
+            var mapped = scratch.mapped;
+            ab.UnmapGPUMemory(&mapped);
+            sys.FreeVec(scratch.allocation);
+        }
+        second.paint(10);
+        count = copiedFill(words, scratch, second, 13, 7, 333, 111, engine_colour);
+        if (!engineJob(ab, words, count)) return dmaFailed(dl, ab, info, graphics, "A fill copied from a row");
+        wrong = fillWrong(second.pixels, 13, 7, 333, 111, engine_colour, 10);
+        _ = Printf(dl, "A fill of 333 x 111 at 13,7 copied from a row of the colour read a pixel on each row, four bytes a pixel: %u of the buffer's %u pixels wrong\n", .{ wrong, engine_width * engine_height });
+        if (wrong != 0) all_right = false;
+        second.paintHalves(11);
+        count = copiedHalvesFill(words, scratch, second, 27, 9, 401, 77, 0xBEEF);
+        if (!engineJob(ab, words, count)) return dmaFailed(dl, ab, info, graphics, "A fill copied from a row of halves");
+        wrong = fillWrongHalves(second.halves(), 27, 9, 401, 77, 0xBEEF, 11);
+        _ = Printf(dl, "The same of 401 x 77 at 27,9, two bytes a pixel read two on each row: %u of the buffer's %u pixels wrong\n", .{ wrong, engine_width * 2 * engine_height });
+        if (wrong != 0) all_right = false;
+        wb.FeedWatchdog();
+    }
+
+    if (!engineTimes(sys, dl, ab, gb, &first, &second, words, wb)) return dmaFailed(dl, ab, info, graphics, "A timed job");
+
+    _ = Printf(dl, "At the end:\n", .{});
+    printQueue(dl, ab);
+    return if (all_right) dos.RETURN_OK else dos.RETURN_WARN;
+}
+
+/// What ENGINE times: a fill a packet a row; a fill copied from a row of
+/// the colour that is read one pixel on for each row; a copy between the
+/// two buffers; and scrolls by `scroll_rows` up and down, in bands.
+const Timed = enum { fill_rows, fill_copied, copy, scroll_up, scroll_down };
+const timed_names = [_][*:0]const u8{ "fill, a packet a row", "fill, copied from a row", "copy between two", "scroll up", "scroll down" };
+
+/// The memory ENGINE fills to take its buffers out of the CPU's caches,
+/// four times the largest cache there is.
+const evict_width: u32 = 4096;
+const evict_height: u32 = 4096;
+
+/// A piece of the machine's memory mapped for the engine: a row of a
+/// fill's colour, `engine_width + engine_height` pixels.
+const Scratch = struct {
+    allocation: *anyopaque,
+    pixels: [*]u32,
+    mapped: amdgpu.GPUMemory = .{},
+};
+
+const scratch_bytes: u32 = (engine_width + engine_height) * 4;
+
+fn scratchRow(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase) ?Scratch {
+    const allocation = sys.AllocVec(scratch_bytes, exec.MEMF_ANY) orelse {
+        _ = Printf(dl, "No memory for %u bytes\n", .{scratch_bytes});
+        return null;
+    };
+    var scratch: Scratch = .{ .allocation = allocation, .pixels = @ptrCast(@alignCast(allocation)) };
+    if (!ab.MapGPUMemory(allocation, scratch_bytes, &scratch.mapped)) {
+        _ = Printf(dl, "%u bytes at %lx are not mapped: see C:Log\n", .{ scratch_bytes, @as(u64, @intFromPtr(allocation)) });
+        sys.FreeVec(allocation);
+        return null;
+    }
+    return scratch;
+}
+
+/// A fill of `width` x `height` pixels at `x, y` of `buffer` as one copy
+/// from `scratch`, whose first `width + height` pixels the CPU sets to
+/// `colour` - or, in halves, its first `width + 2 * height` halves to the
+/// colour's low half, read two halves on for each row.
+fn copiedFill(words: []u32, scratch: Scratch, buffer: EngineBuffer, x: u32, y: u32, width: u32, height: u32, colour: u32) u32 {
+    for (0..width + height) |index| scratch.pixels[index] = colour;
+    var count: u32 = 0;
+    put(words, &count, pitchedCopy(2, scratch.mapped.device, 1, 0, buffer.row(y), engine_width, x, width, height));
+    return count;
+}
+
+fn copiedHalvesFill(words: []u32, scratch: Scratch, buffer: EngineBuffer, x: u32, y: u32, width: u32, height: u32, colour: u16) u32 {
+    const halves: [*]u16 = @ptrCast(scratch.pixels);
+    for (0..width + 2 * height) |index| halves[index] = colour;
+    var count: u32 = 0;
+    put(words, &count, pitchedCopy(1, scratch.mapped.device, 2, 0, buffer.row(y), engine_width * 2, x, width, height));
+    return count;
+}
+
+/// The pixels a fill of `width` x `height` at `x, y` with `colour` did not
+/// leave as it should in a buffer painted with `seed`; of four bytes a
+/// pixel, or of two in `halves`.
+fn fillWrong(dest: [*]const u32, x0: u32, y0: u32, width: u32, height: u32, colour: u32, seed: u32) u32 {
+    var wrong: u32 = 0;
+    for (0..engine_height) |row_index| {
+        const y: u32 = @intCast(row_index);
+        for (0..engine_width) |column| {
+            const x: u32 = @intCast(column);
+            const inside = x >= x0 and x < x0 + width and y >= y0 and y < y0 + height;
+            if (dest[y * engine_width + x] != if (inside) colour else patternAt(x, y, seed)) wrong += 1;
+        }
+    }
+    return wrong;
+}
+
+fn fillWrongHalves(dest: [*]const u16, x0: u32, y0: u32, width: u32, height: u32, colour: u16, seed: u32) u32 {
+    var wrong: u32 = 0;
+    for (0..engine_height) |row_index| {
+        const y: u32 = @intCast(row_index);
+        for (0..engine_width * 2) |column| {
+            const x: u32 = @intCast(column);
+            const inside = x >= x0 and x < x0 + width and y >= y0 and y < y0 + height;
+            if (dest[y * engine_width * 2 + x] != if (inside) colour else halfAt(x, y, seed)) wrong += 1;
+        }
+    }
+    return wrong;
+}
+
+/// What ENGINE's timings work with.
+const Timing = struct {
+    sys: *ExecBase,
+    ab: *AMDGPUBase,
+    gb: *GraphicsBase,
+    first: *EngineBuffer,
+    second: *EngineBuffer,
+    scratch: Scratch,
+    words: []u32,
+    first_surface: *rtg.Surface,
+    second_surface: *rtg.Surface,
+    first_rp: *graphics_library.RastPort,
+    second_rp: *graphics_library.RastPort,
+    evict_rp: *graphics_library.RastPort,
+
+    /// A round's start: the job's rectangles just written by the CPU, so
+    /// that they are in its caches, or the caches filled with other
+    /// memory.
+    fn prepare(t: Timing, hot: bool, width: u32, height: u32) void {
+        if (hot) {
+            t.gb.RectFill(t.first_rp, &.{ .min_x = 0, .min_y = 0, .max_x = @intCast(width), .max_y = @intCast(height + scroll_rows) });
+            t.gb.RectFill(t.second_rp, &.{ .min_x = 0, .min_y = 0, .max_x = @intCast(width), .max_y = @intCast(height) });
+        } else {
+            t.gb.RectFill(t.evict_rp, &.{ .min_x = 0, .min_y = 0, .max_x = evict_width, .max_y = evict_height });
+        }
+    }
+
+    /// The job by the engine, waited for or spun on.
+    fn engine(t: Timing, what: Timed, width: u32, height: u32, spun: bool) bool {
+        var count: u32 = 0;
+        switch (what) {
+            .fill_rows => count = fillPackets(t.words, t.second.*, width, height),
+            .fill_copied => count = copiedFill(t.words, t.scratch, t.second.*, 0, 0, width, height, engine_colour),
+            .copy => put(t.words, &count, copyPacket(2, t.first.row(0), t.second.row(0), engine_width, 0, 0, width, height)),
+            .scroll_up => count = bandPackets(t.words, t.first.*, .{ .sx = 0, .sy = scroll_rows, .width = width, .height = height, .dx = 0, .dy = 0 }).words,
+            .scroll_down => count = bandPackets(t.words, t.first.*, .{ .sx = 0, .sy = 0, .width = width, .height = height, .dx = 0, .dy = scroll_rows }).words,
+        }
+        return if (spun) engineJobSpun(t.sys, t.ab, t.words, count) else engineJob(t.ab, t.words, count);
+    }
+
+    /// The same job by graphics.library.
+    fn library(t: Timing, what: Timed, width: u32, height: u32) void {
+        const w: i32 = @intCast(width);
+        const h: i32 = @intCast(height);
+        const rows: i32 = @intCast(scroll_rows);
+        switch (what) {
+            .fill_rows, .fill_copied => t.gb.RectFill(t.second_rp, &.{ .min_x = 0, .min_y = 0, .max_x = w, .max_y = h }),
+            .copy => _ = t.gb.BltBitMap(t.first_surface, 0, 0, t.second_surface, 0, 0, w, h),
+            .scroll_up => _ = t.gb.BltBitMap(t.first_surface, 0, rows, t.first_surface, 0, 0, w, h),
+            .scroll_down => _ = t.gb.BltBitMap(t.first_surface, 0, 0, t.first_surface, 0, rows, w, h),
+        }
+    }
+};
+
+/// One of ENGINE's timings: `rounds` rounds of `what`, each prepared hot
+/// or cold first and timed alone, by the engine - waited for or spun on -
+/// or by graphics.library. The mean in microseconds, or null where a job
+/// is not done.
+fn timeRounds(t: Timing, what: Timed, width: u32, height: u32, hot: bool, by_engine: bool, spun: bool, rounds: u32) ?u64 {
+    var total: u64 = 0;
+    var round: u32 = 0;
+    while (round < rounds) : (round += 1) {
+        t.prepare(hot, width, height);
+        const began = t.sys.UptimeUs();
+        if (by_engine) {
+            if (!t.engine(what, width, height, spun)) return null;
+        } else {
+            t.library(what, width, height);
+        }
+        total += t.sys.UptimeUs() - began;
+    }
+    return total / rounds;
+}
+
+/// Each of `Timed` at each of `engine_sides` and the whole buffer: with
+/// its rectangles in the CPU's caches by the engine, waited for and spun
+/// on, and by graphics.library; then with them out of the caches by the
+/// engine and by graphics.library. False where a job is not done.
+fn engineTimes(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, gb: *GraphicsBase, first: *EngineBuffer, second: *EngineBuffer, words: []u32, wb: *WatchdogBase) bool {
+    const scratch = scratchRow(sys, dl, ab) orelse return true;
+    defer {
+        var mapped = scratch.mapped;
+        ab.UnmapGPUMemory(&mapped);
+        sys.FreeVec(scratch.allocation);
+    }
+    const evict_bytes = evict_width * evict_height * 4;
+    const evict = sys.AllocVec(evict_bytes, exec.MEMF_ANY) orelse {
+        _ = Printf(dl, "No memory for %u bytes\n", .{evict_bytes});
+        return true;
+    };
+    defer sys.FreeVec(evict);
+    var evict_surface = rtg.Surface{ .pixels = @ptrCast(evict), .width = evict_width, .height = evict_height, .pitch = evict_width * 4, .size_bytes = evict_bytes, .format = .bgra32 };
+    var first_surface = first.surface();
+    var second_surface = second.surface();
+    var rps: [3]*graphics_library.RastPort = undefined;
+    var made: usize = 0;
+    defer for (rps[0..made]) |rp| gb.FreeRastPort(rp);
+    for ([_]*rtg.Surface{ &first_surface, &second_surface, &evict_surface }) |surface| {
+        const tags = [_]TagItem{
+            .{ .tag = graphics_library.RPTAG_Surface, .data = @intFromPtr(surface) },
+            .{ .tag = graphics_library.RPTAG_APen, .data = engine_colour },
+            .{ .tag = graphics_library.RPTAG_DrMd, .data = graphics_library.DRMD_JAM1 },
+            .{},
+        };
+        rps[made] = gb.CreateRastPortTagList(&tags) orelse {
+            _ = Printf(dl, "No RastPort for the timings\n", .{});
+            return true;
+        };
+        made += 1;
+    }
+    const t = Timing{
+        .sys = sys,
+        .ab = ab,
+        .gb = gb,
+        .first = first,
+        .second = second,
+        .scratch = scratch,
+        .words = words,
+        .first_surface = &first_surface,
+        .second_surface = &second_surface,
+        .first_rp = rps[0],
+        .second_rp = rps[1],
+        .evict_rp = rps[2],
+    };
+
+    var mapped: amdgpu.GPUMemory = .{};
+    var began = sys.UptimeUs();
+    if (ab.MapGPUMemory(first.pixels, engine_bytes, &mapped)) {
+        const map_took = sys.UptimeUs() - began;
+        began = sys.UptimeUs();
+        ab.UnmapGPUMemory(&mapped);
+        _ = Printf(dl, "A buffer of %u bytes mapped in %lu us and unmapped in %lu us\n", .{ engine_bytes, map_took, sys.UptimeUs() - began });
+    }
+    _ = Printf(dl, "Timed, the mean of %u rounds each, in microseconds: with the job's rectangles just written by the CPU - by the engine, its job waited for and spun on, and by graphics.library - and with them out of the CPU's caches, by the engine and by graphics.library:\n", .{engine_rounds});
+    for (engine_sizes) |size| {
+        const width = size[0];
+        const height = size[1];
+        _ = Printf(dl, "  %u x %u, %u bytes:%30s%6s %6s %6s   %6s %6s\n", .{ width, height, width * height * 4, "", "engine", "spun", "CPU", "engine", "CPU" });
+        for (0..timed_names.len) |which| {
+            const what: Timed = @enumFromInt(which);
+            const hot_engine = timeRounds(t, what, width, height, true, true, false, engine_rounds) orelse return false;
+            const hot_spun = timeRounds(t, what, width, height, true, true, true, engine_rounds) orelse return false;
+            const hot_cpu = timeRounds(t, what, width, height, true, false, false, engine_rounds).?;
+            const cold_engine = timeRounds(t, what, width, height, false, true, false, engine_rounds) orelse return false;
+            const cold_cpu = timeRounds(t, what, width, height, false, false, false, engine_rounds).?;
+            _ = Printf(dl, "    %-24s hot %6lu %6lu %6lu   cold %6lu %6lu\n", .{ timed_names[which], hot_engine, hot_spun, hot_cpu, cold_engine, cold_cpu });
+            wb.FeedWatchdog();
+        }
+    }
+    return true;
+}
+
+// --- BLITS: the board's own fills and copies -----------------------------------------
+
+/// BLITS' buffers: 2560 x 2880 pixels of four bytes, more than the CPU's
+/// caches hold, rows of whole 256 bytes; read as two bytes a pixel, twice
+/// as many to a row. The colour its fills are drawn in.
+const blits_width: u32 = 2560;
+const blits_height: u32 = 2880;
+const blits_pitch: u32 = blits_width * 4;
+const blits_bytes: u32 = blits_pitch * blits_height;
+const blits_colour: u32 = 0xFF12_3456;
+
+/// One of BLITS' jobs: a fill of `rect` into the second buffer, or
+/// `copies` from the first buffer to the second (`between`) or within the
+/// second (`within`); of two bytes a pixel where `halves`. Done by
+/// rtg.library on the board's buffers, or - `drawn` - drawn by
+/// graphics.library into the board's buffer, as a program draws.
+const Blit = struct {
+    name: [*:0]const u8,
+    kind: enum { fill, between, within },
+    halves: bool = false,
+    drawn: bool = false,
+    rect: rtg.RtgRect = .{},
+    copies: []const rtg.RtgCopy = &.{},
+};
+
+/// Four quarters of the first buffer, each to the quarter across from it
+/// in the second: one job of CopyRects.
+const blit_quarters = [_]rtg.RtgCopy{
+    .{ .src_x = 0, .src_y = 0, .width = 1280, .height = 1440, .dest_x = 1280, .dest_y = 1440 },
+    .{ .src_x = 1280, .src_y = 0, .width = 1280, .height = 1440, .dest_x = 0, .dest_y = 1440 },
+    .{ .src_x = 0, .src_y = 1440, .width = 1280, .height = 1440, .dest_x = 1280, .dest_y = 0 },
+    .{ .src_x = 1280, .src_y = 1440, .width = 1280, .height = 1440, .dest_x = 0, .dest_y = 0 },
+};
+
+const blit_jobs = [_]Blit{
+    .{ .name = "fill, whole rows", .kind = .fill, .rect = .{ .x = 0, .y = 8, .width = 2560, .height = 2864 } },
+    .{ .name = "fill, part of the rows", .kind = .fill, .rect = .{ .x = 13, .y = 7, .width = 2500, .height = 2850 } },
+    .{ .name = "fill, small", .kind = .fill, .rect = .{ .x = 100, .y = 100, .width = 256, .height = 256 } },
+    .{ .name = "copy between two", .kind = .between, .copies = &.{.{ .src_x = 3, .src_y = 5, .width = 2550, .height = 1430, .dest_x = 9, .dest_y = 1400 }} },
+    .{ .name = "copy between two, small", .kind = .between, .copies = &.{.{ .src_x = 3, .src_y = 5, .width = 256, .height = 256, .dest_x = 9, .dest_y = 1400 }} },
+    .{ .name = "four copies between two", .kind = .between, .copies = &blit_quarters },
+    .{ .name = "move clear of itself", .kind = .within, .copies = &.{.{ .src_x = 0, .src_y = 0, .width = 2560, .height = 1430, .dest_x = 0, .dest_y = 1440 }} },
+    .{ .name = "scroll up 16 rows", .kind = .within, .copies = &.{.{ .src_x = 0, .src_y = 16, .width = 2560, .height = 2864, .dest_x = 0, .dest_y = 0 }} },
+    .{ .name = "scroll down 16 rows", .kind = .within, .copies = &.{.{ .src_x = 0, .src_y = 0, .width = 2560, .height = 2864, .dest_x = 0, .dest_y = 16 }} },
+    .{ .name = "scroll up 1 row", .kind = .within, .copies = &.{.{ .src_x = 0, .src_y = 1, .width = 2560, .height = 2879, .dest_x = 0, .dest_y = 0 }} },
+    .{ .name = "move right 16 columns", .kind = .within, .copies = &.{.{ .src_x = 0, .src_y = 0, .width = 2544, .height = 2880, .dest_x = 16, .dest_y = 0 }} },
+    .{ .name = "move left 16 columns", .kind = .within, .copies = &.{.{ .src_x = 16, .src_y = 0, .width = 2544, .height = 2880, .dest_x = 0, .dest_y = 0 }} },
+    .{ .name = "move down 100, right 37", .kind = .within, .copies = &.{.{ .src_x = 0, .src_y = 0, .width = 2523, .height = 2780, .dest_x = 37, .dest_y = 100 }} },
+    .{ .name = "move up 100, left 37", .kind = .within, .copies = &.{.{ .src_x = 37, .src_y = 100, .width = 2523, .height = 2780, .dest_x = 0, .dest_y = 0 }} },
+    .{ .name = "16-bit fill, whole rows", .kind = .fill, .halves = true, .rect = .{ .x = 0, .y = 0, .width = 5120, .height = 2880 } },
+    .{ .name = "16-bit fill, part of the rows", .kind = .fill, .halves = true, .rect = .{ .x = 7, .y = 3, .width = 5001, .height = 2870 } },
+    .{ .name = "16-bit copy, odd columns", .kind = .between, .halves = true, .copies = &.{.{ .src_x = 3, .src_y = 5, .width = 5101, .height = 1430, .dest_x = 11, .dest_y = 1400 }} },
+    .{ .name = "16-bit scroll up 16 rows", .kind = .within, .halves = true, .copies = &.{.{ .src_x = 0, .src_y = 16, .width = 5120, .height = 2864, .dest_x = 0, .dest_y = 0 }} },
+    .{ .name = "fill drawn by graphics.library", .kind = .fill, .drawn = true, .rect = .{ .x = 0, .y = 8, .width = 2560, .height = 2864 } },
+    .{ .name = "copy drawn by graphics.library", .kind = .between, .drawn = true, .copies = &.{.{ .src_x = 3, .src_y = 5, .width = 2550, .height = 1430, .dest_x = 9, .dest_y = 1400 }} },
+};
+
+/// BLITS' four buffers - the board's two, then the plain two - and the
+/// board's as rtg.library has them, of four bytes a pixel and of two.
+const Blits = struct {
+    sys: *ExecBase,
+    rb: *RtgBase,
+    gb: *GraphicsBase,
+    pixels: [4][*]u8,
+    bitmaps: [2][2]*rtg.RtgBitMap,
+
+    /// Buffer `which` as plain memory, of four bytes a pixel or of two.
+    fn surface(blits: Blits, which: usize, halves: bool) rtg.Surface {
+        return .{
+            .pixels = blits.pixels[which],
+            .width = if (halves) 2 * blits_width else blits_width,
+            .height = blits_height,
+            .pitch = blits_pitch,
+            .size_bytes = blits_bytes,
+            .format = if (halves) .rgb565 else .bgra32,
+        };
+    }
+
+    /// The board's two painted, each pixel its own, and copied into the
+    /// plain two.
+    fn paint(blits: Blits, halves: bool) void {
+        for (0..2) |which| {
+            const seed: u32 = @intCast(which + 1);
+            for (0..blits_height) |row_index| {
+                const y: u32 = @intCast(row_index);
+                if (halves) {
+                    const row: [*]u16 = @ptrCast(@alignCast(blits.pixels[which] + y * blits_pitch));
+                    for (0..2 * blits_width) |x| row[x] = halfAt(@intCast(x), y, seed);
+                } else {
+                    const row: [*]u32 = @ptrCast(@alignCast(blits.pixels[which] + y * blits_pitch));
+                    for (0..blits_width) |x| row[x] = patternAt(@intCast(x), y, seed);
+                }
+            }
+            blits.sys.CopyMem(blits.pixels[which], blits.pixels[which + 2], blits_bytes);
+        }
+    }
+
+    /// The pixels in which the board's two differ from the plain two.
+    fn wrong(blits: Blits, halves: bool) u32 {
+        var count: u32 = 0;
+        for (0..2) |which| {
+            if (halves) {
+                const board: [*]const u16 = @ptrCast(@alignCast(blits.pixels[which]));
+                const plain: [*]const u16 = @ptrCast(@alignCast(blits.pixels[which + 2]));
+                for (0..blits_bytes / 2) |index| count += @intFromBool(board[index] != plain[index]);
+            } else {
+                const board: [*]const u32 = @ptrCast(@alignCast(blits.pixels[which]));
+                const plain: [*]const u32 = @ptrCast(@alignCast(blits.pixels[which + 2]));
+                for (0..blits_bytes / 4) |index| count += @intFromBool(board[index] != plain[index]);
+            }
+        }
+        return count;
+    }
+
+    /// A RastPort drawing `blits_colour` into a surface, or into one of
+    /// the board's buffers itself.
+    fn port(blits: Blits, plain: ?*rtg.Surface, bitmap: ?*rtg.RtgBitMap) ?*graphics_library.RastPort {
+        const tags = [_]TagItem{
+            if (bitmap) |board_bitmap| .{ .tag = graphics_library.RPTAG_BitMap, .data = @intFromPtr(board_bitmap) } else .{ .tag = graphics_library.RPTAG_Surface, .data = @intFromPtr(plain.?) },
+            .{ .tag = graphics_library.RPTAG_APen, .data = blits_colour },
+            .{ .tag = graphics_library.RPTAG_DrMd, .data = graphics_library.DRMD_JAM1 },
+            .{},
+        };
+        return blits.gb.CreateRastPortTagList(&tags);
+    }
+
+    /// `job` by graphics.library on plain memory: buffers `first` and
+    /// `first + 1`. False where it has no RastPort.
+    fn byLibrary(blits: Blits, job: Blit, first: usize) bool {
+        var from = blits.surface(first, job.halves);
+        var into = blits.surface(first + 1, job.halves);
+        const gb = blits.gb;
+        switch (job.kind) {
+            .fill => {
+                const rp = blits.port(&into, null) orelse return false;
+                defer gb.FreeRastPort(rp);
+                const rect = job.rect;
+                gb.RectFill(rp, &.{ .min_x = rect.x, .min_y = rect.y, .max_x = rect.x + rect.width, .max_y = rect.y + rect.height });
+            },
+            .between, .within => {
+                const source = if (job.kind == .between) &from else &into;
+                if (job.drawn) {
+                    const rp = blits.port(&into, null) orelse return false;
+                    defer gb.FreeRastPort(rp);
+                    for (job.copies) |copy| gb.BltBitMapRastPort(source, copy.src_x, copy.src_y, rp, copy.dest_x, copy.dest_y, copy.width, copy.height);
+                } else {
+                    for (job.copies) |copy| _ = gb.BltBitMap(source, copy.src_x, copy.src_y, &into, copy.dest_x, copy.dest_y, copy.width, copy.height);
+                }
+            },
+        }
+        return true;
+    }
+
+    /// `job` by the board: through rtg.library, or drawn through
+    /// graphics.library into its buffer. rtg.library's answer, or
+    /// RTGERR_OK for one drawn; one the board does not take done by
+    /// graphics.library on the board's buffers, as the library does it.
+    /// Null where graphics.library has no RastPort.
+    fn byBoard(blits: Blits, job: Blit) ?i32 {
+        const halves = @intFromBool(job.halves);
+        const from = blits.bitmaps[0][halves];
+        const into = blits.bitmaps[1][halves];
+        const rb = blits.rb;
+        if (job.drawn) {
+            const rp = blits.port(null, into) orelse return null;
+            defer blits.gb.FreeRastPort(rp);
+            const rect = job.rect;
+            switch (job.kind) {
+                .fill => blits.gb.RectFill(rp, &.{ .min_x = rect.x, .min_y = rect.y, .max_x = rect.x + rect.width, .max_y = rect.y + rect.height }),
+                .between, .within => for (job.copies) |copy| blits.gb.BltBitMapRastPort(@ptrCast(if (job.kind == .between) from else into), copy.src_x, copy.src_y, rp, copy.dest_x, copy.dest_y, copy.width, copy.height),
+            }
+            return rtg.errors.RTGERR_OK;
+        }
+        const answer = switch (job.kind) {
+            // The colour as graphics.library packed it into the plain
+            // buffer it filled first.
+            .fill => rb.FillRect(into, &job.rect, packedAt(blits, job)),
+            .between => if (job.copies.len == 1) rb.CopyRect(from, into, &job.copies[0]) else rb.CopyRects(from, into, job.copies.ptr, @intCast(job.copies.len)),
+            .within => rb.CopyRect(into, into, &job.copies[0]),
+        };
+        if (answer == rtg.errors.RTGERR_NOT_SUPPORTED and !blits.byLibrary(job, 0)) return null;
+        return answer;
+    }
+};
+
+/// The pixel graphics.library filled first in the plain buffer: the
+/// colour as it packs it for the buffer's format.
+fn packedAt(blits: Blits, job: Blit) u32 {
+    const x: u32 = @intCast(job.rect.x);
+    const y: u32 = @intCast(job.rect.y);
+    const row = blits.pixels[3] + y * blits_pitch;
+    if (job.halves) return @as([*]const u16, @ptrCast(@alignCast(row)))[x];
+    return @as([*]const u32, @ptrCast(@alignCast(row)))[x];
+}
+
+/// BLITS: the board's own fills and copies, through rtg.library and
+/// drawn through graphics.library, each held to graphics.library's on
+/// plain memory pixel for pixel and timed beside it.
+fn blitsCheck(sys: *ExecBase, dl: *DosBase, millis: u32) i32 {
+    const rtg_lib = sys.OpenLibrary(rtg.RTGNAME, rtg.RTG_VERSION) orelse {
+        _ = Printf(dl, "No %s\n", .{rtg.RTGNAME});
+        return dos.RETURN_FAIL;
+    };
+    defer sys.CloseLibrary(rtg_lib);
+    const rb: *RtgBase = @ptrCast(rtg_lib);
+    const board = amdBoard(dl, rb) orelse return dos.RETURN_WARN;
+    const graphics_lib = sys.OpenLibrary("graphics.library", 0) orelse {
+        _ = Printf(dl, "No graphics.library\n", .{});
+        return dos.RETURN_FAIL;
+    };
+    defer sys.CloseLibrary(graphics_lib);
+
+    var allocations: [4]?*anyopaque = @splat(null);
+    defer for (allocations) |allocation| if (allocation) |memory| sys.FreeVec(memory);
+    var pixels: [4][*]u8 = undefined;
+    for (&allocations, &pixels) |*allocation, *start| {
+        const memory = sys.AllocVec(blits_bytes + 256, exec.MEMF_ANY) orelse {
+            _ = Printf(dl, "No memory for %u bytes\n", .{blits_bytes});
+            return dos.RETURN_FAIL;
+        };
+        allocation.* = memory;
+        start.* = @ptrFromInt(@intFromPtr(memory) + 255 & ~@as(usize, 255));
+    }
+    var attached: [4]?*rtg.RtgBitMap = @splat(null);
+    defer for (attached) |bitmap| rb.FreeBitMap(bitmap);
+    var bitmaps: [2][2]*rtg.RtgBitMap = undefined;
+    for (0..2) |which| {
+        for (0..2) |halves| {
+            const described = rtg.RtgBitMap{
+                .pixels = pixels[which],
+                .width = if (halves == 1) 2 * blits_width else blits_width,
+                .height = blits_height,
+                .pitch = blits_pitch,
+                .size_bytes = blits_bytes,
+                .format = if (halves == 1) .rgb565 else .bgra32,
+            };
+            const bitmap = rb.AttachBitMap(board, &described) orelse {
+                _ = Printf(dl, "The board does not take a buffer at %lx\n", .{@as(u64, @intFromPtr(pixels[which]))});
+                return dos.RETURN_FAIL;
+            };
+            attached[which * 2 + halves] = bitmap;
+            bitmaps[which][halves] = bitmap;
+        }
+    }
+    const blits = Blits{ .sys = sys, .rb = rb, .gb = @ptrCast(graphics_lib), .pixels = pixels, .bitmaps = bitmaps };
+    const wb = arm(sys, dl, millis) orelse return dos.RETURN_FAIL;
+    defer wb.DisarmWatchdog();
+    // The board's start of its engine ended, whatever it came to.
+    _ = rb.BoardControl(board, rtg.boards.RTGCTRL_SETTLED, 0);
+    _ = Printf(dl, "The board's two buffers at %lx and %lx, the plain two at %lx and %lx, %u x %u, four bytes a pixel, or twice as many of two\n", .{
+        @as(u64, @intFromPtr(pixels[0])), @as(u64, @intFromPtr(pixels[1])), @as(u64, @intFromPtr(pixels[2])), @as(u64, @intFromPtr(pixels[3])), blits_width, blits_height,
+    });
+    _ = Printf(dl, "  %-32s %-8s %9s %9s %8s\n", .{ "job", "board", "board us", "CPU us", "wrong" });
+
+    var taken: u32 = 0;
+    var refused: u32 = 0;
+    var all_wrong: u32 = 0;
+    var all_right = true;
+    for (blit_jobs) |job| {
+        blits.paint(job.halves);
+        var began = sys.UptimeUs();
+        if (!blits.byLibrary(job, 2)) {
+            _ = Printf(dl, "No RastPort for %s\n", .{job.name});
+            return dos.RETURN_FAIL;
+        }
+        const library_us = sys.UptimeUs() - began;
+        began = sys.UptimeUs();
+        const answer = blits.byBoard(job) orelse {
+            _ = Printf(dl, "No RastPort for %s\n", .{job.name});
+            return dos.RETURN_FAIL;
+        };
+        const board_us = sys.UptimeUs() - began;
+        const wrong = blits.wrong(job.halves);
+        const said: [*:0]const u8 = if (job.drawn) "drawn" else switch (answer) {
+            rtg.errors.RTGERR_OK => "engine",
+            rtg.errors.RTGERR_NOT_SUPPORTED => "refused",
+            else => "failed",
+        };
+        _ = Printf(dl, "  %-32s %-8s %9lu %9lu %8u\n", .{ job.name, said, board_us, library_us, wrong });
+        if (answer == rtg.errors.RTGERR_OK and !job.drawn) taken += 1;
+        if (answer == rtg.errors.RTGERR_NOT_SUPPORTED) refused += 1;
+        if (answer != rtg.errors.RTGERR_OK and answer != rtg.errors.RTGERR_NOT_SUPPORTED) {
+            _ = Printf(dl, "The board answered %ld: see C:Log\n", .{@as(i64, answer)});
+            all_right = false;
+        }
+        all_wrong += wrong;
+        wb.FeedWatchdog();
+    }
+    _ = Printf(dl, "%u jobs taken by the board's engine, %u refused and done by graphics.library, %u pixels wrong\n", .{ taken, refused, all_wrong });
+    return if (all_right and all_wrong == 0) dos.RETURN_OK else dos.RETURN_WARN;
+}
+
 /// How long CYCLE waits for a picture to change by itself and then to
 /// hold, in ticks of 20 ms.
 const change_wait_ticks: u32 = 100;
@@ -1750,9 +2669,10 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     if (argv[arg_direct] != 0) return directCheck(sys, dl, ab, info, millis);
     if (argv[arg_bands] != 0) return bandsCheck(sys, dl, ab, info, millis);
     if (argv[arg_video] != 0) return videoCheck(sys, dl, ab, info, millis);
+    if (argv[arg_blits] != 0) return blitsCheck(sys, dl, millis);
     if (argv[arg_sleep] != 0) return asleepFor(sys, dl, ab, info, millis, number(argv[arg_sleep]), argv[arg_modes] != 0);
-    if (argv[arg_gfx] != 0 or argv[arg_dma] != 0 or argv[arg_gart] != 0) {
-        const then: GraphicsThen = if (argv[arg_gart] != 0) .gart else if (argv[arg_dma] != 0) .dma else .nothing;
+    if (argv[arg_gfx] != 0 or argv[arg_dma] != 0 or argv[arg_gart] != 0 or argv[arg_engine] != 0) {
+        const then: GraphicsThen = if (argv[arg_engine] != 0) .engine else if (argv[arg_gart] != 0) .gart else if (argv[arg_dma] != 0) .dma else .nothing;
         return graphicsStart(sys, dl, ab, info, millis, then);
     }
     if (argv[arg_dump] != 0) {

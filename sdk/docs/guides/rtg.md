@@ -799,8 +799,10 @@ ones dropped because they were for a buffer not shown, rows refreshed,
 failed sends and underruns on a bus. `BoardControl(board,
 RTGCTRL_RESET_STATS, 0)` starts them again, on every board - one whose
 driver has no control of its own included, where it clears the library's
-count of buffers shown; numbers from `RTGCTRL_DRIVER` up are a driver's
-own, listed with the driver in `sdk/libs/rtg/tags.zig`. The AMD board's
+count of buffers shown. `RTGCTRL_SETTLED` answers once what a board
+began in the background as it was made has ended - `RTGERR_NOT_SUPPORTED`
+from one that began nothing of the kind. Numbers from `RTGCTRL_DRIVER`
+up are a driver's own, listed with the driver in `sdk/libs/rtg/tags.zig`. The AMD board's
 (`amd.0`) ask the device's power manager about the display's clocks:
 `RTGCTRL_AMD_FIRMWARE` answers the manager's firmware version, and
 `RTGCTRL_AMD_CLOCKS` fills an `RtgAmdClocks` with the levels the manager
@@ -1113,10 +1115,13 @@ loads nothing.
 A driver that hangs the machine as it is bound would hang every start.
 Before a file is loaded the driver's name is written to
 `ENVARC:Sys/display.trying`; `C:Rtg TRIED`, which the startup-sequence
-runs once the desktop is up, takes the names of the drivers that are on
-the list out of it again. A name left there is a driver that did not
-come back: it is passed over, the system's log says so, and
-`C:Rtg RETRY` tries it again.
+runs once the desktop is up, waits until every board has settled
+(`RTGCTRL_SETTLED`) - a board that starts part of its hardware in a
+process of its own, beside the desktop, is back once that process has
+ended - and then takes the names of the drivers that are on the list
+out of it again. A name left there is a driver that did not come back:
+it is passed over, the system's log says so, and `C:Rtg RETRY` tries it
+again.
 
 ## What a driver keeps
 
@@ -1902,6 +1907,36 @@ long it took; `C:test/Gpu SLEEP n` puts the monitor to sleep for n
 seconds and prints the picture's checksum and the pipe's frames before,
 while asleep and after. Without the display controller the board is
 blank instead of asleep.
+
+**The engine on `amd`.** `amd.0` fills and copies on the graphics
+block's DMA engine (`FillRect`, `CopyRect`, `CopyRects`). The board
+starts the block itself, beside the desktop, in a process of its own
+begun as it is made: the block's firmware read from
+`DEVS:firmware/amdgpu/`, the block started and its engine's queue
+running, in about 600 ms, more beside the desktop's own start at boot;
+`RTGCTRL_SETTLED` answers once that has ended, which `C:Rtg TRIED` waits
+for, and the log says how it went. Until then, and where it failed,
+every job is the cores'. A job is the engine's where what it reads and
+writes is more than the CPU's caches below the memory hold together, as
+the cores' cache leaves give them - 24 MiB on the NucBox, where on its
+2560x1440 desktop that is a copy of a whole picture between two buffers.
+Smaller jobs the cores do sooner, often many times sooner, and are
+refused. The rows a job touches are mapped for it (`MapGPUMemory`), the
+hub snooping the CPU's caches, so nothing is written back first. A fill
+of whole rows is one constant fill, any other a copy from a row of the
+colour; a copy is one sub-window copy each, and a scroll within one
+buffer is cut into bands of rows, each clear of itself. A move along its
+rows alone, which the engine would cut into columns that take it nearly
+three times as long as rows, a move of more than 256 bands, and a buffer
+in the device's memory window are refused; pixels are of one, two or
+four bytes, a buffer's start and its rows' length whole four bytes.
+`C:test/Gpu BLITS` does twenty jobs on two buffers of 28 MiB handed to
+the board, each against graphics.library's on plain memory: on the
+NucBox every pixel is the same, a copy of 14 MiB between two buffers
+takes the engine 890 us and the cores 1227, a fill of 28 MiB 1234 and
+1289, a scroll by 16 rows 1689 and 1643. The block stays powered while
+the board runs, which costs the video decoder about a fifth of its speed
+after its first run in a boot.
 
 **Video layers.** On the VisionFive 2 the layer is the DC8200's first
 overlay: NV12 and I420, BT.601 and BT.709, video's range and the whole

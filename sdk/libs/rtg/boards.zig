@@ -865,7 +865,14 @@ pub const RTG_MAX_BANDS = 8;
 /// BoardControl's `what`. Everything below RTGCTRL_DRIVER means the same
 /// on every board; a driver's own start at RTGCTRL_DRIVER and are listed
 /// with the driver.
+///
+/// RTGCTRL_SETTLED answers once what the board began in the background
+/// as it was made has ended - RTGERR_OK - so that a hang in it is the
+/// driver's as much as one in its binding; RTGERR_NOT_SUPPORTED from a
+/// board that began nothing of the kind. `C:Rtg TRIED` asks every board
+/// before it takes the drivers' names out of ENVARC:Sys/display.trying.
 pub const RTGCTRL_RESET_STATS: u32 = 1;
+pub const RTGCTRL_SETTLED: u32 = 2;
 pub const RTGCTRL_DRIVER: u32 = 0x1000;
 
 /// What `AddRtgNotify` answers, for `RemRtgNotify` to give back. The

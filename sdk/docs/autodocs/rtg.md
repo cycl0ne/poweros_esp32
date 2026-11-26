@@ -665,14 +665,16 @@ fn BoardControl(_: *RtgBase, board: *rtg.RtgBoard, what: u32, value: isize) isiz
 
 - `board` - the board.
 - `what` - an `RTGCTRL_` code: `RTGCTRL_RESET_STATS`, which every board
-  takes, or one of the driver's own.
+  takes; `RTGCTRL_SETTLED`, which answers once what the board began in
+  the background as it was made has ended; or one of the driver's own.
 - `value` - the code's argument.
 
 **RESULT**
 
-`RTGERR_OK` for `RTGCTRL_RESET_STATS`. For a driver's own code what
-the driver answered, or `RTGERR_NOT_SUPPORTED` for a code it does not
-know or a board with no control at all.
+`RTGERR_OK` for `RTGCTRL_RESET_STATS`. For any other code what the
+driver answered, or `RTGERR_NOT_SUPPORTED` for a code it does not know
+or a board with no control at all - for `RTGCTRL_SETTLED`, a board
+that began nothing in the background.
 
 **BEHAVIOR**
 

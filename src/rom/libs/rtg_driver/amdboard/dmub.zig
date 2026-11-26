@@ -720,7 +720,7 @@ fn load(engine: dcn.Engine, controller: *Controller, into: *tags.RtgAmdControlle
 
 /// DEVS:firmware/amdgpu/<prefix>_<a>_<b>_<c><suffix>.bin into `room`,
 /// through exec's formatter.
-fn path(sys: *ExecBase, room: *[64]u8, comptime prefix: [:0]const u8, version: [3]u8, comptime suffix: [:0]const u8) [*:0]const u8 {
+pub fn path(sys: *ExecBase, room: *[64]u8, comptime prefix: [:0]const u8, version: [3]u8, comptime suffix: [:0]const u8) [*:0]const u8 {
     const format = "DEVS:firmware/amdgpu/" ++ prefix ++ "_%u_%u_%u" ++ suffix ++ ".bin";
     const values = .{ @as(u32, version[0]), @as(u32, version[1]), @as(u32, version[2]) };
     comptime exec.checkFormat(format, @TypeOf(values));
@@ -746,7 +746,7 @@ const Into = struct {
 };
 
 /// The file `name` read whole, or null with why said on the log.
-fn readFile(sys: *ExecBase, dl: *DosBase, name: [*:0]const u8) ?[]u8 {
+pub fn readFile(sys: *ExecBase, dl: *DosBase, name: [*:0]const u8) ?[]u8 {
     var length: usize = 0;
     const bytes = dl.ReadFile(name, ~@as(usize, 0), exec.MEMF_ANY, &length) orelse {
         exec.kprintf(sys, "%s: %s cannot be read\n", .{ dcn.owner, name });

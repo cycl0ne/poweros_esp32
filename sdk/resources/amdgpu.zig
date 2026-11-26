@@ -180,6 +180,20 @@ pub const GPUDMA_OP_NOP: u32 = 0;
 /// and ends on four bytes; without it, its low byte into every byte.
 pub const GPUDMA_OP_CONST_FILL: u32 = 11;
 pub const GPUDMA_FILL_WORDS: u32 = 2 << 30;
+/// A rectangle copied from one linear surface to another, thirteen words
+/// with GPUDMA_COPY_SUB_WINDOW in the header: the header, the size of a
+/// pixel in it as the log2 of its bytes - 0 to 4 - at
+/// GPUDMA_COPY_ELEMENT_SHIFT; the source's address (low word, high word);
+/// the rectangle's column in it and its row at bit 16, 14 bits each; the
+/// source's rows' length in pixels less one, at GPUDMA_COPY_PITCH_SHIFT,
+/// 19 bits; its slice's length in pixels less one, 28 bits; the same five
+/// for the destination; the rectangle's width and height less one, the
+/// height at bit 16, 14 bits each; and its depth less one, 0. A surface's
+/// address and its rows' length are whole four bytes.
+pub const GPUDMA_OP_COPY: u32 = 1;
+pub const GPUDMA_COPY_SUB_WINDOW: u32 = 4 << 8;
+pub const GPUDMA_COPY_ELEMENT_SHIFT = 29;
+pub const GPUDMA_COPY_PITCH_SHIFT = 13;
 
 /// What GetGPUDMAState says of the DMA engine's queue: where its ring is
 /// and how long, in bytes; how far the engine has read it and how far it

@@ -39,11 +39,12 @@
 //! ENVARC:Sys/display.trying names the display drivers that are being
 //! loaded from DEVS:gfxdrv: rtg.library writes a driver's name there
 //! before it loads it, and passes over a driver it finds named. TRIED
-//! says the drivers came back: the name of every driver that is on the
-//! list leaves the file, and a name that stays is a driver that hung the
-//! machine. The startup-sequence runs it once the desktop is up. RETRY
-//! deletes the file, loads the drivers again and then does what TRIED
-//! does.
+//! says the drivers came back: once every board says what it began in
+//! the background as it was made has ended (RTGCTRL_SETTLED), the name of
+//! every driver that is on the list leaves the file, and a name that
+//! stays is a driver that hung the machine. The startup-sequence runs it
+//! once the desktop is up. RETRY deletes the file, loads the drivers
+//! again and then does what TRIED does.
 //!
 //! Everything it prints comes from GetBoardInfo and GetBoardStats, which
 //! answer with the bytes they wrote, so a command older or newer than the
@@ -59,7 +60,7 @@ const rtg = sdk.rtg;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Rtg";
-const VERSION_STRING = "\x00$VER: Rtg 1.14 (26.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Rtg 1.15 (26.11.2026)\r\n";
 
 const template = "BOARD,DRIVERS/S,DEVICES/S,BOARDS/S,MODES/S,MEMORY/S,STATS/S,FULL/S," ++
     "SET/S,CLEAR/S,MODE/K,MIRROR/K,BRIGHTNESS/K/N,RANGE/K,FIRST/K,DEVICE/K,DRIVER/K,SAVE/S,RETRY/S,TRIED/S";
@@ -547,9 +548,13 @@ fn onList(listed: []const rtg.RtgDriverInfo, line: []const u8) bool {
     return false;
 }
 
-/// TRIED: the name of every driver on the list taken out of the file of
-/// drivers being tried; the file deleted when none is left.
+/// TRIED: once every board has settled - what it began in the background
+/// as it was made has ended - the name of every driver on the list taken
+/// out of the file of drivers being tried; the file deleted when none is
+/// left.
 fn cameBack(dl: *DosBase, rb: *RtgBase) void {
+    var board = rb.NextBoard(null);
+    while (board) |one| : (board = rb.NextBoard(one)) _ = rb.BoardControl(one, rtg.boards.RTGCTRL_SETTLED, 0);
     var before: [1024]u8 = undefined;
     const file = dl.Open(trying_file, dos.MODE_OLDFILE) orelse return;
     const got = dl.Read(file, &before, before.len);

@@ -179,6 +179,13 @@
 //! monitor's sleep - and is lit again after from the frame it shows; while
 //! it is open, bands are made in frames.
 //!
+//! The engine (`engine_ops`) is the graphics block's DMA engine
+//! (`dma.zig`): FillRect, CopyRect and CopyRects of more than the CPU's
+//! caches hold, on the machine's memory the buffers are in. The block
+//! and its queue are started in a process of its own begun at the end of
+//! `attach`, which neither the board nor its first picture waits for;
+//! `RTGCTRL_SETTLED` and `halt` wait until nothing of it runs.
+//!
 //! The module keeps nothing of its own: a ROM image is read only, so what
 //! changes is the library's to allocate - a `Screen` beside the board -
 //! and found again through what an op is handed.
@@ -217,11 +224,12 @@ const coefficients = @import("coefficients.zig");
 const bandwidth = @import("bandwidth.zig");
 const clocks = @import("clocks.zig");
 const hub = @import("hub.zig");
+const dma = @import("dma.zig");
 
 const MODULE_NAME = "rtg-amd";
 const DRIVER_NAME = "amd";
 const VERSION = 1;
-const REVISION = 24;
+const REVISION = 25;
 const BUILD_DATE = "26.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -419,6 +427,9 @@ const Screen = struct {
     /// Whether the log has said a film's plane could not be lit, since
     /// one last was.
     film_refused: bool = false,
+    /// The graphics block's DMA engine, as FillRect, CopyRect and
+    /// CopyRects reach it (dma.zig).
+    dma: dma.Dma = .{},
 };
 
 /// A plane the cursor is laid over too (`Screen.cursor_plane`,
@@ -1162,6 +1173,9 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, device_tags: ?[*]const
     };
     board.info.buffers = screen.buffers;
     device.driver_data = screen;
+    // The graphics block and its DMA engine's queue started beside the
+    // board, which does not wait for them.
+    dma.start(&screen.dma, sys, screen.dcn.gpu);
     return err.RTGERR_OK;
 }
 
@@ -1221,6 +1235,7 @@ fn tellConnector(screen: *const Screen) void {
 /// the server, which giving it back waits by. The device is
 /// amdgpu.resource's, which is never given back.
 fn halt(screen: *Screen) void {
+    dma.stop(&screen.dma, screen.sys);
     screen.sys.ObtainSemaphore(&screen.pipe_lock);
     dropBands(screen);
     dropFilm(screen);
@@ -2735,6 +2750,11 @@ fn stats(board: *rtg.RtgBoard, into: *rtg.RtgBoardStats) callconv(.c) void {
 fn control(board: *rtg.RtgBoard, what: u32, value: isize) callconv(.c) isize {
     const screen = screenOf(board);
     switch (what) {
+        // Back once the process starting the graphics block has ended.
+        rtg.boards.RTGCTRL_SETTLED => {
+            dma.settle(&screen.dma, screen.sys);
+            return err.RTGERR_OK;
+        },
         rtg.tags.RTGCTRL_AMD_FIRMWARE => {
             screen.sys.ObtainSemaphore(&screen.smu_lock);
             defer screen.sys.ReleaseSemaphore(&screen.smu_lock);
@@ -2894,7 +2914,27 @@ const ops = rtg.boards.RtgBoardOps{
     .set_brightness = &setBrightnessOp,
     .brightness = &brightnessOp,
     .mirror = &mirrorOp,
+    .engine = &engine_ops,
 };
+
+/// FillRect, CopyRect and CopyRects by the graphics block's DMA engine,
+/// for the jobs that are more than the CPU's caches hold (dma.zig).
+const engine_ops = rtg.boards.RtgEngineOps{ .fill_rect = &fillRectOp, .copy_rect = &copyRectOp, .copy_rects = &copyRectsOp };
+
+fn fillRectOp(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect, colour: u32) callconv(.c) i32 {
+    const screen = screenOf(board);
+    return dma.fill(&screen.dma, screen.sys, screen.rtg_base, bitmap, area, colour);
+}
+
+fn copyRectOp(board: *rtg.RtgBoard, src: *rtg.RtgBitMap, dest: *rtg.RtgBitMap, one: *const rtg.RtgCopy) callconv(.c) i32 {
+    const screen = screenOf(board);
+    return dma.copy(&screen.dma, screen.sys, screen.rtg_base, src, dest, @as(*const [1]rtg.RtgCopy, one));
+}
+
+fn copyRectsOp(board: *rtg.RtgBoard, src: *rtg.RtgBitMap, dest: *rtg.RtgBitMap, copies: [*]const rtg.RtgCopy, count: u32) callconv(.c) i32 {
+    const screen = screenOf(board);
+    return dma.copy(&screen.dma, screen.sys, screen.rtg_base, src, dest, copies[0..count]);
+}
 
 /// The same with the pointer the pipe's cursor, the overlay a plane, a
 /// video layer, or any of them together, by `opsFor`.
