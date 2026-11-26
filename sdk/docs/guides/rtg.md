@@ -838,7 +838,20 @@ channel with `RTG_AMD_AUX_REFUSED`. `C:test/Gpu EVENTS [LINE n]` and
 does (`RtgAmdEdid`): whether its hot-plug line senses one, and its EDID
 - over its DDC line by the engine's I2C engine on HDMI and DVI, by I2C
 over its AUX channel on DisplayPort - with the engine's registers before
-and after; `C:test/Gpu EDID [CONNECTOR n]`.
+and after; `C:test/Gpu EDID [CONNECTOR n]`. `RTGCTRL_AMD_PIPE` takes the
+board's pipe down and brings it up again in the mode it is in
+(`RtgAmdPipe`): an HDMI monitor muted, the timing generator stopped, the
+link's front end let go, then the PHY switched off and its PLL powered
+down by the video BIOS's command tables - the transmitter's and the
+pixel clock's, which on this engine the display controller runs, so
+`DMCUB START` comes first - and all of it the other way, the front end's
+stream set up by the encoder's table. Nothing new is chosen: the
+timing generator keeps its timing, the pixel clock is the mode's, and
+the stream's kind, deep colour and packets are put back as they were
+read; HDMI and DVI on a single link up to 340 MHz, RGB or 4:4:4. A flip
+waits while the pipe is down. `C:test/Gpu CYCLE` does it with the
+watchdog armed, the picture's checksum before and after; on the NucBox
+the pipe is down and up again in a quarter of a second.
 
 The numbers say a lot about a picture that misbehaves. A part of the glass
 that is out of date while `refreshes` stands still was never handed on; one

@@ -38,6 +38,13 @@
 //! read place on. The controller sends them once told to (a command of
 //! its own), which it is again after each start.
 //!
+//! **A command table** of the video BIOS - the PHY switched on or off,
+//! the PHY's PLL set for a pixel clock or powered down, a link's front
+//! end set up for a stream - is a command of its own kind, the table's
+//! number in the header and its parameters as the BIOS's table takes
+//! them behind it (`runTable`). The controller answers nothing: it has
+//! run the table once it has moved the read place past it.
+//!
 //! **An AUX transaction** - a read or write of a DisplayPort sink's
 //! registers (DPCD) or of its I2C bus over the AUX channel - is a
 //! command naming the socket's AUX channel by its DDC line's number; the
@@ -45,8 +52,9 @@
 //!
 //! Nothing here runs unless asked for: the board's controls
 //! (RTGCTRL_AMD_CONTROLLER, RTGCTRL_AMD_START_CONTROLLER,
-//! RTGCTRL_AMD_EVENTS, RTGCTRL_AMD_AUX) ask, which `C:test/Gpu DMCUB`,
-//! `EVENTS` and `AUX` do - starting it with the watchdog armed.
+//! RTGCTRL_AMD_EVENTS, RTGCTRL_AMD_AUX, RTGCTRL_AMD_PIPE) ask, which
+//! `C:test/Gpu DMCUB`, `EVENTS`, `AUX` and `CYCLE` do - starting it with
+//! the watchdog armed.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -148,8 +156,19 @@ const trace_entries_at: u32 = 16;
 const command_query_caps: u32 = 6;
 const command_aux: u32 = 70;
 const command_notify: u32 = 71;
+const command_bios_table: u32 = 128;
 const header_answer: u32 = 1 << 16;
+const header_table_shift = 8;
 const header_payload_shift = 24;
+
+/// The video BIOS's command tables the controller runs, by its numbers:
+/// a front end set up, the PHY switched, the PHY's PLL set.
+pub const table_encoder: u32 = 0;
+pub const table_transmitter: u32 = 1;
+pub const table_pixel_clock: u32 = 2;
+/// The most bytes of parameters a table is given: the command less its
+/// header.
+pub const table_bytes_most = 60;
 
 /// The notifications' kinds, in their header's low byte.
 const note_aux_reply: u32 = 1;
@@ -171,8 +190,10 @@ const reply_wait_us: u64 = 100_000;
 const default_trace: u32 = 64 * 1024;
 const default_state: u32 = 64 * 1024;
 
-/// How long each wait lasts at the most.
+/// How long each wait lasts at the most, and a command table's: the PHY
+/// and its PLL locking take longer than a command.
 const wait_us: u64 = 100_000;
+const table_wait_us: u64 = 500_000;
 
 /// The firmware's file: the common header's fields read here, its own
 /// field counting the code, the signature's size before and after the
@@ -285,9 +306,9 @@ pub fn read(engine: dcn.Engine, into: *tags.RtgAmdController) void {
     into.faults = .{ at(engine, fault_undefined).*, at(engine, fault_fetch).*, at(engine, fault_write).* };
 }
 
-/// Wait until `done` says so, for `wait_us` at the most: whether it did.
-fn waitFor(engine: dcn.Engine, comptime done: fn (dcn.Engine) bool) bool {
-    const until = engine.sys.UptimeUs() + wait_us;
+/// Wait until `done` says so, for `limit_us` at the most: whether it did.
+fn waitFor(engine: dcn.Engine, comptime done: fn (dcn.Engine) bool, limit_us: u64) bool {
+    const until = engine.sys.UptimeUs() + limit_us;
     while (!done(engine)) {
         if (engine.sys.UptimeUs() > until) return false;
         pause(engine.sys, 10);
@@ -327,9 +348,9 @@ fn reset(engine: dcn.Engine) void {
     const enabled = at(engine, control).* & control_enable != 0;
     if (enabled and at(engine, control_more).* & more_soft_reset == 0) {
         at(engine, gpint_in).* = gpint_request | gpint_stop;
-        _ = waitFor(engine, stopTaken);
-        _ = waitFor(engine, stopAnswered);
-        _ = waitFor(engine, waiting);
+        _ = waitFor(engine, stopTaken, wait_us);
+        _ = waitFor(engine, stopAnswered, wait_us);
+        _ = waitFor(engine, waiting, wait_us);
     }
     if (enabled) {
         at(engine, control_more).* |= more_soft_reset;
@@ -424,6 +445,30 @@ pub fn start(engine: dcn.Engine, controller: *Controller, into: *tags.RtgAmdCont
 /// did, `command` then holding its slot as the controller left it, which
 /// is where a command that answers leaves its answer.
 fn send(engine: dcn.Engine, controller: *Controller, command: *[16]u32) bool {
+    return sendWithin(engine, controller, command, wait_us);
+}
+
+/// The video BIOS's command table `table` (`table_*`) run by the
+/// controller with `parameters`, as that table takes them: whether it
+/// took it within the longest a table takes. False where the controller
+/// does not run, or for more parameters than a command holds.
+pub fn runTable(engine: dcn.Engine, controller: *Controller, table: u32, parameters: []const u8) bool {
+    if (!controller.running or parameters.len > table_bytes_most) return false;
+    var command: [16]u32 = @splat(0);
+    command[0] = commandHeader(table, @intCast(parameters.len));
+    for (parameters, 0..) |byte, index| {
+        command[1 + index / 4] |= @as(u32, byte) << @intCast(index % 4 * 8);
+    }
+    return sendWithin(engine, controller, &command, table_wait_us);
+}
+
+/// A command table's header: its kind, the table, the bytes behind it.
+pub fn commandHeader(table: u32, bytes: u32) u32 {
+    return command_bios_table | table << header_table_shift | bytes << header_payload_shift;
+}
+
+/// `send`, waited for `limit_us` at the most.
+fn sendWithin(engine: dcn.Engine, controller: *Controller, command: *[16]u32, limit_us: u64) bool {
     const memory = controller.memory orelse return false;
     const slot: [*]volatile u32 = @ptrFromInt(@as(usize, @intCast(memory.cpu)) + controller.mailbox_at + controller.write);
     for (command, 0..) |command_word, index| slot[index] = command_word;
@@ -438,7 +483,7 @@ fn send(engine: dcn.Engine, controller: *Controller, command: *[16]u32) bool {
             return at(engine_, inbox1_read).* == at(engine_, inbox1_write).*;
         }
     }.f;
-    const taken = waitFor(engine, done);
+    const taken = waitFor(engine, done, limit_us);
     for (command, 0..) |*command_word, index| command_word.* = slot[index];
     return taken;
 }
@@ -643,7 +688,7 @@ fn load(engine: dcn.Engine, controller: *Controller, into: *tags.RtgAmdControlle
     scratch(engine, scratch_security).* = 0;
     at(engine, control).* |= control_enable | control_trace_port;
     at(engine, control_more).* &= ~more_soft_reset;
-    if (!waitFor(engine, upAndReady)) {
+    if (!waitFor(engine, upAndReady, wait_us)) {
         exec.kprintf(sys, "%s: the display controller did not come up (status %x)\n", .{ dcn.owner, scratch(engine, scratch_status).* });
         return err.RTGERR_TIMEOUT;
     }
@@ -766,4 +811,12 @@ test "the AUX action follows the kind and the direction" {
     try testing.expectEqual(aux_dpcd_write, auxAction(&.{ .write = 1 }));
     try testing.expectEqual(aux_i2c_read | aux_i2c_more, auxAction(&.{ .kind = tags.RTG_AMD_AUX_I2C, .more = 1 }));
     try testing.expectEqual(aux_i2c_write, auxAction(&.{ .kind = tags.RTG_AMD_AUX_I2C, .write = 1 }));
+}
+
+test "a command table's header names its kind, the table and its bytes" {
+    // The transmitter's, its sixty bytes; the pixel clock's, sixteen;
+    // the front end's, twelve.
+    try testing.expectEqual(@as(u32, 0x3C00_0180), commandHeader(table_transmitter, 60));
+    try testing.expectEqual(@as(u32, 0x1000_0280), commandHeader(table_pixel_clock, 16));
+    try testing.expectEqual(@as(u32, 0x0C00_0080), commandHeader(table_encoder, 12));
 }

@@ -63,6 +63,11 @@
 //! line has the library look at it again. AUX transactions go through
 //! the controller.
 //!
+//! The pipe can be taken down and brought up again in its mode
+//! (`pipe.zig`), on request only (RTGCTRL_AMD_PIPE), through the video
+//! BIOS's command tables the controller runs: a flip waits while it is
+//! down.
+//!
 //! The buffers drawn in are the machine's RAM, taken by the library as
 //! each is allocated (RTGRF_SYSTEM_MEMORY, RTGRF_DMA_MEMORY).
 //!
@@ -91,11 +96,12 @@ const crc = @import("crc.zig");
 const hpd = @import("hpd.zig");
 const aux = @import("aux.zig");
 const monitor = @import("monitor.zig");
+const pipe = @import("pipe.zig");
 
 const MODULE_NAME = "rtg-amd";
 const DRIVER_NAME = "amd";
 const VERSION = 1;
-const REVISION = 9;
+const REVISION = 10;
 const BUILD_DATE = "26.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -137,8 +143,10 @@ const Screen = struct {
     /// The board, and how many pictures it may have at once.
     board: *rtg.RtgBoard,
     buffers: u32 = 1,
-    /// The number of the mode the display is in; 0 before the first.
+    /// The number of the mode the display is in, 0 before the first,
+    /// and its pixel clock as the library has it, 0 where not known.
     mode_id: u32 = 0,
+    pixel_clock_hz: u32 = 0,
     /// What a row of a buffer is rounded up to: the board's display
     /// memory's alignment, which the library rounds a mode's rows by.
     alignment: u32 = row_alignment,
@@ -169,6 +177,8 @@ const Screen = struct {
     ddc_lock: exec.SignalSemaphore = .{},
     /// How many times the library has looked at it.
     looks: u32 = 0,
+    /// The lock a flip and the pipe taken down and up take, one at a time.
+    pipe_lock: exec.SignalSemaphore = .{},
 };
 
 /// Wait for `frames` frames, as the library waits (WaitVBlank): for the
@@ -295,7 +305,11 @@ fn scanFrom(screen: *Screen, picture: *const rtg.RtgBitMap) void {
 /// (`flipAmd`).
 fn flipOp(board: *rtg.RtgBoard, frame: *rtg.RtgBitMap) callconv(.c) i32 {
     if (frame.pixels == null) return err.RTGERR_BAD_ARG;
-    return flipAmd(screenOf(board), frame);
+    const screen = screenOf(board);
+    // Not while the pipe is down: no update would take it.
+    screen.sys.ObtainSemaphore(&screen.pipe_lock);
+    defer screen.sys.ReleaseSemaphore(&screen.pipe_lock);
+    return flipAmd(screen, frame);
 }
 
 /// The AMD display flipped to `frame`. The engine takes a
@@ -478,6 +492,7 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, device_tags: ?[*]const
     sys.InitSemaphore(&screen.smu_lock);
     sys.InitSemaphore(&screen.controller_lock);
     sys.InitSemaphore(&screen.ddc_lock);
+    sys.InitSemaphore(&screen.pipe_lock);
     screen.connector = monitor.boards(found);
     tellConnector(screen);
     // Its hot-plug lines listened to from the start, so a monitor that
@@ -583,6 +598,7 @@ fn showOp(board: *rtg.RtgBoard, what: *const rtg.RtgShow) callconv(.c) i32 {
     const start = what.frame orelse return err.RTGERR_BAD_ARG;
     if (start.pixels == null) return err.RTGERR_BAD_ARG;
     screen.mode_id = mode.id;
+    screen.pixel_clock_hz = mode.pixel_clock_hz;
     screen.width = mode.width;
     screen.height = mode.height;
     screen.pitch = mode.pitch;
@@ -620,8 +636,8 @@ fn stats(board: *rtg.RtgBoard, into: *rtg.RtgBoardStats) callconv(.c) void {
 /// power manager asked, the display controller read, started or sent an
 /// AUX transaction, the hot-plug lines and the controller's
 /// notifications listened to and counted - one asker at a time at the
-/// mailbox and at the controller - and the picture's checksum read.
-/// Nothing else is taken.
+/// mailbox and at the controller - the picture's checksum read, and the
+/// pipe taken down and up. Nothing else is taken.
 fn control(board: *rtg.RtgBoard, what: u32, value: isize) callconv(.c) isize {
     const screen = screenOf(board);
     switch (what) {
@@ -698,6 +714,15 @@ fn control(board: *rtg.RtgBoard, what: u32, value: isize) callconv(.c) isize {
             if (value == 0) return err.RTGERR_BAD_ARG;
             const into: *rtg.tags.RtgAmdCrc = @ptrFromInt(@as(usize, @bitCast(value)));
             return crc.read(screen.dcn, into);
+        },
+        rtg.tags.RTGCTRL_AMD_PIPE => {
+            if (value == 0) return err.RTGERR_BAD_ARG;
+            const into: *rtg.tags.RtgAmdPipe = @ptrFromInt(@as(usize, @bitCast(value)));
+            screen.sys.ObtainSemaphore(&screen.controller_lock);
+            defer screen.sys.ReleaseSemaphore(&screen.controller_lock);
+            screen.sys.ObtainSemaphore(&screen.pipe_lock);
+            defer screen.sys.ReleaseSemaphore(&screen.pipe_lock);
+            return pipe.cycle(screen.dcn, &screen.controller, screen.connector, screen.pixel_clock_hz, into);
         },
         else => return err.RTGERR_NOT_SUPPORTED,
     }

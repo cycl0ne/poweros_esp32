@@ -227,6 +227,20 @@ pub const RTGCTRL_AMD_AUX: u32 = RTGCTRL_DRIVER + 38;
 /// read went; RTGERR_BAD_ARG for no such connector, RTGERR_NOT_SUPPORTED
 /// for one of another kind or whose DDC line has no engine.
 pub const RTGCTRL_AMD_EDID: u32 = RTGCTRL_DRIVER + 39;
+/// `value` an `*RtgAmdPipe`: the board's pipe taken down and brought up
+/// again in the mode it is in - its timing generator stopped, the link's
+/// front end let go, the PHY switched off and its PLL powered down by
+/// the video BIOS's command tables, which the display controller runs,
+/// then all of it the other way - the request filled in with what was
+/// taken, how far it got and the pipe's registers before, while down
+/// and after. The controller runs (RTGCTRL_AMD_START_CONTROLLER). RTGERR_OK
+/// once the pipe is up again; RTGERR_NOT_SUPPORTED where the controller
+/// does not run or the link is not one this takes - HDMI or DVI on a
+/// single link, up to 340 MHz, one pipe, RGB or 4:4:4;
+/// RTGERR_BAD_MODE where the mode's pixel clock is not known;
+/// RTGERR_TIMEOUT where the controller did not take a table or the
+/// timing generator did not stop, `stage` saying where.
+pub const RTGCTRL_AMD_PIPE: u32 = RTGCTRL_DRIVER + 40;
 
 /// How many hot-plug lines RtgAmdEvents holds.
 pub const RTG_AMD_HOT_PLUG_LINES = 5;
@@ -341,6 +355,58 @@ pub const RtgAmdEdid = extern struct {
     found: [8]u32 = @splat(0),
     after: [8]u32 = @splat(0),
     edid: [RTG_AMD_EDID_BYTES]u8 = @splat(0),
+};
+
+/// How far RTGCTRL_AMD_PIPE got: nothing done, the stream taken, the
+/// monitor muted, the timing generator stopped, the front end let go,
+/// the PHY off, the PLL powered down; then the timing generator's clocks
+/// and the PLL on, the timing generator started, the stream set up, the
+/// PHY on, the pipe up.
+pub const RTG_AMD_PIPE_NONE: u32 = 0;
+pub const RTG_AMD_PIPE_TAKEN: u32 = 1;
+pub const RTG_AMD_PIPE_MUTED: u32 = 2;
+pub const RTG_AMD_PIPE_STOPPED: u32 = 3;
+pub const RTG_AMD_PIPE_RELEASED: u32 = 4;
+pub const RTG_AMD_PIPE_PHY_OFF: u32 = 5;
+pub const RTG_AMD_PIPE_DOWN: u32 = 6;
+pub const RTG_AMD_PIPE_CLOCKED: u32 = 7;
+pub const RTG_AMD_PIPE_STARTED: u32 = 8;
+pub const RTG_AMD_PIPE_STREAM: u32 = 9;
+pub const RTG_AMD_PIPE_PHY_ON: u32 = 10;
+pub const RTG_AMD_PIPE_UP: u32 = 11;
+
+/// The links RtgAmdPipe names: HDMI, DVI.
+pub const RTG_AMD_LINK_HDMI: u32 = 1;
+pub const RTG_AMD_LINK_DVI: u32 = 2;
+
+/// The pipe's registers RtgAmdPipe reads: the timing generator's control
+/// and its clocks' control, the front end's control and its FIFO's, the
+/// back end's control and whether it is on, the HDMI control and the
+/// general control packet's.
+pub const RTG_AMD_PIPE_REGISTERS = 8;
+
+/// The pipe taken down and up by RTGCTRL_AMD_PIPE, filled in: how far it
+/// got (RTG_AMD_PIPE_*); the pipe, the link's front and back end and the
+/// PHY; the link's kind (RTG_AMD_LINK_*), its deep colour (0 for 8 bits
+/// a colour, 1 for 10, 2 for 12, 3 for 16), the mode's pixel clock and
+/// the PHY's symbol clock in kHz; the revision of the BIOS's transmitter
+/// table; how long the pipe was down in microseconds; the pipe's
+/// registers (RTG_AMD_PIPE_REGISTERS) before, while down and after.
+pub const RtgAmdPipe = extern struct {
+    stage: u32 = RTG_AMD_PIPE_NONE,
+    pipe: u32 = 0,
+    front: u32 = 0,
+    back: u32 = 0,
+    phy: u32 = 0,
+    link: u32 = 0,
+    deep_color: u32 = 0,
+    pixel_khz: u32 = 0,
+    symbol_khz: u32 = 0,
+    transmitter_revision: u32 = 0,
+    down_us: u32 = 0,
+    before: [RTG_AMD_PIPE_REGISTERS]u32 = @splat(0),
+    down: [RTG_AMD_PIPE_REGISTERS]u32 = @splat(0),
+    after: [RTG_AMD_PIPE_REGISTERS]u32 = @splat(0),
 };
 
 /// What RTGCTRL_AMD_CRC fills in: the pipe summed, each colour's CRC,

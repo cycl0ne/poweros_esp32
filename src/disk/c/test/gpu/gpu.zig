@@ -3,16 +3,18 @@
 //! its video BIOS read, the display's clocks asked for, the display
 //! controller read or started, its hot-plug lines and notifications
 //! counted, an AUX read through it, a monitor's EDID read over its DDC
-//! line, the picture's checksum read, its security
+//! line, the picture's checksum read, the display's pipe taken down and
+//! brought up again in its mode, its security
 //! processor started and the video decoder's firmware loaded by it, the
 //! display's interrupt at each frame counted, or one flip of the picture
 //! the display reads. Built against the SDK only.
 //!
-//!   Gpu TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,WATCHDOG/K/N
+//!   Gpu TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,WATCHDOG/K/N
 //!
 //! BIOS prints the device's video BIOS image (GetGPUBios): where it is
-//! and how long, its tables' header's version, the version of each data
-//! table it lists, and the display's connectors as amdgpu.resource read
+//! and how long, its tables' header's version, the version of each of
+//! the command tables the display's pipe is switched with and of each
+//! data table it lists, and the display's connectors as amdgpu.resource read
 //! them from it (GetGPUConnector) - each one's kind, the PHY that drives
 //! it, its DDC line and its hot-plug pin. Nothing is written to the
 //! device, and no watchdog is wanted.
@@ -71,7 +73,21 @@
 //! registers before and after, what the EDID says of the monitor and its
 //! bytes. The watchdog is armed for it.
 //!
-//! Without BIOS, CLOCKS, DMCUB, CRC, EVENTS, AUX, EDID, FRAMES or FLIP the two files are read from
+//! CYCLE has the board take the display's pipe down and bring it up
+//! again in the mode it is in (RTGCTRL_AMD_PIPE): the timing generator
+//! stopped, the link's front end let go, the PHY switched off and its PLL
+//! powered down by the video BIOS's command tables, which the display
+//! controller runs - DMCUB START must have started it - then all of it
+//! the other way. Printed are what was taken (the pipe, the link's ends,
+//! the PHY, the link's kind, its deep colour and its clocks), how far it
+//! got and how long the pipe was down, the pipe's registers before, while
+//! down and after, and the picture's checksum before and after, which
+//! should be the same: a picture that changes by itself - a clock's
+//! seconds - is first waited for to change and then to hold 100 ms (2 s
+//! at the most), and the pipe taken down right after. The watchdog is
+//! armed for it.
+//!
+//! Without BIOS, CLOCKS, DMCUB, CRC, EVENTS, AUX, EDID, CYCLE, FRAMES or FLIP the two files are read from
 //! DEVS:firmware/amdgpu/, named for the blocks that use them as the
 //! device's table gives their versions - psp_13_0_4_toc.bin for the
 //! security processor 13.0.4, vcn_4_0_2.bin for the video decoder 4.0.2 -
@@ -125,10 +141,10 @@ const rtg = sdk.rtg;
 const RtgBase = sdk.interface.rtg.RtgBase;
 
 pub const COMMAND_NAME = "Gpu";
-const VERSION_STRING = "\x00$VER: Gpu 1.7 (26.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Gpu 1.8 (26.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,WATCHDOG/K/N";
+const template = "TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,WATCHDOG/K/N";
 const arg_toc = 0;
 const arg_firmware = 1;
 const arg_frames = 2;
@@ -149,8 +165,9 @@ const arg_edid = 16;
 const arg_connector = 17;
 const arg_pipe = 18;
 const arg_fetcher = 19;
-const arg_watchdog = 20;
-const arg_count = 21;
+const arg_cycle = 20;
+const arg_watchdog = 21;
+const arg_count = 22;
 
 /// Where the files are.
 const directory = "DEVS:firmware/amdgpu/";
@@ -163,8 +180,19 @@ const atom_mark_at = 4;
 const atom_commands_at = 0x1E;
 const atom_data_tables_at = 0x20;
 
-/// The data tables the display driver reads, by their place in the list.
-const data_table_names = [_]struct { index: u32, name: [*:0]const u8 }{
+/// A table of the BIOS's, by its place in its list.
+const NamedTable = struct { index: u32, name: [*:0]const u8 };
+
+/// The command tables the display driver runs.
+const command_table_names = [_]NamedTable{
+    .{ .index = 4, .name = "front end" },
+    .{ .index = 12, .name = "pixel clock" },
+    .{ .index = 13, .name = "display power gating" },
+    .{ .index = 76, .name = "transmitter" },
+};
+
+/// The data tables the display driver reads.
+const data_table_names = [_]NamedTable{
     .{ .index = 4, .name = "firmware info" },
     .{ .index = 8, .name = "power manager info" },
     .{ .index = 11, .name = "memory the firmware uses" },
@@ -256,6 +284,23 @@ fn tableHeader(image: []const u8, at: usize) ?struct { bytes: u16, format: u8, c
     return .{ .bytes = bytes, .format = image[at + 2], .content = image[at + 3] };
 }
 
+/// The tables `names` of the list at `list` in `image`, each where it
+/// is, its version and its length.
+fn printTables(dl: *DosBase, image: []const u8, list: u16, names: []const NamedTable) void {
+    for (names) |named| {
+        const at = half(image, @as(usize, list) + 4 + named.index * 2) orelse continue;
+        if (at == 0) {
+            _ = Printf(dl, "  %2u %-26s none\n", .{ named.index, named.name });
+            continue;
+        }
+        const table = tableHeader(image, at) orelse continue;
+        _ = Printf(dl, "  %2u %-26s at 0x%04x, version %u.%u, %u bytes\n", .{
+            named.index,            named.name,              @as(u32, at),
+            @as(u32, table.format), @as(u32, table.content), @as(u32, table.bytes),
+        });
+    }
+}
+
 /// The video BIOS image and the connectors read from it, printed.
 fn bios(dl: *DosBase, ab: *AMDGPUBase) i32 {
     var found: amdgpu.GPUBios = .{};
@@ -272,22 +317,12 @@ fn bios(dl: *DosBase, ab: *AMDGPUBase) i32 {
         const commands = half(image, @as(usize, header) + atom_commands_at) orelse 0;
         if (tableHeader(image, commands)) |list| {
             _ = Printf(dl, "Command tables: list at 0x%04x, %u entries\n", .{ @as(u32, commands), @as(u32, list.bytes -| 4) / 2 });
+            printTables(dl, image, commands, &command_table_names);
         }
         const data = half(image, @as(usize, header) + atom_data_tables_at) orelse 0;
         if (tableHeader(image, data)) |list| {
             _ = Printf(dl, "Data tables: list at 0x%04x, %u entries\n", .{ @as(u32, data), @as(u32, list.bytes -| 4) / 2 });
-            for (data_table_names) |named| {
-                const at = half(image, data + 4 + named.index * 2) orelse continue;
-                if (at == 0) {
-                    _ = Printf(dl, "  %2u %-26s none\n", .{ named.index, named.name });
-                    continue;
-                }
-                const table = tableHeader(image, at) orelse continue;
-                _ = Printf(dl, "  %2u %-26s at 0x%04x, version %u.%u, %u bytes\n", .{
-                    named.index,            named.name,              @as(u32, at),
-                    @as(u32, table.format), @as(u32, table.content), @as(u32, table.bytes),
-                });
-            }
+            printTables(dl, image, data, &data_table_names);
         }
     }
     var connector: amdgpu.GPUConnector = .{};
@@ -644,6 +679,92 @@ fn checksum(sys: *ExecBase, dl: *DosBase, millis: u32) i32 {
     return if (result == rtg.errors.RTGERR_OK) dos.RETURN_OK else dos.RETURN_ERROR;
 }
 
+/// The display's pipe taken down and up again (RTGCTRL_AMD_PIPE), the
+/// watchdog armed, the picture's checksum read before and after; printed.
+fn pipeCycle(sys: *ExecBase, dl: *DosBase, millis: u32) i32 {
+    const base = sys.OpenLibrary(rtg.RTGNAME, rtg.RTG_VERSION) orelse {
+        _ = Printf(dl, "No %s\n", .{rtg.RTGNAME});
+        return dos.RETURN_FAIL;
+    };
+    defer sys.CloseLibrary(base);
+    const rb: *RtgBase = @ptrCast(base);
+    const board = amdBoard(dl, rb) orelse return dos.RETURN_WARN;
+    const wb = arm(sys, dl, millis) orelse return dos.RETURN_FAIL;
+    var before: rtg.tags.RtgAmdCrc = .{};
+    var crc_before = rb.BoardControl(board, rtg.tags.RTGCTRL_AMD_CRC, @bitCast(@intFromPtr(&before)));
+    // A picture that changes by itself - a clock's seconds - is waited
+    // for to change and then to hold, so that the pipe is down and up
+    // again before it changes next.
+    var waited: u32 = 0;
+    var changed = false;
+    var held: u32 = 0;
+    while (crc_before == rtg.errors.RTGERR_OK and waited < change_wait_ticks) : (waited += 1) {
+        dl.Delay(1);
+        var now: rtg.tags.RtgAmdCrc = .{};
+        crc_before = rb.BoardControl(board, rtg.tags.RTGCTRL_AMD_CRC, @bitCast(@intFromPtr(&now)));
+        if (now.red == before.red and now.green == before.green and now.blue == before.blue) {
+            held += 1;
+            if (changed and held == held_ticks) break;
+            continue;
+        }
+        before = now;
+        changed = true;
+        held = 0;
+    }
+    var request: rtg.tags.RtgAmdPipe = .{};
+    const result = rb.BoardControl(board, rtg.tags.RTGCTRL_AMD_PIPE, @bitCast(@intFromPtr(&request)));
+    var after: rtg.tags.RtgAmdCrc = .{};
+    const crc_after = rb.BoardControl(board, rtg.tags.RTGCTRL_AMD_CRC, @bitCast(@intFromPtr(&after)));
+    wb.DisarmWatchdog();
+    const stages = [_][*:0]const u8{
+        "nothing done",                 "the stream taken",     "the monitor muted",
+        "the timing generator stopped", "the front end let go", "the PHY off",
+        "down",                         "the clocks on",        "the timing generator started",
+        "the stream set up",            "the PHY on",           "up",
+    };
+    _ = Printf(dl, "Cycle: error %ld, %s\n", .{ @as(i64, result), stages[@min(request.stage, stages.len - 1)] });
+    if (request.stage >= rtg.tags.RTG_AMD_PIPE_TAKEN) {
+        const link: [*:0]const u8 = if (request.link == rtg.tags.RTG_AMD_LINK_HDMI) "HDMI" else "DVI";
+        const bits = [_]u32{ 8, 10, 12, 16 };
+        _ = Printf(dl, "Pipe %u, front end %u, back end %u, PHY %c: %s, %u bits a colour, pixels %u kHz, symbols %u kHz; transmitter table revision %u\n", .{
+            request.pipe,                 request.front,                request.back,      'A' + request.phy,
+            link,                         bits[request.deep_color & 3], request.pixel_khz, request.symbol_khz,
+            request.transmitter_revision,
+        });
+        _ = Printf(dl, "Down and up in %u us\n", .{request.down_us});
+        _ = Printf(dl, "         timing   clocks   front    fifo     back     on       hdmi     gc\n", .{});
+        printPipe(dl, "before", &request.before);
+        if (request.stage > rtg.tags.RTG_AMD_PIPE_TAKEN) printPipe(dl, "down", &request.down);
+        if (request.stage > rtg.tags.RTG_AMD_PIPE_DOWN) printPipe(dl, "after", &request.after);
+    }
+    if (waited < change_wait_ticks) {
+        _ = Printf(dl, "The picture changed by itself and held %u ms after %u ms, the pipe was taken down then\n", .{ held_ticks * 20, (waited + 1) * 20 });
+    } else if (changed) {
+        _ = Printf(dl, "The picture changed by itself and did not hold %u ms in %u ms\n", .{ held_ticks * 20, change_wait_ticks * 20 });
+    } else {
+        _ = Printf(dl, "The picture did not change by itself in %u ms\n", .{change_wait_ticks * 20});
+    }
+    printCrc(dl, "Picture before", crc_before, &before);
+    printCrc(dl, "Picture after ", crc_after, &after);
+    if (crc_before == rtg.errors.RTGERR_OK and crc_after == rtg.errors.RTGERR_OK) {
+        const same = before.red == after.red and before.green == after.green and before.blue == after.blue;
+        _ = Printf(dl, "The picture is %s\n", .{@as([*:0]const u8, if (same) "unchanged" else "CHANGED")});
+    }
+    return if (result == rtg.errors.RTGERR_OK) dos.RETURN_OK else dos.RETURN_ERROR;
+}
+
+/// How long CYCLE waits for a picture to change by itself and then to
+/// hold, in ticks of 20 ms.
+const change_wait_ticks: u32 = 100;
+const held_ticks: u32 = 5;
+
+/// The pipe's registers as RtgAmdPipe holds them, on one line.
+fn printPipe(dl: *DosBase, name: [*:0]const u8, registers: *const [rtg.tags.RTG_AMD_PIPE_REGISTERS]u32) void {
+    _ = Printf(dl, "%-8s", .{name});
+    for (registers) |register| _ = Printf(dl, " %08lx", .{@as(u64, register)});
+    _ = Printf(dl, "\n", .{});
+}
+
 /// A clock's levels on one line, in MHz.
 fn printLevels(dl: *DosBase, name: [*:0]const u8, levels: []const u32) void {
     _ = Printf(dl, "%-28s", .{name});
@@ -711,6 +832,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         if (argv[arg_connector] != 0) request.connector = number(argv[arg_connector]);
         return edidRead(sys, dl, millis, &request);
     }
+    if (argv[arg_cycle] != 0) return pipeCycle(sys, dl, millis);
     if (argv[arg_frames] != 0 or argv[arg_flip] != 0) {
         const pipe = number(argv[arg_pipe]);
         const fetcher = number(argv[arg_fetcher]);
