@@ -6,8 +6,9 @@
 //!
 //! The generator sums each colour of every pixel of a window into a
 //! 16-bit CRC per frame. The window is the whole picture (its visible
-//! width and height), the sum taken every frame once switched on, and
-//! left on: reading it again only reads. The first read switches it on
+//! width and height, made the new one's by a mode set), the sum taken
+//! every frame once switched on, and left on: reading it again only
+//! reads. The first read switches it on
 //! and lets three frames pass, so that the sum read is a whole frame's.
 
 const sdk = @import("sdk");
@@ -70,6 +71,16 @@ pub fn read(engine: dcn.Engine, into: *tags.RtgAmdCrc) isize {
     into.blue = at(engine, data_blue).* & 0xffff;
     into.pipe = engine.pipe;
     return err.RTGERR_OK;
+}
+
+/// The window made the picture the pipe now scans, where the sum is on:
+/// what a mode set has done after it.
+pub fn fit(engine: dcn.Engine) void {
+    if (at(engine, crc_control).* & crc_on == 0) return;
+    at(engine, window_a_x).* = window(engine.width);
+    at(engine, window_a_y).* = window(engine.height);
+    at(engine, window_b_x).* = window(engine.width);
+    at(engine, window_b_y).* = window(engine.height);
 }
 
 /// `us` microseconds let pass, the task waiting.

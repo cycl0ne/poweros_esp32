@@ -241,6 +241,12 @@ pub const RTGCTRL_AMD_EDID: u32 = RTGCTRL_DRIVER + 39;
 /// RTGERR_TIMEOUT where the controller did not take a table or the
 /// timing generator did not stop, `stage` saying where.
 pub const RTGCTRL_AMD_PIPE: u32 = RTGCTRL_DRIVER + 40;
+/// `value` an `*RtgAmdPipe`: what the board's last mode set did - the
+/// pipe taken down and brought up in a mode the library asked for, as
+/// RTGCTRL_AMD_PIPE fills it in, with the mode's picture and whether the
+/// fetcher or the output ran short of pixels three frames after. `stage`
+/// RTG_AMD_PIPE_NONE before the first. RTGERR_OK.
+pub const RTGCTRL_AMD_MODE: u32 = RTGCTRL_DRIVER + 41;
 
 /// How many hot-plug lines RtgAmdEvents holds.
 pub const RTG_AMD_HOT_PLUG_LINES = 5;
@@ -391,7 +397,8 @@ pub const RTG_AMD_PIPE_REGISTERS = 8;
 /// a colour, 1 for 10, 2 for 12, 3 for 16), the mode's pixel clock and
 /// the PHY's symbol clock in kHz; the revision of the BIOS's transmitter
 /// table; how long the pipe was down in microseconds; the pipe's
-/// registers (RTG_AMD_PIPE_REGISTERS) before, while down and after.
+/// registers (RTG_AMD_PIPE_REGISTERS) before, while down and after; for
+/// a mode set, the mode's picture and what ran short (RTG_AMD_UNDERFLOW_*).
 pub const RtgAmdPipe = extern struct {
     stage: u32 = RTG_AMD_PIPE_NONE,
     pipe: u32 = 0,
@@ -407,7 +414,15 @@ pub const RtgAmdPipe = extern struct {
     before: [RTG_AMD_PIPE_REGISTERS]u32 = @splat(0),
     down: [RTG_AMD_PIPE_REGISTERS]u32 = @splat(0),
     after: [RTG_AMD_PIPE_REGISTERS]u32 = @splat(0),
+    width: u32 = 0,
+    height: u32 = 0,
+    underflow: u32 = 0,
 };
+
+/// RtgAmdPipe.underflow: the fetcher ran short of pixels, the output's
+/// input did.
+pub const RTG_AMD_UNDERFLOW_FETCHER: u32 = 1 << 0;
+pub const RTG_AMD_UNDERFLOW_OUTPUT: u32 = 1 << 1;
 
 /// What RTGCTRL_AMD_CRC fills in: the pipe summed, each colour's CRC,
 /// and whether this ask switched the sum on.

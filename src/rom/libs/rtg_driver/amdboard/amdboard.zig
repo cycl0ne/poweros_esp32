@@ -29,13 +29,19 @@
 //! firmware's buffer for good, each picture then made in it, and says so
 //! on the log.
 //!
-//! The display has one mode, the firmware's, and no cursor plane: the
-//! pointer and the overlay are laid in the pictures by the library. Its
-//! connector - the one whose PHY drives the lit link - is looked at by
-//! the library (`detect`, `monitor.zig`): whether its hot-plug line
-//! senses a monitor, and that monitor's EDID over its DDC line
-//! (`i2c.zig`); of the timings the monitor names, `check_mode` takes the
-//! firmware's alone.
+//! The display has no cursor plane: the pointer and the overlay are
+//! laid in the pictures by the library. Its connector - the one whose
+//! PHY drives the lit link - is looked at by the library (`detect`,
+//! `monitor.zig`): whether its hot-plug line senses a monitor, and that
+//! monitor's EDID over its DDC line (`i2c.zig`). Of the timings the
+//! monitor names, `check_mode` takes the one the pipe scans and, once the
+//! display controller runs, every other the pipe can make (`mode.zig`):
+//! progressive, no larger than the frames, up to 340 MHz on HDMI and 165
+//! MHz on DVI. `show` with another mode sets it (`pipe.set`): the
+//! display's clocks held at their top first (`smu.holdTop`), the link
+//! HDMI where the monitor's EDID says it takes HDMI, with the mode's AVI
+//! infoframe, DVI otherwise; what the set did is kept for
+//! RTGCTRL_AMD_MODE.
 //!
 //! The pipe's update is the frame: through the device's interrupt ring,
 //! its server says it to the library (`FrameDone`), and a flip and
@@ -64,9 +70,9 @@
 //! the controller.
 //!
 //! The pipe can be taken down and brought up again in its mode
-//! (`pipe.zig`), on request only (RTGCTRL_AMD_PIPE), through the video
-//! BIOS's command tables the controller runs: a flip waits while it is
-//! down.
+//! (`pipe.zig`), on request (RTGCTRL_AMD_PIPE) and in a mode set,
+//! through the video BIOS's command tables the controller runs: a flip
+//! waits while it is down.
 //!
 //! The buffers drawn in are the machine's RAM, taken by the library as
 //! each is allocated (RTGRF_SYSTEM_MEMORY, RTGRF_DMA_MEMORY).
@@ -97,11 +103,12 @@ const hpd = @import("hpd.zig");
 const aux = @import("aux.zig");
 const monitor = @import("monitor.zig");
 const pipe = @import("pipe.zig");
+const mode = @import("mode.zig");
 
 const MODULE_NAME = "rtg-amd";
 const DRIVER_NAME = "amd";
 const VERSION = 1;
-const REVISION = 10;
+const REVISION = 11;
 const BUILD_DATE = "26.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -179,6 +186,12 @@ const Screen = struct {
     looks: u32 = 0,
     /// The lock a flip and the pipe taken down and up take, one at a time.
     pipe_lock: exec.SignalSemaphore = .{},
+    /// What the last mode set did.
+    last_set: rtg.tags.RtgAmdPipe = .{},
+    /// The top of the display clock's and the pipes' clock's levels, in
+    /// kHz, once read: what a mode is worked out at.
+    top_display_khz: u32 = 0,
+    top_pipes_khz: u32 = 0,
 };
 
 /// Wait for `frames` frames, as the library waits (WaitVBlank): for the
@@ -362,17 +375,17 @@ fn giveUpFlipping(screen: *Screen) void {
 /// Without such a frame, and once the flips were given up, the
 /// framebuffer twice: the pictures are then made in the one frame the
 /// display reads.
-fn framesOp(board: *rtg.RtgBoard, mode: *const rtg.RtgMode, into: *[2]?*rtg.RtgBitMap) callconv(.c) i32 {
+fn framesOp(board: *rtg.RtgBoard, shown: *const rtg.RtgMode, into: *[2]?*rtg.RtgBitMap) callconv(.c) i32 {
     const screen = screenOf(board);
     const fb = screen.fb;
-    if (mode.width > fb.width or mode.height > fb.height) return err.RTGERR_BAD_MODE;
+    if (shown.width > fb.width or shown.height > fb.height) return err.RTGERR_BAD_MODE;
     screen.amd_frames[0] = .{
         .pixels = @ptrFromInt(fb.pixels),
-        .width = mode.width,
-        .height = mode.height,
+        .width = shown.width,
+        .height = shown.height,
         .pitch = fb.pitch,
-        .format = mode.format,
-        .size_bytes = @as(usize, fb.pitch) * mode.height,
+        .format = shown.format,
+        .size_bytes = @as(usize, fb.pitch) * shown.height,
     };
     screen.amd_frames[1] = screen.amd_frames[0];
     if (screen.amd_flipping) {
@@ -586,24 +599,29 @@ fn rowBytes(screen: *const Screen, width: u32) u32 {
 }
 
 /// The board's one op for what is on the glass (`RtgShow`): put in the
-/// mode where the library says it is to be, the display reading the
-/// first of its two frames, which rtg.library has made the whole picture
-/// in. Its pictures after that reach it through `flipOp`.
+/// mode where the library says it is to be - set where the pipe scans
+/// another - the display reading the first of its two frames, which
+/// rtg.library has made the whole picture in. Its pictures after that
+/// reach it through `flipOp`.
 fn showOp(board: *rtg.RtgBoard, what: *const rtg.RtgShow) callconv(.c) i32 {
     if (what.flags & rtg.boards.RTGSHOW_MODE_CHANGED == 0) return err.RTGERR_OK;
     const screen = screenOf(board);
-    const mode = what.mode;
+    const shown = what.mode;
     // A row as the library makes one of a buffer.
-    if (mode.format != screen.format or mode.pitch != rowBytes(screen, mode.width)) return err.RTGERR_BAD_MODE;
+    if (shown.format != screen.format or shown.pitch != rowBytes(screen, shown.width)) return err.RTGERR_BAD_MODE;
     const start = what.frame orelse return err.RTGERR_BAD_ARG;
     if (start.pixels == null) return err.RTGERR_BAD_ARG;
-    screen.mode_id = mode.id;
-    screen.pixel_clock_hz = mode.pixel_clock_hz;
-    screen.width = mode.width;
-    screen.height = mode.height;
-    screen.pitch = mode.pitch;
+    if (!scans(screen, what.timings)) {
+        const code = setMode(screen, what.timings);
+        if (code != err.RTGERR_OK) return code;
+    }
+    screen.mode_id = shown.id;
+    screen.pixel_clock_hz = shown.pixel_clock_hz;
+    screen.width = shown.width;
+    screen.height = shown.height;
+    screen.pitch = shown.pitch;
     // Room for as many pictures of the mode as the board may have.
-    board.region.size = @as(usize, screen.buffers) * @as(usize, mode.pitch) * mode.height;
+    board.region.size = @as(usize, screen.buffers) * @as(usize, shown.pitch) * shown.height;
     // What it read until now says nothing about the new mode.
     screen.scanning = 0;
     scanFrom(screen, start);
@@ -620,12 +638,138 @@ fn detectOp(board: *rtg.RtgBoard, into: *rtg.modes.RtgDetect) callconv(.c) i32 {
     return monitor.detect(screen.dcn, screen.connector, into);
 }
 
-/// The one timing the board makes: the one the firmware lit, whose
-/// picture and whose line and frame the pipe has. Every other a monitor
-/// names is refused, so the board stays in the firmware's mode.
+/// The timings the board makes: the one the pipe scans, whose picture
+/// and whose line and frame it has; once the display controller runs,
+/// every other a mode can be made of in the frames (`mode.of`, at the
+/// display's clocks' top) on an HDMI or DVI connector, at a pixel clock
+/// the link the monitor takes carries.
 fn checkModeOp(board: *rtg.RtgBoard, timings: *const rtg.RtgTimings) callconv(.c) i32 {
-    const engine = screenOf(board).dcn;
-    return if (monitor.isLit(engine, timings.*)) err.RTGERR_OK else err.RTGERR_BAD_MODE;
+    const screen = screenOf(board);
+    if (monitor.isLit(screen.dcn, timings.*)) return err.RTGERR_OK;
+    if (!screen.controller.running) return err.RTGERR_BAD_MODE;
+    if (screen.connector.kind != sdk.resources.amdgpu.GPUCONNECTOR_HDMI and screen.connector.kind != sdk.resources.amdgpu.GPUCONNECTOR_DVI) return err.RTGERR_BAD_MODE;
+    const held = topHeld(screen) orelse return err.RTGERR_BAD_MODE;
+    _ = mode.of(timings.*, screen.fb.width, screen.fb.height, held) orelse return err.RTGERR_BAD_MODE;
+    const most_khz: u32 = if (takesHdmi(screen)) hdmi_most_khz else dvi_most_khz;
+    if (timings.pixel_clock_hz / 1000 > most_khz) return err.RTGERR_BAD_MODE;
+    return err.RTGERR_OK;
+}
+
+/// The fastest pixel clock HDMI is set at, unscrambled, and DVI on one
+/// link, in kHz.
+const hdmi_most_khz: u32 = 340_000;
+const dvi_most_khz: u32 = 165_000;
+
+/// What a mode is worked out at before it is set: the display's clocks
+/// at the top of their levels - read from the power manager the first
+/// time, one asker at a time at the mailbox - the fetcher's rows and the
+/// hub's watermarks. Null where the levels cannot be read.
+fn topHeld(screen: *Screen) ?mode.Held {
+    if (screen.top_display_khz == 0) {
+        screen.sys.ObtainSemaphore(&screen.smu_lock);
+        defer screen.sys.ReleaseSemaphore(&screen.smu_lock);
+        var levels: rtg.tags.RtgAmdClocks = .{};
+        if (smu.clocks(screen.dcn, screen.smu, &levels) == err.RTGERR_OK and levels.disp_count != 0) {
+            screen.top_pipes_khz = smu.top(levels.dpp_mhz[0..levels.disp_count]) * 1000;
+            screen.top_display_khz = smu.top(levels.disp_mhz[0..levels.disp_count]) * 1000;
+        }
+    }
+    if (screen.top_display_khz == 0 or screen.top_pipes_khz == 0) return null;
+    return mode.heldOf(screen.dcn, screen.dcn.fetcher, screen.top_display_khz, screen.top_pipes_khz);
+}
+
+/// Whether the pipe scans `timings`: its picture, its line and its frame,
+/// at the pixel clock the board's mode has where both are known.
+fn scans(screen: *const Screen, timings: *const rtg.RtgTimings) bool {
+    if (!monitor.isLit(screen.dcn, timings.*)) return false;
+    if (screen.pixel_clock_hz == 0 or timings.pixel_clock_hz == 0) return true;
+    return screen.pixel_clock_hz == timings.pixel_clock_hz;
+}
+
+/// Whether the link is set up as HDMI: on an HDMI connector, where the
+/// monitor's EDID says it takes HDMI; without an EDID, as the firmware
+/// lit it.
+fn takesHdmi(screen: *Screen) bool {
+    if (screen.connector.kind != sdk.resources.amdgpu.GPUCONNECTOR_HDMI) return false;
+    var said: rtg.RtgMonitorInfo = .{};
+    _ = screen.rtg_base.GetBoardMonitor(screen.board, &said, @sizeOf(rtg.RtgMonitorInfo));
+    if (said.flags & rtg.modes.RTGMON_EDID == 0) return pipe.litAsHdmi(screen.dcn);
+    return said.flags & rtg.modes.RTGMON_HDMI != 0;
+}
+
+/// What the AVI infoframe says beyond the picture: the RGB range in
+/// full, where the monitor lets it be said; no number for a mode that
+/// HDMI 1.4's vendor infoframe names to a monitor short of HDMI 2.0.
+fn aviFlags(said: *const rtg.RtgMonitorInfo, timings: *const rtg.RtgTimings) u32 {
+    var flags: u32 = 0;
+    if (said.flags & rtg.modes.RTGMON_RANGE_SELECTABLE != 0) flags |= rtg.RTGAVI_RANGE_FULL;
+    const vendor_named = switch (timings.vic) {
+        93, 94, 95, 98 => true,
+        else => false,
+    };
+    if (vendor_named and said.flags & rtg.modes.RTGMON_HDMI2 == 0) flags |= rtg.RTGAVI_NO_VIC;
+    return flags;
+}
+
+/// The pipe set to `timings` (`pipe.set`): the display's clocks held at
+/// their top first, the link HDMI or DVI as the monitor takes it, with
+/// the mode's AVI infoframe on HDMI. One asker at a time at the
+/// controller and the mailbox, and no flip meanwhile. What it did is
+/// kept (RTGCTRL_AMD_MODE) and said on the log; on success the engine is
+/// taken to scan the new mode.
+fn setMode(screen: *Screen, timings: *const rtg.RtgTimings) i32 {
+    const sys = screen.sys;
+    const at_top = topHeld(screen) orelse return err.RTGERR_BAD_MODE;
+    _ = mode.of(timings.*, screen.fb.width, screen.fb.height, at_top) orelse return err.RTGERR_BAD_MODE;
+    const hdmi = takesHdmi(screen);
+    var avi: [rtg.RTG_AVI_BYTES]u8 = @splat(0);
+    var sends_avi = false;
+    if (hdmi) {
+        var said: rtg.RtgMonitorInfo = .{};
+        _ = screen.rtg_base.GetBoardMonitor(screen.board, &said, @sizeOf(rtg.RtgMonitorInfo));
+        sends_avi = drivers(screen).BuildAviInfoFrame(timings, aviFlags(&said, timings), &avi) == rtg.RTG_AVI_BYTES;
+    }
+
+    sys.ObtainSemaphore(&screen.controller_lock);
+    defer sys.ReleaseSemaphore(&screen.controller_lock);
+    if (!screen.controller.running) return err.RTGERR_NOT_SUPPORTED;
+    sys.ObtainSemaphore(&screen.smu_lock);
+    var clocks: rtg.tags.RtgAmdClocks = .{};
+    const hold = smu.holdTop(screen.dcn, screen.smu, &clocks);
+    sys.ReleaseSemaphore(&screen.smu_lock);
+    if (hold != err.RTGERR_OK) {
+        exec.kprintf(sys, "%s: the display's clocks could not be held at their top (%ld), so the mode is not set\n", .{ MODULE_NAME, @as(i64, hold) });
+        return @intCast(hold);
+    }
+    // Worked out at the clocks as they run now, where they read.
+    var running = at_top;
+    if (clocks.disp_khz != 0 and clocks.dpp_khz != 0) running = mode.heldOf(screen.dcn, screen.dcn.fetcher, clocks.disp_khz, clocks.dpp_khz);
+    const new = mode.of(timings.*, screen.fb.width, screen.fb.height, running) orelse return err.RTGERR_BAD_MODE;
+
+    sys.ObtainSemaphore(&screen.pipe_lock);
+    defer sys.ReleaseSemaphore(&screen.pipe_lock);
+    const code = pipe.set(screen.dcn, &screen.controller, screen.connector, &new, hdmi, if (sends_avi) &avi else null, screen.pixel_clock_hz, &screen.last_set);
+    const done = &screen.last_set;
+    if (code != err.RTGERR_OK) {
+        exec.kprintf(sys, "%s: %dx%d at %d kHz not set (%ld), stopped at stage %d\n", .{ MODULE_NAME, new.width, new.height, timings.pixel_clock_hz / 1000, @as(i64, code), done.stage });
+        return code;
+    }
+    screen.dcn.width = new.width;
+    screen.dcn.height = new.height;
+    screen.dcn.h_total = new.h_total;
+    screen.dcn.v_total = new.v_total;
+    crc.fit(screen.dcn);
+    exec.kprintf(sys, "%s: the display set to %dx%d at %d kHz on %s, display clock %d kHz, down for %d us%s\n", .{
+        MODULE_NAME,
+        new.width,
+        new.height,
+        timings.pixel_clock_hz / 1000,
+        if (hdmi) @as([*:0]const u8, "HDMI") else "DVI",
+        clocks.disp_khz,
+        done.down_us,
+        if (done.underflow != 0) @as([*:0]const u8, ", and it ran short of pixels") else "",
+    });
+    return err.RTGERR_OK;
 }
 
 fn stats(board: *rtg.RtgBoard, into: *rtg.RtgBoardStats) callconv(.c) void {
@@ -636,8 +780,9 @@ fn stats(board: *rtg.RtgBoard, into: *rtg.RtgBoardStats) callconv(.c) void {
 /// power manager asked, the display controller read, started or sent an
 /// AUX transaction, the hot-plug lines and the controller's
 /// notifications listened to and counted - one asker at a time at the
-/// mailbox and at the controller - the picture's checksum read, and the
-/// pipe taken down and up. Nothing else is taken.
+/// mailbox and at the controller - the picture's checksum read, the
+/// pipe taken down and up, and what the last mode set did read. Nothing
+/// else is taken.
 fn control(board: *rtg.RtgBoard, what: u32, value: isize) callconv(.c) isize {
     const screen = screenOf(board);
     switch (what) {
@@ -723,6 +868,14 @@ fn control(board: *rtg.RtgBoard, what: u32, value: isize) callconv(.c) isize {
             screen.sys.ObtainSemaphore(&screen.pipe_lock);
             defer screen.sys.ReleaseSemaphore(&screen.pipe_lock);
             return pipe.cycle(screen.dcn, &screen.controller, screen.connector, screen.pixel_clock_hz, into);
+        },
+        rtg.tags.RTGCTRL_AMD_MODE => {
+            if (value == 0) return err.RTGERR_BAD_ARG;
+            const into: *rtg.tags.RtgAmdPipe = @ptrFromInt(@as(usize, @bitCast(value)));
+            screen.sys.ObtainSemaphore(&screen.pipe_lock);
+            defer screen.sys.ReleaseSemaphore(&screen.pipe_lock);
+            into.* = screen.last_set;
+            return err.RTGERR_OK;
         },
         else => return err.RTGERR_NOT_SUPPORTED,
     }

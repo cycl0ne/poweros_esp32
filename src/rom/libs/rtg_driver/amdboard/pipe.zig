@@ -43,6 +43,19 @@
 //! to 340 MHz, one pipe without its picture split between several, RGB
 //! or 4:4:4. Not touched: the planes, the audio's own registers, the
 //! packets' contents, the power of the front end's memories.
+//!
+//! **A mode set** (`set`) goes down and up the same way with a new mode
+//! (`mode.zig`) in between: the fetcher is blanked once the timing
+//! generator has stopped and let go of again once it runs; the mode is
+//! written as the clocks come on, before the timing generator starts;
+//! the PLL is set for the new pixel clock, the back end and the encoder's
+//! table told the link's kind the monitor takes - HDMI where its EDID
+//! says so, DVI otherwise - with 8 bits a colour. On HDMI the front end
+//! is set up as an HDMI stream is - its packets' generator, the general
+//! control and null packets, the audio infoframe - and sends the mode's
+//! AVI infoframe from its first packet generator; the packets' contents
+//! go in before the PHY carries them. Whether the fetcher or the output
+//! ran short of pixels is read once the pipe has run three frames more.
 
 const sdk = @import("sdk");
 const amdgpu = sdk.resources.amdgpu;
@@ -53,6 +66,7 @@ const dcn = @import("dcn.zig");
 const dmub = @import("dmub.zig");
 const monitor = @import("monitor.zig");
 const sound = @import("sound.zig");
+const mode = @import("mode.zig");
 
 // --- the registers, in 32-bit words from the engine's third address ---------------
 
@@ -77,14 +91,36 @@ const dig_front = 0x208b;
 const dig_fifo = 0x2091;
 const hdmi_control = 0x2094;
 const hdmi_gc = 0x209e;
+/// The HDMI packets' controls a mode set changes: which packets are sent
+/// each frame, the infoframes', the audio infoframe's line, the generic
+/// packets' and the first generic packet's line.
+const hdmi_vbi = 0x2098;
+const hdmi_infoframe = 0x2099;
+const hdmi_infoframe_line = 0x209a;
+const hdmi_generic = 0x209b;
+const hdmi_generic_line = 0x209f;
 const dig_back = 0x20b1;
 const dig_back_enable = 0x20b2;
 const link_stride = 0x100;
+/// The front end's double buffering of the HDMI packets' controls, and
+/// its audio's clock.
+const hdmi_double_buffer = 0x20a7;
+const afmt_control = 0x20b0;
+/// The front end's packet generator: which of its packets the data
+/// register reaches and the data, the packets taken up at once, its
+/// status and the power of its memory.
+const vpg_access = 0x2068;
+const vpg_data = 0x2069;
+const vpg_immediate = 0x206b;
+const vpg_status = 0x206c;
+const vpg_memory_power = 0x206d;
+/// Where an output's input reports running short of pixels.
+const optc_input_global = 0x1aca;
 
 /// What of the front end is put back after the encoder's table: the
 /// HDMI control, the packets' controls and the general control packet,
 /// whole.
-const kept = [_]u32{ hdmi_control, 0x2098, 0x2099, 0x209a, 0x209b, 0x209c, 0x209d, 0x209f, 0x20a0, 0x20a1, 0x20a2, 0x20a3, 0x20a4, 0x20a5, 0x20a6, hdmi_gc };
+const kept = [_]u32{ hdmi_control, hdmi_vbi, hdmi_infoframe, hdmi_infoframe_line, hdmi_generic, 0x209c, 0x209d, hdmi_generic_line, 0x20a0, 0x20a1, 0x20a2, 0x20a3, 0x20a4, 0x20a5, 0x20a6, hdmi_gc };
 
 comptime {
     // The general control packet is put back last, its mute with it.
@@ -127,6 +163,34 @@ const back_enable: u32 = 1 << 0;
 const resync_deep_color: u32 = 0x30;
 const dentist_write_mask: u32 = 0x7f;
 const dentist_read_shift = 8;
+
+/// An HDMI stream's setup: in the HDMI control, the packets' generator,
+/// keep-outs, no extra null packets, no deep colour, no scrambling, the
+/// clock channel at the character rate; the null and general control
+/// packets sent every frame, no audio content protection; the audio
+/// infoframe sent, on line 2; the first generic packet - the AVI
+/// infoframe - sent every frame, on line 2.
+const hdmi_setup_mask: u32 = 0x3100_001F;
+const hdmi_setup: u32 = 0x0000_0019;
+const vbi_sent: u32 = 0x31;
+const vbi_acp: u32 = 1 << 12;
+const audio_info_send: u32 = 1 << 4;
+const audio_info_line_mask: u32 = 0x3f << 8;
+const generic0_sent: u32 = 0x3;
+const generic0_line_mask: u32 = 0xffff;
+const packet_line: u32 = 2;
+const double_buffer_off: u32 = 1 << 12;
+const audio_clock_on: u32 = 1 << 0;
+/// The packet generator's: its conflict seen and cleared, the first
+/// packet taken up at once, its memory kept awake and not put to sleep.
+const vpg_conflict: u32 = 1 << 1;
+const vpg_conflict_clear: u32 = 1 << 4;
+const vpg_first_now: u32 = 1 << 0;
+const vpg_awake: u32 = 1 << 0;
+const vpg_asleep: u32 = 1 << 4;
+/// An output's input having run short, and its note cleared.
+const optc_underflow: u32 = 1 << 10;
+const optc_underflow_clear: u32 = 1 << 12;
 
 /// The back end's kinds of link.
 const mode_dvi: u32 = 2;
@@ -173,6 +237,8 @@ const fastest_dvi_khz: u32 = 165_000;
 const stop_wait_us: u64 = 100_000;
 const clock_wait_us: u64 = 10_000;
 const fifo_wait_us: u64 = 50_000;
+const idle_wait_us: u64 = 100_000;
+const vpg_wait_us: u64 = 500;
 
 /// The deep colour's bits a pixel, by its number: what the pixel clock
 /// is multiplied by over 24.
@@ -207,7 +273,20 @@ pub const Stream = struct {
     back_control: u32 = 0,
     resync: u32 = 0,
     kept: [kept.len]u32 = @splat(0),
+    /// A mode set's: the fetcher, and the AVI infoframe sent on HDMI.
+    fetcher: u32 = 0,
+    avi: ?[sdk.rtg.RTG_AVI_BYTES]u8 = null,
 };
+
+/// Where register `offset` is among those kept.
+fn keptAt(comptime offset: u32) usize {
+    return comptime found: {
+        for (kept, 0..) |one, index| {
+            if (one == offset) break :found index;
+        }
+        @compileError("not a kept register");
+    };
+}
 
 fn at(engine: dcn.Engine, offset: u32) *volatile u32 {
     return reg(engine.registers + (@as(usize, engine.block) + offset) * 4);
@@ -258,14 +337,14 @@ pub fn take(engine: dcn.Engine, on: monitor.Connector, pixel_clock_hz: u32, into
     const front = sound.litLink(engine) orelse return err.RTGERR_NO_DISPLAY;
     const back = backOf(engine, front) orelse return err.RTGERR_NOT_SUPPORTED;
     const back_control = linkAt(engine, back, dig_back).*;
-    const mode = (back_control & back_mode_mask) >> back_mode_shift;
-    if (mode != mode_hdmi and mode != mode_dvi) return err.RTGERR_NOT_SUPPORTED;
+    const kind = (back_control & back_mode_mask) >> back_mode_shift;
+    if (kind != mode_hdmi and kind != mode_dvi) return err.RTGERR_NOT_SUPPORTED;
 
     into.pipe = pipe;
     into.front = front;
     into.back = back;
     into.phy = listed.phy;
-    into.hdmi = mode == mode_hdmi;
+    into.hdmi = kind == mode_hdmi;
     const hdmi = linkAt(engine, front, hdmi_control).*;
     if (into.hdmi and hdmi & hdmi_deep_color_enable != 0) into.deep_color = (hdmi >> hdmi_deep_color_shift) & hdmi_deep_color_mask;
     into.pixel_100hz = pixel_clock_hz / 100;
@@ -296,6 +375,13 @@ fn backOf(engine: dcn.Engine, front: u32) ?u32 {
         if ((linkAt(engine, back, dig_back).* >> back_fronts_shift) & (@as(u32, 1) << @intCast(front)) != 0) return back;
     }
     return null;
+}
+
+/// Whether the lit link's back end is set up as HDMI.
+pub fn litAsHdmi(engine: dcn.Engine) bool {
+    const front = sound.litLink(engine) orelse return false;
+    const back = backOf(engine, front) orelse return false;
+    return (linkAt(engine, back, dig_back).* & back_mode_mask) >> back_mode_shift == mode_hdmi;
 }
 
 /// A pixel clock in 100 Hz times the deep colour's factor.
@@ -399,9 +485,10 @@ fn putWord(bytes: []u8, offset: usize, word: u32) void {
 // --- down and up ---------------------------------------------------------------------
 
 /// The pipe taken down, as the file's header says, `stage` moved on as
-/// it goes: RTGERR_OK, RTGERR_TIMEOUT where the timing generator did not
-/// stop or the controller did not take a table.
-pub fn down(engine: dcn.Engine, controller: *dmub.Controller, stream: *const Stream, stage: *u32) i32 {
+/// it goes - for a mode set (`setting`) the fetcher blanked once the
+/// timing generator has stopped: RTGERR_OK, RTGERR_TIMEOUT where the
+/// timing generator did not stop or the controller did not take a table.
+pub fn down(engine: dcn.Engine, controller: *dmub.Controller, stream: *const Stream, setting: bool, stage: *u32) i32 {
     if (stream.hdmi) {
         linkAt(engine, stream.front, hdmi_gc).* = stream.kept[kept.len - 1] | gc_avmute;
         dcn.pause(engine.sys, 3 * stream.frame_us);
@@ -414,6 +501,7 @@ pub fn down(engine: dcn.Engine, controller: *dmub.Controller, stream: *const Str
     if (!until(engine, pipeAt(engine, stream.pipe, otg_clock_control), otg_busy, 0, stop_wait_us)) return err.RTGERR_TIMEOUT;
     pipeAt(engine, stream.pipe, otg_clock_control).* &= ~(otg_clock_enable | otg_clock_gate_off);
     outputAt(engine, stream.pipe, optc_input_clock).* &= ~(input_clock_enable | input_clock_gate_off);
+    if (setting) mode.blankFetcher(engine, stream.fetcher, true, idle_wait_us);
     stage.* = tags.RTG_AMD_PIPE_STOPPED;
 
     linkAt(engine, stream.front, dig_fifo).* &= ~fifo_enable;
@@ -433,9 +521,11 @@ pub fn down(engine: dcn.Engine, controller: *dmub.Controller, stream: *const Str
 }
 
 /// The pipe brought up again, as the file's header says, `stage` moved
-/// on as it goes: RTGERR_OK, RTGERR_TIMEOUT where a clock did not come or
-/// the controller did not take a table.
-pub fn up(engine: dcn.Engine, controller: *dmub.Controller, stream: *const Stream, stage: *u32) i32 {
+/// on as it goes - for a mode set the mode written as the clocks come on
+/// and the fetcher let go of once the timing generator runs:
+/// RTGERR_OK, RTGERR_TIMEOUT where a clock did not come or the controller
+/// did not take a table.
+pub fn up(engine: dcn.Engine, controller: *dmub.Controller, stream: *const Stream, setting: ?*const mode.Mode, stage: *u32) i32 {
     const input = outputAt(engine, stream.pipe, optc_input_clock);
     input.* |= input_clock_enable | input_clock_gate_off;
     if (!until(engine, input, input_clock_on, input_clock_on, clock_wait_us)) return err.RTGERR_TIMEOUT;
@@ -446,11 +536,16 @@ pub fn up(engine: dcn.Engine, controller: *dmub.Controller, stream: *const Strea
     if (!dmub.runTable(engine, controller, dmub.table_pixel_clock, &clock)) return err.RTGERR_TIMEOUT;
     const resync = clockAt(engine, phypll_resync[stream.phy]);
     resync.* = (resync.* & ~resync_deep_color) | (stream.resync & resync_deep_color);
+    if (setting) |new| {
+        mode.writeTiming(engine, stream.pipe, new);
+        mode.writePlane(engine, stream.fetcher, mode.outputOf(engine, stream.pipe), new);
+    }
     stage.* = tags.RTG_AMD_PIPE_CLOCKED;
 
     at(engine, vtg_control + stream.pipe).* |= vtg_enable;
     pipeAt(engine, stream.pipe, otg_control).* |= otg_master_enable;
     dcn.pause(engine.sys, stream.frame_us);
+    if (setting != null) mode.blankFetcher(engine, stream.fetcher, false, 0);
     stage.* = tags.RTG_AMD_PIPE_STARTED;
 
     tellMode(engine, stream);
@@ -458,6 +553,11 @@ pub fn up(engine: dcn.Engine, controller: *dmub.Controller, stream: *const Strea
     if (!dmub.runTable(engine, controller, dmub.table_encoder, &setup)) return err.RTGERR_TIMEOUT;
     const front = linkAt(engine, stream.front, dig_front);
     front.* = (front.* & ~front_packing) | (stream.front_control & front_packing);
+    if (stream.avi) |*frame| {
+        linkAt(engine, stream.front, hdmi_double_buffer).* |= double_buffer_off;
+        linkAt(engine, stream.front, afmt_control).* |= audio_clock_on;
+        writePacket(engine, stream.front, frame);
+    }
     // The mute stays on until the PHY carries the stream again.
     for (kept, stream.kept, 0..) |offset, value, index| {
         const mute = if (index == kept.len - 1 and stream.hdmi) gc_avmute else 0;
@@ -501,6 +601,132 @@ fn startFifo(engine: dcn.Engine, stream: *const Stream) void {
     fifo.* |= fifo_enable;
 }
 
+/// The packet `frame` - an infoframe as rtg.library builds one - into
+/// the front end's packet generator as its first packet, taken up at
+/// once (vpg3_update_generic_info_packet): a conflict with the hardware
+/// reading the packets waited out a while and cleared, its header's
+/// three bytes and a fourth of 0, then its checksum and bytes from the
+/// first data word on, eight words in all. Its memory is kept awake
+/// first.
+fn writePacket(engine: dcn.Engine, front: u32, frame: *const [sdk.rtg.RTG_AVI_BYTES]u8) void {
+    const power = linkAt(engine, front, vpg_memory_power);
+    power.* = (power.* & ~vpg_asleep) | vpg_awake;
+    _ = until(engine, linkAt(engine, front, vpg_status), vpg_conflict, 0, vpg_wait_us);
+    linkAt(engine, front, vpg_status).* |= vpg_conflict_clear;
+    linkAt(engine, front, vpg_access).* = 0;
+    const words = packetWords(frame);
+    const data = linkAt(engine, front, vpg_data);
+    for (words) |word| data.* = word;
+    linkAt(engine, front, vpg_immediate).* |= vpg_first_now;
+}
+
+/// An infoframe as the packet generator's data register takes it: the
+/// header's three bytes and a 0, then the checksum and the bytes, the
+/// rest 0.
+pub fn packetWords(frame: *const [sdk.rtg.RTG_AVI_BYTES]u8) [9]u32 {
+    var body: [32]u8 = @splat(0);
+    @memcpy(body[0 .. frame.len - 3], frame[3..]);
+    var words: [9]u32 = undefined;
+    words[0] = @as(u32, frame[0]) | @as(u32, frame[1]) << 8 | @as(u32, frame[2]) << 16;
+    for (words[1..], 0..) |*word, index| {
+        const at_byte = index * 4;
+        word.* = @as(u32, body[at_byte]) | @as(u32, body[at_byte + 1]) << 8 | @as(u32, body[at_byte + 2]) << 16 | @as(u32, body[at_byte + 3]) << 24;
+    }
+    return words;
+}
+
+/// The stream read before the pipe went down turned to the new mode's:
+/// its pixel clock and the PLL's - 8 bits a colour, no deep colour - the
+/// PHY's symbol clock and a frame's time; the link's kind, HDMI or DVI,
+/// for the back end and the tables; on HDMI the front end's controls set
+/// up as an HDMI stream's (the file's header) and the AVI infoframe
+/// `avi` to send, on DVI the first generic packet no longer sent.
+/// RTGERR_OK, RTGERR_NOT_SUPPORTED for a pixel clock the link is not
+/// taken at.
+pub fn retarget(stream: *Stream, new: *const mode.Mode, hdmi: bool, avi: ?*const [sdk.rtg.RTG_AVI_BYTES]u8) i32 {
+    stream.hdmi = hdmi;
+    stream.deep_color = 0;
+    stream.pixel_100hz = new.pixel_hz / 100;
+    stream.pll_100hz = stream.pixel_100hz;
+    stream.symbol_khz = stream.pll_100hz / 10;
+    stream.frame_us = mode.frameUs(new);
+    if (stream.symbol_khz > fastest_tmds_khz) return err.RTGERR_NOT_SUPPORTED;
+    if (!hdmi and stream.symbol_khz > fastest_dvi_khz) return err.RTGERR_NOT_SUPPORTED;
+    stream.back_control = (stream.back_control & ~back_mode_mask) | ((if (hdmi) mode_hdmi else mode_dvi) << back_mode_shift);
+    stream.resync &= ~resync_deep_color;
+    const kept_values = &stream.kept;
+    const generics = &kept_values[keptAt(hdmi_generic)];
+    if (!hdmi) {
+        generics.* &= ~generic0_sent;
+        stream.avi = null;
+        return err.RTGERR_OK;
+    }
+    const control = &kept_values[keptAt(hdmi_control)];
+    control.* = (control.* & ~hdmi_setup_mask) | hdmi_setup;
+    const vbi = &kept_values[keptAt(hdmi_vbi)];
+    vbi.* = (vbi.* | vbi_sent) & ~vbi_acp;
+    kept_values[keptAt(hdmi_infoframe)] |= audio_info_send;
+    const audio_line = &kept_values[keptAt(hdmi_infoframe_line)];
+    audio_line.* = (audio_line.* & ~audio_info_line_mask) | (packet_line << 8);
+    stream.avi = if (avi) |frame| frame.* else null;
+    if (stream.avi == null) {
+        generics.* &= ~generic0_sent;
+        return err.RTGERR_OK;
+    }
+    generics.* |= generic0_sent;
+    const generic_line = &kept_values[keptAt(hdmi_generic_line)];
+    generic_line.* = (generic_line.* & ~generic0_line_mask) | packet_line;
+    return err.RTGERR_OK;
+}
+
+/// A mode set: the stream taken - with the pixel clock the board's mode
+/// had, `old_pixel_hz`, or the new one's where that is not known - the
+/// pipe down, the stream turned to the new mode (`retarget`), the pipe
+/// up in it, and three frames later whether the fetcher or the output ran
+/// short; `into` filled in as RTGCTRL_AMD_PIPE fills it, with the mode's
+/// picture and that. The controller runs.
+pub fn set(engine: dcn.Engine, controller: *dmub.Controller, on: monitor.Connector, new: *const mode.Mode, hdmi: bool, avi: ?*const [sdk.rtg.RTG_AVI_BYTES]u8, old_pixel_hz: u32, into: *tags.RtgAmdPipe) i32 {
+    into.* = .{};
+    if (!controller.running) return err.RTGERR_NOT_SUPPORTED;
+    var stream: Stream = .{};
+    const taken = take(engine, on, if (old_pixel_hz != 0) old_pixel_hz else new.pixel_hz, &stream);
+    into.pipe = engine.pipe;
+    into.width = new.width;
+    into.height = new.height;
+    if (taken != err.RTGERR_OK) return taken;
+    stream.fetcher = engine.fetcher;
+    var target = stream;
+    const turned = retarget(&target, new, hdmi, avi);
+    if (turned != err.RTGERR_OK) return turned;
+    into.front = stream.front;
+    into.back = stream.back;
+    into.phy = stream.phy;
+    into.link = if (hdmi) tags.RTG_AMD_LINK_HDMI else tags.RTG_AMD_LINK_DVI;
+    into.pixel_khz = target.pixel_100hz / 10;
+    into.symbol_khz = target.symbol_khz;
+    into.transmitter_revision = stream.transmitter_revision;
+    read(engine, &stream, &into.before);
+    into.stage = tags.RTG_AMD_PIPE_TAKEN;
+
+    const started = engine.sys.UptimeUs();
+    const went_down = down(engine, controller, &stream, true, &into.stage);
+    read(engine, &stream, &into.down);
+    if (went_down != err.RTGERR_OK) return went_down;
+    const came_up = up(engine, controller, &target, new, &into.stage);
+    into.down_us = @intCast(@min(engine.sys.UptimeUs() - started, 0xffff_ffff));
+    read(engine, &target, &into.after);
+    if (came_up != err.RTGERR_OK) return came_up;
+
+    mode.clearUnderflow(engine, target.fetcher);
+    const input = outputAt(engine, target.pipe, optc_input_global);
+    input.* |= optc_underflow_clear;
+    input.* &= ~optc_underflow_clear;
+    dcn.pause(engine.sys, 3 * target.frame_us);
+    if (mode.fetcherControl(engine, target.fetcher) & mode.hubp_underflow != 0) into.underflow |= tags.RTG_AMD_UNDERFLOW_FETCHER;
+    if (input.* & optc_underflow != 0) into.underflow |= tags.RTG_AMD_UNDERFLOW_OUTPUT;
+    return err.RTGERR_OK;
+}
+
 /// RTGCTRL_AMD_PIPE: the stream taken, the pipe down and up again,
 /// `into` filled in. The controller runs.
 pub fn cycle(engine: dcn.Engine, controller: *dmub.Controller, on: monitor.Connector, pixel_clock_hz: u32, into: *tags.RtgAmdPipe) i32 {
@@ -522,13 +748,72 @@ pub fn cycle(engine: dcn.Engine, controller: *dmub.Controller, on: monitor.Conne
     into.stage = tags.RTG_AMD_PIPE_TAKEN;
 
     const started = engine.sys.UptimeUs();
-    const went_down = down(engine, controller, &stream, &into.stage);
+    const went_down = down(engine, controller, &stream, false, &into.stage);
     read(engine, &stream, &into.down);
     if (went_down != err.RTGERR_OK) return went_down;
-    const came_up = up(engine, controller, &stream, &into.stage);
+    const came_up = up(engine, controller, &stream, null, &into.stage);
     into.down_us = @intCast(@min(engine.sys.UptimeUs() - started, 0xffff_ffff));
     read(engine, &stream, &into.after);
     return came_up;
+}
+
+test "an infoframe's words: its header, then its checksum and body" {
+    const testing = @import("std").testing;
+    // 1920x1080 at 60 (VIC 16), RGB, full range.
+    var frame: [sdk.rtg.RTG_AVI_BYTES]u8 = @splat(0);
+    frame[0] = 0x82;
+    frame[1] = 2;
+    frame[2] = 13;
+    frame[3] = 0x37;
+    frame[4] = 0x10;
+    frame[5] = 0x28;
+    frame[6] = 0x08;
+    frame[7] = 16;
+    const words = packetWords(&frame);
+    try testing.expectEqual(@as(u32, 0x000D0282), words[0]);
+    try testing.expectEqual(@as(u32, 0x08281037), words[1]);
+    try testing.expectEqual(@as(u32, 16), words[2]);
+    for (words[3..]) |word| try testing.expectEqual(@as(u32, 0), word);
+}
+
+test "a stream turned to HDMI sends its infoframe each frame, one to DVI none" {
+    const testing = @import("std").testing;
+    const own: sdk.rtg.RtgTimings = .{
+        .pixel_clock_hz = 241_500_000,
+        .h_active = 2560,
+        .h_front = 48,
+        .h_sync = 32,
+        .h_back = 80,
+        .v_active = 1440,
+        .v_front = 3,
+        .v_sync = 5,
+        .v_back = 33,
+    };
+    const new = mode.of(own, 2560, 1440, .{ .display_khz = 1_200_000, .pipes_khz = 1_200_000, .pitch = 2560, .watermark = 0 }) orelse return error.TestUnexpectedResult;
+    var frame: [sdk.rtg.RTG_AVI_BYTES]u8 = @splat(0);
+    frame[0] = 0x82;
+    var stream: Stream = .{ .deep_color = 2, .back_control = 0x10030200, .resync = resync_deep_color };
+    stream.kept[keptAt(hdmi_generic)] = 0x88888888;
+    try testing.expectEqual(err.RTGERR_OK, retarget(&stream, &new, true, &frame));
+    try testing.expectEqual(@as(u32, 2_415_000), stream.pixel_100hz);
+    try testing.expectEqual(@as(u32, 241_500), stream.symbol_khz);
+    try testing.expectEqual(@as(u32, 0), stream.deep_color);
+    try testing.expectEqual(@as(u32, 0), stream.resync & resync_deep_color);
+    try testing.expectEqual(mode_hdmi, (stream.back_control & back_mode_mask) >> back_mode_shift);
+    try testing.expectEqual(hdmi_setup, stream.kept[keptAt(hdmi_control)] & hdmi_setup_mask);
+    try testing.expectEqual(vbi_sent, stream.kept[keptAt(hdmi_vbi)] & (vbi_sent | vbi_acp));
+    try testing.expectEqual(@as(u32, 0x8888888B), stream.kept[keptAt(hdmi_generic)]);
+    try testing.expectEqual(packet_line, stream.kept[keptAt(hdmi_generic_line)] & generic0_line_mask);
+    try testing.expect(stream.avi != null);
+
+    try testing.expectEqual(err.RTGERR_NOT_SUPPORTED, retarget(&stream, &new, false, null));
+    var slower = own;
+    slower.pixel_clock_hz = 148_500_000;
+    const dvi = mode.of(slower, 2560, 1440, .{ .display_khz = 1_200_000, .pipes_khz = 1_200_000, .pitch = 2560, .watermark = 0 }) orelse return error.TestUnexpectedResult;
+    try testing.expectEqual(err.RTGERR_OK, retarget(&stream, &dvi, false, &frame));
+    try testing.expectEqual(mode_dvi, (stream.back_control & back_mode_mask) >> back_mode_shift);
+    try testing.expectEqual(@as(u32, 0x88888888), stream.kept[keptAt(hdmi_generic)]);
+    try testing.expect(stream.avi == null);
 }
 
 test "the pixel clock grows with the deep colour" {

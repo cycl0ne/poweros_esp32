@@ -852,6 +852,13 @@ read; HDMI and DVI on a single link up to 340 MHz, RGB or 4:4:4. A flip
 waits while the pipe is down. `C:test/Gpu CYCLE` does it with the
 watchdog armed, the picture's checksum before and after; on the NucBox
 the pipe is down and up again in a quarter of a second.
+`RTGCTRL_AMD_MODE` fills an `RtgAmdPipe` with what the last mode set did
+(see the board below): the picture's size, the link's kind, the clocks,
+how far it got, how long the pipe was down, and whether the fetcher or
+the output ran short of pixels in the three frames after it.
+`C:test/Gpu MODES [HOLD n]` shows every mode the board offers in turn,
+each with a test picture of its size, and prints that and the picture's
+checksum for each, then puts the board back in the mode it was in.
 
 The numbers say a lot about a picture that misbehaves. A part of the glass
 that is out of date while `refreshes` stands still was never handed on; one
@@ -1466,7 +1473,7 @@ hardware.
 | VisionFive 2 on HDMI, the monitor's mode | `jh7110` | the JH7110's display controller reads RAM every frame and sends it through the chip's HDMI transmitter; the driver switches on the display's power domain, its clocks and resets, reads the monitor's EDID over the transmitter's DDC, and sets the transmitter's PHY and the controller for the mode | composed by rtg.library into one of two frames, which the controller is flipped between |
 | Compute Module 5 on its first HDMI port, the monitor's mode | `bcm2712` | the BCM2712's video scaler reads RAM every frame wherever its display list says the picture is, and sends it out through the pixel valve and the HDMI controller | composed by rtg.library into one of two frames, which the scaler is flipped between |
 | Compute Module 4 on its first HDMI port, the firmware's mode | `bcm2711` | the BCM2711's video scaler reads RAM every frame through a display list of the driver's own on the channel the firmware feeds the port from; the pixel valve and the HDMI controller stay as the firmware set them | as the Compute Module 5's |
-| a PC with an AMD display, the firmware's mode | `amd` | the display engine that reads the framebuffer the firmware lit, flipped between that buffer and a frame of the device's own memory, both written through write-combining | composed by rtg.library into those two frames |
+| a PC with an AMD display, the firmware's mode, and every mode the monitor names once its display controller runs | `amd` | the display engine that reads the framebuffer the firmware lit, flipped between that buffer and a frame of the device's own memory, both written through write-combining | composed by rtg.library into those two frames |
 | a PC's firmware framebuffer, QEMU's q35 | `fw` | the framebuffer the UEFI firmware lit, which reads the one buffer it was given | composed by rtg.library straight into it, at the firmware's row length |
 | QEMU's virt machines with `-device ramfb` | `fw` | the emulator reads the shown buffer out of RAM at every refresh of its window; the buffer's address, size, pitch and format are written to the file `etc/ramfb` of the machine's firmware configuration device | one whole buffer read by the emulator; else composed by rtg.library into a frame of the driver's |
 | QEMU's virtio GPU, on a memory-mapped transport or on PCI | `virtio` | each picture is copied into the emulator's copy of a frame, and the window is told which frame to show | composed by rtg.library into one of two frames |
@@ -1673,10 +1680,32 @@ senses a monitor and its EDID - on HDMI and DVI over the DDC line by
 the display engine's I2C engine, on DisplayPort by I2C over the line's
 AUX channel, 16 bytes at a time - so `C:Rtg` and
 `GetBoardMonitor` name the monitor; a monitor plugged in or pulled out
-raises the line's interrupt, which has the library look again. The
-board makes one timing, the firmware's: of the timings the monitor names,
+raises the line's interrupt, which has the library look again. Until
+the display controller runs (`C:test/Gpu DMCUB START`) the board makes
+one timing, the firmware's: of the timings the monitor names,
 `check_mode` takes the one with the picture, line and frame the pipe
 scans, and the board stays in it.
+
+Once the controller runs, `check_mode` takes every progressive timing
+the monitor names whose picture fits the frames the board reads from,
+up to 340 MHz on HDMI and 165 MHz on DVI, and a show in another mode
+sets the pipe to it. The display's clocks are held at the top of their
+levels first, then the pipe is taken down as `RTGCTRL_AMD_PIPE` takes
+it, its fetcher blanked, and brought up in the new mode: the timing
+generator's totals, blanking, syncs and global sync, the fetcher's
+viewport and schedule, the scaler passing the picture through at its
+own size, the output's size, and the pixel clock and the stream by the
+video BIOS's tables. The link is HDMI where the monitor's EDID says it
+takes HDMI - so its sound goes on in any mode - with the mode's AVI
+infoframe sent each frame, DVI otherwise. The fetcher's schedule is
+worked out for one plane of 32-bit pixels, unscaled, read at the
+device's physical addresses at the clocks held: when in the blank it
+starts, how many lines ahead it fetches, and how its requests are paced
+in the hub's 24 MHz reference. The hub's watermarks stay as the firmware
+set them, the fetcher's time to urgency switched off as it left it. A
+mode set is said on the log, with how long the pipe was down; the
+frames keep their size and rows, so a mode larger than the firmware's
+is not offered.
 
 **Video layers.** On the VisionFive 2 the layer is the DC8200's first
 overlay: NV12 and I420, BT.601 and BT.709, video's range and the whole

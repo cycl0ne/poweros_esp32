@@ -4,12 +4,13 @@
 //! controller read or started, its hot-plug lines and notifications
 //! counted, an AUX read through it, a monitor's EDID read over its DDC
 //! line, the picture's checksum read, the display's pipe taken down and
-//! brought up again in its mode, its security
+//! brought up again in its mode or put in each mode it offers, its security
 //! processor started and the video decoder's firmware loaded by it, the
 //! display's interrupt at each frame counted, or one flip of the picture
 //! the display reads. Built against the SDK only.
 //!
-//!   Gpu TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,WATCHDOG/K/N
+//!   Gpu TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,
+//!       WATCHDOG/K/N
 //!
 //! BIOS prints the device's video BIOS image (GetGPUBios): where it is
 //! and how long, its tables' header's version, the version of each of
@@ -87,7 +88,29 @@
 //! at the most), and the pipe taken down right after. The watchdog is
 //! armed for it.
 //!
-//! Without BIOS, CLOCKS, DMCUB, CRC, EVENTS, AUX, EDID, CYCLE, FRAMES or FLIP the two files are read from
+//! MODES puts the display's board in each mode it offers, in turn, and
+//! back in the one it was in. First the board's settings line is applied
+//! as it stands (SetBoardSettings), which has the board's modes made
+//! again of what the monitor names - all it can make once DMCUB START has
+//! started the display controller, the one it scans before. Each mode is
+//! shown with a picture of its own size: eight bars of colour, a white
+//! frame round the edge. Printed for each are the mode, how its set went
+//! (RTGCTRL_AMD_MODE: the link, the pixel clock, how far it got, how long
+//! the pipe was down, whether the fetcher or the output ran short of
+//! pixels) and the picture's checksum read twice, a few frames after the
+//! show and again more than a frame later, which should be the same; then it is held HOLD seconds (2 unless given) for
+//! a look at the monitor. Ctrl-C stops after the mode shown. The watchdog
+//! is armed for it and fed after each mode.
+//!
+//! DUMP prints LENGTH (16 unless given, at most 512) of the display
+//! engine's registers from DUMP on, in 32-bit words from the engine's
+//! address SEGMENT (2 unless given: the one its pipes, links and
+//! endpoints are counted from; 1 is its clocks'). Read only, but a
+//! register of a block switched off can stop the machine: the watchdog
+//! is armed for it.
+//!
+//! Without BIOS, CLOCKS, DMCUB, CRC, EVENTS, AUX, EDID, CYCLE, MODES,
+//! DUMP, FRAMES or FLIP the two files are read from
 //! DEVS:firmware/amdgpu/, named for the blocks that use them as the
 //! device's table gives their versions - psp_13_0_4_toc.bin for the
 //! security processor 13.0.4, vcn_4_0_2.bin for the video decoder 4.0.2 -
@@ -141,10 +164,10 @@ const rtg = sdk.rtg;
 const RtgBase = sdk.interface.rtg.RtgBase;
 
 pub const COMMAND_NAME = "Gpu";
-const VERSION_STRING = "\x00$VER: Gpu 1.8 (26.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Gpu 1.10 (26.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,WATCHDOG/K/N";
+const template = "TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,WATCHDOG/K/N";
 const arg_toc = 0;
 const arg_firmware = 1;
 const arg_frames = 2;
@@ -166,8 +189,12 @@ const arg_connector = 17;
 const arg_pipe = 18;
 const arg_fetcher = 19;
 const arg_cycle = 20;
-const arg_watchdog = 21;
-const arg_count = 22;
+const arg_dump = 21;
+const arg_segment = 22;
+const arg_modes = 23;
+const arg_hold = 24;
+const arg_watchdog = 25;
+const arg_count = 26;
 
 /// Where the files are.
 const directory = "DEVS:firmware/amdgpu/";
@@ -753,6 +780,171 @@ fn pipeCycle(sys: *ExecBase, dl: *DosBase, millis: u32) i32 {
     return if (result == rtg.errors.RTGERR_OK) dos.RETURN_OK else dos.RETURN_ERROR;
 }
 
+/// MODES: the board put in each mode it offers, in turn, a picture of
+/// the mode's own shown in it, what the set did and the checksum printed,
+/// each held `seconds`; then back in the mode it was in, showing
+/// what it showed.
+fn everyMode(sys: *ExecBase, dl: *DosBase, millis: u32, seconds: u32) i32 {
+    const base = sys.OpenLibrary(rtg.RTGNAME, rtg.RTG_VERSION) orelse {
+        _ = Printf(dl, "No %s\n", .{rtg.RTGNAME});
+        return dos.RETURN_FAIL;
+    };
+    defer sys.CloseLibrary(base);
+    const rb: *RtgBase = @ptrCast(base);
+    const board = amdBoard(dl, rb) orelse return dos.RETURN_WARN;
+    const wb = arm(sys, dl, millis) orelse return dos.RETURN_FAIL;
+    defer wb.DisarmWatchdog();
+
+    // The board's line applied as it stands: its modes made again.
+    var line: rtg.RtgSettings = .{};
+    _ = rb.GetBoardSettings(board, &line, @sizeOf(rtg.RtgSettings));
+    _ = rb.SetBoardSettings(board, &line);
+    wb.FeedWatchdog();
+    var list: [modes_most]rtg.RtgMode = undefined;
+    const count = @min(rb.GetBoardModes(board, &list, modes_most), modes_most);
+    var was: u32 = 0;
+    for (list[0..count]) |*one| {
+        if (one.flags & rtg.modes.RTGMF_CURRENT != 0) was = one.id;
+    }
+    const before = rb.BoardDisplayBitMap(board);
+    _ = Printf(dl, "%u modes\n", .{count});
+
+    var failed: u32 = 0;
+    // A picture is given back once another is shown: the board does not
+    // let go of the one it reads.
+    var shown_before: ?*rtg.RtgBitMap = null;
+    defer if (shown_before) |last| rb.FreeBitMap(last);
+    for (list[0..count]) |*one| {
+        if (dl.CheckSignal(exec.SIGBREAKF_CTRL_C) != 0) break;
+        const name: [*:0]const u8 = @ptrCast(&one.name);
+        _ = Printf(dl, "%-14s %4ux%-4u %3u.%03u Hz %6u kHz: ", .{ name, one.width, one.height, one.refresh_mhz / 1000, one.refresh_mhz % 1000, one.pixel_clock_hz / 1000 });
+        const picture = rb.AllocBitMap(board, one.width, one.height, @intFromEnum(one.format), rtg.bitmaps.RTGBMF_DISPLAYABLE) orelse {
+            _ = Printf(dl, "no room for its picture\n", .{});
+            failed += 1;
+            continue;
+        };
+        bars(picture);
+        _ = rb.RefreshRect(picture, null);
+
+        var account_before: rtg.tags.RtgAmdPipe = .{};
+        _ = rb.BoardControl(board, rtg.tags.RTGCTRL_AMD_MODE, @bitCast(@intFromPtr(&account_before)));
+        const band = [_]rtg.RtgBand{.{ .bitmap = picture }};
+        const shown = rb.ShowBoard(board, one.id, &band, band.len);
+        wb.FeedWatchdog();
+        if (shown == rtg.errors.RTGERR_OK) {
+            if (shown_before) |old| rb.FreeBitMap(old);
+            shown_before = picture;
+        } else {
+            rb.FreeBitMap(picture);
+        }
+        var account: rtg.tags.RtgAmdPipe = .{};
+        _ = rb.BoardControl(board, rtg.tags.RTGCTRL_AMD_MODE, @bitCast(@intFromPtr(&account)));
+        if (shown != rtg.errors.RTGERR_OK) {
+            _ = Printf(dl, "not shown: %s, set stopped at stage %u\n", .{ rb.RtgErrorText(shown), account.stage });
+            failed += 1;
+            continue;
+        }
+        if (sameAccount(&account_before, &account)) {
+            _ = Printf(dl, "the mode the pipe scanned, not set; ", .{});
+        } else {
+            const link: [*:0]const u8 = if (account.link == rtg.tags.RTG_AMD_LINK_HDMI) "HDMI" else "DVI";
+            _ = Printf(dl, "set on %s at %u kHz, down %u us%s; ", .{
+                link,
+                account.pixel_khz,
+                account.down_us,
+                @as([*:0]const u8, if (account.underflow & rtg.tags.RTG_AMD_UNDERFLOW_FETCHER != 0) ", the fetcher ran short" else if (account.underflow != 0) ", the output ran short" else ""),
+            });
+            if (account.underflow != 0) failed += 1;
+        }
+        // Read a few frames on, then again more than a frame later.
+        var first: rtg.tags.RtgAmdCrc = .{};
+        var second: rtg.tags.RtgAmdCrc = .{};
+        dl.Delay(8);
+        const read_first = rb.BoardControl(board, rtg.tags.RTGCTRL_AMD_CRC, @bitCast(@intFromPtr(&first)));
+        dl.Delay(3);
+        const read_second = rb.BoardControl(board, rtg.tags.RTGCTRL_AMD_CRC, @bitCast(@intFromPtr(&second)));
+        if (read_first != rtg.errors.RTGERR_OK or read_second != rtg.errors.RTGERR_OK) {
+            _ = Printf(dl, "no checksum\n", .{});
+        } else {
+            const same = first.red == second.red and first.green == second.green and first.blue == second.blue;
+            _ = Printf(dl, "checksum %04x %04x %04x%s\n", .{ second.red, second.green, second.blue, @as([*:0]const u8, if (same) "" else " CHANGING") });
+            if (!same) failed += 1;
+        }
+        hold(dl, wb, 2 * seconds);
+    }
+
+    // The mode it was in, showing what it showed; the last picture is
+    // given back after.
+    if (before) |picture| {
+        const band = [_]rtg.RtgBand{.{ .bitmap = picture }};
+        const back = rb.ShowBoard(board, was, &band, band.len);
+        if (back != rtg.errors.RTGERR_OK) _ = Printf(dl, "Not put back: %s\n", .{rb.RtgErrorText(back)});
+    }
+    _ = Printf(dl, "%u of %u modes failed\n", .{ failed, count });
+    return if (failed == 0) dos.RETURN_OK else dos.RETURN_ERROR;
+}
+
+/// The most modes MODES goes through.
+const modes_most = 32;
+
+/// Whether two of the board's accounts of a mode set are the same: no
+/// set came between them.
+fn sameAccount(a: *const rtg.tags.RtgAmdPipe, b: *const rtg.tags.RtgAmdPipe) bool {
+    const left: [*]const u8 = @ptrCast(a);
+    const right: [*]const u8 = @ptrCast(b);
+    for (0..@sizeOf(rtg.tags.RtgAmdPipe)) |index| {
+        if (left[index] != right[index]) return false;
+    }
+    return true;
+}
+
+/// A picture of a mode's: eight bars of colour across it and a white
+/// frame round its edge, a pixel wide. In 32 bits a pixel only; another
+/// format is left as it is.
+fn bars(picture: *rtg.RtgBitMap) void {
+    if (picture.format != .bgra32) return;
+    const colours = [_]u32{ 0xFFFFFF, 0xFFFF00, 0x00FFFF, 0x00FF00, 0xFF00FF, 0xFF0000, 0x0000FF, 0x202020 };
+    const pixels = picture.pixels orelse return;
+    var row: u32 = 0;
+    while (row < picture.height) : (row += 1) {
+        const line: [*]u32 = @ptrCast(@alignCast(pixels + @as(usize, row) * picture.pitch));
+        var column: u32 = 0;
+        while (column < picture.width) : (column += 1) {
+            const edge = row == 0 or row == picture.height - 1 or column == 0 or column == picture.width - 1;
+            line[column] = 0xFF000000 | (if (edge) 0xFFFFFF else colours[@as(usize, column) * colours.len / picture.width]);
+        }
+    }
+}
+
+/// `length` of the display engine's registers from `first` on, counted
+/// from its address `segment`, the watchdog armed; printed eight a line.
+fn dump(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUInfo, millis: u32, segment: u32, first: u32, length: u32) i32 {
+    var block: amdgpu.GPUBlock = .{};
+    if (!ab.FindGPUBlock(amdgpu.GPUBLOCK_DISPLAY, 0, &block) or segment >= block.count) {
+        _ = Printf(dl, "The device has no display engine's address %u\n", .{segment});
+        return dos.RETURN_WARN;
+    }
+    const words = @min(length, dump_most);
+    const end = (@as(u64, block.addresses[segment]) + first + words) * 4;
+    if (end > info.registers_bytes) {
+        _ = Printf(dl, "Words %u to %u from address %u are past the registers' end\n", .{ first, first + words, segment });
+        return dos.RETURN_WARN;
+    }
+    const wb = arm(sys, dl, millis) orelse return dos.RETURN_FAIL;
+    defer wb.DisarmWatchdog();
+    var index: u32 = 0;
+    while (index < words) : (index += 1) {
+        if (index % 8 == 0) _ = Printf(dl, "%s0x%04x:", .{ @as([*:0]const u8, if (index == 0) "" else "\n"), first + index });
+        const at: usize = @intCast(info.registers + (@as(u64, block.addresses[segment]) + first + index) * 4);
+        _ = Printf(dl, " %08lx", .{@as(u64, reg(at).*)});
+    }
+    _ = Printf(dl, "\n", .{});
+    return dos.RETURN_OK;
+}
+
+/// The most registers DUMP prints.
+const dump_most: u32 = 512;
+
 /// How long CYCLE waits for a picture to change by itself and then to
 /// hold, in ticks of 20 ms.
 const change_wait_ticks: u32 = 100;
@@ -833,6 +1025,12 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         return edidRead(sys, dl, millis, &request);
     }
     if (argv[arg_cycle] != 0) return pipeCycle(sys, dl, millis);
+    if (argv[arg_modes] != 0) return everyMode(sys, dl, millis, if (argv[arg_hold] != 0) number(argv[arg_hold]) else 2);
+    if (argv[arg_dump] != 0) {
+        const length = if (argv[arg_length] != 0) number(argv[arg_length]) else 16;
+        const segment = if (argv[arg_segment] != 0) number(argv[arg_segment]) else 2;
+        return dump(sys, dl, ab, info, millis, segment, number(argv[arg_dump]), length);
+    }
     if (argv[arg_frames] != 0 or argv[arg_flip] != 0) {
         const pipe = number(argv[arg_pipe]);
         const fetcher = number(argv[arg_fetcher]);

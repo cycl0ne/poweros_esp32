@@ -56,6 +56,12 @@ const message_version: u32 = 0x02;
 const message_address_high: u32 = 0x0e;
 const message_address_low: u32 = 0x0f;
 const message_table_out: u32 = 0x10;
+/// The display clock and the pipes' clock set, and the least the display
+/// controller's clock may run at: each in MHz, answered with the clock
+/// set.
+const message_display_clock: u32 = 0x04;
+const message_pipes_clock: u32 = 0x06;
+const message_least_controller_clock: u32 = 0x07;
 
 /// The manager's table of clock levels, by its number, and what the
 /// memory it is copied into starts on: a page, as the manager's tables
@@ -228,6 +234,39 @@ pub fn clocks(engine: dcn.Engine, mailbox: Mailbox, into: *rtg.tags.RtgAmdClocks
     return err.RTGERR_OK;
 }
 
+/// The display's clocks held at their top, as a mode is set: the levels
+/// read into `into`, the display controller's clock (DCFCLK) told its
+/// top level is the least it runs at, the display clock and the pipes'
+/// clock set to their top level where they run below it, and what runs
+/// then read again. RTGERR_OK, or what `clocks` answers; RTGERR_IO for a
+/// table without levels or a message refused, `into.message` the one.
+pub fn holdTop(engine: dcn.Engine, mailbox: Mailbox, into: *rtg.tags.RtgAmdClocks) isize {
+    const read = clocks(engine, mailbox, into);
+    if (read != err.RTGERR_OK) return read;
+    if (into.dcf_count == 0 or into.disp_count == 0) return err.RTGERR_IO;
+    const steps = [_]struct { message: u32, mhz: u32, running_khz: u32 }{
+        .{ .message = message_least_controller_clock, .mhz = top(into.dcf_mhz[0..into.dcf_count]), .running_khz = 0 },
+        .{ .message = message_display_clock, .mhz = top(into.disp_mhz[0..into.disp_count]), .running_khz = into.disp_khz },
+        .{ .message = message_pipes_clock, .mhz = top(into.dpp_mhz[0..into.disp_count]), .running_khz = into.dpp_khz },
+    };
+    for (steps) |step| {
+        if (step.running_khz >= step.mhz * 1000) continue;
+        const answer = send(engine.sys, mailbox, step.message, step.mhz) orelse return err.RTGERR_TIMEOUT;
+        into.answer = answer.answer;
+        into.message = step.message;
+        if (answer.answer != ANSWER_DONE) return err.RTGERR_IO;
+    }
+    running(engine, mailbox, into);
+    return err.RTGERR_OK;
+}
+
+/// The highest of a clock's levels.
+pub fn top(levels: []const u32) u32 {
+    var highest: u32 = 0;
+    for (levels) |level| highest = @max(highest, level);
+    return highest;
+}
+
 /// The clocks running now into `into`: the PLL's frequency from the
 /// generator, and the display clock and the pipes' clock from the
 /// engine's dividers. Read only; nothing where the generator is not
@@ -278,6 +317,13 @@ test "the PLL's frequency is the reference times its multiplier, fraction and al
     try testing.expectEqual(@as(u32, 3_624_000), pllKhz(75 | 0x8000 << 16));
     // Bits between the whole and the fraction are not the multiplier's.
     try testing.expectEqual(@as(u32, 3_600_000), pllKhz(75 | 0xf000));
+}
+
+test "a clock's top is its highest level, wherever it stands" {
+    // The box's display clock's levels.
+    try testing.expectEqual(@as(u32, 1200), top(&.{ 600, 685, 800, 800, 960, 960, 960, 1200 }));
+    try testing.expectEqual(@as(u32, 960), top(&.{ 200, 960, 800 }));
+    try testing.expectEqual(@as(u32, 0), top(&.{}));
 }
 
 test "a divider's number stands for quarters, halves and wholes by its range" {
