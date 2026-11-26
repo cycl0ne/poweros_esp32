@@ -48,7 +48,9 @@ const Sampler = @import("../sampler/_sampler.zig").Sampler;
 /// element 0 on (shader.Resources).
 ///
 /// Some kinds want a device that has them, others answering
-/// `error_feature_not_present`: a storage image `storage_images`, a texel
+/// `error_feature_not_present`: a storage image `storage_images` (every
+/// device since 1.217, the V3D's functions on the cores writing it where
+/// its TMU reads it), a texel
 /// buffer `texel_buffers`, a dynamic buffer `dynamic_descriptors` (and no
 /// more of them in one set than
 /// `PhysicalDeviceLimits.max_descriptor_set_dynamic_buffers`), and an
@@ -107,8 +109,9 @@ pub fn CreateDescriptorSetLayout(base: *FacetBase, device: *facet.Device, info: 
     for (given) |binding| {
         if (!_descriptor.known(binding.descriptor_type)) return .error_validation_failed;
         if (binding.binding > 255) return .error_feature_not_present;
-        // A storage image is written through the texture the library keeps,
-        // which a device with a layout of its own does not use.
+        // A storage image is written through a view's texture, which on a
+        // device with a layout of its own finds each texel where that
+        // device keeps it (`_image.deviceTexels`, since 1.217).
         if (binding.descriptor_type == .storage_image and !owner.physical.can.storage_images) return .error_feature_not_present;
         if (_descriptor.ofTexels(binding.descriptor_type) and !owner.physical.can.texel_buffers) return .error_feature_not_present;
         if (_descriptor.ofDynamic(binding.descriptor_type) and !owner.physical.can.dynamic_descriptors) return .error_feature_not_present;

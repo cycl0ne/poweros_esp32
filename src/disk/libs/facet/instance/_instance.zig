@@ -234,7 +234,9 @@ pub const Capabilities = extern struct {
     /// (v3dvx_formats.c:204, v3dv_formats.c:273-276), and the V3D here
     /// with it (since 1.142).
     filtered_depth: bool = false,
-    /// `storage_image` descriptors, and the texel buffer kinds.
+    /// `storage_image` descriptors: every device since 1.217, the V3D's
+    /// written by the functions the cores run beside it, where its TMU
+    /// reads them (`_image.deviceTexels`). And the texel buffer kinds.
     storage_images: bool = false,
     texel_buffers: bool = false,
     /// `uniform_buffer_dynamic` and `storage_buffer_dynamic`: a buffer

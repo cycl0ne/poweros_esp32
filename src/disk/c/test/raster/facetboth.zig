@@ -30,6 +30,10 @@
 //! subpassLoad of an image a first subpass drew into and the pass does
 //! not keep, read by a second subpass at each pixel's own place: the V3D
 //! fetches it through the TMU where the first subpass's frame stored it.
+//! The texture stored by a function (since 1.76) is written by a compute
+//! function of the program's, each group a texel, and drawn: on the V3D
+//! the function runs on the cores, which write each texel where its TMU
+//! reads it, and the draw samples it there.
 //! The cases of
 //! no colour (since 1.18) draw a depth alone, then look at it in a pass of
 //! colour: a shadow map sampled, or a subpass after it tested against it;
@@ -157,7 +161,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.75 (25.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.76 (26.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -9188,6 +9192,8 @@ const branch_unoptimized = [_]u32{
 const plain_entries = [_]shader.Entry{
     shader.compute("vertices", &computeVertices),
     shader.compute("numbers", &computeNumbers),
+    // A storage image's texels, a group each (since 1.76).
+    shader.compute("stored", &storedTexels),
     shader.control("even", levelsOf(.{ 4, 4, 4, 4 }, .{ 4, 4 }), 0),
     shader.control("uneven", levelsOf(.{ 2, 3, 5, 7 }, .{ 3, 6 }), 0),
     shader.control("lines", levelsOf(.{ 5, 12, 1, 1 }, .{ 1, 1 }), 0),
@@ -9231,6 +9237,21 @@ const words = [_]shader.Spirv{.{}} ** plain_entries.len ++ shipped_words;
 const code = shader.Module{ .entry_count = entries.len, .entries = &entries, .spirv = &words, .spirv_count = words.len };
 
 const texture_side: u32 = 64;
+/// The sides of the texture "stored by a function" writes (since 1.76).
+const stored_side: u32 = 64;
+
+/// "stored": a group a texel of the storage image at set 0 binding 0, a
+/// pattern of its place that no copy put there, which the case then
+/// draws. A check of 8 texels a side, the red the column's where it is
+/// not set and the green the row's (since 1.76).
+fn storedTexels(groups: *const shader.Groups) callconv(.c) void {
+    const image = groups.resources.written(0, 0, 0) orelse return;
+    const x = groups.group[0];
+    const y = groups.group[1];
+    const check = ((x >> 3) ^ (y >> 3)) & 1;
+    const high: u32 = if (check != 0) 0xE0 else x * 4;
+    image.setColor(0, 0, x, y, 0xFF00_0080 | high << 16 | (y * 4) << 8);
+}
 const picture_usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_TRANSFER_SRC | facet.IMAGE_USAGE_TRANSFER_DST;
 const texture_levels = 7;
 const formats = [_]facet.Format{ .b8g8r8a8_unorm, .r8g8b8a8_unorm, .r5g6b5_unorm_pack16 };
@@ -9947,6 +9968,16 @@ const Side = struct {
     input_set_layout: ?*facet.DescriptorSetLayout = null,
     input_layout: ?*facet.PipelineLayout = null,
     input_set: ?*facet.DescriptorSet = null,
+    /// The texture a compute function writes, its view, the set layout,
+    /// layout, pipeline and set it writes it through, and the set a draw
+    /// samples it through (since 1.76).
+    stored: ?*facet.Image = null,
+    stored_view: ?*facet.ImageView = null,
+    stored_set_layout: ?*facet.DescriptorSetLayout = null,
+    stored_layout: ?*facet.PipelineLayout = null,
+    stored_pipeline: ?*facet.Pipeline = null,
+    stored_set: ?*facet.DescriptorSet = null,
+    stored_sampled: ?*facet.DescriptorSet = null,
     drawn_resolving: ?*facet.RenderPass = null,
     drawn_resolving_frame: ?*facet.Framebuffer = null,
     /// What a shipped shader that reads the push constants is made with:
@@ -10078,7 +10109,7 @@ const Side = struct {
 
         const binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .sampled_image, .stage_flags = facet.SHADER_STAGE_FRAGMENT };
         try expect(fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&binding) }, &side.set_layout), error.Refused);
-        try expect(fb.CreateDescriptorPool(device, &.{ .max_sets = formats.len + 10 + layered_count + throughs.len + shadow_ops.len + formats.len * 2 + 2 }, &side.descriptor_pool), error.Refused);
+        try expect(fb.CreateDescriptorPool(device, &.{ .max_sets = formats.len + 10 + layered_count + throughs.len + shadow_ops.len + formats.len * 2 + 4 }, &side.descriptor_pool), error.Refused);
         const layouts: [formats.len]?*facet.DescriptorSetLayout = @splat(side.set_layout);
         try expect(fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = side.descriptor_pool.?, .descriptor_set_count = formats.len, .set_layouts = @ptrCast(&layouts) }, &side.sets), error.Refused);
         for (side.sets, side.texture_views) |set, texture_view| {
@@ -10163,6 +10194,7 @@ const Side = struct {
         try side.upFour();
         try side.upDrawn();
         try side.upInput();
+        try side.upStored();
     }
 
     /// The image of four samples, its depth, and the two passes over them:
@@ -10260,6 +10292,34 @@ const Side = struct {
         try expect(fb.CreateRenderPass(device, &.{ .attachment_count = 3, .attachments = &attachments, .subpass_count = 1, .subpasses = @ptrCast(&subpass) }, &side.drawn_resolving), error.Refused);
         const views = [3]*facet.ImageView{ side.four_view.?, side.drawn_views[0][0].?, side.four_depth_view.? };
         try expect(fb.CreateFramebuffer(device, &.{ .render_pass = side.drawn_resolving.?, .attachment_count = 3, .attachments = &views, .width = side.width, .height = side.height }, &side.drawn_resolving_frame), error.Refused);
+    }
+
+    /// The texture a compute function writes through as a storage image,
+    /// and what it writes it and a draw samples it through (`stored`;
+    /// since 1.76).
+    fn upStored(side: *Side) Failure!void {
+        const fb = side.fb;
+        const device = side.device.?;
+        try side.image(.{ .format = formats[0], .extent = .{ .width = stored_side, .height = stored_side }, .usage = facet.IMAGE_USAGE_STORAGE | facet.IMAGE_USAGE_SAMPLED }, 0, &side.stored);
+        side.stored_view = try side.view(side.stored.?, formats[0], facet.IMAGE_ASPECT_COLOR, 1);
+        const binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .storage_image, .stage_flags = facet.SHADER_STAGE_COMPUTE };
+        try expect(fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&binding) }, &side.stored_set_layout), error.Refused);
+        try expect(fb.CreatePipelineLayout(device, &.{ .set_layout_count = 1, .set_layouts = @ptrCast(&side.stored_set_layout) }, &side.stored_layout), error.Refused);
+        const info = facet.ComputePipelineCreateInfo{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = side.module.?, .name = "stored" }, .layout = side.stored_layout.? };
+        var made: [1]?*facet.Pipeline = undefined;
+        try expect(fb.CreateComputePipelines(device, null, 1, @ptrCast(&info), &made), error.Refused);
+        side.stored_pipeline = made[0];
+        const layouts = [2]?*facet.DescriptorSetLayout{ side.stored_set_layout, side.set_layout };
+        var sets: [2]?*facet.DescriptorSet = undefined;
+        try expect(fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = side.descriptor_pool.?, .descriptor_set_count = 2, .set_layouts = @ptrCast(&layouts) }, &sets), error.Refused);
+        side.stored_set = sets[0];
+        side.stored_sampled = sets[1];
+        const infos = [2]facet.DescriptorImageInfo{ .{ .image_view = side.stored_view, .image_layout = .general }, .{ .image_view = side.stored_view, .image_layout = .general } };
+        const writes = [2]facet.WriteDescriptorSet{
+            .{ .dst_set = side.stored_set.?, .dst_binding = 0, .descriptor_type = .storage_image, .image_info = @ptrCast(&infos[0]) },
+            .{ .dst_set = side.stored_sampled.?, .dst_binding = 0, .descriptor_type = .sampled_image, .image_info = @ptrCast(&infos[1]) },
+        };
+        fb.UpdateDescriptorSets(device, 2, &writes, 0, null);
     }
 
     /// The image a later subpass reads as an input attachment and all
@@ -10769,6 +10829,11 @@ const Side = struct {
         fb.DestroyDescriptorSetLayout(device, side.input_set_layout);
         fb.DestroyImageView(device, side.input_view);
         fb.DestroyImage(device, side.input);
+        fb.DestroyPipeline(device, side.stored_pipeline);
+        fb.DestroyPipelineLayout(device, side.stored_layout);
+        fb.DestroyDescriptorSetLayout(device, side.stored_set_layout);
+        fb.DestroyImageView(device, side.stored_view);
+        fb.DestroyImage(device, side.stored);
         fb.DestroyFramebuffer(device, side.drawn_resolving_frame);
         fb.DestroyRenderPass(device, side.drawn_resolving);
         fb.DestroyFramebuffer(device, side.four_drawn_frame);
@@ -12427,6 +12492,27 @@ const Cases = struct {
         side.draw(quad_at, 6);
         side.end();
     }
+    /// A texture written by the compute function "stored", a group a
+    /// texel, then drawn over the quad, nearest. On the V3D the function
+    /// runs on the cores, which write each texel where its TMU reads it,
+    /// and the dispatch sends what they wrote out of the CPU's caches
+    /// before the frame samples it (docs/facet-vulkan10.md item 57;
+    /// since 1.76).
+    fn storedByFunction(side: *Side) Failure!void {
+        const fb = side.fb;
+        const commands = side.commands.?;
+        fb.CmdBindPipeline(commands, .compute, side.stored_pipeline.?);
+        fb.CmdBindDescriptorSets(commands, .compute, side.stored_layout.?, 0, 1, @ptrCast(&side.stored_set), 0, null);
+        fb.CmdDispatch(commands, stored_side, stored_side, 1);
+        // The sample after the function's writes, as Vulkan asks.
+        const written = facet.MemoryBarrier{ .src_access_mask = facet.ACCESS_SHADER_WRITE, .dst_access_mask = facet.ACCESS_SHADER_READ };
+        fb.CmdPipelineBarrier(commands, facet.PIPELINE_STAGE_COMPUTE_SHADER, facet.PIPELINE_STAGE_FRAGMENT_SHADER, 0, 1, @ptrCast(&written), 0, null, 0, null);
+        side.begin(.{});
+        fb.CmdBindDescriptorSets(commands, .graphics, side.layout.?, 0, 1, @ptrCast(&side.stored_sampled), 0, null);
+        try side.use(.{ .vertex = "texture", .fragment = "nearest" });
+        side.draw(quad_at, 6);
+        side.end();
+    }
     fn onTarget(comptime target: Target) *const fn (side: *Side) Failure!void {
         return &struct {
             fn run(side: *Side) Failure!void {
@@ -12722,6 +12808,7 @@ const cases = [_]Case{
     // 1.75: an image a subpass drew into, read by a later one as an input
     // attachment, which the V3D does since facet 1.216 (item 56).
     .{ .name = "shipped input attachment", .run = &Cases.inputRead },
+    .{ .name = "stored by a function", .run = &Cases.storedByFunction },
     // No colour (since 1.18), which the V3D draws since facet 1.150: a
     // shadow map drawn in a pass of it alone, and a depth drawn in a
     // subpass of its own before the colour is, as a pre-pass is.

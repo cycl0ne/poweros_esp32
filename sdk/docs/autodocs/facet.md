@@ -4132,7 +4132,9 @@ of 0. A binding's descriptors are an array, read by a shader as
 element 0 on (shader.Resources).
 
 Some kinds want a device that has them, others answering
-`error_feature_not_present`: a storage image `storage_images`, a texel
+`error_feature_not_present`: a storage image `storage_images` (every
+device since 1.217, the V3D's functions on the cores writing it where
+its TMU reads it), a texel
 buffer `texel_buffers`, a dynamic buffer `dynamic_descriptors` (and no
 more of them in one set than
 `PhysicalDeviceLimits.max_descriptor_set_dynamic_buffers`), and an

@@ -295,12 +295,14 @@ in (`putLayer`, `setColor`) and read them from (`colorAt`). A compute
 function and a fragment function of the program's can both write one. What
 is left out:
 
-- **Only the cores write one** (`PhysicalDeviceFeatures.storage_images`).
-  The V3D's TMU keeps a texture in a layout of its own, which is not the one
-  the library writes, so a set layout with the kind is refused there. Like
-  an input attachment, this one waits on a shader compiler for the QPUs
-  and not on a packet: a storage image is written by a function of the
-  program's, and the V3D runs none of those.
+- **Only the cores write one**, on either device. Since 1.217 the V3D takes
+  the kind (`Capabilities.storage_images`): its TMU keeps a texture in a
+  layout of its own, and a view's texture there finds each texel where the
+  device keeps it (`texture.Texture.place`, `_image.deviceTexels`), so a
+  function run on the cores beside the V3D writes it where the TMU reads
+  it. No QPU program reads or writes one yet: a compute shader that does
+  runs its function on the cores, and a graphics pipeline is refused there
+  (docs/facet-vulkan10.md item 57, steps 2 and 3).
 - **Nothing orders two writes.** A frame's work is shared between the
   cores, and groups run in no order, so two functions writing the same texel
   is for the program to avoid - as it is in Vulkan, there being no barrier
@@ -675,7 +677,7 @@ Vulkan allows them, and facet does not do them.
 | A depth or stencil op on a device that keeps neither (`stored_depth`, `stored_stencil`): every device keeps both since 1.47. On a device without `stored_stencil` an `s8_uint` attachment has no DEPTH_STENCIL_ATTACHMENT (`_format.describe`), so one whose stencil is kept breaks VUID-VkSubpassDescription-pDepthStencilAttachment-02650 as well and may be answered either way (`Result.error_validation_failed`), and one left in the tiles is drawn all the same. One for a plane the format has not keeps nothing since 1.106 | `render/createrenderpass.zig` |
 | An `input_attachment` layout on a device that reads none (`input_attachments`): none since 1.216, the V3D until then | `descriptor/createdescriptorsetlayout.zig` |
 | More dynamic buffer descriptors in one set than `max_descriptor_set_dynamic_buffers` | `descriptor/createdescriptorsetlayout.zig` |
-| A `storage_image` layout on the V3D: its TMU keeps a texture its own way | `descriptor/createdescriptorsetlayout.zig` |
+| A `storage_image` layout on a device that writes none (`storage_images`): none since 1.217, the V3D until then (docs/facet-vulkan10.md item 57) | `descriptor/createdescriptorsetlayout.zig` |
 | A fixed fragment form that drops pixels, on the V3D: the QPUs have no program that discards | `driver/v3d/driver.zig` |
 | A fixed fragment form that samples through a sampler, on the V3D: nor one that reads a sampler | `driver/v3d/driver.zig` |
 | A depth attachment kept, whose image has no memory behind it | `render/createframebuffer.zig` |

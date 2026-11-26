@@ -1521,22 +1521,23 @@ test "a device's sample counts follow what it draws, and the three optional mult
     try expectSampleCounts(.{ four, four, four, one, four, one, four, four, one }, &colorless.properties.limits);
 
     // A bit a driver cleared stays clear, with the capability or without:
-    // the V3D's three zeros for the images it does not sample
+    // the V3D's two zeros for the images it does not sample
     // (driver/v3d/driver.zig), whose describe only the board can run. It
-    // samples a colour and a depth of four since 1.209 (item 61's V7).
+    // samples a colour and a depth of four since 1.209 (item 61's V7), and
+    // since 1.217 keeps the table's one sample for a storage image, which
+    // it said 0 of before (item 57).
     for ([_]bool{ false, true }) |can| {
         var v3d = record.*;
         v3d.properties.limits = _instance.limits;
         v3d.properties.limits.sampled_image_integer_sample_counts = 0;
         v3d.properties.limits.sampled_image_stencil_sample_counts = 0;
-        v3d.properties.limits.storage_image_sample_counts = 0;
         v3d.can.multisampling = can;
         // And a subpass of no attachment, at its pipelines' count, since
         // 1.150 (docs/facet-vulkan10.md items 43 and 61's V8).
         v3d.can.colorless_subpasses = true;
         _instance.narrowSampleCounts(&v3d);
         const drawn = if (can) four else one;
-        try expectSampleCounts(.{ drawn, drawn, drawn, drawn, drawn, 0, drawn, 0, 0 }, &v3d.properties.limits);
+        try expectSampleCounts(.{ drawn, drawn, drawn, drawn, drawn, 0, drawn, 0, one }, &v3d.properties.limits);
     }
 
     // Sample rate shading, alpha to one and a variable sample rate are

@@ -1560,6 +1560,38 @@ pub fn deviceLaid(image: *const Image) bool {
     };
 }
 
+/// Of a view of an image that lies as its device's textures do
+/// (`deviceLaid`), the texture a function of the program's reads and
+/// writes it through on the cores: each texel where the device keeps it
+/// (`texture.Texture.place`), in its format's bytes as they lie
+/// (`lyingFormat`), which are what a copy moves there (`writeTexel`). So a
+/// compute function or a vertex function run on the cores beside the V3D
+/// reads a texture where its TMU reads it, and writes a storage image
+/// where the TMU will (since 1.217, docs/facet-vulkan10.md item 57); until
+/// then the view's texture read the library's own blocks out of the
+/// device's tiles. Not an image of four samples, each pixel's in a quad
+/// (`quads`), nor one kept in compressed blocks: those keep the texture
+/// they had.
+pub fn deviceTexels(view: *ImageView) void {
+    const image = view.image;
+    if (!deviceLaid(image) or image.quads) return;
+    const format = lyingFormat(image.format) orelse return;
+    if (format.compressed()) return;
+    view.texels.format = format;
+    view.texels.place = &texelPlace;
+    view.texels.owner = view;
+}
+
+/// `texture.Texture.place` for `deviceTexels`: the device's own place of
+/// a texel of the view's levels and layers, counted from the texture's
+/// memory, which starts where the view's first level does.
+fn texelPlace(texels: *const texture.Texture, layer: u32, lod: u32, x: u32, y: u32) callconv(.c) usize {
+    const view: *const ImageView = @ptrCast(@alignCast(texels.owner.?));
+    const image = view.image;
+    const at = image.device.physical.ops.texture_offset.?(image, view.base_level + lod, view.base_layer + layer, x, y);
+    return @intFromPtr(image.data.?) +% at -% @intFromPtr(texels.memory);
+}
+
 /// Where a level's texels are on a device with a layout of its own, in bytes
 /// from the image's memory: the layer, or a 3D image's slice, placed by
 /// the device too (since 1.141).
