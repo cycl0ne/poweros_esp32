@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetProbe";
-const VERSION_STRING = "\x00$VER: FacetProbe 1.48 (11.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetProbe 1.49 (26.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "CORES/S,V3D/S,QUIET/S";
@@ -99,6 +99,13 @@ const Can = struct {
     /// there is a device saying it cannot. The cores can since 1.87 and
     /// the V3D refuses the operand (item 28).
     texel_offsets: bool,
+    /// Whether a subpass may read an attachment it draws into. The cores
+    /// read their own rows; the V3D refuses such a pass at
+    /// CreateRenderPass (error_feature_not_present), v3dv reading the
+    /// attachment out of the tile buffer, which its compiler does not yet
+    /// (docs/facet-vulkan10.md item 56). Vulkan has no feature for it, so
+    /// it is read off the device's type, as `samplers` is (since 1.49).
+    tile_inputs: bool,
 
     fn formatOf(fb: *FacetBase, physical: *facet.PhysicalDevice, format: facet.Format) facet.FormatProperties {
         var said: facet.FormatProperties = undefined;
@@ -167,6 +174,7 @@ const Can = struct {
             // read off the format itself.
             .etc2_textures = formatOf(fb, physical, .etc2_r8g8b8_unorm_block).optimal_tiling_features != 0,
             .texel_offsets = limits.max_texel_offset != 0,
+            .tile_inputs = properties.device_type == .cpu,
         };
     }
 };
@@ -1085,12 +1093,20 @@ fn storageImageChecks(probe: *Probe) void {
     // Every float format says it may be written through, and R32_SFLOAT
     // is an image format of its own.
     const float_formats = [5]facet.Format{ .r16g16b16a16_sfloat, .r32g32b32a32_sfloat, .b10g11r11_ufloat_pack32, .e5b9g9r9_ufloat_pack32, .r32_sfloat };
+    // Where the floats are not kept, as on the V3D, which unpacks them
+    // into 8 bits a channel, none is (since 1.49, facet 1.220). CreateImage
+    // and the query still make such an image with SAMPLED beside STORAGE,
+    // unpacked, as they make a compressed one: holding each usage to its
+    // format's feature is docs/facet-vulkan10.md item 94.
     var all_storage = true;
+    var any_storage = false;
     for (float_formats) |format| {
         fb.GetPhysicalDeviceFormatProperties(probe.physical, format, &properties);
-        if (properties.optimal_tiling_features & facet.FORMAT_FEATURE_STORAGE_IMAGE == 0) all_storage = false;
+        if (properties.optimal_tiling_features & facet.FORMAT_FEATURE_STORAGE_IMAGE == 0) all_storage = false else any_storage = true;
     }
-    probe.check(all_storage, "every float format says it may be written through");
+    if (!probe.can.kept_floats) {
+        probe.check(!any_storage, "no float format says it may be written through where its floats are not kept");
+    } else probe.check(all_storage, "every float format says it may be written through");
 
     // Each written with the same four floats and read back: what the
     // format keeps of them. A whole number above 1 is what a colour could
@@ -1106,6 +1122,7 @@ fn storageImageChecks(probe: *Probe) void {
     const given = [4]f32{ 1.5, 2.5, 0.25, 0.5 };
     const floats_out: [*]const f32 = @ptrCast(@alignCast(told_bytes));
     for (kinds) |kind| {
+        if (!probe.can.kept_floats) break;
         const held = probe.bound(.{
             .format = kind.format,
             .extent = .{ .width = 8, .height = 8 },
@@ -2283,8 +2300,15 @@ fn inputChecks(probe: *Probe) void {
     // whose reads it leaves undefined where nothing orders the write
     // before them - is drawn since 1.134, with the self-dependency or
     // without it; it was refused until then.
+    // Refused as not present where the device reads no tile it draws
+    // (`Can.tile_inputs`, since 1.49).
     const loop = facet.SubpassDescription{ .input_attachment_count = 1, .input_attachments = &to_first, .color_attachment_count = 1, .color_attachments = &to_first };
-    probe.check(probe.renderPass(.{ .attachment_count = 2, .attachments = &attachments, .subpass_count = 1, .subpasses = @ptrCast(&loop) }) != null, "a subpass that reads what it draws made");
+    var looped: ?*facet.RenderPass = null;
+    const loop_made = fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &attachments, .subpass_count = 1, .subpasses = @ptrCast(&loop) }, &looped);
+    _ = Probe.keep(&probe.passes, looped);
+    if (probe.can.tile_inputs) {
+        probe.check(loop_made == .success, "a subpass that reads what it draws made");
+    } else probe.check(loop_made == .error_feature_not_present and looped == null, "a subpass that reads what it draws refused as not present where no tile is read");
     const with_depth = [2]facet.AttachmentDescription{
         .{ .format = .d16_unorm, .final_layout = .general },
         .{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .general },
@@ -2299,6 +2323,19 @@ fn inputChecks(probe: *Probe) void {
     const extent = facet.Extent3D{ .width = side, .height = side };
     const wanted = facet.MEMORY_PROPERTY_HOST_VISIBLE;
     const read_info = facet.ImageCreateInfo{ .format = .b8g8r8a8_unorm, .extent = extent, .tiling = .linear, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_INPUT_ATTACHMENT };
+    // The checks after this read the pictures' rows. The V3D reads an
+    // input attachment through its TMU, laid out as a texture in optimal
+    // tiling (since facet 1.216), and so refuses one in rows, as v3dv does
+    // (v3dv_formats.c:512-516), the query saying the same: what it draws
+    // out of an input attachment is FacetBoth's "shipped input attachment"
+    // to compare against the cores (since 1.49).
+    var rows_shape: facet.ImageFormatProperties = undefined;
+    if (fb.GetPhysicalDeviceImageFormatProperties(probe.physical, read_info.format, .@"2d", .linear, read_info.usage, 0, &rows_shape) != .success) {
+        var refused: ?*facet.Image = null;
+        const rows_made = fb.CreateImage(device, &read_info, &refused);
+        fb.DestroyImage(device, refused);
+        return probe.check(rows_made != .success and refused == null, "a picture in rows read as an input attachment refused, as the query says");
+    }
     const first = probe.image(read_info, wanted) orelse return probe.check(false, "a picture made to be read");
     const first_memory = probe.memories[0].?;
     const plain_info = facet.ImageCreateInfo{ .format = .b8g8r8a8_unorm, .extent = extent, .tiling = .linear, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT };
