@@ -130,6 +130,11 @@ pub const GPUPOWER_VIDEO: u32 = 1;
 pub const GPUPOWER_JPEG: u32 = 2;
 pub const GPUPOWER_GRAPHICS: u32 = 3;
 
+/// GetGPUClock's clocks: the graphics block's, and the data fabric's,
+/// which carries the device's reads and writes of the machine's memory.
+pub const GPUCLOCK_GRAPHICS: u32 = 1;
+pub const GPUCLOCK_FABRIC: u32 = 2;
+
 /// LoadGPUFirmware's kinds, as the security processor numbers them: the
 /// video decoder's firmware, the list of register writes that starts
 /// the video decoder, which the processor applies itself, and the display

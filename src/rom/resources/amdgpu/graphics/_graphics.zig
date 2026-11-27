@@ -1,13 +1,30 @@
 // SPDX-License-Identifier: MPL-2.0
 //! The graphics block: where its registers are, the wait for its engines
-//! once its firmware is loaded, and its memory hub - what its engines'
+//! once its firmware is loaded, its RLC given what it needs before the
+//! engines run, its clock gating, and its memory hub - what its engines'
 //! memory traffic goes through.
 //!
 //! **Its registers** are counted in 32-bit words from the block's first
 //! two addresses in the device's table, as the version this reads has
 //! them (11.0.1); another version numbers some of them otherwise, and is
 //! said so of instead. A block switched off answers every read with 0
-//! and drops every write, so they are read only while it is powered.
+//! and drops every write, so they are read and written only while it is
+//! powered.
+//!
+//! **Its RLC** is given, once the hub is on and before any engine runs,
+//! what the vendor's driver gives it then where the security processor
+//! loaded it (gfx_v11_0_rlc_resume): the graphics pipe's clear state, in
+//! a page of the device's memory kept for it (`_clearstate.zig`), and its
+//! machine that saves and restores the block's registers switched on -
+//! the RLC's firmware has it on already.
+//!
+//! **Its clocks.** Once the block is started it is let gate its clocks
+//! while it is idle, as the vendor's driver lets it then: in the RLC's
+//! safe mode, its coarse-, medium- and fine-grain clock gating on and the
+//! RLC told when the command processor and the DMA engine go busy and
+//! idle (gfx_v11_0_update_gfx_clock_gating). Its power gating, with which
+//! the RLC would have the block switched off once it is idle, is left
+//! off: the block stays powered (StartGPUGraphics).
 //!
 //! **The engines' code.** Once the RLC has been told every part is there
 //! and the power controller powers the block up, the RLC hands each
@@ -48,6 +65,7 @@ const exec = sdk.exec;
 const amdgpu = sdk.resources.amdgpu;
 const reg = sdk.hardware.mmio.reg;
 const AMDGPUBase = @import("../amdgpu_base.zig").AMDGPUBase;
+const _clearstate = @import("_clearstate.zig");
 
 /// The version whose registers are known.
 const known = .{ .major = 11, .minor = 0, .revision = 1 };
@@ -58,6 +76,69 @@ pub const Register = struct { segment: u8, offset: u32 };
 
 pub const CP_STAT: Register = .{ .segment = 0, .offset = 0x0f40 };
 pub const RLC_RLCS_BOOTLOAD_STATUS: Register = .{ .segment = 1, .offset = 0x4e7e };
+
+/// The RLC's own: whether it runs, its safe mode, its save and restore
+/// machine.
+const RLC_CNTL: Register = .{ .segment = 1, .offset = 0x4c00 };
+const RLC_SAFE_MODE: Register = .{ .segment = 1, .offset = 0x0980 };
+const RLC_SRM_CNTL: Register = .{ .segment = 1, .offset = 0x4c80 };
+/// Where the RLC finds the graphics pipe's clear state, and its length in
+/// words.
+const RLC_CSIB_ADDR_LO: Register = .{ .segment = 1, .offset = 0x0987 };
+const RLC_CSIB_ADDR_HI: Register = .{ .segment = 1, .offset = 0x0988 };
+const RLC_CSIB_LENGTH: Register = .{ .segment = 1, .offset = 0x0989 };
+const RLC_ENABLE_F32: u32 = 1 << 0;
+/// RLC_SAFE_MODE's command bit, set until the RLC has taken the message
+/// in the bits above it: 1 to enter, 0 to leave.
+const SAFE_MODE_CMD: u32 = 1 << 0;
+const SAFE_MODE_ENTER: u32 = 1 << 1;
+const SRM_ENABLE: u32 = 1 << 0;
+const SRM_AUTO_INCR_ADDR: u32 = 1 << 1;
+/// How long the RLC is given to enter its safe mode: the vendor's 100 ms.
+const safe_mode_most_us: u64 = 100_000;
+
+/// The block's clock gating: the overrides that keep each kind of it off
+/// (RLC_CGTT_MGCG_OVERRIDE), the coarse-grain gating's control, how often
+/// the command processor looks at an idle ring and how many looks make it
+/// idle, the command processor's interrupts at its busy and idle edges -
+/// for all its pipes and for the graphics pipe - and the DMA engine's
+/// interrupt to the RLC at its own.
+const RLC_CGTT_MGCG_OVERRIDE: Register = .{ .segment = 1, .offset = 0x4c48 };
+const RLC_CGCG_CGLS_CTRL: Register = .{ .segment = 1, .offset = 0x4c49 };
+const CP_RB_WPTR_POLL_CNTL: Register = .{ .segment = 0, .offset = 0x0f62 };
+const CP_INT_CNTL: Register = .{ .segment = 0, .offset = 0x1de9 };
+const CP_INT_CNTL_RING0: Register = .{ .segment = 0, .offset = 0x1e0a };
+const SDMA0_RLC_CGCG_CTRL: Register = .{ .segment = 0, .offset = 0x005c };
+/// The overrides cleared, the kinds of gating the vendor's driver has on
+/// this block (its cg_flags for 11.0.1): coarse-grain gating and light
+/// sleep, medium-grain gating - the RLC's and the GRBM's clocks and the
+/// block's - fine-grain gating and its repeaters', and the performance
+/// counters' clock.
+const CGCG_OVERRIDES: u32 = 1 << 3 | 1 << 4;
+const MGCG_OVERRIDES: u32 = 1 << 1 | 1 << 2 | 1 << 5;
+const REPEATER_FGCG_OVERRIDE: u32 = 1 << 9;
+const FGCG_OVERRIDE: u32 = 1 << 8;
+const PERFMON_CLOCK_STATE: u32 = 1 << 10;
+/// RLC_CGCG_CGLS_CTRL's coarse-grain gating and light sleep, each on with
+/// the vendor's idle threshold and delay.
+const CGCG_EN: u32 = 1 << 0;
+const CGLS_EN: u32 = 1 << 1;
+const CGLS_DELAY_SHIFT = 2;
+const CGLS_DELAY_MASK: u32 = 0x0000_00fc;
+const CGCG_IDLE_SHIFT = 8;
+const CGCG_IDLE_MASK: u32 = 0x07ff_ff00;
+const cgcg_idle_threshold: u32 = 0x36;
+const cgls_delay: u32 = 0x0f;
+/// CP_RB_WPTR_POLL_CNTL's look and idle count, the vendor's.
+const POLL_FREQUENCY_MASK: u32 = 0x0000_ffff;
+const IDLE_POLL_COUNT_SHIFT = 16;
+const IDLE_POLL_COUNT_MASK: u32 = 0xffff_0000;
+const poll_frequency: u32 = 0x100;
+const idle_poll_count: u32 = 0x90;
+/// The command processor's busy and idle interrupts: a compute pipe
+/// busy, a context busy and empty, the graphics pipe idle.
+const IDLE_INTERRUPTS: u32 = 1 << 18 | 1 << 19 | 1 << 20 | 1 << 21;
+const CGCG_INT_ENABLE: u32 = 1 << 1;
 pub const BOOTLOAD_COMPLETE: u32 = 0x8000_0000;
 const CP_DEBUG: Register = .{ .segment = 0, .offset = 0x1e1f };
 const CPG_UTCL1_ERROR_HALT_DISABLE: u32 = 1 << 15;
@@ -242,6 +323,83 @@ pub fn waitForEngines(ab: *AMDGPUBase) bool {
         pause(ab, 1000);
     }
     return true;
+}
+
+/// The block let gate its clocks while it is idle, as the vendor's
+/// driver lets it once the block is started (amdgpu_device_ip_late_init,
+/// gfx_v11_0_update_gfx_clock_gating): the overrides of coarse-grain
+/// gating and light sleep cleared and both switched on with the vendor's
+/// idle threshold and delay, the command processor's idle looks and its
+/// busy and idle interrupts, which the RLC watches, the DMA engine's
+/// interrupt to the RLC, then the overrides of medium-grain gating, of
+/// fine-grain gating and its repeaters' and of the performance counters'
+/// clock cleared, and the graphics pipe's busy and idle interrupts on -
+/// all of it where the RLC runs in its safe mode, entered and waited
+/// for, 100 ms at most, as the vendor's driver waits.
+pub fn gateClocks(ab: *AMDGPUBase) void {
+    const running = enterSafeMode(ab);
+    at(ab, RLC_CGTT_MGCG_OVERRIDE).* &= ~CGCG_OVERRIDES;
+    at(ab, RLC_CGCG_CGLS_CTRL).* = at(ab, RLC_CGCG_CGLS_CTRL).* & ~(CGCG_IDLE_MASK | CGLS_DELAY_MASK) |
+        cgcg_idle_threshold << CGCG_IDLE_SHIFT | CGCG_EN | cgls_delay << CGLS_DELAY_SHIFT | CGLS_EN;
+    at(ab, CP_RB_WPTR_POLL_CNTL).* = at(ab, CP_RB_WPTR_POLL_CNTL).* & ~(POLL_FREQUENCY_MASK | IDLE_POLL_COUNT_MASK) |
+        poll_frequency | idle_poll_count << IDLE_POLL_COUNT_SHIFT;
+    at(ab, CP_INT_CNTL).* |= IDLE_INTERRUPTS;
+    at(ab, SDMA0_RLC_CGCG_CTRL).* |= CGCG_INT_ENABLE;
+    at(ab, RLC_CGTT_MGCG_OVERRIDE).* &= ~MGCG_OVERRIDES;
+    at(ab, RLC_CGTT_MGCG_OVERRIDE).* &= ~REPEATER_FGCG_OVERRIDE;
+    at(ab, RLC_CGTT_MGCG_OVERRIDE).* &= ~FGCG_OVERRIDE;
+    at(ab, RLC_CGTT_MGCG_OVERRIDE).* &= ~PERFMON_CLOCK_STATE;
+    at(ab, CP_INT_CNTL_RING0).* |= IDLE_INTERRUPTS;
+    leaveSafeMode(ab, running);
+}
+
+/// The RLC given what it needs before the block's engines run, as the
+/// vendor's driver resumes an RLC the security processor loaded
+/// (gfx_v11_0_rlc_resume): the graphics pipe's clear state written into a
+/// page of the device's memory, taken the first time and kept, and its
+/// address and length in words given to the RLC (gfx_v11_0_init_csb);
+/// then its machine that saves and restores the block's registers
+/// switched on (gfx_v11_0_rlc_enable_srm). False, said on the raw port,
+/// where the device's memory has no room for the page.
+pub fn resumeRlc(ab: *AMDGPUBase) bool {
+    if (_clearstate.words.len * 4 > page_bytes) @compileError("the clear state is more than a page");
+    const gpu: *sdk.interface.amdgpu.AMDGPUBase = @ptrCast(&ab.lib);
+    if (ab.clear_state.bytes == 0 and !gpu.AllocGPUMemory(@intCast(page_bytes), @intCast(page_bytes), &ab.clear_state)) {
+        exec.kprintf(ab.sys_base, "%s: no room in the device's memory for the graphics pipe's clear state\n", .{amdgpu.AMDGPUNAME});
+        return false;
+    }
+    const page: [*]volatile u32 = @ptrFromInt(@as(usize, @intCast(ab.clear_state.cpu)));
+    for (_clearstate.words, 0..) |value, index| page[index] = value;
+    fence();
+    at(ab, RLC_CSIB_ADDR_HI).* = @truncate(ab.clear_state.device >> 32);
+    at(ab, RLC_CSIB_ADDR_LO).* = @as(u32, @truncate(ab.clear_state.device)) & 0xffff_fffc;
+    at(ab, RLC_CSIB_LENGTH).* = _clearstate.words.len;
+    at(ab, RLC_SRM_CNTL).* |= SRM_AUTO_INCR_ADDR | SRM_ENABLE;
+    return true;
+}
+
+/// The RLC's safe mode entered where the RLC runs, and waited for: whether
+/// it runs, which says whether to leave it after. Where it does not take
+/// the mode in time, that is put on the system's lines.
+fn enterSafeMode(ab: *AMDGPUBase) bool {
+    const sys = ab.sys_base;
+    if (at(ab, RLC_CNTL).* & RLC_ENABLE_F32 == 0) return false;
+    at(ab, RLC_SAFE_MODE).* = SAFE_MODE_CMD | SAFE_MODE_ENTER;
+    const until = sys.UptimeUs() + safe_mode_most_us;
+    while (at(ab, RLC_SAFE_MODE).* & SAFE_MODE_CMD != 0) {
+        if (sys.UptimeUs() > until) {
+            exec.kprintf(sys, "%s: the graphics block's RLC does not take its safe mode: RLC_SAFE_MODE %x\n", .{
+                amdgpu.AMDGPUNAME, at(ab, RLC_SAFE_MODE).*,
+            });
+            break;
+        }
+    }
+    return true;
+}
+
+/// The RLC's safe mode left, where `running` says it was entered.
+fn leaveSafeMode(ab: *AMDGPUBase, running: bool) void {
+    if (running) at(ab, RLC_SAFE_MODE).* = SAFE_MODE_CMD;
 }
 
 fn fence() void {

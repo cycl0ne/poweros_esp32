@@ -102,7 +102,8 @@ pub const AMDGPUBase = extern struct {
     /// lands on; where the range that table maps begins in the device's
     /// addresses, and how long it is; what of the range is mapped
     /// (MapGPUMemory), offsets into it, and the lock it is mapped and
-    /// unmapped under.
+    /// unmapped under. The page its RLC is given the graphics pipe's
+    /// clear state in.
     graphics: amdgpu.GPUBlock = .{},
     graphics_known: bool = false,
     graphics_failed: bool = false,
@@ -112,6 +113,7 @@ pub const AMDGPUBase = extern struct {
     gart_bytes: u64 = 0,
     gart_arena: Arena = .{},
     gart_lock: exec.SignalSemaphore,
+    clear_state: amdgpu.GPUMemory = .{},
     /// The DMA engine's queue: the piece its ring and what the engine
     /// writes back are in; whether it runs, and whether it failed to start
     /// - after which it is not tried again. How many bytes have been

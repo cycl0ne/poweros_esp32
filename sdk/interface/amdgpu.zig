@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
 //! amdgpu.resource's functions: the machine's AMD graphics device, where
 //! its register window is and where each of its blocks' registers are,
-//! its blocks powered up and down, its own memory handed out and the
-//! machine's mapped for its engines, the firmware its blocks run loaded
-//! through its security processor, its interrupts handed to the drivers
-//! of the blocks that raise them, its graphics block's DMA and compute
-//! engines given jobs, and code objects loaded for the compute engine
-//! and their kernels run.
+//! its blocks powered up and down and its clocks read, its own memory
+//! handed out and the machine's mapped for its engines, the firmware its
+//! blocks run loaded through its security processor, its interrupts
+//! handed to the drivers of the blocks that raise them, its graphics
+//! block's DMA and compute engines given jobs, and code objects loaded
+//! for the compute engine and their kernels run.
 //! A resource: no Open or Close, its first function in the first slot.
 //! The base comes from OpenResource("amdgpu.resource").
 //!
@@ -48,6 +48,7 @@ pub const LVO = struct {
     pub const LoadGPUCode = libraries.lvo(23);
     pub const FindGPUKernel = libraries.lvo(24);
     pub const FreeGPUCode = libraries.lvo(25);
+    pub const GetGPUClock = libraries.lvo(26);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -79,6 +80,7 @@ pub const Fn = struct {
     pub const LoadGPUCode = *const fn (*AMDGPUBase, [*]const u8, u32, *amdgpu.GPUCode) callconv(.c) bool;
     pub const FindGPUKernel = *const fn (*AMDGPUBase, *const amdgpu.GPUCode, [*:0]const u8, *amdgpu.GPUKernel) callconv(.c) bool;
     pub const FreeGPUCode = *const fn (*AMDGPUBase, *amdgpu.GPUCode) callconv(.c) void;
+    pub const GetGPUClock = *const fn (*AMDGPUBase, u32) callconv(.c) u32;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -266,5 +268,12 @@ pub const AMDGPUBase = opaque {
     /// `code` is cleared.
     pub fn FreeGPUCode(self: *AMDGPUBase, code: *amdgpu.GPUCode) void {
         return libraries.call(self, LVO.FreeGPUCode, Fn.FreeGPUCode, .{code});
+    }
+
+    /// The device's clock `clock` (GPUCLOCK_*) as its power manager reads
+    /// it, in MHz; 0 where the manager does not answer or does not know the
+    /// clock, or there is no device.
+    pub fn GetGPUClock(self: *AMDGPUBase, clock: u32) u32 {
+        return libraries.call(self, LVO.GetGPUClock, Fn.GetGPUClock, .{clock});
     }
 };

@@ -1967,10 +1967,12 @@ the kernels 2283 to 2331 us and the cores 2763 to 2906, over 1024 x 1024
 a picture scaled up twice to the whole buffer 3408 to 3414 and 6951 to
 7056, from 128 to 256 pixels a side 145 and 198, a shape in both colours
 over the whole buffer 1480 to 1487 and 1793 to 2047, a tile 1150 to 1168
-and 1678 to 1915; over 64 x 64 a picture takes the kernels 88 us and the
-cores 14 to 19. The block stays powered while the board runs, which
-costs the video decoder about a fifth of its speed after its first run
-in a boot.
+and 1678 to 1915; over 64 x 64 a picture takes the kernels 88 to 100 us
+and the cores 14 to 19. The block stays powered while the board runs,
+its clocks stopped while it is idle - it is never let switch off, as on
+the NucBox it does not come back - which costs the video decoder about a
+fifth of its speed after its first run in a boot: a film of 502 frames
+the first run decodes in 248 ms takes every later one 300 to 303.
 
 **Video layers.** On the VisionFive 2 the layer is the DC8200's first
 overlay: NV12 and I420, BT.601 and BT.709, video's range and the whole

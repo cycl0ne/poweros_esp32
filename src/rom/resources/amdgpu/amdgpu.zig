@@ -90,6 +90,7 @@ test {
     _ = @import("security/loadgpufirmware.zig");
     _ = @import("security/startgpugraphics.zig");
     _ = @import("graphics/_graphics.zig");
+    _ = @import("graphics/_clearstate.zig");
     _ = @import("dma/_dma.zig");
     _ = @import("dma/startgpudma.zig");
     _ = @import("dma/sendgpudma.zig");
@@ -143,6 +144,8 @@ test "a machine without the device has the resource, and it answers false" {
     try testing.expect(!call(ab).FindGPUBlock(amdgpu.GPUBLOCK_DISPLAY, 0, &block));
     try testing.expect(!call(ab).SetGPUPower(amdgpu.GPUPOWER_JPEG, 0, true));
     try testing.expect(!call(ab).SetGPUPower(amdgpu.GPUPOWER_GRAPHICS, 0, true));
+    try testing.expectEqual(@as(u32, 0), call(ab).GetGPUClock(amdgpu.GPUCLOCK_GRAPHICS));
+    try testing.expectEqual(@as(u32, 0), call(ab).GetGPUClock(amdgpu.GPUCLOCK_FABRIC));
     var memory: amdgpu.GPUMemory = .{ .bytes = 7 };
     try testing.expect(!call(ab).AllocGPUMemory(4096, 4096, &memory));
     try testing.expectEqual(@as(u32, 7), memory.bytes);

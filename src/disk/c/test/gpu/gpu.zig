@@ -252,8 +252,10 @@
 //! firmware loaded, the block started and its memory hub turned on
 //! (StartGPUGraphics), which waits until the engines have their code.
 //! How long that took is printed, and the block's registers again with
-//! its hub's; the block is left powered and started. The watchdog is
-//! armed for it.
+//! its hub's and its clock gating's, and the graphics block's and the
+//! data fabric's clocks as the power manager reads them (GetGPUClock),
+//! at once and again after the block has been idle for a second; the
+//! block is left powered and started. The watchdog is armed for it.
 //!
 //! DMA does what GFX does, then starts the block's DMA engine with its
 //! queue (StartGPUDMA) and tries it: a job of eight NOPs; a hundred
@@ -423,7 +425,7 @@ const graphics_library = sdk.graphics;
 const GraphicsBase = sdk.interface.graphics.GraphicsBase;
 
 pub const COMMAND_NAME = "Gpu";
-const VERSION_STRING = "\x00$VER: Gpu 1.27 (27.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Gpu 1.28 (27.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,SLEEP/K/N,RANGE/S,POINTER/S,MIRROR/S,OVERLAY/S,DIRECT/S,BANDS/S,VIDEO/S,GFX/S,DMA/S,GART/S,ENGINE/S,BLITS/S,COMPUTE/S,KERNELS/S,BLOCK/K/N,WATCHDOG/K/N";
@@ -1395,6 +1397,23 @@ fn graphicsFile(sys: *ExecBase, dl: *DosBase, prefix: []const u8, block: amdgpu.
     return true;
 }
 
+/// Its clock gating's: the overrides that keep each kind of it off, the
+/// coarse-grain gating's control, and the power gating's, which is left
+/// off.
+const gating_registers = [_]GraphicsRegister{
+    .{ .name = "RLC_CGTT_MGCG_OVERRIDE", .segment = 1, .offset = 0x4c48 },
+    .{ .name = "RLC_CGCG_CGLS_CTRL", .segment = 1, .offset = 0x4c49 },
+    .{ .name = "RLC_PG_CNTL", .segment = 1, .offset = 0x4c43 },
+};
+
+/// The graphics block's clock and the data fabric's, as the power
+/// manager reads them; 0 where it does not answer.
+fn printClocks(dl: *DosBase, ab: *AMDGPUBase) void {
+    _ = Printf(dl, "  the graphics block's clock %u MHz, the data fabric's %u MHz\n", .{
+        ab.GetGPUClock(amdgpu.GPUCLOCK_GRAPHICS), ab.GetGPUClock(amdgpu.GPUCLOCK_FABRIC),
+    });
+}
+
 /// What GFX, DMA, GART, ENGINE and COMPUTE go on to once the block is
 /// started.
 const GraphicsThen = enum { nothing, dma, gart, engine, compute };
@@ -1464,6 +1483,13 @@ fn graphicsStart(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPU
     printGraphics(dl, info, graphics, &graphics_registers);
     _ = Printf(dl, "Its memory hub's:\n", .{});
     printGraphics(dl, info, graphics, &hub_registers);
+    _ = Printf(dl, "Its clock gating's, and the clocks:\n", .{});
+    printGraphics(dl, info, graphics, &gating_registers);
+    printClocks(dl, ab);
+    dl.Delay(50);
+    wb.FeedWatchdog();
+    _ = Printf(dl, "After a second idle:\n", .{});
+    printClocks(dl, ab);
     return switch (then) {
         .nothing => dos.RETURN_OK,
         .dma => dmaCheck(sys, dl, ab, info, graphics, wb),

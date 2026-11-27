@@ -34,6 +34,7 @@ const GetGPUComputeState = @import("compute/getgpucomputestate.zig").GetGPUCompu
 const LoadGPUCode = @import("code/loadgpucode.zig").LoadGPUCode;
 const FindGPUKernel = @import("code/findgpukernel.zig").FindGPUKernel;
 const FreeGPUCode = @import("code/freegpucode.zig").FreeGPUCode;
+const GetGPUClock = @import("power/getgpuclock.zig").GetGPUClock;
 
 /// amdgpu.resource's interface, as the SDK generates it from
 /// sdk/fd/amdgpu_lib.fd.
@@ -84,6 +85,7 @@ const contract_files = [_][]const u8{
     @embedFile("code/loadgpucode.zig"),
     @embedFile("code/findgpukernel.zig"),
     @embedFile("code/freegpucode.zig"),
+    @embedFile("power/getgpuclock.zig"),
 };
 
 fn lvoGetGPUInfo(ab: *AMDGPUBase, info: *amdgpu.GPUInfo) callconv(.c) bool {
@@ -164,6 +166,9 @@ fn lvoFindGPUKernel(ab: *AMDGPUBase, code: *const amdgpu.GPUCode, name: [*:0]con
 fn lvoFreeGPUCode(ab: *AMDGPUBase, code: *amdgpu.GPUCode) callconv(.c) void {
     FreeGPUCode(ab, code);
 }
+fn lvoGetGPUClock(ab: *AMDGPUBase, clock: u32) callconv(.c) u32 {
+    return GetGPUClock(ab, clock);
+}
 
 /// The jump table, in slot order: a resource has no standard vectors, so
 /// its first function is in the first slot.
@@ -194,4 +199,5 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoLoadGPUCode),
     vec(lvoFindGPUKernel),
     vec(lvoFreeGPUCode),
+    vec(lvoGetGPUClock),
 };

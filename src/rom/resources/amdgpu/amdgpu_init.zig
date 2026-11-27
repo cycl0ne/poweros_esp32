@@ -37,8 +37,8 @@ const _graphics = @import("graphics/_graphics.zig");
 /// The name it is opened by. The SDK's.
 pub const RESOURCE_NAME = amdgpu.AMDGPUNAME;
 pub const RESOURCE_VERSION = 1;
-pub const RESOURCE_REVISION = 12;
-const BUILD_DATE = "26.11.2026";
+pub const RESOURCE_REVISION = 13;
+const BUILD_DATE = "27.11.2026";
 const RESOURCE_VERSION_STRING =
     "\x00$VER: " ++ RESOURCE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ RESOURCE_VERSION, RESOURCE_REVISION }) ++
@@ -110,6 +110,7 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     ab.gart_bytes = 0;
     ab.gart_arena = .{};
     sys_base.InitSemaphore(&ab.gart_lock);
+    ab.clear_state = .{};
     ab.dma_ring = .{};
     ab.dma_running = false;
     ab.dma_failed = false;

@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
 //! amdgpu.resource's functions: the machine's AMD graphics device, where
 //! its register window is and where each of its blocks' registers are,
-//! its blocks powered up and down, its own memory handed out and the
-//! machine's mapped for its engines, the firmware its blocks run loaded
-//! through its security processor, its interrupts handed to the drivers
-//! of the blocks that raise them, its graphics block's DMA and compute
-//! engines given jobs, and code objects loaded for the compute engine
-//! and their kernels run.
+//! its blocks powered up and down and its clocks read, its own memory
+//! handed out and the machine's mapped for its engines, the firmware its
+//! blocks run loaded through its security processor, its interrupts
+//! handed to the drivers of the blocks that raise them, its graphics
+//! block's DMA and compute engines given jobs, and code objects loaded
+//! for the compute engine and their kernels run.
 //! A resource: no Open or Close, its first function in the first slot.
 //! The base comes from OpenResource("amdgpu.resource").
 ##include libs/exec/exec as exec
@@ -116,4 +116,8 @@ bool FindGPUKernel(*const amdgpu.GPUCode code, [*:0]const u8 name, *amdgpu.GPUKe
 /// A code object from LoadGPUCode taken out of the device's memory;
 /// `code` is cleared.
 void FreeGPUCode(*amdgpu.GPUCode code)
+/// The device's clock `clock` (GPUCLOCK_*) as its power manager reads
+/// it, in MHz; 0 where the manager does not answer or does not know the
+/// clock, or there is no device.
+u32 GetGPUClock(u32 clock)
 ##end

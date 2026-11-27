@@ -2,12 +2,12 @@
 
 amdgpu.resource's functions: the machine's AMD graphics device, where
 its register window is and where each of its blocks' registers are,
-its blocks powered up and down, its own memory handed out and the
-machine's mapped for its engines, the firmware its blocks run loaded
-through its security processor, its interrupts handed to the drivers
-of the blocks that raise them, its graphics block's DMA and compute
-engines given jobs, and code objects loaded for the compute engine
-and their kernels run.
+its blocks powered up and down and its clocks read, its own memory
+handed out and the machine's mapped for its engines, the firmware its
+blocks run loaded through its security processor, its interrupts
+handed to the drivers of the blocks that raise them, its graphics
+block's DMA and compute engines given jobs, and code objects loaded
+for the compute engine and their kernels run.
 A resource: no Open or Close, its first function in the first slot.
 The base comes from OpenResource("amdgpu.resource").
 
@@ -22,6 +22,7 @@ Generated from the source by `./zig build autodoc`.
 - [FreeGPUCode](#freegpucode) - A code object from LoadGPUCode taken out of the device's memory.
 - [FreeGPUMemory](#freegpumemory) - A piece of the device's memory given back.
 - [GetGPUBios](#getgpubios) - The device's video BIOS image.
+- [GetGPUClock](#getgpuclock) - One of the device's clocks as its power manager reads it, in MHz.
 - [GetGPUComputeState](#getgpucomputestate) - The compute engine's queue as it is: its ring, how far it has been read and written, its jobs and interrupts, the scheduler's firmware, and the queue's and the engine's registers.
 - [GetGPUConnector](#getgpuconnector) - One of the display's connectors.
 - [GetGPUDMAState](#getgpudmastate) - The DMA engine's queue as it is, read into `state`.
@@ -524,6 +525,70 @@ None known.
 var bios: amdgpu.GPUBios = .{};
 if (!ab.GetGPUBios(&bios)) return; // no image: no tables to read
 const image = bios.image.?[0..bios.bytes];
+```
+
+## GetGPUClock
+
+One of the device's clocks as its power manager reads it, in MHz.
+
+**SYNOPSIS**
+
+```zig
+fn GetGPUClock(ab: *AMDGPUBase, clock: u32) u32
+```
+
+**SINCE**
+
+1.13. LVO -108.
+
+**INPUTS**
+
+- `clock` - GPUCLOCK_GRAPHICS, the graphics block's; or
+  GPUCLOCK_FABRIC, the data fabric's, which carries the device's reads
+  and writes of the machine's memory.
+
+**RESULT**
+
+The clock in MHz, as the manager answers. 0 where the manager does not
+answer or refuses, `clock` is neither of the two, the manager is not
+one whose messages are known, or there is no device.
+
+**BEHAVIOR**
+
+The manager is asked through its mailbox, as the vendor's driver asks
+it for a clock as it is now on this manager
+(smu_v13_0_4_get_current_clk_freq): GetGfxclkFrequency for the
+graphics block's, GetFclkFrequency for the fabric's, each with 0.
+
+**CONTEXT**
+
+- Waits: for the mailbox where another task has it, and for the
+  manager's answer, some microseconds.
+- Interrupts: no.
+- Locks: takes the mailbox's lock.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+None.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`SetGPUPower`, `GetGPUInfo`
+
+**EXAMPLES**
+
+```zig
+const graphics_mhz = ab.GetGPUClock(amdgpu.GPUCLOCK_GRAPHICS);
+const fabric_mhz = ab.GetGPUClock(amdgpu.GPUCLOCK_FABRIC);
 ```
 
 ## GetGPUComputeState
@@ -1658,16 +1723,17 @@ fn StartGPUGraphics(ab: *AMDGPUBase, files: *const amdgpu.GPUGraphicsFiles) bool
 **RESULT**
 
 True once every part is loaded, the RLC told to start, the power
-controller started, every engine has its code and the hub is on, and
-at once where an earlier call did all of it. False where a file is not
-given, or its header is not one the resource reads - the command
-processor's of another version than the first, the RLC's of another
-than 2.0 to 2.3, a part outside its file - which is said on the
-system's lines, and nothing is loaded; where the block is one whose
-registers the resource does not know (it knows 11.0.1); where
-StartGPUSecurity has not made the processor ready, the processor does
-not answer within five seconds, or the device's memory has no room for
-a part's copy or the hub's page table; where the power manager does
+controller started, every engine has its code, the hub is on and the
+RLC has the graphics pipe's clear state, and at once where an earlier
+call did all of it. False where a file is not given, or its header is
+not one the resource reads - the command processor's of another
+version than the first, the RLC's of another than 2.0 to 2.3, a part
+outside its file - which is said on the system's lines, and nothing is
+loaded; where the block is one whose registers the resource does not
+know (it knows 11.0.1); where StartGPUSecurity has not made the
+processor ready, the processor does not answer within five seconds, or
+the device's memory has no room for a part's copy, the hub's page
+table or the graphics pipe's clear state; where the power manager does
 not keep the block powered, refuses to start the power controller or
 does not answer within a second; where either is one whose commands
 the resource does not know; where the engines do not have their code
@@ -1698,6 +1764,13 @@ RLC_RLCS_BOOTLOAD_STATUS), and turns its memory hub on: its system
 aperture over the device's own memory, uncached, its TLB and L2 cache
 on, and its first context with an empty page table over 512 MiB of
 the device's addresses (0x7FFF00000000 on), in the device's memory.
+Then the RLC is given the graphics pipe's clear state - the packets
+that set its context's registers to their first values, in a page of
+the device's memory - and its machine that saves and restores the
+block's registers is switched on; last, in the RLC's safe mode, the
+block's coarse-, medium- and fine-grain clock gating is switched on,
+the RLC told when the command processor and the DMA engine go busy and
+idle.
 
 **CONTEXT**
 
@@ -1713,8 +1786,9 @@ the device's addresses (0x7FFF00000000 on), in the device's memory.
 
 The files stay the caller's; each part is copied. What the processor
 put into its region stays there, and the block runs from it. The
-hub's page table, 1 MiB, and its scratch page are taken from the
-device's memory and kept.
+hub's page table, 1 MiB, its scratch page and the page of the
+graphics pipe's clear state are taken from the device's memory and
+kept.
 
 **NOTES**
 
@@ -1725,7 +1799,16 @@ code: each is started with its queue (StartGPUDMA, StartGPUCompute).
 
 A command processor of the later kind, whose files' header is of the
 second version and names its engines' stacks as parts of their own,
-is refused.
+is refused. The block is never let switch itself off while it is
+idle: its power gating is left off. With it on and the power manager
+allowing it (AllowGfxOff), the block switches off once it is idle, but
+it does not come back - the power controller that powers it up again
+stops before the RLC it restarts says it runs, whether the manager is
+told to bring it back (DisallowGfxOff) or a doorbell of one of its
+queues is rung - the manager answers no message from then on, and
+within minutes the machine stops. Kept powered, the block costs the
+video decoder about a fifth of its speed after the decoder's first run
+in a boot.
 
 **SEE ALSO**
 
