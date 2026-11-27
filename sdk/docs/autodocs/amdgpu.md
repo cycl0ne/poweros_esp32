@@ -1521,22 +1521,23 @@ fn SendGPUKernel(ab: *AMDGPUBase, kernel: *const amdgpu.GPUKernel, dispatch: *co
 - `kernel` - the kernel, as FindGPUKernel found it in a loaded code
   object.
 - `dispatch` - how many groups it runs in each dimension and how many
-  threads each group has, and its arguments (GPUDispatch).
+  threads each group has, its arguments, and for a kernel whose stack
+  grows as it runs the bytes each lane is given (GPUDispatch).
 
 **RESULT**
 
 The job's number, which WaitGPUCompute waits for; 0 where the queue
 does not run (StartGPUCompute), where the kernel takes anything a
 dispatch does not hand it - values in its registers other than the
-address of its arguments, a stack that grows as it runs, a trap
-handler - or more private memory than a wave's scratch holds, more
-than 64 KiB of group memory or 256 bytes of arguments, where a
-dimension of the dispatch is 0, a group has more than 1024 threads,
-where the scratch its private memory needs cannot be made - the
-graphics block's compute units not known, no room in the device's
-memory, or the queue not idle within a second - or the jobs before it
-leave no room in its ring within a second. Why a kernel is refused is
-said in the system's log.
+address of its arguments, a trap handler - or more private memory,
+its stack's with it, than a wave's scratch holds, more than 64 KiB of
+group memory or 256 bytes of arguments, where a dimension of the
+dispatch is 0, a group has more than 1024 threads, where the scratch
+its private memory needs cannot be made - the graphics block's
+compute units not known, no room in the device's memory, or the queue
+not idle within a second - or the jobs before it leave no room in its
+ring within a second. Why a kernel is refused is said in the system's
+log.
 
 **BEHAVIOR**
 
@@ -1562,6 +1563,12 @@ before it to be done; then the piece is given back and made again at
 its size. Every dispatch is told where the piece is and how many waves
 of what size it holds, one of a kernel without private memory too, as
 the waves of one sent before it may still be using it.
+
+Since 1.21 a kernel whose stack grows as it runs
+(GPUKERNEL_DYNAMIC_STACK) is given the more of its own private bytes
+and the dispatch's `stack_bytes` for each lane - 1 KiB
+(GPUDISPATCH_STACK_BYTES) where it names none - and its scratch is
+made for that.
 
 **CONTEXT**
 
@@ -1590,11 +1597,11 @@ device's memory from then on - on the NucBox, 32 waves for each of its
 
 **BUGS**
 
-A kernel whose stack grows as it runs - recursion, a call it cannot
-see the end of, an array of a size it works out - or that needs the
-dispatch's own packet, its queue or a dispatch number in its
-registers, or its arguments loaded into registers before it starts,
-cannot be run.
+A kernel that needs the dispatch's own packet, its queue or a dispatch
+number in its registers, or its arguments loaded into registers
+before it starts, cannot be run. A stack that grows past the bytes its
+dispatch gives it is not stopped: the kernel then keeps its frames in
+memory that is not its own.
 
 **SEE ALSO**
 

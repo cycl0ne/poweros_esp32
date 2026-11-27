@@ -473,7 +473,7 @@ test "the board's code object as the build makes it: each kernel found as FindGP
         };
         // A rectangle of the largest sides the board hands a kernel, in
         // groups of 64 along its rows.
-        if (compute.refusal(&kernel, .{ (1 << 16) / 64 + 1, 1 << 16, 1 }, .{ 64, 1, 1 }, @sizeOf(named[1]))) |why| {
+        if (compute.refusal(&kernel, .{ (1 << 16) / 64 + 1, 1 << 16, 1 }, .{ 64, 1, 1 }, @sizeOf(named[1]), 0)) |why| {
             std.debug.print("{s}: {s}\n", .{ named[0], why });
             return error.Refused;
         }

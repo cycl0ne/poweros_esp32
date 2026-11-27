@@ -347,6 +347,14 @@ test "the kernel C:test/Gpu runs, as the build makes it" {
     try testing.expectEqual(@as(u16, 0), found.preloaded);
     try testing.expect(kernelDescriptor(image, head, "fil") == null);
     try testing.expect(kernelDescriptor(image, head, "fills") == null);
+
+    // `walk` recurses: its stack grows as it runs, past the private bytes
+    // its descriptor gives, and its properties say so.
+    const walk_at = kernelDescriptor(image, head, "walk") orelse return error.NoKernel;
+    const walk = descriptorAt(image, offsetOf(image, head, walk_at, descriptor_bytes).?).?;
+    try testing.expect(walk.properties & amdgpu.GPUKERNEL_DYNAMIC_STACK != 0);
+    try testing.expect(walk.private_bytes > 0);
+    try testing.expectEqual(@as(u32, 1), walk.rsrc2 & 1);
 }
 
 test "a code object cut short is refused" {

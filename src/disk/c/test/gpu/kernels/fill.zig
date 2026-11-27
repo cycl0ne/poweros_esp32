@@ -16,6 +16,13 @@
 //! `(k * 5 + value) & 127` is `i + k`, and the word the sum of entry
 //! `(k * 3 + i) & 127` times `k + 1` for each `k` below 128.
 //!
+//! `walk` takes the buffer's address, a depth and the count, and writes
+//! into word `i` what a chain of `depth` calls makes of `i`, each call
+//! working on what the one inside it answered: a recursion the compiler
+//! cannot make a loop, so that the kernel's stack grows by a frame a call
+//! (32 bytes) as it runs, past the private memory its descriptor gives,
+//! and its properties say so.
+//!
 //! `spin` reads the word at `flag` until it is not 0, which nothing
 //! writes while COMPUTE RESET waits for it: a kernel that does not end,
 //! for the queue's reset to give up.
@@ -39,6 +46,20 @@ export fn spill(out: [*]addrspace(.global) u32, value: u32, count: u32) callconv
         sum +%= table[(step *% 3 +% index) & 127] *% (step + 1);
     }
     out[index] = sum;
+}
+
+/// Call `depth` of `walk`'s chain: `seed` as it is at the bottom, and
+/// above it what the call inside, on `seed * 3 + 1`, answered, mixed with
+/// `seed` and the depth.
+fn chain(depth: u32, seed: u32) u32 {
+    if (depth == 0) return seed;
+    const inner = chain(depth - 1, seed *% 3 +% 1);
+    return (inner ^ (inner >> 3)) *% (seed | 1) +% depth;
+}
+
+export fn walk(out: [*]addrspace(.global) u32, depth: u32, count: u32) callconv(.kernel) void {
+    const index = @workGroupId(0) *% 64 +% @workItemId(0);
+    if (index < count) out[index] = chain(depth, index);
 }
 
 export fn spin(flag: *addrspace(.global) volatile u32) callconv(.kernel) void {

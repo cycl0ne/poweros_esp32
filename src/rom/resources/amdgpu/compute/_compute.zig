@@ -192,7 +192,6 @@ const TMPRING_WAVESIZE_SHIFT = 12;
 const TMPRING_WAVESIZE_MASK: u32 = 0x7fff << TMPRING_WAVESIZE_SHIFT;
 /// In a kernel's descriptor's properties, that its stack grows as it
 /// runs, past the private bytes it gives (USES_DYNAMIC_STACK).
-const KERNEL_DYNAMIC_STACK: u32 = 1 << 11;
 const COMPUTE_SHADER_EN: u32 = 1 << 0;
 const FORCE_START_AT_000: u32 = 1 << 2;
 const ORDER_MODE: u32 = 1 << 6;
@@ -600,13 +599,26 @@ pub const Scratch = struct {
     }
 };
 
+/// The private bytes a lane of `kernel` is given: its own, or, where its
+/// stack grows as it runs, the more of its own and the dispatch's
+/// `stack_bytes` - GPUDISPATCH_STACK_BYTES where that is 0 (ROCclr's
+/// dispatch: the device's stack size, 1 KiB unless the program sets
+/// another, or the kernel's private segment where that is more).
+pub fn laneBytes(kernel: *const amdgpu.GPUKernel, stack_bytes: u32) u64 {
+    if (kernel.properties & amdgpu.GPUKERNEL_DYNAMIC_STACK == 0) return kernel.private_bytes;
+    const stack = if (stack_bytes == 0) amdgpu.GPUDISPATCH_STACK_BYTES else stack_bytes;
+    return @max(stack, kernel.private_bytes);
+}
+
 /// The bytes a wave of `kernel` keeps in scratch: its lanes' private
-/// bytes on 256 bytes, and 256 more where that makes an even count of
-/// them (ac_compute_scratch_wavesize); 0 for a kernel with none.
-pub fn waveBytes(kernel: *const amdgpu.GPUKernel) u64 {
-    if (kernel.private_bytes == 0) return 0;
+/// bytes (`laneBytes`) on 256 bytes, and 256 more where that makes an
+/// even count of them (ac_compute_scratch_wavesize); 0 for a kernel with
+/// none.
+pub fn waveBytes(kernel: *const amdgpu.GPUKernel, stack_bytes: u32) u64 {
+    const private = laneBytes(kernel, stack_bytes);
+    if (private == 0) return 0;
     const lanes: u64 = if (kernel.properties & amdgpu.GPUKERNEL_WAVE32 != 0) 32 else 64;
-    return (@as(u64, kernel.private_bytes) * lanes + 255) & ~@as(u64, 255) | 256;
+    return (private * lanes + 255) & ~@as(u64, 255) | 256;
 }
 
 /// The most a wave may keep in scratch, as COMPUTE_TMPRING_SIZE holds it.
@@ -660,16 +672,16 @@ pub fn dispatch(into: *[dispatch_words]u32, first: u32, kernel: *const amdgpu.GP
 /// descriptor gives, which a wave's scratch holds; no trap handler, at
 /// most 64 KiB of group memory, 256 bytes of arguments and 1024 threads
 /// in a group.
-pub fn refusal(kernel: *const amdgpu.GPUKernel, groups: [3]u32, threads: [3]u32, argument_bytes: u32) ?[*:0]const u8 {
+pub fn refusal(kernel: *const amdgpu.GPUKernel, groups: [3]u32, threads: [3]u32, argument_bytes: u32, stack_bytes: u32) ?[*:0]const u8 {
     if (kernel.code == 0 or kernel.code & 0xff != 0) return "its code is not on 256 bytes";
-    if (kernel.properties & KERNEL_DYNAMIC_STACK != 0) return "its stack grows as it runs, past the private memory it gives";
-    if (kernel.properties & ~(amdgpu.GPUKERNEL_ARGUMENTS | amdgpu.GPUKERNEL_WAVE32) != 0) return "it takes values in its registers that are not handed to it";
+    if (kernel.properties & ~(amdgpu.GPUKERNEL_ARGUMENTS | amdgpu.GPUKERNEL_WAVE32 | amdgpu.GPUKERNEL_DYNAMIC_STACK) != 0) return "it takes values in its registers that are not handed to it";
     const user = (kernel.rsrc2 & RSRC2_USER_SGPR_MASK) >> RSRC2_USER_SGPR_SHIFT;
     const meant: u32 = if (kernel.properties & amdgpu.GPUKERNEL_ARGUMENTS != 0) 2 else 0;
     if (user != meant) return "its scalar registers are not the address of its arguments";
-    if (kernel.private_bytes == 0 and kernel.rsrc2 & RSRC2_SCRATCH_EN != 0) return "it uses scratch memory of no size";
-    if (kernel.private_bytes != 0 and kernel.rsrc2 & RSRC2_SCRATCH_EN == 0) return "its private memory is not given its waves";
-    if (waveBytes(kernel) > wave_bytes_most) return "its private memory is more than a wave's scratch holds";
+    const private = laneBytes(kernel, stack_bytes);
+    if (private == 0 and kernel.rsrc2 & RSRC2_SCRATCH_EN != 0) return "it uses scratch memory of no size";
+    if (private != 0 and kernel.rsrc2 & RSRC2_SCRATCH_EN == 0) return "its private memory is not given its waves";
+    if (waveBytes(kernel, stack_bytes) > wave_bytes_most) return "its private memory is more than a wave's scratch holds";
     if (kernel.rsrc2 & RSRC2_TRAP_PRESENT != 0) return "it needs a trap handler";
     if (kernel.group_bytes > 64 * 1024) return "it takes more than 64 KiB of group memory";
     if (kernel.argument_bytes > amdgpu.GPUKERNEL_ARGUMENTS_MAX or argument_bytes > amdgpu.GPUKERNEL_ARGUMENTS_MAX) return "its arguments take more than 256 bytes";
@@ -1217,26 +1229,32 @@ test "a kernel's dispatch" {
     dispatch(&words_out, 0x1260, &kernel, .{ 4, 1, 1 }, .{ 64, 1, 1 }, 0x80_0001_e100, Scratch.of(0x80_0400_0000, 384, 16640, 1));
     try testing.expectEqualSlices(u32, &.{ 0xC002_7600, 0x0210, 0x8004_0000, 0, 0xC001_7600, 0x0218, 384 | 65 << 12 }, words_out[19..26]);
     try testing.expectEqual(@as(u32, 384 | 2 << 12), Scratch.of(0, 768, 512, 2).tmpring);
-    try testing.expect(refusal(&kernel, .{ 4, 1, 1 }, .{ 64, 1, 1 }, 16) == null);
-    try testing.expect(refusal(&kernel, .{ 4, 1, 1 }, .{ 64, 32, 1 }, 16) != null);
-    try testing.expect(refusal(&kernel, .{ 0, 1, 1 }, .{ 64, 1, 1 }, 16) != null);
-    try testing.expect(refusal(&kernel, .{ 1, 1, 1 }, .{ 64, 1, 1 }, 257) != null);
+    try testing.expect(refusal(&kernel, .{ 4, 1, 1 }, .{ 64, 1, 1 }, 16, 0) == null);
+    try testing.expect(refusal(&kernel, .{ 4, 1, 1 }, .{ 64, 32, 1 }, 16, 0) != null);
+    try testing.expect(refusal(&kernel, .{ 0, 1, 1 }, .{ 64, 1, 1 }, 16, 0) != null);
+    try testing.expect(refusal(&kernel, .{ 1, 1, 1 }, .{ 64, 1, 1 }, 257, 0) != null);
     var scratch = kernel;
     scratch.private_bytes = 16;
-    try testing.expect(refusal(&scratch, .{ 1, 1, 1 }, .{ 64, 1, 1 }, 16) != null);
+    try testing.expect(refusal(&scratch, .{ 1, 1, 1 }, .{ 64, 1, 1 }, 16, 0) != null);
     scratch.rsrc2 |= RSRC2_SCRATCH_EN;
-    try testing.expect(refusal(&scratch, .{ 1, 1, 1 }, .{ 64, 1, 1 }, 16) == null);
+    try testing.expect(refusal(&scratch, .{ 1, 1, 1 }, .{ 64, 1, 1 }, 16, 0) == null);
     scratch.private_bytes = 0;
-    try testing.expect(refusal(&scratch, .{ 1, 1, 1 }, .{ 64, 1, 1 }, 16) != null);
+    try testing.expect(refusal(&scratch, .{ 1, 1, 1 }, .{ 64, 1, 1 }, 16, 0) != null);
     scratch.private_bytes = 1 << 20;
-    try testing.expect(refusal(&scratch, .{ 1, 1, 1 }, .{ 64, 1, 1 }, 16) != null);
+    try testing.expect(refusal(&scratch, .{ 1, 1, 1 }, .{ 64, 1, 1 }, 16, 0) != null);
+    // A stack that grows is given the dispatch's bytes, 1 KiB where it
+    // names none - with no private bytes of its own too - and refused
+    // past what a wave's scratch holds.
     var dynamic = scratch;
     dynamic.private_bytes = 16;
-    dynamic.properties |= KERNEL_DYNAMIC_STACK;
-    try testing.expect(refusal(&dynamic, .{ 1, 1, 1 }, .{ 64, 1, 1 }, 16) != null);
+    dynamic.properties |= amdgpu.GPUKERNEL_DYNAMIC_STACK;
+    try testing.expect(refusal(&dynamic, .{ 1, 1, 1 }, .{ 64, 1, 1 }, 16, 0) == null);
+    dynamic.private_bytes = 0;
+    try testing.expect(refusal(&dynamic, .{ 1, 1, 1 }, .{ 64, 1, 1 }, 16, 0) == null);
+    try testing.expect(refusal(&dynamic, .{ 1, 1, 1 }, .{ 64, 1, 1 }, 16, 1 << 20) != null);
     var dispatch_pointer = kernel;
     dispatch_pointer.properties |= 1 << 1;
-    try testing.expect(refusal(&dispatch_pointer, .{ 1, 1, 1 }, .{ 64, 1, 1 }, 16) != null);
+    try testing.expect(refusal(&dispatch_pointer, .{ 1, 1, 1 }, .{ 64, 1, 1 }, 16, 0) != null);
     try testing.expectEqual(@as(u32, 0), groupBlocks(0));
     try testing.expectEqual(@as(u32, 1), groupBlocks(512));
     try testing.expectEqual(@as(u32, 128), groupBlocks(65536));
@@ -1244,15 +1262,27 @@ test "a kernel's dispatch" {
 
 test "a wave's scratch, and how many waves the queue's holds" {
     var kernel: amdgpu.GPUKernel = .{ .properties = amdgpu.GPUKERNEL_WAVE32 };
-    try testing.expectEqual(@as(u64, 0), waveBytes(&kernel));
+    try testing.expectEqual(@as(u64, 0), waveBytes(&kernel, 0));
     kernel.private_bytes = 516;
-    try testing.expectEqual(@as(u64, 16640), waveBytes(&kernel));
+    try testing.expectEqual(@as(u64, 16640), waveBytes(&kernel, 0));
     kernel.private_bytes = 1;
-    try testing.expectEqual(@as(u64, 256), waveBytes(&kernel));
+    try testing.expectEqual(@as(u64, 256), waveBytes(&kernel, 0));
     kernel.private_bytes = 16;
-    try testing.expectEqual(@as(u64, 768), waveBytes(&kernel));
+    try testing.expectEqual(@as(u64, 768), waveBytes(&kernel, 0));
+    // A fixed stack takes no notice of the dispatch's bytes.
+    try testing.expectEqual(@as(u64, 768), waveBytes(&kernel, 4096));
     kernel.properties = 0;
-    try testing.expectEqual(@as(u64, 1280), waveBytes(&kernel));
+    try testing.expectEqual(@as(u64, 1280), waveBytes(&kernel, 0));
+    // A stack that grows: 1 KiB a lane where the dispatch names none, the
+    // dispatch's bytes, and the kernel's own where those are more.
+    kernel.properties = amdgpu.GPUKERNEL_WAVE32 | amdgpu.GPUKERNEL_DYNAMIC_STACK;
+    kernel.private_bytes = 32;
+    try testing.expectEqual(@as(u64, 1024), laneBytes(&kernel, 0));
+    try testing.expectEqual(@as(u64, 32 * 1024 + 256), waveBytes(&kernel, 0));
+    try testing.expectEqual(@as(u64, 4096), laneBytes(&kernel, 4096));
+    try testing.expectEqual(@as(u64, 32), laneBytes(&kernel, 16));
+    kernel.private_bytes = 2048;
+    try testing.expectEqual(@as(u64, 2048), laneBytes(&kernel, 0));
     try testing.expectEqual(@as(u32, 384), scratchWaves(1, 12));
     try testing.expectEqual(@as(u32, 32), scratchWaves(1, 0));
     try testing.expectEqual(@as(u32, 64), scratchWaves(2, 1));

@@ -26,21 +26,22 @@ const _compute = @import("_compute.zig");
 /// - `kernel` - the kernel, as FindGPUKernel found it in a loaded code
 ///   object.
 /// - `dispatch` - how many groups it runs in each dimension and how many
-///   threads each group has, and its arguments (GPUDispatch).
+///   threads each group has, its arguments, and for a kernel whose stack
+///   grows as it runs the bytes each lane is given (GPUDispatch).
 ///
 /// RESULT:
 /// The job's number, which WaitGPUCompute waits for; 0 where the queue
 /// does not run (StartGPUCompute), where the kernel takes anything a
 /// dispatch does not hand it - values in its registers other than the
-/// address of its arguments, a stack that grows as it runs, a trap
-/// handler - or more private memory than a wave's scratch holds, more
-/// than 64 KiB of group memory or 256 bytes of arguments, where a
-/// dimension of the dispatch is 0, a group has more than 1024 threads,
-/// where the scratch its private memory needs cannot be made - the
-/// graphics block's compute units not known, no room in the device's
-/// memory, or the queue not idle within a second - or the jobs before it
-/// leave no room in its ring within a second. Why a kernel is refused is
-/// said in the system's log.
+/// address of its arguments, a trap handler - or more private memory,
+/// its stack's with it, than a wave's scratch holds, more than 64 KiB of
+/// group memory or 256 bytes of arguments, where a dimension of the
+/// dispatch is 0, a group has more than 1024 threads, where the scratch
+/// its private memory needs cannot be made - the graphics block's
+/// compute units not known, no room in the device's memory, or the queue
+/// not idle within a second - or the jobs before it leave no room in its
+/// ring within a second. Why a kernel is refused is said in the system's
+/// log.
 ///
 /// BEHAVIOR:
 /// Under the queue's lock the arguments are copied into the next of the
@@ -66,6 +67,12 @@ const _compute = @import("_compute.zig");
 /// of what size it holds, one of a kernel without private memory too, as
 /// the waves of one sent before it may still be using it.
 ///
+/// Since 1.21 a kernel whose stack grows as it runs
+/// (GPUKERNEL_DYNAMIC_STACK) is given the more of its own private bytes
+/// and the dispatch's `stack_bytes` for each lane - 1 KiB
+/// (GPUDISPATCH_STACK_BYTES) where it names none - and its scratch is
+/// made for that.
+///
 /// CONTEXT:
 /// - Waits: for a slot and for room in the ring, a second at most each;
 ///   where the scratch is made again, for the queue to be idle, a second
@@ -89,11 +96,11 @@ const _compute = @import("_compute.zig");
 /// 12 compute units, 384 times a wave's bytes.
 ///
 /// BUGS:
-/// A kernel whose stack grows as it runs - recursion, a call it cannot
-/// see the end of, an array of a size it works out - or that needs the
-/// dispatch's own packet, its queue or a dispatch number in its
-/// registers, or its arguments loaded into registers before it starts,
-/// cannot be run.
+/// A kernel that needs the dispatch's own packet, its queue or a dispatch
+/// number in its registers, or its arguments loaded into registers
+/// before it starts, cannot be run. A stack that grows past the bytes its
+/// dispatch gives it is not stopped: the kernel then keeps its frames in
+/// memory that is not its own.
 ///
 /// SEE ALSO:
 /// `LoadGPUCode`, `FindGPUKernel`, `SendGPUCompute`, `WaitGPUCompute`
@@ -113,7 +120,7 @@ pub fn SendGPUKernel(ab: *AMDGPUBase, kernel: *const amdgpu.GPUKernel, dispatch:
     if (ab.device == null or !ab.compute_running) return 0;
     const sys = ab.sys_base;
     const owner = amdgpu.AMDGPUNAME;
-    if (_compute.refusal(kernel, dispatch.groups, dispatch.threads, dispatch.argument_bytes)) |why| {
+    if (_compute.refusal(kernel, dispatch.groups, dispatch.threads, dispatch.argument_bytes, dispatch.stack_bytes)) |why| {
         exec.kprintf(sys, "%s: a kernel at 0x%lx is not run: %s\n", .{ owner, kernel.code, why });
         return 0;
     }
@@ -132,7 +139,7 @@ pub fn SendGPUKernel(ab: *AMDGPUBase, kernel: *const amdgpu.GPUKernel, dispatch:
         }
         _compute.pause(ab, 100);
     }
-    const scratch = scratchFor(ab, kernel) orelse return 0;
+    const scratch = scratchFor(ab, kernel, dispatch.stack_bytes) orelse return 0;
     const slot_at = _compute.slots_at + slot * _compute.slot_bytes;
     const into: [*]volatile u8 = @ptrCast(_compute.words(ab, slot_at));
     for (0.._compute.slot_bytes) |index| {
@@ -150,13 +157,13 @@ pub fn SendGPUKernel(ab: *AMDGPUBase, kernel: *const amdgpu.GPUKernel, dispatch:
 
 /// The scratch a dispatch of `kernel` is told of, under the queue's lock:
 /// the queue's own, made first where it holds less for a wave than the
-/// kernel needs - once every job sent before it is done, as a piece in
-/// use keeps its waves' size; null where it cannot be, which is said in
-/// the system's log.
-fn scratchFor(ab: *AMDGPUBase, kernel: *const amdgpu.GPUKernel) ?_compute.Scratch {
+/// kernel needs, its stack's `stack_bytes` with it - once every job sent
+/// before it is done, as a piece in use keeps its waves' size; null where
+/// it cannot be, which is said in the system's log.
+fn scratchFor(ab: *AMDGPUBase, kernel: *const amdgpu.GPUKernel, stack_bytes: u32) ?_compute.Scratch {
     const sys = ab.sys_base;
     const owner = amdgpu.AMDGPUNAME;
-    const needed = _compute.waveBytes(kernel);
+    const needed = _compute.waveBytes(kernel, stack_bytes);
     if (needed > ab.scratch_wave_bytes) {
         if (ab.compute_units == 0) {
             exec.kprintf(sys, "%s: a kernel at 0x%lx is not run: the graphics block's compute units, which its scratch is made for, are not known\n", .{ owner, kernel.code });

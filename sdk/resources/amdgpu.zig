@@ -321,22 +321,34 @@ pub const GPUKernel = extern struct {
     properties: u32 = 0,
 };
 /// A kernel's properties: the address of its arguments handed to it in
-/// its first two scalar registers, and waves of 32 lanes.
+/// its first two scalar registers; waves of 32 lanes; a stack that grows
+/// as it runs - recursion, a call it cannot see the end of, an array of a
+/// size it works out - whose bytes the dispatch gives
+/// (GPUDispatch.stack_bytes).
 pub const GPUKERNEL_ARGUMENTS: u32 = 1 << 3;
 pub const GPUKERNEL_WAVE32: u32 = 1 << 10;
+pub const GPUKERNEL_DYNAMIC_STACK: u32 = 1 << 11;
 /// The most bytes of arguments a dispatch takes.
 pub const GPUKERNEL_ARGUMENTS_MAX = 256;
 
 /// A kernel's dispatch, as SendGPUKernel takes it: how many groups it
 /// runs in each of the three dimensions and how many threads each group
 /// has in each, and its arguments - `argument_bytes` of them at
-/// `arguments`, copied when it is sent, so they need not stay.
+/// `arguments`, copied when it is sent, so they need not stay. For a
+/// kernel whose stack grows as it runs (GPUKERNEL_DYNAMIC_STACK),
+/// `stack_bytes` is the private memory each lane is given, its own and
+/// its stack's: 0 for GPUDISPATCH_STACK_BYTES, and never less than the
+/// kernel's own.
 pub const GPUDispatch = extern struct {
     groups: [3]u32 = .{ 1, 1, 1 },
     threads: [3]u32 = .{ 1, 1, 1 },
     arguments: ?*const anyopaque = null,
     argument_bytes: u32 = 0,
+    stack_bytes: u32 = 0,
 };
+/// The private memory a lane of a kernel whose stack grows is given
+/// where its dispatch names none.
+pub const GPUDISPATCH_STACK_BYTES: u32 = 1024;
 
 /// AddGPUIntServer's clients - which of the device's blocks raised an
 /// interrupt - and their sources, as the interrupt block numbers them.
