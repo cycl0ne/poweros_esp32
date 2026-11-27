@@ -7658,4 +7658,46 @@ pub const LIBRARY_VERSION = 1;
 /// it makes before they are read. On the CM5 (package f243) FacetProbe is
 /// 1074 of 1074 and FacetBoth's 316 cases are each as at 1.230: a program
 /// of one colour compiles as it did.
-pub const LIBRARY_REVISION = 231;
+///
+/// 232: **Frames of several render targets on the V3D
+/// (docs/facet-vulkan10.md item 55, step 2 of 3).** `frame.Frame` has a
+/// render target of each colour attachment a subpass has, the unused among
+/// them (`Frame.colors`, `Frame.targets`), each with its own image,
+/// format, target, load, clear inside the area and resolve
+/// (`frame.Color`); the frame's own fields of render target 0 are gone.
+/// The common packet counts them, "Number of Render Targets" at 4 and one
+/// less, v3dv's MAX2(color_count, 1) (v3dvx_cmd_buffer.c:975). Each target
+/// is configured by its number, in its number's order, one after another
+/// in the tile buffer: its packets each name it at 3, and the first has
+/// its base address in 512 bits, the next one's past its tile's rows,
+/// tile_height * stride / 8 (`cl.renderTarget`; v3dvx_cmd_buffer.c:
+/// 1077-1185). An unused one is configured with a stride of 1 and takes no
+/// room (`cl.unusedRenderTarget`, :1080-1086). A tile loads each target
+/// that loads, from its own buffer, RENDER_TARGET_0 + i, in its number's
+/// order before the depth, and stores the depth first and then each
+/// target, its resolve before it, then clears them all at once
+/// (`cmd_buffer_render_pass_emit_loads` and `_stores`, :236-340 and
+/// :480-699). The second list, for the tiles a cleared area covers whole,
+/// leaves out only the loads of the targets that clear inside it
+/// (`Frame.clearsInside`). The tile is chosen from the bytes of every
+/// target (`Frame.colorBytes`), as v3dv sums total_color_bpp
+/// (v3dv_pass.c:353-371). The GFXH-1742 tile's store of nothing, and a
+/// tile's of a frame of no colour, name RGBA8 whatever the colour is:
+/// what a store of nothing names is not read, and v3dv leaves it 0.
+/// Nothing draws several yet: the V3D plays a subpass's colour
+/// attachments as parts, each a frame of render target 0, until step 3.
+///
+/// Three host tests are new: a frame of four render targets - RGBA8
+/// loaded, an unused one, RGBA16F loaded at the area's edge alone,
+/// RGBA32F cleared - each configured by its number at the base address
+/// worked by hand, the tile buffer they take 28 bytes of each pixel of
+/// the tile, each loaded and stored from its own buffer in v3dv's order
+/// and RGBA32F resolved first at four samples; frames of unused
+/// attachments alone, of none and of one at 1 behind an unused 0; and the
+/// packets of a target of four floats in a tile that is not square. 4564
+/// of the 4567 pass, 3 skipped. Each of 20 mutants of the new code fails
+/// them (4 written again so that they compile, their first form refused
+/// by the compiler). On the CM5 (package f244) FacetProbe is 1074 of 1074
+/// and FacetBoth's 316 cases are each as at 1.231: a frame of one render
+/// target is configured as it was.
+pub const LIBRARY_REVISION = 232;
