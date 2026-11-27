@@ -67,6 +67,26 @@ pub const OUTPUT_R16F: u64 = 20;
 pub const OUTPUT_RG8: u64 = 29;
 pub const OUTPUT_R8: u64 = 30;
 pub const OUTPUT_RGBA5551: u64 = 45;
+/// The output image formats of whole numbers (since 1.229).
+pub const OUTPUT_RGB10_A2UI: u64 = 2;
+pub const OUTPUT_RGBA32I: u64 = 12;
+pub const OUTPUT_RG32I: u64 = 13;
+pub const OUTPUT_R32I: u64 = 14;
+pub const OUTPUT_RGBA32UI: u64 = 15;
+pub const OUTPUT_RG32UI: u64 = 16;
+pub const OUTPUT_R32UI: u64 = 17;
+pub const OUTPUT_RGBA16I: u64 = 21;
+pub const OUTPUT_RG16I: u64 = 22;
+pub const OUTPUT_R16I: u64 = 23;
+pub const OUTPUT_RGBA16UI: u64 = 24;
+pub const OUTPUT_RG16UI: u64 = 25;
+pub const OUTPUT_R16UI: u64 = 26;
+pub const OUTPUT_RGBA8I: u64 = 31;
+pub const OUTPUT_RG8I: u64 = 32;
+pub const OUTPUT_R8I: u64 = 33;
+pub const OUTPUT_RGBA8UI: u64 = 34;
+pub const OUTPUT_RG8UI: u64 = 35;
+pub const OUTPUT_R8UI: u64 = 36;
 /// How a depth or a stencil plane lies in memory, for a store or a load of
 /// the tiles' own (since 1.47).
 pub const OUTPUT_D16: u64 = 42;

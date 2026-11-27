@@ -1458,7 +1458,7 @@ Still left out. Each is marked *facet-wide* or *V3D-only*:
 
 ### 36. Make the mandatory colour-attachment formats drawable
 
-*formats / colour attachments* &mdash; conformance-blocking, large &mdash; **steps 1 to 3 done in 1.226-1.228: the cores draw all thirty-five, the V3D the fourteen**; the V3D's twenty-one still to come
+*formats / colour attachments* &mdash; conformance-blocking, large &mdash; **done in 1.226-1.229, four steps: the cores and the V3D draw all thirty-five**
 
 Vulkan mandates COLOR_ATTACHMENT for 38 formats and COLOR_ATTACHMENT_BLEND for 14. facet provides 3 of each, hard-coded in a two-line `drawable()` and enforced by CreateImage. The missing 35 are the integer attachments, the three sRGB words, the half- and single-float forms, a2b10g10r10 both ways, a8b8g8r8_*_pack32 and a1r5g5b5. This is the largest piece in the formats strand: the tile buffer keeps 8 bits a channel of BGRA, dithered to 565 on store, so each new format needs a tile representation, a store, a load, a clear and — for the 11 blendable ones — a blend unit at that width. On the V3D the render-target config packets must name the format too. The same fix closes the colour-input-attachment gap, since an input attachment must be of a format rowFormat knows, which is the same three. Since 1.126 (item 32) BLIT_DST rides on this as well, set beside COLOR_ATTACHMENT as v3dv sets it: each format made an attachment here becomes a blit's destination, so the blit, which carries 8 bits a channel, has to write it at its own width - a float as a float, a whole number as it is. Since 1.127 (item 31) the A8B8G8R8 whole numbers are their R8G8B8A8 forms under another name, so each follows its form here with one name more; A1R5G5B5 is unpacked as it is copied in, so its attachment needs a tile format of its own and a store that packs it.
 
@@ -1669,11 +1669,64 @@ input attachment read back taken, the whole numbers or the floats'
 blend put back on `texel_targets`. On the CM5 (packages f236 to f238) FacetProbe is
 1038 of 1038 and FacetBoth's 316 cases are each as at 1.227.
 
-Still left out after step 3. Each is marked *facet-wide* or *V3D-only*:
-- **The V3D draws none of the twenty-one** (step 4): it says no
-  COLOR_ATTACHMENT for them (`whole_targets`), so CreateImage and
-  CreateRenderPass refuse each. *V3D-only*.
-- **The V3D reads back none of the fourteen it drew**: an image of one
+**Step 4, in 1.229: the V3D draws the twenty-one.** About 620 lines,
+180 of them host tests, 140 FacetProbe's and 160 glslc's words. Each is
+COLOR_ATTACHMENT, BLIT_DST and both copies on the V3D as on the cores,
+never blended (`Capabilities.whole_targets`, now both devices').
+`v3d.target` takes v3dv's rows for them (v3dvx_formats.c:133-197): each
+its own output image format, none with red and blue swapped,
+A8B8G8R8 as its R8G8B8A8 form; `cl.internalOf` their six internal types
+at 32, 64 or 128 bits a pixel, A2B10G10R10_UINT at 16-bit whole numbers
+(`get_internal_type_bpp_for_output_format`, v3dvx_formats.c:338-465).
+The tiles hold what is written to the channel's range by the clamped
+type v3dv gives each (`cl.typeClamp`,
+`V3D_RENDER_TARGET_TYPE_CLAMP_*_CLAMPED`, v3dvx_cmd_buffer.c:856-884),
+as the cores hold it (`Batch.putWholes`), and a pass clears to the
+clear's words cut to the channel (`cl.clearColor`,
+`get_hw_clear_color`, v3dvx_device.c:289-334). A program's colour of
+whole numbers is its words, written to the TLB a word at a time under
+the F32 specifier, as v3dv keys a pure integer target with f32_color_rb
+(v3dv_pipeline.c:1253-1256; `Target.wide`) and Mesa's back end moves
+them without a conversion (`vir_emit_tlb_color_write`, nir_to_vir.c:
+1955): the SPIR-V front end now takes a fragment output of integers,
+which it refused since 1.165. A clear drawn as a rectangle, by
+CmdClearAttachments or over a render area the tiles stick out of, into
+any target taken a word a channel is a program of its own that moves
+four uniforms to the TLB untouched (`qpu.words_fragment`,
+`driver.Programs.words`), as v3dv clears with a fragment shader that
+stores its push constants (`get_color_clear_rect_fs`,
+v3dv_meta_clear.c:421-440): the vertices' colour passed each word
+through the varyings' FMUL and FADD, which flush a whole number below
+2^23 to 0 as a denormal and may change a NaN's bits. Four samples
+resolve on the CPU after the frame, keeping the first
+(`_transfer.resolveRectangle`, as on the cores since 1.227). One host
+test is new (a device shaped as the V3D: the twenty-one attachments,
+never blended, their pipelines keeping the format, their images drawn
+and read back refused), as are two of the V3D module's (v3dv's rows of
+the twenty-one, their types, clamps, clears and alpha, and each its own
+output format; the clear program's four uniforms, moves and specifier)
+and one of the compile (glslc's uvec4 and ivec4 of push constants
+through Mesa's back end: four push uniforms, one move to TLBU under
+0xFFFFFF3F and three to TLB, nothing packed or converted), and one old
+compile test is turned round (an integer colour out, refused until now,
+compiles). FacetProbe 1.57 draws six of the twenty-one on both devices
+from SPIR-V beside the cores' functions (R32G32B32A32_UINT with 2^24 +
+1, R8G8_SINT below 0 and held, R8G8B8A8_UINT and R16G16B16A16_UINT
+held, A2B10G10R10_UINT and R32_SINT at -2^31), each cleared by the
+pass and over a square of it by CmdClearAttachments, and reads
+`whole_textures` off SAMPLED_IMAGE, the V3D now saying the twenty-one's
+attachment features without sampling them. Fourteen mutations each
+fail a test: an output format of the other sign, of fewer channels or
+normalized, two formats given one output, the whole numbers written as
+halves, a clear of them packed as bytes, a type taken for no whole
+numbers, an alpha where there is none, the clear program's first move
+not to TLBU, a uniform uncounted, a word moved as a float or one not
+loaded, and the integer colour refused again. On the CM5
+(packages f239 and f240) FacetProbe is 1070 of 1070 and FacetBoth's
+316 cases are each as at 1.227.
+
+Still left out after step 4. Each is marked *facet-wide* or *V3D-only*:
+- **The V3D reads back none of the thirty-five it drew**: an image of one
   both drawn and sampled, or read as an input attachment, is refused
   (`target_reads`), the TMU's texture state knowing none of their
   formats where the tiles store them (`tiling.writeTextureState`, item
@@ -1696,6 +1749,17 @@ Still left out after step 3. Each is marked *facet-wide* or *V3D-only*:
 - **Alpha to coverage reads no alpha of whole numbers**: Vulkan leaves
   it undefined for an integer colour attachment 0, and the cores take
   the coverage as it is. *Facet-wide*.
+- **A fixed form into whole numbers writes its floats' words**: the
+  fixed forms are the library's own and write floats, which Vulkan
+  leaves undefined in an integer attachment (the Fragment Output
+  Interface's "do not match"); the V3D's wide programs move the floats'
+  bits, the cores' bytes go their own way. A program compiled from
+  SPIR-V with an integer output writes the numbers on both.
+  *Facet-wide*.
+- **A subpass drawn in parts takes one compiled program**: parts of a
+  target taken a word a channel beside one of half-floats are refused
+  the program (`driver.compiled`), until a subpass draws its parts
+  together (item 55). *V3D-only*.
 - **A format of the fourteen that a sampler does not read where it
   lies** (the sRGB words, A1R5G5B5, A2B10G10R10, R16_SFLOAT,
   R16G16_SFLOAT, R32G32_SFLOAT) may not be both sampled and drawn into:

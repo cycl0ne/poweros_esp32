@@ -510,6 +510,30 @@ pub const wide_cube_fragment = wide(cube_fragment);
 pub const wide_volume_fragment = wide(volume_fragment);
 pub const wide_shadow_fragment = wide(shadow_fragment);
 
+/// A clear's four words into a render target the TLB takes a word a
+/// channel, of 32-bit floats or of whole numbers: v3dv's clear-rect
+/// fragment shader (`get_color_clear_rect_fs`, v3dv_meta_clear.c:
+/// 421-440), which loads the colour from its push constants and stores it
+/// as it is, written as Mesa's back end writes it under f32_color_rb
+/// (vir_emit_tlb_color_write, nir_to_vir.c:2007-2022): four uniforms, the
+/// four words untouched by any float operation, and the specifier the
+/// TLBU write reads as the fifth. The colour of the vertices instead
+/// would pass each word through the varyings' FMUL and FADD, which flush
+/// whole numbers below 2^23 to 0 as denormals (since 1.229).
+const words_code = [_]u64{
+    ldunifrf(4),
+    ldunifrf(5),
+    ldunifrf(6),
+    ldunifrf(7),
+} ++ last_section ++ [_]u64{
+    movTo(.tlbu, 4),
+    movTo(.tlb, 5),
+    movTo(.tlb, 6),
+    movTo(.tlb, 7),
+} ++ end_of_program;
+
+pub const words_fragment = Fragment{ .code = &words_code, .varyings = 0, .uniforms = 5 };
+
 const std = @import("std");
 
 test "nop is what 7.1 calls it" {
@@ -641,4 +665,32 @@ test "a fixed form's program for floats of 32 bits: each write of two half-float
         try std.testing.expectEqual(@as(u32, 1), tlbu);
     }
     try std.testing.expectEqual(@as(u32, 0xFFFF_FF3F), tlb_f32_specifier);
+}
+
+test "a clear's four words into a target taken a word a channel: four uniforms moved as they are, the first to TLBU, and the specifier the fifth (since 1.229)" {
+    const clear = words_fragment;
+    try std.testing.expectEqual(@as(u32, 0), clear.varyings);
+    try std.testing.expectEqual(@as(u32, 5), clear.uniforms);
+    var loads: u32 = 0;
+    var tlb: u32 = 0;
+    var tlbu: u32 = 0;
+    for (clear.code) |word| {
+        const inst = pack.unpack(word) orelse return error.TestUnexpectedResult;
+        if (inst.sig.ldunifrf) loads += 1;
+        if (inst.kind != .alu) continue;
+        // Nothing that would read a word as a float.
+        try std.testing.expect(inst.alu.add.op != .fmov and inst.alu.add.op != .fadd and inst.alu.mul.op != .fmul);
+        if (!inst.alu.add.magic_write) continue;
+        if (inst.alu.add.waddr == instr.magic(.tlb)) tlb += 1;
+        if (inst.alu.add.waddr == instr.magic(.tlbu)) {
+            // The first write, and of the first word loaded.
+            try std.testing.expectEqual(@as(u32, 0), tlb);
+            try std.testing.expectEqual(@as(u6, 4), inst.alu.add.a.raddr);
+            tlbu += 1;
+        }
+    }
+    try std.testing.expectEqual(@as(u32, 4), loads);
+    try std.testing.expectEqual(@as(u32, 3), tlb);
+    try std.testing.expectEqual(@as(u32, 1), tlbu);
+    try std.testing.expectEqualSlices(u64, &end_of_program, clear.code[clear.code.len - end_of_program.len ..]);
 }
