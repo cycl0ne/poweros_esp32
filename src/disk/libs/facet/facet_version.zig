@@ -7625,4 +7625,37 @@ pub const LIBRARY_VERSION = 1;
 /// function of one: that picture keeps what was there on both devices,
 /// "two attachments, second" 0 of 230400 pixels apart where it was 11,
 /// "subpasses, second picture" 5 where it was 8.
-pub const LIBRARY_REVISION = 230;
+///
+/// 231: **Several colour outs in the V3D's fragment programs, each
+/// written to the render target of its location (docs/facet-vulkan10.md
+/// item 55, step 1 of 3).** The compiler takes a colour out of four
+/// floats at each location 0 to 3 (`compile.most_colors`), each its
+/// render target's output_color_var (ntq_setup_outputs,
+/// nir_to_vir.c:2580-2602), and refuses one past them or two at one
+/// location (`Error.Location`); `Work.output` and `Work.stored` are one a
+/// location. emit_frag_end writes each render target the key's cbufs has
+/// and the program has a colour out at, from 0 up (nir_to_vir.c:
+/// 2142-2143), each by vir_emit_tlb_color_write's specifier, which names
+/// it by 7 - rt (:1965-1985); alpha to coverage reads location 0's alpha
+/// alone (:2056-2065), and early fragment tests are promoted where any
+/// render target is written (:2050-2054). An output nothing is stored
+/// into is not written, where Mesa writes the 0 its temporary holds:
+/// undefined in Vulkan either way. The plan's compile still takes one
+/// colour, at location 0. Nothing draws with it yet: the V3D keys its
+/// pipelines with render target 0 alone, and refuses a fragment shader
+/// of several outputs until step 3.
+///
+/// Four host tests are new, of five modules glslc made
+/// (`glslc_reference.zig`): three colour outs stored out of their order,
+/// each render target packed from its own location's floats; one at
+/// location 1 alone; the refusals; and the optimizations seeing every
+/// colour - a sum another colour reads not contracted, two colours CSE
+/// makes one both written, a float a colour reads past a kept selection
+/// live to the end. 4561 of the 4564 pass, 3 skipped. Of 18 mutants of
+/// the new code, 12 failed the host tests and 4 more fail the last of
+/// those tests; the other 2 were in code nothing reached, which is gone:
+/// a `usesOf` nothing called, and `armCost`'s look at the colours, which
+/// it makes before they are read. On the CM5 (package f243) FacetProbe is
+/// 1074 of 1074 and FacetBoth's 316 cases are each as at 1.230: a program
+/// of one colour compiles as it did.
+pub const LIBRARY_REVISION = 231;

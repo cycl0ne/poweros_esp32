@@ -33351,3 +33351,497 @@ pub const glslc_whole_signed = [_]u32{
     0x00000010, 0x0000000F, 0x0003003E, 0x00000009, 0x00000010, 0x000100FD,
     0x00010038,
 };
+
+/// glslc -fshader-stage=frag, without -O: three colour outs at locations 0, 1 and 2, stored out of their order (since 1.231). 175 words.
+///
+/// ```glsl
+/// #version 450
+/// // Three colour outs, stored out of the order of their locations: the
+/// // interpolated colour with red and blue swapped at 2, the colour itself
+/// // at 0, and one minus it at 1.
+/// layout(location = 0) in vec4 v;
+/// layout(location = 2) out vec4 swapped;
+/// layout(location = 0) out vec4 first;
+/// layout(location = 1) out vec4 rest;
+/// void main() {
+///     swapped = v.bgra;
+///     first = v;
+///     rest = vec4(1.0) - v;
+/// }
+/// ```
+///
+/// ```
+/// ; SPIR-V
+/// ; Version: 1.0
+/// ; Generator: Google Shaderc over Glslang; 11
+/// ; Bound: 21
+/// ; Schema: 0
+///                OpCapability Shader
+///           %1 = OpExtInstImport "GLSL.std.450"
+///                OpMemoryModel Logical GLSL450
+///                OpEntryPoint Fragment %4 "main" %9 %11 %14 %16
+///                OpExecutionMode %4 OriginUpperLeft
+///                OpSource GLSL 450
+///                OpSourceExtension "GL_GOOGLE_cpp_style_line_directive"
+///                OpSourceExtension "GL_GOOGLE_include_directive"
+///                OpName %4 "main"
+///                OpName %9 "swapped"
+///                OpName %11 "v"
+///                OpName %14 "first"
+///                OpName %16 "rest"
+///                OpDecorate %9 Location 2
+///                OpDecorate %11 Location 0
+///                OpDecorate %14 Location 0
+///                OpDecorate %16 Location 1
+///           %2 = OpTypeVoid
+///           %3 = OpTypeFunction %2
+///           %6 = OpTypeFloat 32
+///           %7 = OpTypeVector %6 4
+///           %8 = OpTypePointer Output %7
+///           %9 = OpVariable %8 Output
+///          %10 = OpTypePointer Input %7
+///          %11 = OpVariable %10 Input
+///          %14 = OpVariable %8 Output
+///          %16 = OpVariable %8 Output
+///          %17 = OpConstant %6 1
+///          %18 = OpConstantComposite %7 %17 %17 %17 %17
+///           %4 = OpFunction %2 None %3
+///           %5 = OpLabel
+///          %12 = OpLoad %7 %11
+///          %13 = OpVectorShuffle %7 %12 %12 2 1 0 3
+///                OpStore %9 %13
+///          %15 = OpLoad %7 %11
+///                OpStore %14 %15
+///          %19 = OpLoad %7 %11
+///          %20 = OpFSub %7 %18 %19
+///                OpStore %16 %20
+///                OpReturn
+///                OpFunctionEnd
+/// ```
+pub const glslc_several_colours = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000015, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0009000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00000009, 0x0000000B, 0x0000000E,
+    0x00000010, 0x00030010, 0x00000004, 0x00000007, 0x00030003, 0x00000002,
+    0x000001C2, 0x000A0004, 0x475F4C47, 0x4C474F4F, 0x70635F45, 0x74735F70,
+    0x5F656C79, 0x656E696C, 0x7269645F, 0x69746365, 0x00006576, 0x00080004,
+    0x475F4C47, 0x4C474F4F, 0x6E695F45, 0x64756C63, 0x69645F65, 0x74636572,
+    0x00657669, 0x00040005, 0x00000004, 0x6E69616D, 0x00000000, 0x00040005,
+    0x00000009, 0x70617773, 0x00646570, 0x00030005, 0x0000000B, 0x00000076,
+    0x00040005, 0x0000000E, 0x73726966, 0x00000074, 0x00040005, 0x00000010,
+    0x74736572, 0x00000000, 0x00040047, 0x00000009, 0x0000001E, 0x00000002,
+    0x00040047, 0x0000000B, 0x0000001E, 0x00000000, 0x00040047, 0x0000000E,
+    0x0000001E, 0x00000000, 0x00040047, 0x00000010, 0x0000001E, 0x00000001,
+    0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00030016,
+    0x00000006, 0x00000020, 0x00040017, 0x00000007, 0x00000006, 0x00000004,
+    0x00040020, 0x00000008, 0x00000003, 0x00000007, 0x0004003B, 0x00000008,
+    0x00000009, 0x00000003, 0x00040020, 0x0000000A, 0x00000001, 0x00000007,
+    0x0004003B, 0x0000000A, 0x0000000B, 0x00000001, 0x0004003B, 0x00000008,
+    0x0000000E, 0x00000003, 0x0004003B, 0x00000008, 0x00000010, 0x00000003,
+    0x0004002B, 0x00000006, 0x00000011, 0x3F800000, 0x0007002C, 0x00000007,
+    0x00000012, 0x00000011, 0x00000011, 0x00000011, 0x00000011, 0x00050036,
+    0x00000002, 0x00000004, 0x00000000, 0x00000003, 0x000200F8, 0x00000005,
+    0x0004003D, 0x00000007, 0x0000000C, 0x0000000B, 0x0009004F, 0x00000007,
+    0x0000000D, 0x0000000C, 0x0000000C, 0x00000002, 0x00000001, 0x00000000,
+    0x00000003, 0x0003003E, 0x00000009, 0x0000000D, 0x0004003D, 0x00000007,
+    0x0000000F, 0x0000000B, 0x0003003E, 0x0000000E, 0x0000000F, 0x0004003D,
+    0x00000007, 0x00000013, 0x0000000B, 0x00050083, 0x00000007, 0x00000014,
+    0x00000012, 0x00000013, 0x0003003E, 0x00000010, 0x00000014, 0x000100FD,
+    0x00010038,
+};
+
+/// glslc -fshader-stage=frag, without -O: one colour out, at location 1 alone (since 1.231). 119 words.
+///
+/// ```glsl
+/// #version 450
+/// // One colour out, at location 1 alone: half the interpolated colour.
+/// layout(location = 0) in vec4 v;
+/// layout(location = 1) out vec4 second;
+/// void main() {
+///     second = v * 0.5;
+/// }
+/// ```
+///
+/// ```
+/// ; SPIR-V
+/// ; Version: 1.0
+/// ; Generator: Google Shaderc over Glslang; 11
+/// ; Bound: 15
+/// ; Schema: 0
+///                OpCapability Shader
+///           %1 = OpExtInstImport "GLSL.std.450"
+///                OpMemoryModel Logical GLSL450
+///                OpEntryPoint Fragment %4 "main" %9 %11
+///                OpExecutionMode %4 OriginUpperLeft
+///                OpSource GLSL 450
+///                OpSourceExtension "GL_GOOGLE_cpp_style_line_directive"
+///                OpSourceExtension "GL_GOOGLE_include_directive"
+///                OpName %4 "main"
+///                OpName %9 "second"
+///                OpName %11 "v"
+///                OpDecorate %9 Location 1
+///                OpDecorate %11 Location 0
+///           %2 = OpTypeVoid
+///           %3 = OpTypeFunction %2
+///           %6 = OpTypeFloat 32
+///           %7 = OpTypeVector %6 4
+///           %8 = OpTypePointer Output %7
+///           %9 = OpVariable %8 Output
+///          %10 = OpTypePointer Input %7
+///          %11 = OpVariable %10 Input
+///          %13 = OpConstant %6 0.5
+///           %4 = OpFunction %2 None %3
+///           %5 = OpLabel
+///          %12 = OpLoad %7 %11
+///          %14 = OpVectorTimesScalar %7 %12 %13
+///                OpStore %9 %14
+///                OpReturn
+///                OpFunctionEnd
+/// ```
+pub const glslc_second_colour = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x0000000F, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00000009, 0x0000000B, 0x00030010,
+    0x00000004, 0x00000007, 0x00030003, 0x00000002, 0x000001C2, 0x000A0004,
+    0x475F4C47, 0x4C474F4F, 0x70635F45, 0x74735F70, 0x5F656C79, 0x656E696C,
+    0x7269645F, 0x69746365, 0x00006576, 0x00080004, 0x475F4C47, 0x4C474F4F,
+    0x6E695F45, 0x64756C63, 0x69645F65, 0x74636572, 0x00657669, 0x00040005,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00040005, 0x00000009, 0x6F636573,
+    0x0000646E, 0x00030005, 0x0000000B, 0x00000076, 0x00040047, 0x00000009,
+    0x0000001E, 0x00000001, 0x00040047, 0x0000000B, 0x0000001E, 0x00000000,
+    0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00030016,
+    0x00000006, 0x00000020, 0x00040017, 0x00000007, 0x00000006, 0x00000004,
+    0x00040020, 0x00000008, 0x00000003, 0x00000007, 0x0004003B, 0x00000008,
+    0x00000009, 0x00000003, 0x00040020, 0x0000000A, 0x00000001, 0x00000007,
+    0x0004003B, 0x0000000A, 0x0000000B, 0x00000001, 0x0004002B, 0x00000006,
+    0x0000000D, 0x3F000000, 0x00050036, 0x00000002, 0x00000004, 0x00000000,
+    0x00000003, 0x000200F8, 0x00000005, 0x0004003D, 0x00000007, 0x0000000C,
+    0x0000000B, 0x0005008E, 0x00000007, 0x0000000E, 0x0000000C, 0x0000000D,
+    0x0003003E, 0x00000009, 0x0000000E, 0x000100FD, 0x00010038,
+};
+
+/// glslc -fshader-stage=frag, without -O: a sum that is one colour out and read by another (since 1.231). 174 words.
+///
+/// ```glsl
+/// #version 450
+/// // The interpolated colour plus a quarter at location 1, and the colour
+/// // plus that at location 0: the sum read twice, which nir_opt_algebraic's
+/// // fadd(a, fadd(is_used_once)(a, b)) leaves as it is.
+/// layout(location = 0) in vec4 v;
+/// layout(location = 0) out vec4 first;
+/// layout(location = 1) out vec4 second;
+/// void main() {
+///     vec4 inner = v + vec4(0.25);
+///     second = inner;
+///     first = v + inner;
+/// }
+/// ```
+///
+/// ```
+/// ; SPIR-V
+/// ; Version: 1.0
+/// ; Generator: Google Shaderc over Glslang; 11
+/// ; Bound: 23
+/// ; Schema: 0
+///                OpCapability Shader
+///           %1 = OpExtInstImport "GLSL.std.450"
+///                OpMemoryModel Logical GLSL450
+///                OpEntryPoint Fragment %4 "main" %11 %17 %19
+///                OpExecutionMode %4 OriginUpperLeft
+///                OpSource GLSL 450
+///                OpSourceExtension "GL_GOOGLE_cpp_style_line_directive"
+///                OpSourceExtension "GL_GOOGLE_include_directive"
+///                OpName %4 "main"
+///                OpName %9 "inner"
+///                OpName %11 "v"
+///                OpName %17 "second"
+///                OpName %19 "first"
+///                OpDecorate %11 Location 0
+///                OpDecorate %17 Location 1
+///                OpDecorate %19 Location 0
+///           %2 = OpTypeVoid
+///           %3 = OpTypeFunction %2
+///           %6 = OpTypeFloat 32
+///           %7 = OpTypeVector %6 4
+///           %8 = OpTypePointer Function %7
+///          %10 = OpTypePointer Input %7
+///          %11 = OpVariable %10 Input
+///          %13 = OpConstant %6 0.25
+///          %14 = OpConstantComposite %7 %13 %13 %13 %13
+///          %16 = OpTypePointer Output %7
+///          %17 = OpVariable %16 Output
+///          %19 = OpVariable %16 Output
+///           %4 = OpFunction %2 None %3
+///           %5 = OpLabel
+///           %9 = OpVariable %8 Function
+///          %12 = OpLoad %7 %11
+///          %15 = OpFAdd %7 %12 %14
+///                OpStore %9 %15
+///          %18 = OpLoad %7 %9
+///                OpStore %17 %18
+///          %20 = OpLoad %7 %11
+///          %21 = OpLoad %7 %9
+///          %22 = OpFAdd %7 %20 %21
+///                OpStore %19 %22
+///                OpReturn
+///                OpFunctionEnd
+/// ```
+pub const glslc_shared_sum = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000017, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0008000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000B, 0x00000011, 0x00000013,
+    0x00030010, 0x00000004, 0x00000007, 0x00030003, 0x00000002, 0x000001C2,
+    0x000A0004, 0x475F4C47, 0x4C474F4F, 0x70635F45, 0x74735F70, 0x5F656C79,
+    0x656E696C, 0x7269645F, 0x69746365, 0x00006576, 0x00080004, 0x475F4C47,
+    0x4C474F4F, 0x6E695F45, 0x64756C63, 0x69645F65, 0x74636572, 0x00657669,
+    0x00040005, 0x00000004, 0x6E69616D, 0x00000000, 0x00040005, 0x00000009,
+    0x656E6E69, 0x00000072, 0x00030005, 0x0000000B, 0x00000076, 0x00040005,
+    0x00000011, 0x6F636573, 0x0000646E, 0x00040005, 0x00000013, 0x73726966,
+    0x00000074, 0x00040047, 0x0000000B, 0x0000001E, 0x00000000, 0x00040047,
+    0x00000011, 0x0000001E, 0x00000001, 0x00040047, 0x00000013, 0x0000001E,
+    0x00000000, 0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002,
+    0x00030016, 0x00000006, 0x00000020, 0x00040017, 0x00000007, 0x00000006,
+    0x00000004, 0x00040020, 0x00000008, 0x00000007, 0x00000007, 0x00040020,
+    0x0000000A, 0x00000001, 0x00000007, 0x0004003B, 0x0000000A, 0x0000000B,
+    0x00000001, 0x0004002B, 0x00000006, 0x0000000D, 0x3E800000, 0x0007002C,
+    0x00000007, 0x0000000E, 0x0000000D, 0x0000000D, 0x0000000D, 0x0000000D,
+    0x00040020, 0x00000010, 0x00000003, 0x00000007, 0x0004003B, 0x00000010,
+    0x00000011, 0x00000003, 0x0004003B, 0x00000010, 0x00000013, 0x00000003,
+    0x00050036, 0x00000002, 0x00000004, 0x00000000, 0x00000003, 0x000200F8,
+    0x00000005, 0x0004003B, 0x00000008, 0x00000009, 0x00000007, 0x0004003D,
+    0x00000007, 0x0000000C, 0x0000000B, 0x00050081, 0x00000007, 0x0000000F,
+    0x0000000C, 0x0000000E, 0x0003003E, 0x00000009, 0x0000000F, 0x0004003D,
+    0x00000007, 0x00000012, 0x00000009, 0x0003003E, 0x00000011, 0x00000012,
+    0x0004003D, 0x00000007, 0x00000014, 0x0000000B, 0x0004003D, 0x00000007,
+    0x00000015, 0x00000009, 0x00050081, 0x00000007, 0x00000016, 0x00000014,
+    0x00000015, 0x0003003E, 0x00000013, 0x00000016, 0x000100FD, 0x00010038,
+};
+
+/// glslc -fshader-stage=frag, without -O: colour outs past a product nothing reads and of a sum made twice (since 1.231). 199 words.
+///
+/// ```glsl
+/// #version 450
+/// // A product nothing reads, which nir_opt_dce drops, and a sum made twice,
+/// // which nir_opt_cse makes one: location 1's colour is the first sum, and
+/// // location 2's the second.
+/// layout(location = 0) in vec4 v;
+/// layout(location = 0) out vec4 first;
+/// layout(location = 1) out vec4 second;
+/// layout(location = 2) out vec4 third;
+/// void main() {
+///     vec4 unused = v * 7.0;
+///     first = v;
+///     second = v + vec4(0.25);
+///     third = v + vec4(0.25);
+/// }
+/// ```
+///
+/// ```
+/// ; SPIR-V
+/// ; Version: 1.0
+/// ; Generator: Google Shaderc over Glslang; 11
+/// ; Bound: 26
+/// ; Schema: 0
+///                OpCapability Shader
+///           %1 = OpExtInstImport "GLSL.std.450"
+///                OpMemoryModel Logical GLSL450
+///                OpEntryPoint Fragment %4 "main" %11 %16 %18 %23
+///                OpExecutionMode %4 OriginUpperLeft
+///                OpSource GLSL 450
+///                OpSourceExtension "GL_GOOGLE_cpp_style_line_directive"
+///                OpSourceExtension "GL_GOOGLE_include_directive"
+///                OpName %4 "main"
+///                OpName %9 "unused"
+///                OpName %11 "v"
+///                OpName %16 "first"
+///                OpName %18 "second"
+///                OpName %23 "third"
+///                OpDecorate %11 Location 0
+///                OpDecorate %16 Location 0
+///                OpDecorate %18 Location 1
+///                OpDecorate %23 Location 2
+///           %2 = OpTypeVoid
+///           %3 = OpTypeFunction %2
+///           %6 = OpTypeFloat 32
+///           %7 = OpTypeVector %6 4
+///           %8 = OpTypePointer Function %7
+///          %10 = OpTypePointer Input %7
+///          %11 = OpVariable %10 Input
+///          %13 = OpConstant %6 7
+///          %15 = OpTypePointer Output %7
+///          %16 = OpVariable %15 Output
+///          %18 = OpVariable %15 Output
+///          %20 = OpConstant %6 0.25
+///          %21 = OpConstantComposite %7 %20 %20 %20 %20
+///          %23 = OpVariable %15 Output
+///           %4 = OpFunction %2 None %3
+///           %5 = OpLabel
+///           %9 = OpVariable %8 Function
+///          %12 = OpLoad %7 %11
+///          %14 = OpVectorTimesScalar %7 %12 %13
+///                OpStore %9 %14
+///          %17 = OpLoad %7 %11
+///                OpStore %16 %17
+///          %19 = OpLoad %7 %11
+///          %22 = OpFAdd %7 %19 %21
+///                OpStore %18 %22
+///          %24 = OpLoad %7 %11
+///          %25 = OpFAdd %7 %24 %21
+///                OpStore %23 %25
+///                OpReturn
+///                OpFunctionEnd
+/// ```
+pub const glslc_folded_colours = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x0000001A, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0009000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000B, 0x00000010, 0x00000012,
+    0x00000017, 0x00030010, 0x00000004, 0x00000007, 0x00030003, 0x00000002,
+    0x000001C2, 0x000A0004, 0x475F4C47, 0x4C474F4F, 0x70635F45, 0x74735F70,
+    0x5F656C79, 0x656E696C, 0x7269645F, 0x69746365, 0x00006576, 0x00080004,
+    0x475F4C47, 0x4C474F4F, 0x6E695F45, 0x64756C63, 0x69645F65, 0x74636572,
+    0x00657669, 0x00040005, 0x00000004, 0x6E69616D, 0x00000000, 0x00040005,
+    0x00000009, 0x73756E75, 0x00006465, 0x00030005, 0x0000000B, 0x00000076,
+    0x00040005, 0x00000010, 0x73726966, 0x00000074, 0x00040005, 0x00000012,
+    0x6F636573, 0x0000646E, 0x00040005, 0x00000017, 0x72696874, 0x00000064,
+    0x00040047, 0x0000000B, 0x0000001E, 0x00000000, 0x00040047, 0x00000010,
+    0x0000001E, 0x00000000, 0x00040047, 0x00000012, 0x0000001E, 0x00000001,
+    0x00040047, 0x00000017, 0x0000001E, 0x00000002, 0x00020013, 0x00000002,
+    0x00030021, 0x00000003, 0x00000002, 0x00030016, 0x00000006, 0x00000020,
+    0x00040017, 0x00000007, 0x00000006, 0x00000004, 0x00040020, 0x00000008,
+    0x00000007, 0x00000007, 0x00040020, 0x0000000A, 0x00000001, 0x00000007,
+    0x0004003B, 0x0000000A, 0x0000000B, 0x00000001, 0x0004002B, 0x00000006,
+    0x0000000D, 0x40E00000, 0x00040020, 0x0000000F, 0x00000003, 0x00000007,
+    0x0004003B, 0x0000000F, 0x00000010, 0x00000003, 0x0004003B, 0x0000000F,
+    0x00000012, 0x00000003, 0x0004002B, 0x00000006, 0x00000014, 0x3E800000,
+    0x0007002C, 0x00000007, 0x00000015, 0x00000014, 0x00000014, 0x00000014,
+    0x00000014, 0x0004003B, 0x0000000F, 0x00000017, 0x00000003, 0x00050036,
+    0x00000002, 0x00000004, 0x00000000, 0x00000003, 0x000200F8, 0x00000005,
+    0x0004003B, 0x00000008, 0x00000009, 0x00000007, 0x0004003D, 0x00000007,
+    0x0000000C, 0x0000000B, 0x0005008E, 0x00000007, 0x0000000E, 0x0000000C,
+    0x0000000D, 0x0003003E, 0x00000009, 0x0000000E, 0x0004003D, 0x00000007,
+    0x00000011, 0x0000000B, 0x0003003E, 0x00000010, 0x00000011, 0x0004003D,
+    0x00000007, 0x00000013, 0x0000000B, 0x00050081, 0x00000007, 0x00000016,
+    0x00000013, 0x00000015, 0x0003003E, 0x00000012, 0x00000016, 0x0004003D,
+    0x00000007, 0x00000018, 0x0000000B, 0x00050081, 0x00000007, 0x00000019,
+    0x00000018, 0x00000015, 0x0003003E, 0x00000017, 0x00000019, 0x000100FD,
+    0x00010038,
+};
+
+/// glslc -fshader-stage=frag, without -O: a colour out at location 1 stored in one arm of a selection alone (since 1.231). 220 words.
+///
+/// ```glsl
+/// #version 450
+/// // A colour out at location 1 stored in a selection's arm alone: seven
+/// // operations of four floats, 28 by nir_opt_peephole_select's count, past
+/// // its limit of 24, so the selection is kept; the last of them is the
+/// // colour, which counts.
+/// layout(location = 0) in vec4 v;
+/// layout(location = 1) out vec4 o;
+/// void main() {
+///     if (v.x < 0.5) {
+///         o = sin(sin(sin(v + 0.5) + 0.5) + 0.5) + 0.5;
+///     }
+/// }
+/// ```
+///
+/// ```
+/// ; SPIR-V
+/// ; Version: 1.0
+/// ; Generator: Google Shaderc over Glslang; 11
+/// ; Bound: 34
+/// ; Schema: 0
+///                OpCapability Shader
+///           %1 = OpExtInstImport "GLSL.std.450"
+///                OpMemoryModel Logical GLSL450
+///                OpEntryPoint Fragment %4 "main" %9 %21
+///                OpExecutionMode %4 OriginUpperLeft
+///                OpSource GLSL 450
+///                OpSourceExtension "GL_GOOGLE_cpp_style_line_directive"
+///                OpSourceExtension "GL_GOOGLE_include_directive"
+///                OpName %4 "main"
+///                OpName %9 "v"
+///                OpName %21 "o"
+///                OpDecorate %9 Location 0
+///                OpDecorate %21 Location 1
+///           %2 = OpTypeVoid
+///           %3 = OpTypeFunction %2
+///           %6 = OpTypeFloat 32
+///           %7 = OpTypeVector %6 4
+///           %8 = OpTypePointer Input %7
+///           %9 = OpVariable %8 Input
+///          %10 = OpTypeInt 32 0
+///          %11 = OpConstant %10 0
+///          %12 = OpTypePointer Input %6
+///          %15 = OpConstant %6 0.5
+///          %16 = OpTypeBool
+///          %20 = OpTypePointer Output %7
+///          %21 = OpVariable %20 Output
+///           %4 = OpFunction %2 None %3
+///           %5 = OpLabel
+///          %13 = OpAccessChain %12 %9 %11
+///          %14 = OpLoad %6 %13
+///          %17 = OpFOrdLessThan %16 %14 %15
+///                OpSelectionMerge %19 None
+///                OpBranchConditional %17 %18 %19
+///          %18 = OpLabel
+///          %22 = OpLoad %7 %9
+///          %23 = OpCompositeConstruct %7 %15 %15 %15 %15
+///          %24 = OpFAdd %7 %22 %23
+///          %25 = OpExtInst %7 %1 Sin %24
+///          %26 = OpCompositeConstruct %7 %15 %15 %15 %15
+///          %27 = OpFAdd %7 %25 %26
+///          %28 = OpExtInst %7 %1 Sin %27
+///          %29 = OpCompositeConstruct %7 %15 %15 %15 %15
+///          %30 = OpFAdd %7 %28 %29
+///          %31 = OpExtInst %7 %1 Sin %30
+///          %32 = OpCompositeConstruct %7 %15 %15 %15 %15
+///          %33 = OpFAdd %7 %31 %32
+///                OpStore %21 %33
+///                OpBranch %19
+///          %19 = OpLabel
+///                OpReturn
+///                OpFunctionEnd
+/// ```
+pub const glslc_arm_colour = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000022, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00000009, 0x00000015, 0x00030010,
+    0x00000004, 0x00000007, 0x00030003, 0x00000002, 0x000001C2, 0x000A0004,
+    0x475F4C47, 0x4C474F4F, 0x70635F45, 0x74735F70, 0x5F656C79, 0x656E696C,
+    0x7269645F, 0x69746365, 0x00006576, 0x00080004, 0x475F4C47, 0x4C474F4F,
+    0x6E695F45, 0x64756C63, 0x69645F65, 0x74636572, 0x00657669, 0x00040005,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00030005, 0x00000009, 0x00000076,
+    0x00030005, 0x00000015, 0x0000006F, 0x00040047, 0x00000009, 0x0000001E,
+    0x00000000, 0x00040047, 0x00000015, 0x0000001E, 0x00000001, 0x00020013,
+    0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00030016, 0x00000006,
+    0x00000020, 0x00040017, 0x00000007, 0x00000006, 0x00000004, 0x00040020,
+    0x00000008, 0x00000001, 0x00000007, 0x0004003B, 0x00000008, 0x00000009,
+    0x00000001, 0x00040015, 0x0000000A, 0x00000020, 0x00000000, 0x0004002B,
+    0x0000000A, 0x0000000B, 0x00000000, 0x00040020, 0x0000000C, 0x00000001,
+    0x00000006, 0x0004002B, 0x00000006, 0x0000000F, 0x3F000000, 0x00020014,
+    0x00000010, 0x00040020, 0x00000014, 0x00000003, 0x00000007, 0x0004003B,
+    0x00000014, 0x00000015, 0x00000003, 0x00050036, 0x00000002, 0x00000004,
+    0x00000000, 0x00000003, 0x000200F8, 0x00000005, 0x00050041, 0x0000000C,
+    0x0000000D, 0x00000009, 0x0000000B, 0x0004003D, 0x00000006, 0x0000000E,
+    0x0000000D, 0x000500B8, 0x00000010, 0x00000011, 0x0000000E, 0x0000000F,
+    0x000300F7, 0x00000013, 0x00000000, 0x000400FA, 0x00000011, 0x00000012,
+    0x00000013, 0x000200F8, 0x00000012, 0x0004003D, 0x00000007, 0x00000016,
+    0x00000009, 0x00070050, 0x00000007, 0x00000017, 0x0000000F, 0x0000000F,
+    0x0000000F, 0x0000000F, 0x00050081, 0x00000007, 0x00000018, 0x00000016,
+    0x00000017, 0x0006000C, 0x00000007, 0x00000019, 0x00000001, 0x0000000D,
+    0x00000018, 0x00070050, 0x00000007, 0x0000001A, 0x0000000F, 0x0000000F,
+    0x0000000F, 0x0000000F, 0x00050081, 0x00000007, 0x0000001B, 0x00000019,
+    0x0000001A, 0x0006000C, 0x00000007, 0x0000001C, 0x00000001, 0x0000000D,
+    0x0000001B, 0x00070050, 0x00000007, 0x0000001D, 0x0000000F, 0x0000000F,
+    0x0000000F, 0x0000000F, 0x00050081, 0x00000007, 0x0000001E, 0x0000001C,
+    0x0000001D, 0x0006000C, 0x00000007, 0x0000001F, 0x00000001, 0x0000000D,
+    0x0000001E, 0x00070050, 0x00000007, 0x00000020, 0x0000000F, 0x0000000F,
+    0x0000000F, 0x0000000F, 0x00050081, 0x00000007, 0x00000021, 0x0000001F,
+    0x00000020, 0x0003003E, 0x00000015, 0x00000021, 0x000200F9, 0x00000013,
+    0x000200F8, 0x00000013, 0x000100FD, 0x00010038,
+};

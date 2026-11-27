@@ -33,8 +33,9 @@
 //! - The colour is moved out where the body ends and not at its OpStore,
 //!   which the steps do not keep: what comes after the store is not
 //!   handed on.
-//! - The key is the one this device's draws have: render target 0, of
-//!   16-bit floats, red and blue not swapped, or none (since 1.150), and
+//! - The key is the one this device's draws have: render targets of
+//!   16-bit floats or of 32-bit channels, red and blue not swapped, or
+//!   none (since 1.150), and
 //!   of what Mesa's key varies, alpha to coverage and that alone (`Key`). One sample a pixel or four
 //!   (since 1.148): the colour is written a pixel at a time either way,
 //!   as Mesa writes it without sample shading (msaa_per_sample_output).
@@ -138,8 +139,9 @@ pub const Key = struct {
     sample_alpha_to_coverage: bool = false,
     /// The render targets the subpass draws, a bit each: Mesa's cbufs,
     /// which v3dv sets for each colour attachment that is not
-    /// ATTACHMENT_UNUSED (v3dv_pipeline.c:2137-2142). A part draws one, as
-    /// render target 0, or none (since 1.150).
+    /// ATTACHMENT_UNUSED (v3dv_pipeline.c:2137-2142). A part drawn alone
+    /// draws one, as render target 0, or none (since 1.150); the program
+    /// writes each it has a colour out at the location of (since 1.231).
     cbufs: u8 = 1,
     /// The render targets of 32-bit channels, a bit each, which the TLB
     /// is written a float at a time (Mesa's f32_color_rb, v3d_compiler.h):
@@ -219,7 +221,9 @@ const Emit = struct {
     /// Where the workgroup's shared memory starts, worked out at the
     /// program's start (c->cs_shared_offset; since 1.203).
     cs_shared_offset: Reg = .{},
-    outputs: [4]Reg = undefined,
+    /// The colour at each location, as Mesa's c->outputs holds each
+    /// output's four floats at its driver location.
+    outputs: [compile.most_colors][4]Reg = undefined,
     flush: [max_tmu_queue_size]Pending = undefined,
     flush_count: u32 = 0,
     output_fifo_size: u32 = 0,
@@ -408,8 +412,8 @@ fn nirToVir(e: *Emit) Error!void {
     // No primitive id, point or line coordinate is in the profile.
     try setupScratch(e);
     try setupFsInputs(e);
-    // ntq_setup_outputs: the colour is location 0, which needs nothing
-    // emitted.
+    // ntq_setup_outputs: each colour is its location's, which needs
+    // nothing emitted.
     try emitBlock(e);
 }
 
@@ -1303,8 +1307,8 @@ fn fromSsa(e: *Emit) Error!void {
             },
         }
     }
-    if (e.work.stored != compile.none) for (0..steps[e.work.stored].kind.parts()) |k| {
-        endRead(steps, at_end, .{ .step = e.work.stored, .part = @intCast(k) });
+    for (e.work.stored) |stored| if (stored != compile.none) for (0..steps[stored].kind.parts()) |k| {
+        endRead(steps, at_end, .{ .step = stored, .part = @intCast(k) });
     };
 
     for (0..webs.count) |k| for (webs.phisOf(k)) |phi| {
@@ -1889,17 +1893,26 @@ fn unpackTexel(e: *Emit, at: u16) Error!void {
     }
 }
 
-/// ntq_emit_color_write (nir_to_vir.c:3020): the colour moved out of what
-/// the body made it in.
-/// The program writes a colour: Mesa's output_color_var[0], which the
-/// steps have where the module stores one. Every module compiled does,
-/// and the program of no colour (`compileNoColor`) does not.
+/// The program writes a colour: one of Mesa's output_color_var, which
+/// the steps have where the module stores one. Every module compiled
+/// does, and the program of no colour (`compileNoColor`) does not.
 fn hasColor(e: *const Emit) bool {
     return e.work.output_count != 0;
 }
 
+/// It writes one at location `rt`: output_color_var[rt], stored into
+/// (since 1.231).
+fn hasColorAt(e: *const Emit, rt: u32) bool {
+    return e.work.stored[rt] != compile.none;
+}
+
+/// ntq_emit_color_write (nir_to_vir.c:3020): each colour moved out of what
+/// the body made it in, in the order of their locations.
 fn emitColorWrite(e: *Emit) Error!void {
-    for (&e.outputs, 0..) |*output, k| output.* = try e.c.mul(.mov, .{try getSrc(e, e.work.stored, k)});
+    for (e.work.stored, &e.outputs) |stored, *output| {
+        if (stored == compile.none) continue;
+        for (output, 0..) |*float, k| float.* = try e.c.mul(.mov, .{try getSrc(e, stored, k)});
+    }
 }
 
 /// vir_TMU_WRITE (v3d_tex.c:34).
@@ -2372,15 +2385,19 @@ fn restoreLastThrsw(c: *Compile, restore: Restore) void {
 fn emitFragEnd(e: *Emit) Error!void {
     const c = e.c;
     // Alpha to coverage where the TLB blends (nir_to_vir.c:2056-2065):
-    // the samples FTOC makes of colour 0's alpha, kept of those the pixel
-    // has (since 1.149).
-    if (e.key.sample_alpha_to_coverage and hasColor(e)) {
-        const covered = try c.add(.@"and", .{ try c.add(.msf, .{}), try c.add(.ftoc, .{e.outputs[3]}) });
+    // the samples FTOC makes of location 0's alpha, kept of those the
+    // pixel has (since 1.149); none where the program writes nothing
+    // there.
+    if (e.key.sample_alpha_to_coverage and hasColorAt(e, 0)) {
+        const covered = try c.add(.@"and", .{ try c.add(.msf, .{}), try c.add(.ftoc, .{e.outputs[0][3]}) });
         _ = try c.addDest(.setmsf, vir.nopReg(), .{covered});
     }
-    // A colour the TLB takes: render target 0 is among the key's, and
-    // the program writes it (nir_to_vir.c:2050-2054).
-    const has_any_tlb_color_write = e.key.cbufs & 1 != 0 and hasColor(e);
+    // A colour the TLB takes: a render target among the key's that the
+    // program writes (nir_to_vir.c:2050-2054).
+    var has_any_tlb_color_write = false;
+    for (0..compile.most_colors) |rt| {
+        if (e.key.cbufs & (@as(u8, 1) << @intCast(rt)) != 0 and hasColorAt(e, @intCast(rt))) has_any_tlb_color_write = true;
+    }
     // There is no sample mask, so early_fragment_tests is promoted where
     // a colour is written, no storage buffer is named (info.num_ssbos,
     // :2074; since 1.168) nor an image, a storage image's or an input
@@ -2405,7 +2422,10 @@ fn emitFragEnd(e: *Emit) Error!void {
         inst.uniform = try c.getUniformIndex(.constant, tlb_specifier | 0xffffff00);
         inst.is_tlb_z_write = true;
     }
-    try emitTlbColorWrite(e, 0);
+    // Each render target in turn (nir_to_vir.c:2142-2143), up to this
+    // device's (`compile.most_colors`) where Mesa goes to
+    // V3D_MAX_DRAW_BUFFERS, past which the key has no bit set.
+    for (0..compile.most_colors) |rt| try emitTlbColorWrite(e, @intCast(rt));
 }
 
 /// sched_flags (nir_to_vir.c:4902) for the one block there is: each
@@ -2456,7 +2476,7 @@ fn readsReg(inst: *const Inst, r: Reg) bool {
 /// with.
 fn emitTlbColorWrite(e: *Emit, rt: u32) Error!void {
     const c = e.c;
-    if (e.key.cbufs & (@as(u8, 1) << @intCast(rt)) == 0 or !hasColor(e)) return;
+    if (e.key.cbufs & (@as(u8, 1) << @intCast(rt)) == 0 or !hasColorAt(e, rt)) return;
     const num_components = 4;
     const f32_color = e.key.f32_color_rb & (@as(u8, 1) << @intCast(rt)) != 0;
     var conf: u32 = 0xffffff00;
@@ -2470,7 +2490,7 @@ fn emitTlbColorWrite(e: *Emit, rt: u32) Error!void {
         conf |= if (num_components >= 3) tlb_vec_size_4_f16 else tlb_vec_size_2_f16;
     }
 
-    const color = e.outputs;
+    const color = e.outputs[rt];
     if (f32_color) {
         const inst = try c.mulDest(.mov, vir.magicReg(.tlbu), .{color[0]});
         inst.uniform = try c.getUniformIndex(.constant, conf);

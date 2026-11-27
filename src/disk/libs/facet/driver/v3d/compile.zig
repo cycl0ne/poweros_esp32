@@ -110,6 +110,11 @@ pub const most_steps = 256;
 /// The varyings the hardware carries
 /// (`PhysicalDeviceLimits.max_vertex_output_components`).
 pub const most_varyings = qpu.most_varyings;
+/// The colour outs a fragment program writes, one for each render target
+/// at its location: facet's colour attachments a subpass
+/// (`_render.most_colors`), which is V3D_MAX_RENDER_TARGETS at 4.2
+/// (v3d_limits.h:44) and under the 8 of 7.1 (since 1.231).
+pub const most_colors = 4;
 /// The floats a program may read as uniforms of its own. Mesa's grow as
 /// they are added (vir_get_uniform_index, vir.c:2771); a Code and a
 /// Shader hold them by value, 12 bytes each. 32 until 1.191, where a
@@ -343,9 +348,10 @@ pub const Error = error{
     /// which only Mesa's back end compiles.
     Storage,
     /// Input locations that are not 0 upwards without a gap, or a colour
-    /// out that is not location 0.
+    /// out at a location past the render targets (`most_colors`) or at one
+    /// another is at; for the plan's compile, one not at location 0.
     Location,
-    /// More than one colour out (`several_outputs`), or none.
+    /// No colour out; for the plan's compile, more than one.
     Outputs,
     /// More varyings than the hardware carries.
     Varyings,
@@ -1778,8 +1784,10 @@ pub const Work = struct {
 
     inputs: [most_varyings]Input = undefined,
     input_count: u32 = 0,
-    /// The one colour out.
-    output: u16 = none,
+    /// The colour outs, the variable at each location, `none` at one no
+    /// variable is at (Mesa's output_color_var, nir_to_vir.c:2594-2602;
+    /// one at location 0 until 1.231), and how many there are.
+    output: [most_colors]u16 = @splat(none),
     output_count: u32 = 0,
 
     /// The stage the module is a program of, and what a vertex program
@@ -1850,8 +1858,9 @@ pub const Work = struct {
 
     steps: [most_steps]Step = undefined,
     step_count: u32 = 0,
-    /// The step the body stored into the colour out.
-    stored: u16 = none,
+    /// The step the body stored into the colour out at each location, or
+    /// `none` where there is none or nothing was stored into it.
+    stored: [most_colors]u16 = @splat(none),
     /// The function's own variables, as nir_lower_vars_to_ssa makes
     /// them values (since 1.155): how many floats each is, and which
     /// float each of its floats holds where the walk has got to, a
@@ -1967,6 +1976,11 @@ pub const Work = struct {
 /// already been turned down by `CreateShaderModule`.
 pub fn compile(work: *Work, words: []const u32) Error!Code {
     try readModule(work, words);
+    // Every hand-written program writes one colour, at location 0, which
+    // the tile buffer takes without a configuration of its own
+    // (`qpu.zig`): several are Mesa's back end's (since 1.231).
+    if (work.output_count > 1) return Error.Outputs;
+    if (work.output[0] == none) return Error.Location;
     // Every hand-written program's varyings are `qpu.varying`'s, with
     // perspective (since 1.190, where the reading takes the others).
     if (work.flat_floats != 0 or work.noperspective_floats != 0) return Error.Refused;
@@ -3309,14 +3323,18 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                         work.output_vars[work.output_var_count] = id;
                         work.output_var_count += 1;
                     } else {
-                        // One colour out, at location 0, of four floats:
-                        // what the tile buffer takes without a
-                        // configuration of its own (`qpu.zig`).
-                        if (work.output_count != 0) return Error.Outputs;
-                        if (work.location[id] != 0) return Error.Location;
+                        // A colour out of four floats at a location of a
+                        // render target, which its TLB write names
+                        // (`to_vir.emitTlbColorWrite`): FRAG_RESULT_DATA0
+                        // upwards, each its render target's
+                        // output_color_var (ntq_setup_outputs,
+                        // nir_to_vir.c:2580-2602; one at location 0 until
+                        // 1.231).
+                        const at = work.location[id];
+                        if (at >= most_colors or work.output[at] != none) return Error.Location;
                         if (floats != .f32x4) return Error.Type;
-                        work.output = id;
-                        work.output_count = 1;
+                        work.output[at] = id;
+                        work.output_count += 1;
                         work.points[id] = try outputLocal(work, floats);
                     },
                     else => return Error.Storage,
@@ -3691,7 +3709,7 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
     if (work.stage == .vertex) return finishVertex(work);
     if (work.stage == .gl_compute) return finishCompute(work);
     if (work.output_count == 0) return Error.Outputs;
-    if (work.stored == none) return Error.NoColor;
+    if (std.mem.allEqual(u16, &work.stored, none)) return Error.NoColor;
     try builtinVariables(work);
     try algebraic(work);
     try order(work);
@@ -5110,8 +5128,12 @@ fn storedMask(work: *const Work, local: u16) u8 {
 /// (nir_move_output_stores_to_end.c:86-93).
 fn copyOutputs(work: *Work) Error!void {
     switch (work.stage) {
-        .fragment => if (work.output != none and storedMask(work, work.points[work.output]) != 0) {
-            work.stored = try outputValue(work, work.points[work.output]);
+        // Each colour out at its location; one nothing was stored into
+        // has no TLB write, where Mesa's writes the 0 its temporary holds
+        // (nir_lower_undef_to_zero): what is written there is undefined
+        // either way.
+        .fragment => for (work.output, &work.stored) |id, *stored| {
+            if (id != none and storedMask(work, work.points[id]) != 0) stored.* = try outputValue(work, work.points[id]);
         },
         .vertex => {
             if (work.position_local != none and storedMask(work, work.position_local) != 0) work.position = try outputValue(work, work.position_local);
@@ -6107,12 +6129,11 @@ fn armCost(work: *const Work, from: u16, to: u16) u32 {
             used = true;
             if (user.tag != .add) only_added = false;
         };
-        if (work.stored == at) {
-            used = true;
-            only_added = false;
-        }
         // A float a variable holds after the merge, where the other way
-        // in left it nothing to choose against, is read later.
+        // in left it nothing to choose against, is read later: a colour
+        // out's among them, its variable being the function's own until
+        // `copyOutputs` reads it where the module ends (since 1.206), after
+        // every selection is counted.
         for (work.values[0..work.local_count]) |holds| for (holds) |each_float| if (each_float.step == at) {
             used = true;
             only_added = false;
@@ -6427,11 +6448,13 @@ const Order = struct {
         return new;
     }
 
-    /// nir_opt_dce: live is the colour's step, a discard, and what a live
-    /// step reads.
+    /// nir_opt_dce: live is each colour's step, a discard, and what a
+    /// live step reads.
     fn dce(list: *Order, work: *const Work) void {
         var reached: [most_steps]bool = @splat(false);
-        if (work.stored != none) reached[work.stored] = true;
+        for (work.stored) |stored| if (stored != none) {
+            reached[stored] = true;
+        };
         var at = list.last;
         while (at != none) : (at = list.prev[at]) {
             if (list.removed[at]) continue;
@@ -6531,10 +6554,10 @@ const Order = struct {
         return progress;
     }
 
-    /// How many times the steps still in the program, and the colour
+    /// How many times the steps still in the program, and the colours
     /// stored, read `at`: what is_used_once counts.
     fn usesOf(list: *const Order, work: *const Work, at: u16) u32 {
-        var count: u32 = if (work.stored == at) 1 else 0;
+        var count: u32 = @intCast(std.mem.count(u16, &work.stored, &.{at}));
         for (work.steps[0..work.step_count], 0..) |user, k| {
             if (!list.present(@intCast(k))) continue;
             for (readsOf(user)) |field| if (field) |operand_at| {
@@ -7093,7 +7116,9 @@ const Order = struct {
         for (kept[0..count]) |*each| renameReads(each, &renamed);
         @memcpy(work.steps[0..count], kept[0..count]);
         work.step_count = count;
-        if (work.stored != none) work.stored = renamed[work.stored];
+        for (&work.stored) |*stored| if (stored.* != none) {
+            stored.* = renamed[stored.*];
+        };
         work.sampled = none;
         work.sample_count = 0;
         for (work.steps[0..count], 0..) |each, place| {
@@ -7505,20 +7530,11 @@ fn renameReads(each: *Step, renamed: *const [most_steps]u16) void {
     }
 }
 
-/// How many times the steps after `at`, and the colour stored, read it.
-fn usesOf(work: *const Work, at: u16) u32 {
-    var count: u32 = if (work.stored == at) 1 else 0;
-    for (work.steps[at + 1 .. work.step_count]) |user| {
-        for (readsOf(user)) |field| if (field) |of| {
-            if (of == at) count += 1;
-        };
-    }
-    return count;
-}
-
 /// What read `from` reads `to`.
 fn replaceUses(work: *Work, from: u16, to: u16) void {
-    if (work.stored == from) work.stored = to;
+    for (&work.stored) |*stored| if (stored.* == from) {
+        stored.* = to;
+    };
     for (work.steps[0..work.step_count]) |*user| {
         switch (user.tag) {
             .input, .constant, .push, .ubo, .ssbo, .barrier, .scratch, .control_barrier => {},
@@ -11824,7 +11840,7 @@ fn settle(work: *Work) Error!void {
     // samples puts it. Where it did not, it goes here, and what the
     // colour waits for is waited out first so that the two writes stay
     // next to it as they are in `flat_code`.
-    const slots = work.slot_of[work.stored];
+    const slots = work.slot_of[work.stored[0]];
     // A texel drawn as it is: the two words the TMU handed back are
     // already two pairs of half-floats, which is what the tile buffer
     // takes, so nothing unpacks them and nothing packs them again
@@ -11840,7 +11856,7 @@ fn settle(work: *Work) Error!void {
     // colour below is right: it packs the four floats back, and the 1 it
     // needs is already loaded, because reading a half out non-fused is
     // exactly what makes `wantsOne` true.
-    const packed_whole = work.steps[work.stored].tag == .sample and
+    const packed_whole = work.steps[work.stored[0]].tag == .sample and
         work.slot_half[slots[0]] == .low and work.slot_half[slots[1]] == .high and
         work.slot_half[slots[2]] == .low and work.slot_half[slots[3]] == .high;
     if (packed_whole) {
@@ -11978,8 +11994,8 @@ fn wantsOne(work: *const Work) bool {
     }
     // The texel drawn as it is goes to the tile buffer packed, which is
     // the form it came in.
-    if (work.steps[work.stored].tag == .sample) return false;
-    for (work.slot_of[work.stored][0..4]) |slot| if (work.slot_texel[slot]) return true;
+    if (work.steps[work.stored[0]].tag == .sample) return false;
+    for (work.slot_of[work.stored[0]][0..4]) |slot| if (work.slot_texel[slot]) return true;
     return false;
 }
 
@@ -12049,7 +12065,7 @@ fn live(work: *Work) Error!void {
     // to carry the bump across.
     var part: u32 = 0;
     while (part < 4) : (part += 1) {
-        const slot = work.slot_of[work.stored][part];
+        const slot = work.slot_of[work.stored[0]][part];
         work.slot_last[slot] = most_steps;
     }
     // A texel's four floats are two registers, a pair of half-floats
@@ -12474,6 +12490,29 @@ fn patched(comptime words: []const u32, comptime op: spirv.Op, comptime at: u32,
             k += count;
         }
         @compileError("no such instruction to patch");
+    }
+}
+
+/// `words` with its colour out, its one Output variable, decorated at
+/// `location` instead (since 1.231).
+fn colourAt(comptime words: []const u32, comptime location: u32) [words.len]u32 {
+    comptime {
+        @setEvalBranchQuota(100_000);
+        var copy: [words.len]u32 = words[0..words.len].*;
+        var out_id: u32 = 0;
+        var k: usize = 5;
+        while (k < copy.len) : (k += copy[k] >> 16) {
+            if (copy[k] & 0xFFFF == @intFromEnum(spirv.Op.variable) and copy[k + 3] == @intFromEnum(spirv.StorageClass.output)) out_id = copy[k + 2];
+        }
+        if (out_id == 0) @compileError("no colour out");
+        k = 5;
+        while (k < copy.len) : (k += copy[k] >> 16) {
+            if (copy[k] & 0xFFFF == @intFromEnum(spirv.Op.decorate) and copy[k + 1] == out_id and copy[k + 2] == @intFromEnum(spirv.Decoration.location)) {
+                copy[k + 3] = location;
+                return copy;
+            }
+        }
+        @compileError("the colour out has no location");
     }
 }
 
@@ -14841,7 +14880,7 @@ test "an fabs of an fneg is the fabs of what it negates, a float or a vector at 
         }
     };
     const color = [4]f32{ -0.25, 0.5, -0.75, 1.0 };
-    try testing.expectEqual([4]f32{ 0.25, 0.75, 1.0, 0.75 }, evaluatedOf(&work, work.stored, color, 0));
+    try testing.expectEqual([4]f32{ 0.25, 0.75, 1.0, 0.75 }, evaluatedOf(&work, work.stored[0], color, 0));
     // The fabs nir_normalize_cubemap_coords takes of each float of a
     // direction (nir_normalize_cubemap_coords.c:30-55) is of the float
     // itself where the direction negates it, and the two fnegs are the
@@ -14909,7 +14948,7 @@ test "a 32-bit division or remainder is nir_lower_idiv's: a Newton step of the r
                     .irem => @rem(numer, denom),
                     .imod => @mod(numer, denom),
                 };
-                const found = evaluatedOf(&work, work.stored, color, 0)[0];
+                const found = evaluatedOf(&work, work.stored[0], color, 0)[0];
                 try testing.expectEqual(@as(f32, @floatFromInt(expected)), found);
             }
         }
@@ -14968,7 +15007,7 @@ test "a division of two vectors of two is a lowering a float, of one set of cons
                 const x: u32 = @intFromFloat(color[0] * 100.0);
                 const y: u32 = @intFromFloat(color[1] * 100.0);
                 if (x == 0 or y == 0) continue;
-                const found = evaluatedOf(&work, work.stored, color, 0);
+                const found = evaluatedOf(&work, work.stored[0], color, 0);
                 try testing.expectEqual(@as(f32, @floatFromInt(x / y)), found[0]);
                 try testing.expectEqual(@as(f32, @floatFromInt(y / x)), found[1]);
             }
@@ -15032,7 +15071,7 @@ test "glslc's divisions by constants are multiplies by magic numbers, shifts and
                     2 => .{ @floatFromInt(@divTrunc(n, 3)), 0, 0, 1 },
                     else => .{ @floatFromInt(@divTrunc(n, m)), @floatFromInt(@divTrunc(m, 3)), 0, 1 },
                 };
-                try testing.expectEqual(expected, evaluatedOf(&work, work.stored, color, 0));
+                try testing.expectEqual(expected, evaluatedOf(&work, work.stored[0], color, 0));
             }
         }
     }
@@ -15072,7 +15111,7 @@ test "five divisions by constants and their checks are more steps than the table
             var y: u32 = 0;
             while (y < 256) : (y += 1) {
                 const color = [4]f32{ (@as(f32, @floatFromInt(x)) + 0.25) / 255.0, (@as(f32, @floatFromInt(y)) + 0.25) / 255.0, 0, 0 };
-                try testing.expectEqual([4]f32{ color[0], 1.0, color[1], 1.0 }, evaluatedOf(&work, work.stored, color, 0));
+                try testing.expectEqual([4]f32{ color[0], 1.0, color[1], 1.0 }, evaluatedOf(&work, work.stored[0], color, 0));
             }
         }
     }
@@ -15878,6 +15917,235 @@ test "through Mesa's back end, whole numbers into a target of them: the push con
         try testing.expectEqual(@as(u32, 3), tlb);
         try testing.expectEqual(@as(u32, 0), code.varyings);
     }
+}
+
+/// vir_emit_tlb_color_write's specifier of a colour of half-floats into
+/// render target `rt`, a pixel at a time (nir_to_vir.c:1966-1985): ~0 for
+/// render target 0, which the register is preloaded with.
+fn f16Specifier(rt: u32) u32 {
+    return 0xffffff00 | 1 << 2 | (7 - rt) << 3 | 3 << 6 | 1 << 1 | 1 << 0;
+}
+
+/// And of four 32-bit channels.
+fn f32Specifier(rt: u32) u32 {
+    return 0xffffff00 | 1 << 2 | (7 - rt) << 3 | 0 << 6 | (4 - 1);
+}
+
+/// The specifiers a program's uniforms hand its TLBU writes, in the order
+/// it reads them: the uniforms whose top three bytes are all set, which
+/// no other constant of these programs is.
+fn specifiersOf(code: *const Code, into: []u32) []const u32 {
+    var count: usize = 0;
+    for (code.stream()) |word| switch (word) {
+        .float => |value| {
+            const bits: u32 = @bitCast(value);
+            if (bits & 0xffffff00 == 0xffffff00) {
+                into[count] = bits;
+                count += 1;
+            }
+        },
+        else => {},
+    };
+    return into[0..count];
+}
+
+/// The two operands of each of a program's packed TLB writes, to TLBU
+/// or TLB, in their order: what each pair of half-floats is packed from.
+const Packs = struct {
+    names: [16][2][8]u8 = undefined,
+    lengths: [16][2]usize = undefined,
+    count: usize = 0,
+
+    fn of(code: Code) Packs {
+        var packs: Packs = .{};
+        for (code.words) |word| {
+            var buffer: [disasm.most_text]u8 = undefined;
+            const line = disasm.disasm(word, &buffer).?;
+            const pack = std.mem.indexOf(u8, line, "vfpack tlb") orelse continue;
+            const comma = std.mem.indexOfScalarPos(u8, line, pack, ',').?;
+            var operands = std.mem.tokenizeAny(u8, line[comma + 1 ..], ", ");
+            for (0..2) |k| {
+                const name = operands.next().?;
+                @memcpy(packs.names[packs.count][k][0..name.len], name);
+                packs.lengths[packs.count][k] = name.len;
+            }
+            packs.count += 1;
+        }
+        return packs;
+    }
+
+    /// The `k`th operand of the `pack`th write.
+    fn operand(packs: *const Packs, pack: usize, k: usize) []const u8 {
+        return packs.names[pack][k][0..packs.lengths[pack][k]];
+    }
+};
+
+/// Its TLB writes in order, `u` for one to TLBU and `.` for one to TLB.
+fn tlbWritesOf(code: Code, into: []u8) []const u8 {
+    var count: usize = 0;
+    for (code.words) |word| {
+        var buffer: [disasm.most_text]u8 = undefined;
+        const line = disasm.disasm(word, &buffer).?;
+        var rest = line;
+        while (std.mem.indexOf(u8, rest, " tlb")) |at| {
+            const after = rest[at + " tlb".len ..];
+            into[count] = if (after.len > 0 and after[0] == 'u') 'u' else '.';
+            count += 1;
+            rest = after;
+        }
+    }
+    return into[0..count];
+}
+
+test "through Mesa's back end, three colour outs stored out of their order: each written to the render target of its location, in the order of the render targets, the first by the specifier the register holds and the others each by its own (since 1.231)" {
+    // emit_frag_end writes each render target the key has and the
+    // program has a colour out at, from 0 up (nir_to_vir.c:2142-2143),
+    // and vir_emit_tlb_color_write names it by 7 - rt (:1970).
+    var work: Work = .{};
+    const code = try throughMesaKeyed(&work, &reference.glslc_several_colours, .{ .cbufs = 0b111 });
+    try testing.expectEqual(@as(u32, 3), work.output_count);
+    for (work.stored[0..3]) |stored| try testing.expect(stored != none);
+    try testing.expectEqual(none, work.stored[3]);
+    try testing.expectEqual(~@as(u32, 0), f16Specifier(0));
+    var specifiers: [8]u32 = undefined;
+    try testing.expectEqualSlices(u32, &.{ f16Specifier(1), f16Specifier(2) }, specifiersOf(&code, &specifiers));
+    var writes: [16]u8 = undefined;
+    try testing.expectEqualStrings("..u.u.", tlbWritesOf(code, &writes));
+    try testing.expectEqual(@as(usize, 6), countOf(code, "vfpack tlb"));
+    // Each render target packed from its own location's floats: render
+    // target 2's red and blue are render target 0's blue and red, its
+    // green and alpha the same, and render target 1's are none of them.
+    const packs = Packs.of(code);
+    try testing.expectEqual(@as(usize, 6), packs.count);
+    try testing.expectEqualStrings(packs.operand(1, 0), packs.operand(4, 0));
+    try testing.expectEqualStrings(packs.operand(0, 1), packs.operand(4, 1));
+    try testing.expectEqualStrings(packs.operand(0, 0), packs.operand(5, 0));
+    try testing.expectEqualStrings(packs.operand(1, 1), packs.operand(5, 1));
+    for ([2]usize{ 2, 3 }) |pack| for (0..2) |k| for ([4]usize{ 0, 1, 4, 5 }) |other| for (0..2) |j| {
+        try testing.expect(!std.mem.eql(u8, packs.operand(pack, k), packs.operand(other, j)));
+    };
+    // What each render target is given: location 0 the colour as it came,
+    // location 1 one minus it, location 2 it with red and blue swapped.
+    try testing.expect(isInputPart(&work, work.stored[0], 0, 0));
+    try testing.expect(isInputPart(&work, work.stored[2], 0, 2));
+    try testing.expect(isInputPart(&work, work.stored[2], 2, 0));
+    try testing.expectEqual(Tag.sub, work.steps[partOf(&work, work.stored[1], 0).step].tag);
+    try testing.expectEqual(@as(u32, 4), code.varyings);
+
+    // A part drawn alone, render target 0 its one: location 0 is
+    // written, and nothing else.
+    var alone: Work = .{};
+    const first = try throughMesaKeyed(&alone, &reference.glslc_several_colours, .{ .cbufs = 0b001 });
+    try testing.expectEqual(@as(usize, 0), specifiersOf(&first, &specifiers).len);
+    try testing.expectEqualStrings("..", tlbWritesOf(first, &writes));
+
+    // Render target 1 of 32-bit floats (f32_color_rb): its four floats a
+    // write each, the first to TLBU with its own specifier, between the
+    // pairs of the others.
+    var wide: Work = .{};
+    const wide_code = try throughMesaKeyed(&wide, &reference.glslc_several_colours, .{ .cbufs = 0b111, .f32_color_rb = 0b010 });
+    try testing.expectEqualSlices(u32, &.{ f32Specifier(1), f16Specifier(2) }, specifiersOf(&wide_code, &specifiers));
+    try testing.expectEqualStrings("..u...u.", tlbWritesOf(wide_code, &writes));
+    try testing.expectEqual(@as(usize, 3), countOf(wide_code, "mov tlb,"));
+}
+
+test "through Mesa's back end, a colour out at location 1 alone: render target 1 written by its own specifier, and none where the key has no render target 1, which then writes Z through (since 1.231)" {
+    var work: Work = .{};
+    const code = try throughMesaKeyed(&work, &reference.glslc_second_colour, .{ .cbufs = 0b011 });
+    try testing.expectEqual(none, work.stored[0]);
+    try testing.expect(work.stored[1] != none);
+    var specifiers: [8]u32 = undefined;
+    try testing.expectEqualSlices(u32, &.{f16Specifier(1)}, specifiersOf(&code, &specifiers));
+    var writes: [16]u8 = undefined;
+    try testing.expectEqualStrings("u.", tlbWritesOf(code, &writes));
+    try testing.expect(!code.writes_z);
+
+    // No render target of the key's has a colour: no colour is written,
+    // so early fragment tests are not promoted and the program writes Z
+    // (nir_to_vir.c:2050-2054, 2098).
+    var unkeyed: Work = .{};
+    const none_written = try throughMesaKeyed(&unkeyed, &reference.glslc_second_colour, .{ .cbufs = 0b001 });
+    try testing.expectEqualStrings("u", tlbWritesOf(none_written, &writes));
+    try testing.expect(none_written.writes_z);
+
+    // Alpha to coverage reads location 0's alpha, output_color_var[0]
+    // (nir_to_vir.c:2056-2065): a program with nothing there covers by
+    // nothing, and one with a colour there by its alpha alone.
+    var uncovered: Work = .{};
+    const no_alpha = try throughMesaKeyed(&uncovered, &reference.glslc_second_colour, .{ .cbufs = 0b011, .sample_alpha_to_coverage = true });
+    try testing.expectEqual(@as(usize, 0), opsOf(no_alpha, "ftoc"));
+    var covered: Work = .{};
+    const by_alpha = try throughMesaKeyed(&covered, &reference.glslc_several_colours, .{ .cbufs = 0b111, .sample_alpha_to_coverage = true });
+    try testing.expectEqual(@as(usize, 1), opsOf(by_alpha, "ftoc"));
+}
+
+test "through Mesa's back end, the optimizations see every colour out: a sum another colour reads is not contracted, a colour nir_opt_cse makes one with another is written, and a float a colour reads past a kept selection is live to the end (since 1.231)" {
+    // fadd(a, fadd(is_used_once)(a, b)) (nir_opt_algebraic.py:275): the
+    // inner sum is location 1's colour too, so read twice, and left. Its
+    // store into location 0 instead (`patched`), the colour at 1 never
+    // stored, it is read once, and contracted to a product by 2.0.
+    // The varying's four FMULs by W are the program's only products
+    // (emit_fragment_varying).
+    var work: Work = .{};
+    const code = try throughMesaKeyed(&work, &reference.glslc_shared_sum, .{ .cbufs = 0b011 });
+    try testing.expectEqual(Tag.add, work.steps[work.stored[0]].tag);
+    try testing.expectEqual(work.stored[1], work.steps[work.stored[0]].b);
+    try testing.expectEqual(@as(usize, 4), opsOf(code, "fmul"));
+    var once: Work = .{};
+    const contracted = try throughMesaKeyed(&once, &comptime patched(&reference.glslc_shared_sum, .store, 1, 0, 19), .{ .cbufs = 0b011 });
+    try testing.expectEqual(none, once.stored[1]);
+    try testing.expectEqual(@as(usize, 4 + 4), opsOf(contracted, "fmul"));
+
+    // A product nothing reads goes (nir_opt_dce), and every step after it
+    // is renumbered; the sum made twice is one (nir_opt_cse), which both
+    // location 1 and location 2 are, each written.
+    var folded: Work = .{};
+    const both = try throughMesaKeyed(&folded, &reference.glslc_folded_colours, .{ .cbufs = 0b111 });
+    try testing.expectEqual(@as(usize, 4), opsOf(both, "fmul"));
+    try testing.expectEqual(folded.stored[1], folded.stored[2]);
+    var writes: [16]u8 = undefined;
+    try testing.expectEqualStrings("..u.u.", tlbWritesOf(both, &writes));
+    const color = [4]f32{ 0.5, 0.25, 0.75, 1.0 };
+    try testing.expectEqual(color, evaluatedOf(&folded, folded.stored[0], color, 0));
+    try testing.expectEqual([4]f32{ 0.75, 0.5, 1.0, 1.25 }, evaluatedOf(&folded, folded.stored[1], color, 0));
+
+    // The selection kept over its limit, its colour at location 1: `x`,
+    // read past the merge by the colour alone, is live to the end, so it
+    // interferes with the phi and the false way copies it into the phi's
+    // register (nir_def_is_live_at), as at location 0.
+    var kept: Work = .{};
+    const branched = try throughMesaKeyed(&kept, &comptime colourAt(Costly(13).words, 1), .{ .cbufs = 0b011 });
+    try testing.expectEqual(@as(usize, 1), stepsOf(&kept, .begin_if));
+    try testing.expectEqual(@as(usize, 1), countOf(branched, "bu.allna"));
+    try testing.expectEqual(@as(usize, 1), opsOf(branched, "xor.ifa"));
+    try testing.expectEqual(@as(usize, 1), opsOf(branched, "mov.ifna"));
+    try testing.expectEqual(@as(usize, 3), opsOf(branched, "mov.ifa"));
+    try testing.expectEqualStrings("u.", tlbWritesOf(branched, &writes));
+
+    // A colour stored in a selection's arm alone is that arm's step, which
+    // nir_opt_peephole_select counts as read (`armCost`): seven
+    // operations of four floats, 28 past the limit of 24, so the
+    // selection is not flattened, at location 1 as at location 0 - and a
+    // kept selection one way of which leaves a variable nothing is
+    // refused here (`Selection.one_way`), where 24 would have flattened it.
+    for ([2][]const u32{ &reference.glslc_arm_colour, &comptime colourAt(&reference.glslc_arm_colour, 0) }) |words| {
+        var arm: Work = .{};
+        try testing.expectError(Error.Branches, throughMesaKeyed(&arm, words, .{ .cbufs = 0b011 }));
+    }
+}
+
+test "a colour out past the render targets, or two at one location, is refused; the plan's compile takes one, at location 0, alone (since 1.231)" {
+    // OpDecorate %9 Location 1 made 4: past `most_colors`.
+    var work: Work = .{};
+    try testing.expectError(Error.Location, throughMesa(&work, &comptime patched(&reference.glslc_second_colour, .decorate, 0, 2, most_colors)));
+    // OpDecorate %16 Location 1 made 0, where %14 is.
+    var twice: Work = .{};
+    try testing.expectError(Error.Location, throughMesa(&twice, &comptime patched(&reference.glslc_several_colours, .decorate, 3, 2, 0)));
+    // The plan writes the tile buffer's one colour.
+    var planned: Work = .{};
+    try testing.expectError(Error.Outputs, compile(&planned, &reference.glslc_several_colours));
+    var second: Work = .{};
+    try testing.expectError(Error.Location, compile(&second, &reference.glslc_second_colour));
 }
 
 test "through Mesa's back end, glslc's discard is facet's, to the word" {
@@ -17292,7 +17560,7 @@ test "a variable of the function's own read before anything is stored into it is
     // nothing, which is 0 (nir_lower_undef_to_zero).
     var work: Work = .{};
     _ = try throughMesa(&work, &comptime patched(&reference.glslc_cutout_unoptimized, .store, 0, 0, 32));
-    const colour = work.steps[work.stored];
+    const colour = work.steps[work.stored[0]];
     try testing.expectEqual(Tag.construct, colour.tag);
     for (colour.from[0..4]) |each| {
         try testing.expectEqual(Tag.constant, work.steps[each].tag);
@@ -17523,11 +17791,13 @@ test "an outer arm that jumps to the inner merge block, where its own merge is d
     try testing.expectError(Error.Branches, throughMesa(&work, &comptime patched(&reference.glslc_nested, .branch, 3, 0, 36)));
 }
 
-/// Which steps are live: the colour's, each discard, and what a live
+/// Which steps are live: each colour's, each discard, and what a live
 /// step reads.
 fn liveMask(work: *const Work) [most_steps]bool {
     var reached: [most_steps]bool = @splat(false);
-    if (work.stored != none) reached[work.stored] = true;
+    for (work.stored) |stored| if (stored != none) {
+        reached[stored] = true;
+    };
     var at = work.step_count;
     while (at > 0) {
         at -= 1;
@@ -18454,7 +18724,7 @@ test "Asin, Acos, Atan and Atan2 are nir_asin's, nir_acos's, nir_atan's and nir_
         const s = [2]f32{ std.math.asin(c[0]) * 0.3183099 + 0.5, std.math.asin(c[1]) * 0.3183099 + 0.5 };
         const o = [2]f32{ std.math.acos(c[1]) * 0.3183099, std.math.acos(c[2]) * 0.3183099 };
         const expected = [4]f32{ s[0] * 0.5 + o[1] * 0.5, s[1] * 0.5 + o[0] * 0.5, std.math.atan(c[2] * 4.0) * 0.3183099 + 0.5, std.math.atan2(c[3], c[0]) * 0.1591549 + 0.5 };
-        const found = evaluatedOf(&work, work.stored, color, 0);
+        const found = evaluatedOf(&work, work.stored[0], color, 0);
         for (expected, found) |want, got| try testing.expectApproxEqAbs(want, got, 1e-4);
     }
 }
@@ -18478,7 +18748,7 @@ test "Sinh, Cosh, Tanh, Asinh, Acosh and Atanh are vtn_glsl450.c's of fexp, flog
         const b = std.math.acosh(color[0] + 1.0) * 0.7;
         const d = std.math.atanh(c[1] * 0.9) * 0.3 + 0.5;
         const expected = [4]f32{ s * 0.5 + h * 0.5, t, a * 0.5 + b * 0.5, d };
-        const found = evaluatedOf(&work, work.stored, color, 0);
+        const found = evaluatedOf(&work, work.stored[0], color, 0);
         for (expected, found) |want, got| try testing.expectApproxEqAbs(want, got, 1e-4);
     }
 }
@@ -18515,7 +18785,7 @@ test "Cross, Reflect, FaceForward, Refract and Fma are vtn_glsl450.c's, Refract'
         const t: V3 = if (k < 0) @splat(0) else @as(V3, @splat(eta)) * i - @as(V3, @splat(eta * ndi + @sqrt(k))) * n;
         if (k < 0) whole += 1;
         const expected = [4]f32{ x[0] * 0.5 + 0.5, r[1] * 0.25 + f[2] * 0.25 + 0.5, t[0] * 0.375 + 0.5, t[2] * 0.25 + x[2] * 0.25 + 0.5 };
-        const found = evaluatedOf(&work, work.stored, color, 0);
+        const found = evaluatedOf(&work, work.stored[0], color, 0);
         for (expected, found) |want, got| try testing.expectApproxEqAbs(want, got, 1e-5);
     }
     // Both of FaceForward's ways and both of Refract's are worked out.
@@ -18584,7 +18854,7 @@ test "FindILsb, FindSMsb and FindUMsb are 31 - uclz of x & -x, of x ^ (x >> 31) 
     try testing.expectEqual(@as(usize, 8), countOf(code, "clz"));
     for (find_colors) |color| {
         const expected = bitFindsOf(color);
-        const found = evaluatedOf(&work, work.stored, color, 0);
+        const found = evaluatedOf(&work, work.stored[0], color, 0);
         try testing.expectEqualSlices(f32, &expected, &found);
     }
 }
@@ -18657,7 +18927,7 @@ test "ModfStruct, FrexpStruct and Ldexp are vtn_glsl450.c's, nir_lower_frexp's a
     try testing.expectEqual(@as(usize, 4), of_one);
     for (modf_colors) |color| {
         const expected = modfFrexpOf(color);
-        const found = evaluatedOf(&work, work.stored, color, 0);
+        const found = evaluatedOf(&work, work.stored[0], color, 0);
         for (expected, found) |want, got| try testing.expectApproxEqAbs(want, got, 1e-6);
     }
 }
@@ -18795,7 +19065,7 @@ test "the packings of snorms and unorms are nir_opt_algebraic's and nir_lower_al
         try testing.expectEqual(each.fround, countOf(code, "ftouz"));
         for (packing_colors) |color| {
             const expected = each.of(color);
-            const found = evaluatedOf(&work, work.stored, color, 0);
+            const found = evaluatedOf(&work, work.stored[0], color, 0);
             for (expected, found) |want, got| try testing.expectApproxEqAbs(want, got, 1e-6);
         }
     }
@@ -18849,7 +19119,7 @@ test "PackHalf2x16 is a VFPACK of its two floats and UnpackHalf2x16 an FMOV of e
     try testing.expectEqual(@as(usize, 1), countOf(code, "shr"));
     for (packing_colors) |color| {
         const expected = halfPackingOf(color);
-        const found = evaluatedOf(&work, work.stored, color, 0);
+        const found = evaluatedOf(&work, work.stored[0], color, 0);
         for (expected, found) |want, got| try testing.expectApproxEqAbs(want, got, 1e-6);
     }
 }
@@ -18970,7 +19240,7 @@ test "Determinant and MatrixInverse of a mat2 and a mat3 are build_det's and mat
     try testing.expectEqual(@as(usize, 2), countOf(code, "recip "));
     for (packing_colors) |color| {
         const expected = matrixInverseOf(color);
-        const found = evaluatedOf(&work, work.stored, color, 0);
+        const found = evaluatedOf(&work, work.stored[0], color, 0);
         for (expected, found) |want, got| try testing.expectApproxEqAbs(want, got, 1e-5);
     }
 }
@@ -18981,7 +19251,7 @@ test "Determinant of a mat4 is build_det's cofactors of column 0, each a mat3's,
     try testing.expectEqual(@as(usize, 0), countOf(code, "recip "));
     for (packing_colors) |color| {
         const expected = determinant4Of(color);
-        const found = evaluatedOf(&work, work.stored, color, 0);
+        const found = evaluatedOf(&work, work.stored[0], color, 0);
         for (expected, found) |want, got| try testing.expectApproxEqAbs(want, got, 1e-5);
     }
 }
@@ -19088,12 +19358,12 @@ test "OpBitCount, OpBitReverse, OpBitFieldInsert, OpBitFieldSExtract and OpBitFi
     for (steps) |x| for (steps) |y| for (steps) |z| {
         const color = [4]f32{ x, y, z, 1.0 };
         const expected = bitsOf(color);
-        const found = evaluatedOf(&work, work.stored, color, 0);
+        const found = evaluatedOf(&work, work.stored[0], color, 0);
         for (expected, found) |want, got| try testing.expectApproxEqAbs(want, got, 1e-6);
     };
     for (packing_colors) |color| {
         const expected = bitsOf(color);
-        const found = evaluatedOf(&work, work.stored, color, 0);
+        const found = evaluatedOf(&work, work.stored[0], color, 0);
         for (expected, found) |want, got| try testing.expectApproxEqAbs(want, got, 1e-6);
     }
 }
@@ -19218,12 +19488,12 @@ test "packings and unpackings of constants fold to GLSL's words and floats: roun
     for (cases) |case| {
         var work: Work = .{};
         const packing = @intFromEnum(case.which) <= @intFromEnum(spirv.Glsl.pack_unorm_2x16);
-        work.stored = if (packing)
+        work.stored[0] = if (packing)
             try packOf(&work, case.which, try floatsConstant(&work, case.floats))
         else
             try unpackOf(&work, case.which, try integerSplat(&work, .f32x1, @bitCast(case.word)));
         try algebraic(&work);
-        const made = work.steps[work.stored];
+        const made = work.steps[work.stored[0]];
         try testing.expectEqual(Tag.constant, made.tag);
         if (packing) {
             try testing.expectEqual(packedOf(case.floats, if (case.which == .pack_unorm_4x8 or case.which == .pack_snorm_4x8) 8 else 16, case.which == .pack_snorm_4x8 or case.which == .pack_snorm_2x16), case.word);
@@ -20268,9 +20538,9 @@ test "nir_opt_algebraic's rules of an address's arithmetic, and of masks and shi
     };
     for (cases) |case| {
         var work: Work = .{};
-        work.stored = try case.build(&work);
+        work.stored[0] = try case.build(&work);
         try algebraic(&work);
-        var shape = shapeOf(&work, work.stored);
+        var shape = shapeOf(&work, work.stored[0]);
         try testing.expectEqualStrings(case.shape, shape.text());
     }
 }
@@ -20832,9 +21102,9 @@ test "a struct or an array made by OpCompositeConstruct is read by OpCompositeEx
     var work: Work = .{};
     _ = try throughMesa(&work, &reference.glslc_aggregate_values);
     try testing.expectEqual(@as(u32, 3), work.local_count - work.output_local_count);
-    const out = work.steps[work.stored];
+    const out = work.steps[work.stored[0]];
     for (0..3) |k| {
-        const float = partOf(&work, work.stored, @intCast(k));
+        const float = partOf(&work, work.stored[0], @intCast(k));
         try testing.expectEqual(Tag.input, work.steps[float.step].tag);
         try testing.expectEqual(@as(u8, 3), float.part);
     }
@@ -21088,7 +21358,7 @@ test "an array in scratch stored into at an index the body computes, and an elem
     work = .{};
     _ = try throughMesa(&work, &reference.glslc_scratch_reread);
     try testing.expectEqual(@as(usize, 3), liveOf(&work, .scratch));
-    const before = partOf(&work, work.stored, 0);
+    const before = partOf(&work, work.stored[0], 0);
     try testing.expectEqual(Tag.constant, work.steps[before.step].tag);
     try testing.expectEqual(@as(f32, 0.25), work.pool[work.steps[before.step].at + before.part]);
     var stored: ?usize = null;
@@ -21129,14 +21399,14 @@ test "nir_opt_copy_prop_vars takes a load of a float in scratch whose value it h
     // p the initializer's a[1], and q color.y as a[i] was stored; r and
     // a[3] loads, the store at an index the body computes having taken
     // the copies of a[2] and a[3], which it may be of.
-    const p = partOf(&work, work.stored, 0);
+    const p = partOf(&work, work.stored[0], 0);
     try testing.expectEqual(Tag.constant, work.steps[p.step].tag);
     try testing.expectEqual(@as(f32, 0.375), work.pool[work.steps[p.step].at + p.part]);
-    const q = partOf(&work, work.stored, 1);
+    const q = partOf(&work, work.stored[0], 1);
     try testing.expectEqual(Tag.input, work.steps[q.step].tag);
     try testing.expectEqual(@as(u8, 1), q.part);
     for ([_]u8{ 2, 3 }, [_]u32{ 8, 12 }) |part, bytes| {
-        const loaded = partOf(&work, work.stored, part);
+        const loaded = partOf(&work, work.stored[0], part);
         try testing.expectEqual(Tag.scratch, work.steps[loaded.step].tag);
         try testing.expectEqual(bytes * 16, work.steps[loaded.step].at);
     }
@@ -21188,7 +21458,7 @@ test "a load of a float in scratch at an index the body computes reads every sto
     try testing.expectEqualSlices(u32, &.{ 0, 4, 8, 12, 4 }, offsets[0..count]);
     try testing.expectEqual(@as(usize, 1), stepsOf(&work, .scratch_indirect));
     try testing.expectEqual(@as(usize, 0), stepsOf(&work, .scratch));
-    const third = partOf(&work, work.stored, 2);
+    const third = partOf(&work, work.stored[0], 2);
     try testing.expectEqual(Tag.constant, work.steps[third.step].tag);
     try testing.expectEqual(@as(f32, 0.625), work.pool[work.steps[third.step].at + third.part]);
 }
@@ -21218,7 +21488,7 @@ test "an index computed twice is one value to nir_opt_copy_prop_vars once nir_op
     try testing.expectEqual(@as(u32, 0), code.spill_size);
     try testing.expectEqual(@as(usize, 0), stepsOf(&work, .scratch_store));
     try testing.expectEqual(@as(usize, 0), stepsOf(&work, .scratch_indirect));
-    const first = partOf(&work, work.stored, 0);
+    const first = partOf(&work, work.stored[0], 0);
     try testing.expectEqual(Tag.input, work.steps[first.step].tag);
     try testing.expectEqual(@as(u8, 1), first.part);
     try testing.expectEqual(@as(usize, 0), streamWordsOf(code, .spill_offset));
@@ -21243,7 +21513,7 @@ test "an array of structs in scratch: members two floats apart, and a kept selec
     try testing.expectEqualSlices(u32, &.{ 0, 4, 8, 12, 16, 20, 12, 0, 0 }, offsets[0..count]);
     try testing.expectEqual(@as(usize, 2), stepsOf(&work, .scratch_indirect));
     try testing.expectEqual(@as(usize, 0), stepsOf(&work, .scratch));
-    const third = partOf(&work, work.stored, 2);
+    const third = partOf(&work, work.stored[0], 2);
     try testing.expectEqual(Tag.constant, work.steps[third.step].tag);
     try testing.expectEqual(@as(f32, 0.625), work.pool[work.steps[third.step].at + third.part]);
 }
@@ -21256,7 +21526,7 @@ test "FacetBoth's scratch case: eight floats in scratch, one stored at a compute
     try testing.expectEqual(@as(usize, 8 + 1), stepsOf(&work, .scratch_store));
     try testing.expectEqual(@as(usize, 2), stepsOf(&work, .scratch_indirect));
     try testing.expectEqual(@as(usize, 1), stepsOf(&work, .scratch));
-    const second = partOf(&work, work.stored, 1);
+    const second = partOf(&work, work.stored[0], 1);
     try testing.expectEqual(Tag.input, work.steps[second.step].tag);
     try testing.expectEqual(@as(u8, 2), second.part);
 }
@@ -21334,15 +21604,15 @@ test "a load at an index the body computes into an array of two of the function'
     try testing.expectEqual(@as(usize, 0), stepsOf(&work, .select));
     try testing.expectEqual(@as(usize, 1), stepsOf(&work, .compare));
     try testing.expectEqual(@as(usize, 2), integerOpsOf(&work, .b2f32));
-    const x = work.steps[partOf(&work, work.stored, 0).step];
+    const x = work.steps[partOf(&work, work.stored[0], 0).step];
     try testing.expect(isIntegerOp(x, .b2f32));
     try expectTreeCondition(&work, x.a);
-    try testing.expectEqual(@as(?u32, 0), floatBits(&work, partOf(&work, work.stored, 1)));
-    const z = work.steps[partOf(&work, work.stored, 2).step];
+    try testing.expectEqual(@as(?u32, 0), floatBits(&work, partOf(&work, work.stored[0], 1)));
+    const z = work.steps[partOf(&work, work.stored[0], 2).step];
     try testing.expect(isIntegerOp(z, .b2f32));
     try testing.expectEqual(Tag.logic, work.steps[z.a].tag);
     try testing.expectEqual(x.a, work.steps[z.a].a);
-    try testing.expectEqual(@as(?u32, @bitCast(@as(f32, 1.0))), floatBits(&work, partOf(&work, work.stored, 3)));
+    try testing.expectEqual(@as(?u32, @bitCast(@as(f32, 1.0))), floatBits(&work, partOf(&work, work.stored[0], 3)));
     // Each b2f the AND of the bool and 1.0, and the inot a NOT
     // (nir_to_vir.c:1521-1523, :1683-1694).
     try testing.expectEqual(@as(usize, 2), countOf(code, "and "));
@@ -21378,10 +21648,10 @@ test "a store at an index the body computes into an array of two of the function
     try testing.expect(by_j != by_i);
     try testing.expectEqual(selects[1], program[selects[2]].b);
     try testing.expectEqual(selects[0], program[selects[2]].from[0]);
-    try testing.expectEqual(selects[1], partOf(&work, work.stored, 0).step);
-    try testing.expectEqual(selects[0], partOf(&work, work.stored, 1).step);
-    try testing.expectEqual(selects[2], partOf(&work, work.stored, 2).step);
-    try testing.expect(isInputPart(&work, work.stored, 3, 3));
+    try testing.expectEqual(selects[1], partOf(&work, work.stored[0], 0).step);
+    try testing.expectEqual(selects[0], partOf(&work, work.stored[0], 1).step);
+    try testing.expectEqual(selects[2], partOf(&work, work.stored[0], 2).step);
+    try testing.expect(isInputPart(&work, work.stored[0], 3, 3));
 }
 
 test "a member, a struct and a matrix's column through an if-else tree, and a float of a vector stored through one is the vector loaded, the float inserted and the vector stored" {
@@ -21402,7 +21672,7 @@ test "a member, a struct and a matrix's column through an if-else tree, and a fl
         try testing.expect(isInputFloat(&work, program[at].b, pair[0]));
         try testing.expect(isInputFloat(&work, program[at].from[0], pair[1]));
     }
-    for (selects[0..4], 0..) |at, k| try testing.expectEqual(at, partOf(&work, work.stored, @intCast(k)).step);
+    for (selects[0..4], 0..) |at, k| try testing.expectEqual(at, partOf(&work, work.stored[0], @intCast(k)).step);
     // two[i].y = w * 0.5, two vec2s: the tree of the vector's load, its
     // x then nir_opt_algebraic's; the store's merge two[1] first, then
     // two[0] (vtn_local_store, vtn_variables.c:644-667).
@@ -21414,10 +21684,10 @@ test "a member, a struct and a matrix's column through an if-else tree, and a fl
     try testing.expect(isInputFloat(&work, work.program()[selects[0]].b, 3));
     try testing.expectEqual(half, work.program()[selects[1]].b);
     try testing.expect(isInputFloat(&work, work.program()[selects[1]].from[0], 1));
-    try testing.expect(isInputPart(&work, work.stored, 0, 0));
-    try testing.expectEqual(selects[1], partOf(&work, work.stored, 1).step);
-    try testing.expect(isInputPart(&work, work.stored, 2, 2));
-    try testing.expectEqual(selects[0], partOf(&work, work.stored, 3).step);
+    try testing.expect(isInputPart(&work, work.stored[0], 0, 0));
+    try testing.expectEqual(selects[1], partOf(&work, work.stored[0], 1).step);
+    try testing.expect(isInputPart(&work, work.stored[0], 2, 2));
+    try testing.expectEqual(selects[0], partOf(&work, work.stored[0], 3).step);
 }
 
 test "an index the body computes into one element is that element, a float of a vector loaded through a tree its bcsel, and an element nothing was stored into takes what the other arm's was" {
@@ -21436,10 +21706,10 @@ test "an index the body computes into one element is that element, a float of a 
     try expectTreeCondition(&work, chosen.a);
     try testing.expect(isInputFloat(&work, chosen.b, 1));
     try testing.expect(isInputFloat(&work, chosen.from[0], 3));
-    try testing.expect(isInputPart(&work, work.stored, 0, 2));
-    try testing.expectEqual(selects[0], partOf(&work, work.stored, 1).step);
-    try testing.expect(isInputPart(&work, work.stored, 2, 1));
-    try testing.expect(isInputPart(&work, work.stored, 3, 0));
+    try testing.expect(isInputPart(&work, work.stored[0], 0, 2));
+    try testing.expectEqual(selects[0], partOf(&work, work.stored[0], 1).step);
+    try testing.expect(isInputPart(&work, work.stored[0], 2, 1));
+    try testing.expect(isInputPart(&work, work.stored[0], 3, 0));
 }
 
 test "the phis of an array an if-else tree reaches are put down at a merge before the others', and a tree in an arm or one into scratch is refused" {
@@ -21457,7 +21727,7 @@ test "the phis of an array an if-else tree reaches are put down at a merge befor
     try testing.expect(isInputFloat(&work, program[selects[1]].from[0], 0));
     try expectTreeCondition(&work, program[selects[2]].a);
     try testing.expectEqual(selects[0], program[selects[2]].b);
-    try testing.expectEqual(selects[1], partOf(&work, work.stored, 1).step);
+    try testing.expectEqual(selects[1], partOf(&work, work.stored[0], 1).step);
     // A load through a tree in an arm, which Mesa flattens with the
     // tree's only in the loop of passes after it.
     work = .{};
@@ -21476,16 +21746,16 @@ test "a bcsel of 1.0 and 0.0 is the b2f of its bool, of 0.0 and 1.0 the b2f of t
     try testing.expectEqual(@as(usize, 0), stepsOf(&work, .select));
     try testing.expectEqual(@as(usize, 2), integerOpsOf(&work, .b2f32));
     try testing.expectEqual(@as(usize, 2), stepsOf(&work, .negate));
-    const straight = partOf(&work, work.stored, 0).step;
-    const turned = partOf(&work, work.stored, 1).step;
+    const straight = partOf(&work, work.stored[0], 0).step;
+    const turned = partOf(&work, work.stored[0], 1).step;
     try testing.expect(isIntegerOp(work.steps[straight], .b2f32));
     try testing.expectEqual(Tag.compare, work.steps[work.steps[straight].a].tag);
     try testing.expect(isIntegerOp(work.steps[turned], .b2f32));
     try testing.expectEqual(Tag.logic, work.steps[work.steps[turned].a].tag);
-    const minus = work.steps[partOf(&work, work.stored, 2).step];
+    const minus = work.steps[partOf(&work, work.stored[0], 2).step];
     try testing.expectEqual(Tag.negate, minus.tag);
     try testing.expectEqual(straight, minus.a);
-    const minus_turned = work.steps[partOf(&work, work.stored, 3).step];
+    const minus_turned = work.steps[partOf(&work, work.stored[0], 3).step];
     try testing.expectEqual(Tag.negate, minus_turned.tag);
     try testing.expectEqual(turned, minus_turned.a);
 }
@@ -21587,7 +21857,7 @@ test "an integer varying is read flat, its bits the C coefficient, and its float
     for (0..256) |v| {
         const bits: f32 = @bitCast(@as(u32, @intCast(v)));
         const other: f32 = @bitCast(@as(u32, @intCast(255 - v)));
-        const made = evaluatedOf(&work, work.stored, .{ bits, other, bits, other }, 0);
+        const made = evaluatedOf(&work, work.stored[0], .{ bits, other, bits, other }, 0);
         const value = @as(f32, @floatFromInt(v)) * scale;
         const rest = @as(f32, @floatFromInt(255 - v)) * scale;
         try testing.expectEqual([4]f32{ value, rest, value, rest }, made);
@@ -21669,7 +21939,7 @@ test "a module of more than 256 ids, 32 constants and 256 words is read, its loo
         for (0..3) |_| {
             for (&a) |*each| each.* = each.* * 0.5 + 0.25;
         }
-        try testing.expectEqual(a, evaluatedOf(&work, work.stored, color, 0));
+        try testing.expectEqual(a, evaluatedOf(&work, work.stored[0], color, 0));
     }
 }
 
@@ -22633,14 +22903,14 @@ test "through Mesa's back end, a fragment program's colour stored in both arms w
     try testing.expect(!hasBranch(&work));
     try testing.expectEqual(@as(usize, 4), stepsOf(&work, .select));
     for (0..4) |k| {
-        const chosen = work.steps[partOf(&work, work.stored, @intCast(k)).step];
+        const chosen = work.steps[partOf(&work, work.stored[0], @intCast(k)).step];
         try testing.expectEqual(Tag.select, chosen.tag);
         // The false way's v * 0.5.
         try testing.expectEqual(Tag.mul, work.steps[partOf(&work, chosen.from[0], 0).step].tag);
     }
     // The true way's x and y are v's y and z.
-    try testing.expect(isInputFloat(&work, work.steps[partOf(&work, work.stored, 0).step].b, 1));
-    try testing.expect(isInputFloat(&work, work.steps[partOf(&work, work.stored, 1).step].b, 2));
+    try testing.expect(isInputFloat(&work, work.steps[partOf(&work, work.stored[0], 0).step].b, 1));
+    try testing.expect(isInputFloat(&work, work.steps[partOf(&work, work.stored[0], 1).step].b, 2));
     try testing.expectEqual(@as(usize, 19), code.words.len);
 }
 
@@ -22650,7 +22920,7 @@ test "through Mesa's back end, a fragment program's colour stored, then again in
     try testing.expect(hasBranch(&work));
     try testing.expectEqual(@as(usize, 4), stepsOf(&work, .phi));
     try testing.expectEqual(@as(usize, 0), stepsOf(&work, .select));
-    for (0..4) |k| try testing.expectEqual(Tag.phi, work.steps[partOf(&work, work.stored, @intCast(k)).step].tag);
+    for (0..4) |k| try testing.expectEqual(Tag.phi, work.steps[partOf(&work, work.stored[0], @intCast(k)).step].tag);
     try testing.expectEqual(@as(usize, 1), countOf(code, "bu.allna"));
     try testing.expectEqual(@as(usize, 2), countOf(code, "ldtmu"));
     try testing.expectEqual(@as(usize, 35), code.words.len);
@@ -22753,7 +23023,7 @@ test "through Mesa's back end, FacetBoth's shipped outputs: the colour stored in
     try testing.expect(!hasBranch(&work));
     // r, g, b and the alpha before its fma: each a bcsel (since 1.206).
     try testing.expectEqual(@as(usize, 4), stepsOf(&work, .select));
-    try testing.expectEqual(Tag.select, work.steps[partOf(&work, work.stored, 2).step].tag);
+    try testing.expectEqual(Tag.select, work.steps[partOf(&work, work.stored[0], 2).step].tag);
     try testing.expectEqual(@as(usize, 19), code.words.len);
 }
 
