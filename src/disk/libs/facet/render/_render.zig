@@ -40,6 +40,14 @@ pub const most_attachments = 8;
 pub const most_subpasses = 4;
 pub const most_colors = 4;
 pub const most_parts = 8;
+/// The input attachments, by their index, whose reads `Subpass.tile_inputs`
+/// says a subpass may take out of the tile it draws: v3dv's
+/// MAX_INPUT_ATTACHMENTS (v3dv_limits.h:52), the size of its
+/// tlb_input_attachment_location (since 1.237).
+pub const most_tile_inputs = 4;
+/// What `Subpass.tile_inputs` holds for an input attachment the subpass
+/// does not draw into, v3dv's UINT8_MAX.
+pub const no_tile_input: u8 = 0xFF;
 
 /// One pass over the tiles: a subpass's colour attachments, or one of
 /// them where the subpass is drawn once for each.
@@ -112,6 +120,14 @@ pub const Subpass = struct {
     color_count: u32,
     /// Goes on in the tiles of the one before it.
     joined: bool,
+    /// For each input attachment, by its index, the location among the
+    /// subpass's colour attachments of the one it is, where the subpass
+    /// draws into it as well, or `no_tile_input`: v3dv's
+    /// tlb_input_attachment_location (subpass_setup_tlb_input_attachments,
+    /// v3dv_pass.c:97-135), which a driver whose programs read the tile
+    /// buffer keys a pipeline of the subpass on (`Pipeline.tile_inputs`,
+    /// since 1.237).
+    tile_inputs: [most_tile_inputs]u8 = @splat(no_tile_input),
 };
 
 pub const RenderPass = struct {

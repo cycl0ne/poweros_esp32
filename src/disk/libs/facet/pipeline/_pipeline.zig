@@ -233,6 +233,11 @@ pub const Pipeline = struct {
     /// `part_formats`, the format each part of the subpass drew first
     /// (since 1.228).
     color_formats: [_render.most_colors]facet.Format = @splat(.undefined),
+    /// Its subpass's `tile_inputs`: the colour location each input
+    /// attachment is, by its index, where the subpass draws into it as
+    /// well, which v3dv keys a pipeline on (v3dv_pipeline.c:2125-2135;
+    /// since 1.237).
+    tile_inputs: [_render.most_tile_inputs]u8 = @splat(_render.no_tile_input),
     /// Its subpass is drawn in more than one part, a part for each colour
     /// attachment, its commands played again from its begin for each
     /// (docs/facet-vulkan10.md items 80 and 87). A driver whose program

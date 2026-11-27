@@ -11768,6 +11768,78 @@ test "a device of the V3D's layout lays an attachment a later subpass reads out 
     try testing.expect(pass == null);
 }
 
+test "a subpass says which of its colour locations each input attachment is that it draws into, and on a device that reads each out of its render target one that reads two is drawn together (since 1.237)" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    const descriptions: [5]facet.AttachmentDescription = @splat(.{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .general });
+    const colors = [3]facet.AttachmentReference{
+        .{ .attachment = 0, .layout = .general },
+        .{ .attachment = 1, .layout = .general },
+        .{ .attachment = 2, .layout = .general },
+    };
+    const none = _render.no_tile_input;
+    // Inputs 0 and 1 are colours 1 and 2, input 2 attachment 3, which it
+    // does not draw: v3dv's tlb_input_attachment_location
+    // (subpass_setup_tlb_input_attachments, v3dv_pass.c:97-135).
+    const inputs = [3]facet.AttachmentReference{ colors[1], colors[2], .{ .attachment = 3, .layout = .general } };
+    const reads_two = facet.SubpassDescription{ .input_attachment_count = 3, .input_attachments = &inputs, .color_attachment_count = 3, .color_attachments = &colors };
+    const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
+    for ([_]bool{ false, true }) |every| {
+        physical.can.every_tile_input = every;
+        defer physical.can.every_tile_input = false;
+        var made: ?*facet.RenderPass = null;
+        try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(device, &.{ .attachment_count = 4, .attachments = &descriptions, .subpass_count = 1, .subpasses = @ptrCast(&reads_two) }, &made));
+        defer fb.DestroyRenderPass(device, made);
+        const plan = _objects.of(_render.RenderPass, made.?);
+        try testing.expectEqual([4]u8{ 1, 2, none, none }, plan.subpasses[0].tile_inputs);
+        // The cores a part for each colour, the device that reads the
+        // tile buffer the one part, all three planes in it.
+        try testing.expectEqual(@as(u32, if (every) 1 else 3), plan.part_count);
+        if (every) try testing.expectEqual(@as(u32, 3), plan.parts[0].color_count);
+    }
+
+    // A subpass after one that read its own, of the same targets and
+    // reading none, goes on in its tiles and reads nothing out of them;
+    // an index past v3dv's four is not among them (v3dv_pass.c:111-114).
+    const first = [1]facet.AttachmentReference{colors[0]};
+    const fifth: [5]facet.AttachmentReference = .{ .{ .attachment = 4, .layout = .general }, .{ .attachment = 4, .layout = .general }, .{ .attachment = 4, .layout = .general }, .{ .attachment = 4, .layout = .general }, colors[0] };
+    const passes = [2]facet.SubpassDescription{
+        .{ .input_attachment_count = 5, .input_attachments = &fifth, .color_attachment_count = 1, .color_attachments = &first },
+        .{ .color_attachment_count = 1, .color_attachments = &first },
+    };
+    const loop = [2]facet.SubpassDescription{
+        .{ .input_attachment_count = 1, .input_attachments = &first, .color_attachment_count = 1, .color_attachments = &first },
+        .{ .color_attachment_count = 1, .color_attachments = &first },
+    };
+    var past: ?*facet.RenderPass = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(device, &.{ .attachment_count = 5, .attachments = &descriptions, .subpass_count = 2, .subpasses = &passes }, &past));
+    defer fb.DestroyRenderPass(device, past);
+    try testing.expectEqual([4]u8{ none, none, none, none }, _objects.of(_render.RenderPass, past.?).subpasses[0].tile_inputs);
+    var looped: ?*facet.RenderPass = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(device, &.{ .attachment_count = 1, .attachments = &descriptions, .subpass_count = 2, .subpasses = &loop }, &looped));
+    defer fb.DestroyRenderPass(device, looped);
+    const looped_plan = _objects.of(_render.RenderPass, looped.?);
+    try testing.expectEqual([4]u8{ 0, none, none, none }, looped_plan.subpasses[0].tile_inputs);
+    try testing.expect(looped_plan.subpasses[1].joined);
+    try testing.expectEqual([4]u8{ none, none, none, none }, looped_plan.subpasses[1].tile_inputs);
+
+    // A pipeline of the subpass carries them, which a driver that
+    // compiles keys its fragment program on (v3dv_pipeline.c:2125-2135).
+    const shaders = try module(&bench, &TogetherScene.code);
+    defer fb.DestroyShaderModule(device, shaders);
+    const layout = try pipelineLayout(&bench, &.{}, 0);
+    defer fb.DestroyPipelineLayout(device, layout);
+    var made: ?*facet.RenderPass = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(device, &.{ .attachment_count = 4, .attachments = &descriptions, .subpass_count = 1, .subpasses = @ptrCast(&reads_two) }, &made));
+    defer fb.DestroyRenderPass(device, made);
+    const result, const reading = makePipeline(&bench, .{ .module = shaders, .name = "three", .layout = layout, .pass = made.?, .blend_count = 3 });
+    try testing.expectEqual(facet.Result.success, result);
+    defer fb.DestroyPipeline(device, reading);
+    try testing.expectEqual([4]u8{ 1, 2, none, none }, _objects.of(_pipeline.Pipeline, reading.?).tile_inputs);
+}
+
 test "a function run on the cores beside a device of the V3D's layout reads a texture and writes a storage image where that device keeps them (item 57, step 1)" {
     const Moved = struct {
         /// Each group reads texel (x, y) of the sampled view at binding 0

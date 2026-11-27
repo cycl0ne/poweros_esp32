@@ -7916,4 +7916,60 @@ pub const LIBRARY_VERSION = 1;
 /// the quad, in front of the far triangle, 1 at worst, so that no
 /// dropped pixel kept its depth, and the shadow map of it drawn in a
 /// pass of the depth alone, by the program of no colour.
-pub const LIBRARY_REVISION = 236;
+///
+/// 237: **An input attachment the subpass draws into, read out of the
+/// V3D's tile buffer (docs/facet-vulkan10.md item 56, the first entry it
+/// left out).** Vulkan 1.0 has no feature for such a loop, and the V3D
+/// refused the subpass at CreateRenderPass (`can.tile_inputs`). It is
+/// v3dv's way, ported:
+/// - **The subpass** says which of its colour locations each input
+///   attachment is, by its index, where it draws into it as well:
+///   `_render.Subpass.tile_inputs`, v3dv's tlb_input_attachment_location
+///   (subpass_setup_tlb_input_attachments, v3dv_pass.c:97-135), of the
+///   first four indices. A pipeline carries its subpass's
+///   (`Pipeline.tile_inputs`), and the V3D keys its fragment program on
+///   them (`compile.Key.tile_inputs`; v3dv_pipeline.c:2125-2135).
+/// - **The compiler** reads OpDecorate InputAttachmentIndex
+///   (`Sampler.input_index`). A subpassLoad whose index the key gives a
+///   render target is a `tile_load` of that render target and no fetch:
+///   lower_tlb_input_attachment_instr's load_tile_image
+///   (v3dv_pipeline.c:301-356) and lower_tlb_load's load_tlb_color_brcm
+///   (v3d_nir_lower_load_output.c:26-98). Its place, its layer and its
+///   texture unit go with the fetch, but the variable is still counted
+///   in info.num_images (pipeline_lower_nir, v3dv_pipeline.c:1875), so Z
+///   is written through as before.
+/// - **The back end** reads it as vir_emit_tlb_color_read does
+///   (nir_to_vir.c:2731-2815; `to_vir.emitTlbColorRead`). There is a
+///   thread switch before the first read, and the scoreboard is locked
+///   on the first switch where another follows (tlb_read_config,
+///   :2682-2727). The read is configured by a uniform unless its
+///   configuration is the default 0xffffffff, which render target 0's
+///   four half-floats are. Half-floats come back two to a word, each
+///   taken apart by an FMOV of a half; 32-bit floats one to a read. Each
+///   render target is read once, however often it is read; its cache,
+///   c->color_reads, is not reached from a module, as nir_opt_cse makes
+///   two loads one before it.
+/// - **The pass.** `can.tile_inputs` is true on the V3D, and so is the
+///   new `can.every_tile_input`: a subpass that reads two of its own is
+///   drawn together there, each read out of its own render target,
+///   where the cores draw it a part for each.
+///
+/// Five host tests are new. Four are the programs: glslc's subpassLoad
+/// read out of render target 0 in twelve instructions, two LDTLB and no
+/// uniform; render target 1's read configured by 0xfffffff7 and a 32-bit
+/// target's by 0xffffff3f, read a float at a time; beside a varying, the
+/// reads after the last switch; and two reads of it, which nir_opt_cse
+/// makes one (v3dv_pipeline.c:413), so the tile buffer is read once. The
+/// fifth is the subpass's
+/// locations, the joined subpass after it reading none, an index past
+/// four left out, a subpass of two own reads one part on a device of
+/// `every_tile_input`, and the pipeline carrying them. 4580 of the 4583
+/// pass, 3 skipped. FacetProbe 1.62 has the V3D make a subpass that reads
+/// two of its own. FacetBoth 1.85's "shipped input attachment of its own"
+/// draws the rectangle over the quad and the glass through glslc's
+/// subpassLoad of the attachment the subpass draws into, after a barrier
+/// by region, then reads that into the picture in a second subpass, over
+/// a clear of its own. On the board FacetProbe passes 1088 of 1088; the
+/// new case is 11 of 230400 apart, at the edge pixels "shipped input
+/// attachment" has, and the other 331 are as in 1.236.
+pub const LIBRARY_REVISION = 237;

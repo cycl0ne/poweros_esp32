@@ -148,6 +148,13 @@ pub const Key = struct {
     /// v3dv sets it for a colour attachment of 32-bit floats
     /// (v3dv_pipeline.c:1240-1243; since 1.228).
     f32_color_rb: u8 = 0,
+    /// The render target each input attachment of the subpass is, by its
+    /// index, where the subpass draws into it as well: v3dv's
+    /// tlb_input_attachment_location, which its pipeline key carries
+    /// (v3dv_pipeline.c:2125-2135) and its lowering reads before the
+    /// compile (lower_tlb_input_attachments, :2744-2748). `compile.zig`'s
+    /// walk reads it, here it is a `tile_load` (since 1.237).
+    tile_inputs: compile.TileInputs = compile.no_tile_inputs,
 };
 
 /// A program compiled: its instructions in `c.qpu_insts`, the uniforms it
@@ -224,6 +231,11 @@ const Emit = struct {
     /// The colour at each location, as Mesa's c->outputs holds each
     /// output's four floats at its driver location.
     outputs: [compile.most_colors][4]Reg = undefined,
+    /// Each render target's colour as the tile buffer handed it back,
+    /// read once whatever reads it (c->color_reads, nir_to_vir.c:
+    /// 2745-2808; since 1.237).
+    color_reads: [compile.most_colors][4]Reg = undefined,
+    color_read: [compile.most_colors]bool = @splat(false),
     flush: [max_tmu_queue_size]Pending = undefined,
     flush_count: u32 = 0,
     output_fifo_size: u32 = 0,
@@ -742,6 +754,7 @@ fn emitStep(e: *Emit, each: Step, at: u16) Error!void {
         // make floats, which the flush defines, and one written (since
         // 1.218).
         .image_load, .image_store => return emitImageLoadStore(e, each, at),
+        .tile_load => try emitTlbColorRead(e, each.at, at),
         // ntq_emit_image_size (nir_to_vir.c:2653-2679): each size a
         // uniform of the view's, a 3D image's depth third or an array's
         // layers, and no level, which is 0 (since 1.219).
@@ -1894,6 +1907,63 @@ fn unpackTexel(e: *Emit, at: u16) Error!void {
             e.defs[at][word * 2 + k] = float;
         }
     }
+}
+
+/// The configuration of a read of render target `rt`'s colour, of
+/// `components` floats, which a thread switch comes before: the
+/// scoreboard is to be locked before the tile buffer is read, and it is
+/// locked on the last switch, which is after the read where the program
+/// switches again; vir_emit_thrsw then locks it on the first instead
+/// (tlb_read_config, nir_to_vir.c:2682-2727). Read a pixel at a time, of
+/// one sample.
+fn tlbReadConfig(e: *Emit, rt: u32, components: u32) Error!u32 {
+    const c = e.c;
+    if (!c.emitted_tlb_load) {
+        if (!c.last_thrsw_at_top_level) try c.emitThrsw();
+        c.emitted_tlb_load = true;
+    }
+    var config: u32 = 0xffffff00 | tlb_sample_mode_per_pixel;
+    config |= (7 - rt) << tlb_render_target_shift;
+    if (e.key.f32_color_rb & (@as(u32, 1) << @intCast(rt)) != 0) {
+        config |= tlb_type_f32_color | (components - 1) << tlb_vec_size_minus_1_shift;
+    } else {
+        config |= tlb_type_f16_color | tlb_f16_swap_hi_lo;
+        config |= if (components >= 3) tlb_vec_size_4_f16 else tlb_vec_size_2_f16;
+    }
+    return config;
+}
+
+/// vir_emit_tlb_color_read (nir_to_vir.c:2731-2815): render target
+/// `rt`'s four floats, read out of the tile buffer once and moved into
+/// the step's. A target of 32-bit floats hands one a read, one of
+/// half-floats two, which an FMOV each of the low and the high half
+/// takes apart. The first read is configured, but where its
+/// configuration is the default, 0xffffffff, which a read of render
+/// target 0's four half-floats is: then it reads as the others do, with
+/// no uniform. v3dv swaps no red and blue in
+/// the program (swap_color_rb is 0, v3dv_pipeline.c:1335): the store
+/// does (since 1.237).
+fn emitTlbColorRead(e: *Emit, rt: u32, at: u16) Error!void {
+    const c = e.c;
+    if (!e.color_read[rt]) {
+        const config = try tlbReadConfig(e, rt, 4);
+        const reads = &e.color_reads[rt];
+        if (e.key.f32_color_rb & (@as(u32, 1) << @intCast(rt)) != 0) {
+            reads[0] = if (config != 0xffffffff) try c.tlbuRead(config) else try c.tlbRead();
+            for (reads[1..]) |*read| read.* = try c.tlbRead();
+        } else {
+            for (0..2) |word| {
+                const pair = if (word == 0 and config != 0xffffffff) try c.tlbuRead(config) else try c.tlbRead();
+                for ([_]instr.InputUnpack{ .l, .h }, 0..) |half, k| {
+                    const float = try c.mul(.fmov, .{pair});
+                    vir.setUnpack(c.defs[float.index].?, 0, half);
+                    reads[word * 2 + k] = float;
+                }
+            }
+        }
+        e.color_read[rt] = true;
+    }
+    for (e.color_reads[rt], 0..) |read, k| try storeDef(e, at, k, try c.mul(.mov, .{read}));
 }
 
 /// The program writes a colour: one of Mesa's output_color_var, which

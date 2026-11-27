@@ -412,6 +412,7 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
         .written = if (fragment == null) .colors else fragment_entry.written(),
         .colorless = pass.parts[subpass.first_part].color_count == 0,
         .color_formats = colorFormats(pass, subpass),
+        .tile_inputs = subpass.tile_inputs,
         .replayed = subpass.part_count > 1,
         .fragment_stage = fragment != null,
         .viewport = null,

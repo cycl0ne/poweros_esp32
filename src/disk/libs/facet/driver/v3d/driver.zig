@@ -429,11 +429,16 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         .texel_buffers = true,
         // A fragment program reads an input attachment through the TMU,
         // where the pass stored it (`compile.readSubpass`; since 1.216,
-        // docs/facet-vulkan10.md item 56). Not one the same subpass draws
-        // into, which v3dv reads out of the tile buffer
-        // (lower_tlb_input_attachment_instr, v3dv_pipeline.c:301-356).
+        // docs/facet-vulkan10.md item 56). One the same subpass draws
+        // into it reads out of the tile buffer, its render target's
+        // colour, as v3dv does (lower_tlb_input_attachment_instr,
+        // v3dv_pipeline.c:301-356; vir_emit_tlb_color_read, nir_to_vir.c:
+        // 2731-2815), the pipeline keyed by the subpass's `tile_inputs`
+        // (since 1.237). Each its own render target, so a subpass that
+        // reads several of its own is drawn together all the same.
         .input_attachments = true,
-        .tile_inputs = false,
+        .tile_inputs = true,
+        .every_tile_input = true,
         // The fourteen colour attachments of 0 to 1 and of floats of
         // docs/facet-vulkan10.md item 36, each in its own output format
         // and internal type (`v3d.target`, since 1.228), and since 1.229
@@ -955,9 +960,12 @@ fn compiled(pipeline: *Pipeline) facet.Result {
     // target 0 alone since 1.150), each written a float at a time where it
     // is of 32-bit floats (f32_color_rb, v3dv_pipeline.c:1240-1243; since
     // 1.228) and a word at a time where it is of whole numbers
-    // (:1253-1256; since 1.229).
+    // (:1253-1256; since 1.229). And the render target each input
+    // attachment is, where the subpass draws into it as well, which the
+    // program reads out of the tile buffer (tlb_input_attachment_location,
+    // v3dv_pipeline.c:2125-2135; since 1.237).
     const colors = v3d.target.colorKey(&pipeline.color_formats);
-    const key = compile.Key{ .sample_alpha_to_coverage = coverageOf(pipeline), .cbufs = if (pipeline.colorless) 0 else colors.cbufs, .f32_color_rb = colors.f32_color_rb };
+    const key = compile.Key{ .sample_alpha_to_coverage = coverageOf(pipeline), .cbufs = if (pipeline.colorless) 0 else colors.cbufs, .f32_color_rb = colors.f32_color_rb, .tile_inputs = pipeline.tile_inputs };
     const code = compile.compileThroughMesa(work, pipeline.fragment_words, v3d.heap.of(sys), key) catch |err| return switch (err) {
         error.OutOfMemory => .error_out_of_host_memory,
         else => .error_feature_not_present,
@@ -976,8 +984,9 @@ fn compiled(pipeline: *Pipeline) facet.Result {
     // pipeline is refused (since 1.170). Since 1.233 the V3D draws a
     // subpass of several once, its program writing every render target,
     // as v3dv does (item 55), and none of its pipelines is replayed: a
-    // subpass that reads its own attachment, the one drawn in parts, it
-    // does not make (`can.tile_inputs`).
+    // subpass that reads two of its own attachments, the one drawn in
+    // parts on the cores, it draws together, each read out of its render
+    // target (`can.every_tile_input`, since 1.237).
     if (code.tmu_dirty_rcl and pipeline.replayed) return .error_feature_not_present;
     // The floats of each location the fragment program reads, which the
     // vertex program is keyed by (used_outputs, from the fragment

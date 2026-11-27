@@ -110,6 +110,16 @@ pub const most_steps = 256;
 /// The varyings the hardware carries
 /// (`PhysicalDeviceLimits.max_vertex_output_components`).
 pub const most_varyings = qpu.most_varyings;
+/// The input attachments a subpass may read out of the tile buffer, by
+/// their index: v3dv's MAX_INPUT_ATTACHMENTS (v3dv_limits.h:52), the size
+/// of its tlb_input_attachment_location (since 1.237).
+pub const most_tile_inputs = 4;
+/// The render target each input attachment of a subpass is, by its
+/// index, where the subpass draws into it as well, or `no_tile` (v3dv's
+/// UINT8_MAX, subpass_setup_tlb_input_attachments, v3dv_pass.c:97-135).
+pub const TileInputs = [most_tile_inputs]u8;
+pub const no_tile: u8 = 0xFF;
+pub const no_tile_inputs: TileInputs = @splat(no_tile);
 /// The colour outs a fragment program writes, one for each render target
 /// at its location: facet's colour attachments a subpass
 /// (`_render.most_colors`), which is V3D_MAX_RENDER_TARGETS at 4.2
@@ -430,6 +440,10 @@ pub const Sampler = struct {
     /// map takes the kind (pipeline_get_descriptor_map, v3dv_pipeline.c:
     /// 601-606; since 1.215).
     input_attachment: bool = false,
+    /// An input attachment's index in its subpass, OpDecorate
+    /// InputAttachmentIndex, or `no_tile`: which of the pipeline's
+    /// `tile_inputs` the read is (since 1.237).
+    input_index: u8 = no_tile,
     /// A storage image, Sampled 2 of a format: read and written with no
     /// sampler, at an integer coordinate, its layer or its slice the
     /// third word where `dim` is layers or a volume. A cube is its six
@@ -844,6 +858,15 @@ pub const Tag = enum {
     /// width, its height, and a 3D image's depth or an array's layers
     /// (ntq_emit_image_size, nir_to_vir.c:2653-2679; since 1.219).
     image_size,
+    /// An input attachment the subpass draws into as well, read out of
+    /// the tile buffer where the pixel is: render target `at`'s colour,
+    /// four floats. v3dv makes such a subpassLoad a load_tile_image
+    /// (lower_tlb_input_attachment_instr, v3dv_pipeline.c:301-356), and
+    /// v3d a load_tlb_color_brcm of render target `at` and sample 0
+    /// (lower_tlb_load, v3d_nir_lower_load_output.c:26-98), which
+    /// vir_emit_tlb_color_read reads (nir_to_vir.c:2731-2815; since
+    /// 1.237).
+    tile_load,
     /// A vertex program's float `a` written to the VPM at `at`, one
     /// float as v3d_nir_store_output stores each (v3d_nir_lower_io.c:
     /// 72-92): a varying where the fragment program reads it, or one of
@@ -1621,6 +1644,12 @@ pub const Work = struct {
     /// From OpDecorate DescriptorSet and Binding, or `none`.
     set: [most_ids]u16 = @splat(none),
     binding: [most_ids]u16 = @splat(none),
+    /// From OpDecorate InputAttachmentIndex, or `no_tile` (since 1.237).
+    attachment_index: [most_ids]u8 = @splat(no_tile),
+    /// What the fragment program is compiled for: the render target each
+    /// input attachment of the subpass is, by its index, where the
+    /// subpass draws into it as well (`Key.tile_inputs`, since 1.237).
+    tile_inputs: TileInputs = no_tile_inputs,
     /// Which sampler an id names: the variable, and the value an OpLoad
     /// of it answers. A sampler is not a value a step can hold, so it is
     /// carried beside the steps rather than among them.
@@ -1995,7 +2024,7 @@ pub const Work = struct {
 /// follows a pointer out of them, and a module that is not one has
 /// already been turned down by `CreateShaderModule`.
 pub fn compile(work: *Work, words: []const u32) Error!Code {
-    try readModule(work, words);
+    try readModule(work, words, no_tile_inputs);
     // Every hand-written program writes one colour, at location 0, which
     // the tile buffer takes without a configuration of its own
     // (`qpu.zig`): several are Mesa's back end's (since 1.231).
@@ -2011,7 +2040,7 @@ pub fn compile(work: *Work, words: []const u32) Error!Code {
     // reads it once.
     if (work.sample_count > 1) return Error.Samplers;
     for (work.program()) |each| switch (each.tag) {
-        .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier, .scratch, .scratch_indirect, .scratch_store, .shared, .shared_store, .shared_atomic, .control_barrier, .image_load, .image_store, .image_size => return Error.Storage,
+        .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier, .scratch, .scratch_indirect, .scratch_store, .shared, .shared_store, .shared_atomic, .control_barrier, .image_load, .image_store, .image_size, .tile_load => return Error.Storage,
         .discard => return Error.Discards,
         .sample_compared => return Error.Samplers,
         // Every one reads a 2D texture at s and t (since 1.179), at the
@@ -2079,7 +2108,7 @@ pub fn compileVertexThroughMesa(work: *Work, words: []const u32, child: std.mem.
 
 /// `compileVertexThroughMesa` with the register sets the caller's.
 pub fn compileVertexVir(work: *Work, words: []const u32, allocator: std.mem.Allocator, compiler: *const vir.Compiler, key: VertexKey) (Error || std.mem.Allocator.Error)!Code {
-    try readStage(work, words, .vertex, key);
+    try readStage(work, words, .vertex, key, no_tile_inputs);
     return compileRead(work, allocator, compiler, .{});
 }
 
@@ -2097,7 +2126,7 @@ pub fn compileComputeThroughMesa(work: *Work, words: []const u32, child: std.mem
 
 /// `compileComputeThroughMesa` with the register sets the caller's.
 pub fn compileComputeVir(work: *Work, words: []const u32, allocator: std.mem.Allocator, compiler: *const vir.Compiler) (Error || std.mem.Allocator.Error)!Code {
-    try readStage(work, words, .gl_compute, .{});
+    try readStage(work, words, .gl_compute, .{}, no_tile_inputs);
     return compileRead(work, allocator, compiler, .{});
 }
 
@@ -2108,7 +2137,7 @@ pub fn compileComputeVir(work: *Work, words: []const u32, allocator: std.mem.All
 /// `compiler` is the register sets (`allocate.initRegSets`), made once
 /// for every compile.
 pub fn compileVir(work: *Work, words: []const u32, allocator: std.mem.Allocator, compiler: *const vir.Compiler, key: Key) (Error || std.mem.Allocator.Error)!Code {
-    try readModule(work, words);
+    try readModule(work, words, key.tile_inputs);
     return compileRead(work, allocator, compiler, key);
 }
 
@@ -2344,18 +2373,19 @@ const Units = struct {
 
 /// The words looked at against the profile and read into `work`: what
 /// `compile` and `compileVir` share.
-fn readModule(work: *Work, words: []const u32) Error!void {
-    return readStage(work, words, .fragment, .{});
+fn readModule(work: *Work, words: []const u32, tiles: TileInputs) Error!void {
+    return readStage(work, words, .fragment, .{}, tiles);
 }
 
 /// The words of a program of `stage`, read into `work`; a vertex program
-/// for `key` (since 1.163).
-fn readStage(work: *Work, words: []const u32, stage: spirv.ExecutionModel, key: VertexKey) Error!void {
+/// for `key` (since 1.163), a fragment program for a subpass whose input
+/// attachments `tiles` are among its render targets (since 1.237).
+fn readStage(work: *Work, words: []const u32, stage: spirv.ExecutionModel, key: VertexKey, tiles: TileInputs) Error!void {
     // The variables found to live in scratch so far, each a walk of its
     // own (since 1.177).
     var scratch: Scratch = .{};
     while (true) {
-        work.* = .{ .stage = stage, .vertex_key = key, .scratch = scratch, .scratch_size = scratch.size() };
+        work.* = .{ .stage = stage, .vertex_key = key, .tile_inputs = tiles, .scratch = scratch, .scratch_size = scratch.size() };
         // The VPM's layout, v3d_nir_setup_vpm_layout_vs (v3d_nir_lower_io.c:
         // 400-435): the coordinate program's position first, then the place
         // on screen; the vertex program's place, its Zs and 1/Wc. A point
@@ -2637,6 +2667,7 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     // 799; since 1.215).
                     .input_attachment_index => {
                         if (operands.len != 3) return Error.Body;
+                        work.attachment_index[id] = @intCast(@min(operands[2], no_tile));
                         continue;
                     },
                     // How far an array's elements are apart in a block
@@ -3136,7 +3167,7 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     work.thing[id] = .variable;
                     work.class[id] = @intCast(@intFromEnum(class));
                     work.sampler_of[id] = @intCast(work.sampler_count);
-                    work.samplers[work.sampler_count] = .{ .set = work.set[id], .binding = work.binding[id], .dim = work.sampler_dim[pointee], .multisampled = work.multisampled.isSet(pointee), .input_attachment = subpass, .storage = storage };
+                    work.samplers[work.sampler_count] = .{ .set = work.set[id], .binding = work.binding[id], .dim = work.sampler_dim[pointee], .multisampled = work.multisampled.isSet(pointee), .input_attachment = subpass, .input_index = if (subpass) work.attachment_index[id] else no_tile, .storage = storage };
                     work.sampler_count += 1;
                     continue;
                 }
@@ -4617,7 +4648,7 @@ fn loopCost(work: *const Work, from: u16, to: u16) u32 {
                 cost += each.kind.parts();
                 continue;
             },
-            .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier, .scratch, .scratch_indirect, .scratch_store, .shared, .shared_store, .shared_atomic, .control_barrier, .discard, .sample, .sample_compared, .output, .viewport, .system, .image_load, .image_store, .image_size => {
+            .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier, .scratch, .scratch_indirect, .scratch_store, .shared, .shared_store, .shared_atomic, .control_barrier, .discard, .sample, .sample_compared, .output, .viewport, .system, .image_load, .image_store, .image_size, .tile_load => {
                 cost += 1;
                 continue;
             },
@@ -6136,8 +6167,9 @@ fn armCost(work: *const Work, from: u16, to: u16) u32 {
             // (nir_opt_peephole_select.c:109-129), nor is a store_deref
             // (since 1.177).
             // An image_load and an image_store neither (since 1.218), nor
-            // an image_size (since 1.219).
-            .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier, .scratch, .scratch_indirect, .scratch_store, .shared, .shared_store, .shared_atomic, .control_barrier, .image_load, .image_store, .image_size => return std.math.maxInt(u32),
+            // an image_size (since 1.219), nor a read of the tile buffer,
+            // which is not speculated (since 1.237).
+            .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier, .scratch, .scratch_indirect, .scratch_store, .shared, .shared_store, .shared_atomic, .control_barrier, .image_load, .image_store, .image_size, .tile_load => return std.math.maxInt(u32),
             // ineg and iabs are move-like, as fneg and fabs are
             // (nir_opt_peephole_select.c:251-264; since 1.165).
             .integer => switch (@as(Integer, @enumFromInt(each.at))) {
@@ -7380,7 +7412,8 @@ fn computes(tag: Tag) bool {
         // An image_load is not taken for another either: an image's
         // loads are ACCESS_CAN_REORDER where nir_opt_access finds no store
         // to any image (nir_opt_access.c:224-293), which is not ported
-        // (since 1.218).
+        // (since 1.218). A tile_load is, as the txf it is made of is
+        // before it is one (v3dv_pipeline.c:386, :413; since 1.237).
         .input, .constant, .push, .component, .construct, .discard, .output, .viewport, .system, .ssbo_store, .ssbo_atomic, .barrier, .begin_if, .begin_else, .end_if, .phi, .scratch, .scratch_indirect, .scratch_store, .shared, .shared_store, .shared_atomic, .control_barrier, .image_load, .image_store => false,
         else => true,
     };
@@ -7488,7 +7521,7 @@ fn readsOf(each: Step) [4]?u16 {
         // A storage image's coordinate, and a store's texel (since 1.218).
         .image_load => .{ each.a, null, null, null },
         .image_store => .{ each.a, each.b, null, null },
-        .image_size => .{ null, null, null, null },
+        .image_size, .tile_load => .{ null, null, null, null },
     };
 }
 
@@ -11335,6 +11368,19 @@ fn readSubpass(work: *Work, operands: []const u32) Error!void {
     if (try kindOf(work, type_id) != .f32x4) return Error.Type;
     const which = work.sampler_of[try idOf(operands[2])];
     if (which == none or !work.samplers[which].input_attachment) return Error.Body;
+    // An attachment the subpass draws into as well is read out of the
+    // tile buffer, its render target's colour where the pixel is, and
+    // the read's place is not looked at: lower_tlb_input_attachment_instr
+    // makes the txf a load_tile_image of the location
+    // tlb_input_attachment_location gives the input attachment's index,
+    // where it gives one (v3dv_pipeline.c:301-356). The txf's place and
+    // layer go with the txf, and so does its unit: nothing samples it
+    // (since 1.237).
+    const index = work.samplers[which].input_index;
+    if (index < work.tile_inputs.len and work.tile_inputs[index] != no_tile) {
+        work.step_of[id] = try put(work, .{ .tag = .tile_load, .kind = .f32x4, .at = work.tile_inputs[index] });
+        return;
+    }
     // The read's two words, each a constant of its own where it is one,
     // as nir_opt_constant_folding leaves a channel of a load_const, so
     // (('iadd', a, 0), a) takes them (nir_opt_algebraic.py:239).
@@ -11815,7 +11861,7 @@ fn settle(work: *Work) Error!void {
             // are already in registers, so neither costs an instruction.
             .input, .component, .construct => {},
             // Refused by `compile` before the plan is laid out.
-            .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier, .scratch, .scratch_indirect, .scratch_store, .shared, .shared_store, .shared_atomic, .control_barrier, .image_load, .image_store, .image_size => return Error.Storage,
+            .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier, .scratch, .scratch_indirect, .scratch_store, .shared, .shared_store, .shared_atomic, .control_barrier, .image_load, .image_store, .image_size, .tile_load => return Error.Storage,
             .compare, .discard => return Error.Discards,
             .sample_compared, .texture_size, .texture_levels => return Error.Samplers,
             .begin_if, .begin_else, .end_if, .phi => return Error.Branches,
@@ -23429,6 +23475,120 @@ test "a vertex program writes 0 to the layer a fragment program's subpassLoad re
         vpmIndex(2),               vpmIndex(3), vpmIndex(4),
     }, code.stream());
     try testing.expectEqual(@as(usize, 9), countOf(code, "stvpmv"));
+}
+
+test "through Mesa's back end, a subpassLoad of an attachment the subpass draws into reads its render target out of the tile buffer, after the last thread switch (since 1.237)" {
+    // lower_tlb_input_attachment_instr makes the txf a load_tile_image of
+    // the location tlb_input_attachment_location gives input attachment
+    // 0, render target 0 (v3dv_pipeline.c:301-356); lower_tlb_load a
+    // load_tlb_color_brcm of sample 0 (v3d_nir_lower_load_output.c:
+    // 26-98). vir_emit_tlb_color_read reads its four half-floats in two
+    // words, an FMOV of each half, which copy propagation hands the fmul
+    // (nir_to_vir.c:2731-2815). tlb_read_config emits a thread switch
+    // before the first read, which is the last, so the scoreboard is
+    // locked there; and its configuration is 0xffffffff, the default, so
+    // both reads are LDTLB and no uniform configures them (:2682-2727).
+    // The txf's place and layer went with it: no varying, no TMU, no
+    // unit. The input attachment's variable is still counted in
+    // info.num_images (pipeline_lower_nir, v3dv_pipeline.c:1875), so Z is
+    // written through as before.
+    var work: Work = .{};
+    const code = try throughMesaKeyed(&work, &reference.glslc_subpass, .{ .tile_inputs = .{ 0, no_tile, no_tile, no_tile } });
+    try expectText(code, &.{
+        text("nop", "nop", "thrsw"),
+        text("nop", "nop", "thrsw"),
+        text("nop", "nop", ""),
+        text("nop", "nop", "ldtlb.rf4"),
+        text("nop", "fmul rf6, rf4.l, 0x3f000000", ""),
+        text("nop", "fmul rf7, rf4.h, 0x3f000000", ""),
+        text("nop", "nop", "ldtlb.rf5"),
+        text("mov tlbu, rf5", "fmul rf8, rf5.l, 0x3f000000", ""),
+        text("vfpack tlb, rf6, rf7", "fmul rf9, rf5.h, 0x3f000000", ""),
+        text("vfpack tlb, rf8, rf9", "nop", "thrsw"),
+        text("nop", "nop", ""),
+        text("nop", "nop", ""),
+    });
+    try testing.expectEqual(@as(u32, 0), code.varyings);
+    try testing.expect(!code.reads_layer);
+    try testing.expectEqual(@as(u32, 0), code.sampler_count);
+    try testing.expect(!code.lock_scoreboard_on_first_thrsw);
+    try testing.expect(code.writes_z and code.disable_ez);
+    try expectStream(&.{wordOf(0xFFFF_FF84)}, code.stream());
+    // Keyed for none, or for another index, it is the fetch of 1.215.
+    for ([_]TileInputs{ no_tile_inputs, .{ no_tile, 0, no_tile, no_tile } }) |tiles| {
+        const fetched = try throughMesaKeyed(&work, &reference.glslc_subpass, .{ .tile_inputs = tiles });
+        try testing.expect(fetched.reads_layer);
+        try testing.expectEqual(@as(u32, 1), fetched.sampler_count);
+        try testing.expectEqual(@as(usize, 0), countOf(fetched, "ldtlb"));
+    }
+}
+
+test "through Mesa's back end, a read of another render target, or of one of 32-bit floats, is configured by a uniform, and the floats are read one at a time (since 1.237)" {
+    // Render target 1: (7 - 1) << 3 in the configuration, of half-floats
+    // swapped, four of them, a pixel at a time: 0xfffffff7, the stream's
+    // first word, ahead of the Z write's specifier (tlb_read_config,
+    // nir_to_vir.c:2706-2724).
+    var work: Work = .{};
+    const other = try throughMesaKeyed(&work, &reference.glslc_subpass, .{ .tile_inputs = .{ 1, no_tile, no_tile, no_tile }, .cbufs = 0b11 });
+    try expectStream(&.{ wordOf(0xFFFF_FFF7), wordOf(0xFFFF_FF84) }, other.stream());
+    try testing.expectEqual(@as(usize, 1), countOf(other, "ldtlbu"));
+    try testing.expectEqual(@as(usize, 2), countOf(other, "ldtlb"));
+    // f32_color_rb: TLB_TYPE_F32_COLOR and a vector of four, 0xffffff3f,
+    // the read's first; four reads, a float each, no FMOV between them
+    // and the fmul; then the colour written as one of floats is, by its
+    // own specifier, the same word.
+    const wide = try throughMesaKeyed(&work, &reference.glslc_subpass, .{ .tile_inputs = .{ 0, no_tile, no_tile, no_tile }, .f32_color_rb = 1 });
+    try expectStream(&.{ wordOf(0xFFFF_FF3F), wordOf(0xFFFF_FF84), wordOf(0xFFFF_FF3F) }, wide.stream());
+    try testing.expectEqual(@as(usize, 1), countOf(wide, "ldtlbu"));
+    try testing.expectEqual(@as(usize, 4), countOf(wide, "ldtlb"));
+    try testing.expectEqual(@as(usize, 4), countOf(wide, "fmul rf"));
+    try testing.expectEqual(@as(usize, 0), countOf(wide, ".l,"));
+}
+
+/// `glslc_subpass_varying` with its varying's OpLoad made a second
+/// OpImageRead of the input attachment, so that the colour is the
+/// subpassLoad times itself: `%21 = OpImageRead %7 %13 %17`.
+fn readTwice(comptime words: []const u32) [words.len + 1]u32 {
+    const load = [4]u32{ 0x0004_003D, 7, 0x15, 0x14 };
+    const at = std.mem.indexOf(u32, words, &load).?;
+    return words[0..at].* ++ [5]u32{ 0x0005_0062, 7, 0x15, 0x0D, 0x11 } ++ words[at + 4 ..].*;
+}
+
+test "through Mesa's back end, a render target the program reads out of the tile buffer twice is read once (since 1.237)" {
+    // The two subpassLoads are one step: nir_lower_input_attachments
+    // makes each a txf (v3dv_pipeline.c:386) and v3d_optimize_nir's
+    // nir_opt_cse one of the two (:413, nir_to_vir.c:2265), before
+    // lower_tlb_input_attachments makes it a load (`computes`). So
+    // vir_emit_tlb_color_read's c->color_reads, which keeps a render
+    // target's colour for every later load of it (nir_to_vir.c:2745-
+    // 2812), is not reached from a module here: taken out, it fails no
+    // test.
+    var work: Work = .{};
+    const code = try throughMesaKeyed(&work, &comptime readTwice(&reference.glslc_subpass_varying), .{ .tile_inputs = .{ 0, no_tile, no_tile, no_tile } });
+    try testing.expectEqual(@as(usize, 2), countOf(code, "ldtlb"));
+    try testing.expectEqual(@as(usize, 4), countOf(code, "fmul"));
+    try expectStream(&.{wordOf(0xFFFF_FF84)}, code.stream());
+}
+
+test "through Mesa's back end, a subpassLoad read out of the tile buffer beside a varying: the varyings are the program's own, and the reads after the last thread switch (since 1.237)" {
+    var work: Work = .{};
+    const code = try throughMesaKeyed(&work, &reference.glslc_subpass_varying, .{ .tile_inputs = .{ 0, no_tile, no_tile, no_tile } });
+    try testing.expectEqual(@as(u32, 4), code.varyings);
+    try testing.expect(!code.reads_layer);
+    try testing.expectEqual(@as(u32, 0), code.flat_shade_flags);
+    try testing.expectEqual(@as(usize, 4), countOf(code, "ldvary"));
+    try testing.expectEqual(@as(usize, 2), countOf(code, "ldtlb"));
+    try testing.expect(!code.lock_scoreboard_on_first_thrsw);
+    // Each read is after the second of the pair of switches that is the
+    // last, and the last but the end's.
+    var switches: u32 = 0;
+    for (code.words) |word| {
+        var buffer: [disasm.most_text]u8 = undefined;
+        const line = disasm.disasm(word, &buffer).?;
+        if (std.mem.indexOf(u8, line, "thrsw") != null) switches += 1;
+        if (std.mem.indexOf(u8, line, "ldtlb") != null) try testing.expectEqual(@as(u32, 2), switches);
+    }
+    try testing.expectEqual(@as(u32, 3), switches);
 }
 
 test "a subpassLoad of an image of four samples, of an array of input attachments' images, or with an image operand, and an input attachment of Sampled 1, are refused" {
