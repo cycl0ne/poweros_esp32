@@ -100,6 +100,9 @@ pub const GPUBLOCK_ADDRESSES = 8;
 /// and its memory window as the machine reaches them, and how much memory
 /// of its own the device has - the part of the machine's memory set aside
 /// for it, of which the memory window shows the first `window_bytes`.
+/// `memory_start` is where that memory starts as the device's engines
+/// address it, the window's first byte; 0 where the memory hub is one
+/// whose registers the resource does not know.
 pub const GPUInfo = extern struct {
     vendor: u32 = 0,
     device: u32 = 0,
@@ -108,6 +111,7 @@ pub const GPUInfo = extern struct {
     window: u64 align(4) = 0,
     window_bytes: u64 align(4) = 0,
     memory_bytes: u64 align(4) = 0,
+    memory_start: u64 align(4) = 0,
 };
 
 /// What FindGPUBlock says of a block: which it is, its version, and where

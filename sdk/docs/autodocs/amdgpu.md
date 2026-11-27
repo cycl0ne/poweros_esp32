@@ -29,7 +29,7 @@ Generated from the source by `./zig build autodoc`.
 - [GetGPUInfo](#getgpuinfo) - What the device is and where the machine reaches it.
 - [LoadGPUCode](#loadgpucode) - A code object for the graphics block's compute engine placed in the device's memory, its own addresses set to where it is.
 - [LoadGPUFirmware](#loadgpufirmware) - A block's firmware loaded by the security processor into its protected region, or a list of a block's register writes applied by it.
-- [MapGPUMemory](#mapgpumemory) - A range of the machine's memory mapped for the graphics block's engines: its pages written into the block's memory hub's page table, and where the engines reach it answered.
+- [MapGPUMemory](#mapgpumemory) - A range of the machine's memory mapped for the graphics block's engines: its pages written into the block's memory hub's page table, and where the engines reach it answered - or, for the device's own memory, where they reach it through the hub's aperture.
 - [RemGPUIntServer](#remgpuintserver) - A server AddGPUIntServer added taken off again.
 - [SendGPUCompute](#sendgpucompute) - A job of the compute engine's packets put on its queue: the engine's caches made to see memory as the CPU left it, the packets, and the job's end, which writes its number and raises the engine's interrupt.
 - [SendGPUDMA](#sendgpudma) - A job of the DMA engine's packets put on its queue: copied into the ring with a fence and a trap after them, and the engine told.
@@ -823,15 +823,19 @@ fn GetGPUInfo(ab: *AMDGPUBase, info: *GPUInfo) bool
 
 True with `info` filled in: the device's PCI vendor and device ids,
 its register window and its memory window as the machine reaches them,
-each with its length, and how much memory of its own it has. False on
-a machine without the device, with `info` left alone.
+each with its length, how much memory of its own it has, and where
+that starts to the device (`memory_start`, since 1.15). False on a
+machine without the device, with `info` left alone.
 
 **BEHAVIOR**
 
 The device was found, claimed and read once, as the resource started;
 what is answered is what was read then. `memory_bytes` is the device's
 own answer for its memory - the part of the machine's memory set aside
-for it - of which the memory window shows the first `window_bytes`.
+for it - of which the memory window shows the first `window_bytes`;
+`memory_start` is where its memory hub places it to the device's
+engines, so that a byte `n` into the window is `memory_start + n` to
+them.
 
 **CONTEXT**
 
@@ -1047,7 +1051,7 @@ _ = ab.LoadGPUFirmware(amdgpu.GPUFIRMWARE_VIDEO_REGISTERS, @ptrCast(&writes), 8,
 
 ## MapGPUMemory
 
-A range of the machine's memory mapped for the graphics block's engines: its pages written into the block's memory hub's page table, and where the engines reach it answered.
+A range of the machine's memory mapped for the graphics block's engines: its pages written into the block's memory hub's page table, and where the engines reach it answered - or, for the device's own memory, where they reach it through the hub's aperture.
 
 **SYNOPSIS**
 
@@ -1062,7 +1066,9 @@ fn MapGPUMemory(ab: *AMDGPUBase, address: *anyopaque, bytes: u32, memory: *amdgp
 **INPUTS**
 
 - `address` - the range's first byte, as the CPU reaches it: any
-  memory of the machine's, at any byte.
+  memory of the machine's, at any byte, or of the device's own - where
+  the machine has it, as AllocGPUMemory answers it, or in the device's
+  memory window.
 - `bytes` - how long it is; more than 0.
 - `memory` - where to say where it is.
 
@@ -1071,13 +1077,25 @@ fn MapGPUMemory(ab: *AMDGPUBase, address: *anyopaque, bytes: u32, memory: *amdgp
 True with `memory` filled in: `cpu` the address given, `device` where
 the graphics block's engines reach the same byte, `bytes` its length.
 False, `memory` untouched, where StartGPUGraphics has not turned the
-hub on, `bytes` is 0, the hub's page table has no room left for the
-range - it maps 512 MiB, in at most 64 ranges at a time - or the hub
-does not take its new entries; and on a machine without the device.
+hub on, `bytes` is 0, the range lies partly in the device's own memory
+and partly not or in the memory window where the device's host data
+path cannot be flushed, the hub's page table has no room left for the
+range -
+it maps 512 MiB, in at most 64 ranges at a time - or the hub does not
+take its new entries; and on a machine without the device.
 
 **BEHAVIOR**
 
-The range is handed to CachePreDMA, which says where a device sees it.
+A range wholly in the device's own memory (since 1.15) - where the
+machine has it, or in the memory window, which shows its first
+`window_bytes` - takes no entry: `device` is its place in that memory
+to the engines (GPUInfo's `memory_start` and on), which the hub's
+aperture sends them to, uncached in the block. The CPU's reads and
+writes in the window pass the device's host data path, which holds
+writes back: for a range there the CPU's gathered writes are fenced
+and the path is flushed, its flush posted by a read of the bus block
+(amdgpu_hdp_generic_flush). Any other range is handed to CachePreDMA,
+which says where a device sees it.
 Each page of 4 KiB it lies in, the first and the last whole, gets an
 entry in the table, one after another in the first run of free
 entries that holds them all, as the vendor's driver maps a page into
@@ -1100,7 +1118,13 @@ The memory stays the caller's, and must stay where it is - not freed -
 until UnmapGPUMemory has taken it out again. What the engines write
 there is the CPU's to read at once, and what the CPU writes theirs:
 the hub snoops the CPUs' caches, so nothing is written back or dropped
-by hand around a job.
+by hand around a job. The device's own memory it does not snoop, and
+the CPU reaches that gathered or uncached - the pieces AllocGPUMemory
+hands out are written gathered - so what the CPU wrote there is the
+engines' once the writes are fenced, which sending a job does; what it
+wrote in the window, once the range is mapped, which flushes the path
+its writes take. What the engines write in the device's memory the CPU
+reads at once either way.
 
 **NOTES**
 
@@ -1946,8 +1970,9 @@ The range's entries are written 0, which is not valid, as the vendor's
 driver takes a page out of its GART, the hub's TLB is dropped for its
 first context, and the entries are free for the next MapGPUMemory. An
 engine that reaches the range after is sent to the hub's scratch page
-and does not reach the memory. A zero piece, one not in the hub's
-range or one it does not hold mapped is cleared and nothing else.
+and does not reach the memory. A zero piece, a range of the device's
+own memory - which took no entry - one not in the hub's range or one
+it does not hold mapped is cleared and nothing else.
 
 **CONTEXT**
 

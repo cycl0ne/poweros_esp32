@@ -206,6 +206,40 @@ test "the device's memory is handed out in pieces each address of which says the
     try testing.expect(call(ab).AllocGPUMemory(3 * mib, 2 * mib, &picture));
     try testing.expectEqual(@as(u64, 0), picture.device % (2 * mib));
 
+    // With the hub on, a range of a piece is answered with its place to
+    // the device and takes no entry in the table - where the machine has
+    // it, and in the memory window, which shows the first 256 MiB and
+    // whose host data path is flushed for it. A range across an edge of
+    // either is refused, and one in the window where the path cannot be
+    // flushed.
+    ab.graphics_started = true;
+    ab.info.window = 0x7c_0000_0000;
+    ab.info.window_bytes = 256 * mib;
+    var bus_words = [_]u32{ 7, 9 };
+    ab.host_flush = @intFromPtr(&bus_words[0]);
+    ab.host_posted = @intFromPtr(&bus_words[1]);
+    var mapped: amdgpu.GPUMemory = .{};
+    try testing.expect(call(ab).MapGPUMemory(@ptrFromInt(@as(usize, @intCast(ring.cpu)) + 16), 64, &mapped));
+    try testing.expectEqual(ring.device + 16, mapped.device);
+    try testing.expectEqual(@as(u32, 64), mapped.bytes);
+    try testing.expectEqual(@as(u32, 7), bus_words[0]);
+    call(ab).UnmapGPUMemory(&mapped);
+    try testing.expectEqual(@as(u32, 0), mapped.bytes);
+    try testing.expect(call(ab).MapGPUMemory(@ptrFromInt(0x7c_0000_0000 + 64 * mib), 4096, &mapped));
+    try testing.expectEqual(@as(u64, 0x80_0000_0000 + 64 * mib), mapped.device);
+    try testing.expectEqual(@as(u32, 0), bus_words[0]);
+    call(ab).UnmapGPUMemory(&mapped);
+    try testing.expect(!call(ab).MapGPUMemory(@ptrFromInt(0x7c_0000_0000 + 256 * mib - 64), 128, &mapped));
+    try testing.expect(!call(ab).MapGPUMemory(@ptrFromInt(0x8_4000_0000 - 64), 128, &mapped));
+    try testing.expect(!call(ab).MapGPUMemory(@ptrFromInt(0x8_4000_0000 + 512 * mib - 64), 128, &mapped));
+    ab.host_flush = 0;
+    try testing.expect(!call(ab).MapGPUMemory(@ptrFromInt(0x7c_0000_0000), 64, &mapped));
+    try testing.expectEqual(@as(u32, 0), mapped.bytes);
+    try testing.expectEqual(@as(u32, 0), ab.gart_arena.count);
+    ab.graphics_started = false;
+    ab.host_posted = 0;
+    ab.info = .{};
+
     call(ab).FreeGPUMemory(&ring);
     try testing.expectEqual(@as(u32, 0), ring.bytes);
     var again: amdgpu.GPUMemory = .{};

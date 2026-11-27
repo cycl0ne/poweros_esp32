@@ -58,6 +58,12 @@ pub const AMDGPUBase = extern struct {
     memory_machine: u64 = 0,
     memory_bytes: u64 = 0,
     memory_gathered: bool = false,
+    /// The bus block's register that flushes the device's host data path
+    /// - which the CPU's reads and writes in the memory window pass - and
+    /// the one read after it, so that the flush is posted: 0 where the bus
+    /// block is not one whose registers are known.
+    host_flush: usize = 0,
+    host_posted: usize = 0,
     arena: Arena = .{},
     arena_lock: exec.SignalSemaphore,
     /// The security processor, where it is one whose ring and commands

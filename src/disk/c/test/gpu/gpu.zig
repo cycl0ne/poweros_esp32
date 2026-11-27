@@ -19,7 +19,7 @@
 //!
 //!   Gpu TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,
 //!       SLEEP/K/N,RANGE/S,POINTER/S,MIRROR/S,OVERLAY/S,DIRECT/S,BANDS/S,VIDEO/S,GFX/S,DMA/S,GART/S,ENGINE/S,BLITS/S,COMPUTE/S,KERNELS/S,
-//!       BLOCK/K/N,WATCHDOG/K/N
+//!       DEVICE/S,WINDOW/S,BLOCK/K/N,WATCHDOG/K/N
 //!
 //! BIOS prints the device's video BIOS image (GetGPUBios): where it is
 //! and how long, its tables' header's version, the version of each of
@@ -367,6 +367,14 @@
 //! (RTGCTRL_AMD_ENGINE, RTG_AMD_ENGINE_ALL), then by the board's own
 //! rule, which it is left with. The watchdog is armed for it.
 //!
+//! With DEVICE the buffers BLITS and KERNELS hand the board are pieces of
+//! the device's own memory (AllocGPUMemory), where the machine has it;
+//! with WINDOW the same pieces through the device's memory window, made
+//! write-combining to the CPU as the firmware's framebuffer there is
+//! (SetMemoryType), which they stay. Each job is then done once more with
+//! every one left to graphics.library on the same memory
+//! (RTG_AMD_ENGINE_NONE), and timed beside the board's.
+//!
 //! Without BIOS, CLOCKS, DMCUB, CRC, EVENTS, AUX, EDID, CYCLE, MODES,
 //! SLEEP, RANGE, POINTER, MIRROR, OVERLAY, DIRECT, BANDS, VIDEO, GFX,
 //! DMA, GART, ENGINE, BLITS, COMPUTE, DUMP, FRAMES or FLIP the two files
@@ -427,10 +435,10 @@ const graphics_library = sdk.graphics;
 const GraphicsBase = sdk.interface.graphics.GraphicsBase;
 
 pub const COMMAND_NAME = "Gpu";
-const VERSION_STRING = "\x00$VER: Gpu 1.30 (27.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Gpu 1.31 (27.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,SLEEP/K/N,RANGE/S,POINTER/S,MIRROR/S,OVERLAY/S,DIRECT/S,BANDS/S,VIDEO/S,GFX/S,DMA/S,GART/S,ENGINE/S,BLITS/S,COMPUTE/S,KERNELS/S,BLOCK/K/N,WATCHDOG/K/N";
+const template = "TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,SLEEP/K/N,RANGE/S,POINTER/S,MIRROR/S,OVERLAY/S,DIRECT/S,BANDS/S,VIDEO/S,GFX/S,DMA/S,GART/S,ENGINE/S,BLITS/S,COMPUTE/S,KERNELS/S,DEVICE/S,WINDOW/S,BLOCK/K/N,WATCHDOG/K/N";
 const arg_toc = 0;
 const arg_firmware = 1;
 const arg_frames = 2;
@@ -471,9 +479,11 @@ const arg_engine = 36;
 const arg_blits = 37;
 const arg_compute = 38;
 const arg_kernels = 39;
-const arg_block = 40;
-const arg_watchdog = 41;
-const arg_count = 42;
+const arg_device = 40;
+const arg_window = 41;
+const arg_block = 42;
+const arg_watchdog = 43;
+const arg_count = 44;
 
 /// Where the files are.
 const directory = "DEVS:firmware/amdgpu/";
@@ -2684,6 +2694,102 @@ fn engineTimes(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, gb: *GraphicsBase,
     return true;
 }
 
+// --- where the board's buffers are ---------------------------------------------------
+
+/// Where BLITS' and KERNELS' buffers for the board are: the machine's
+/// memory, a piece of the device's own memory where the machine has it
+/// (DEVICE), or the same piece through the device's memory window
+/// (WINDOW).
+const Place = enum {
+    machine,
+    device,
+    window,
+
+    /// What it is called on the command's lines.
+    fn name(place: Place) [*:0]const u8 {
+        return switch (place) {
+            .machine => "the machine's memory",
+            .device => "the device's memory",
+            .window => "the device's memory through its window",
+        };
+    }
+};
+
+/// A buffer for the board: its first byte, and what it was taken from -
+/// memory of the machine's or a piece of the device's.
+const BoardBuffer = struct {
+    pixels: [*]u8,
+    allocation: ?*anyopaque = null,
+    piece: amdgpu.GPUMemory = .{},
+
+    /// What it was taken from given back.
+    fn free(buffer: *BoardBuffer, sys: *ExecBase, ab: *AMDGPUBase) void {
+        if (buffer.allocation) |memory| sys.FreeVec(memory);
+        if (buffer.piece.bytes != 0) ab.FreeGPUMemory(&buffer.piece);
+        buffer.allocation = null;
+    }
+};
+
+/// A buffer of `bytes` for the board at `place`, on 256 bytes: null,
+/// said, where there is none.
+fn boardBuffer(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUInfo, place: Place, bytes: u32) ?BoardBuffer {
+    if (place == .machine) {
+        const memory = sys.AllocVec(bytes + 256, exec.MEMF_ANY) orelse {
+            _ = Printf(dl, "No memory for %u bytes\n", .{bytes});
+            return null;
+        };
+        return .{ .pixels = @ptrFromInt(@intFromPtr(memory) + 255 & ~@as(usize, 255)), .allocation = memory };
+    }
+    var piece: amdgpu.GPUMemory = .{};
+    if (!ab.AllocGPUMemory(bytes, 4096, &piece)) {
+        _ = Printf(dl, "No room for %u bytes in the device's memory\n", .{bytes});
+        return null;
+    }
+    if (place == .device) return .{ .pixels = @ptrFromInt(@as(usize, @intCast(piece.cpu))), .piece = piece };
+    const offset = piece.device -% info.memory_start;
+    if (info.memory_start == 0 or offset + bytes > info.window_bytes) {
+        _ = Printf(dl, "The piece at %lx of the device's memory is past its window of %ld MiB\n", .{ piece.device, @as(i64, @intCast(info.window_bytes >> 20)) });
+        ab.FreeGPUMemory(&piece);
+        return null;
+    }
+    const at: usize = @intCast(info.window + offset);
+    if (!gathered(sys, at, bytes)) _ = Printf(dl, "The window at %lx stays uncached to the CPU\n", .{@as(u64, at)});
+    return .{ .pixels = @ptrFromInt(at), .piece = piece };
+}
+
+/// `bytes` from `at` made write-combining to the CPU: false where the
+/// machine's map does not mark them.
+fn gathered(sys: *ExecBase, at: usize, bytes: u32) bool {
+    const resource = sys.OpenResource(sdk.resources.platform.PLATFORMNAME) orelse return false;
+    const pb: *sdk.interface.platform.PlatformBase = @ptrCast(@alignCast(resource));
+    return pb.SetMemoryType(at, bytes, sdk.resources.platform.MEMTYPE_GATHERED);
+}
+
+/// The pixels of `bytes_each` bytes in which `bytes` of `board` and of
+/// `plain` differ, read eight bytes at a time: the board's buffer may be
+/// the device's memory, which the CPU reads uncached, a load at a time.
+fn differing(board: [*]const u8, plain: [*]const u8, bytes: u32, bytes_each: u32) u32 {
+    const board_words: [*]const u64 = @ptrCast(@alignCast(board));
+    const plain_words: [*]const u64 = @ptrCast(@alignCast(plain));
+    const lane: u64 = if (bytes_each == 2) 0xffff else 0xffff_ffff;
+    const step: u6 = if (bytes_each == 2) 16 else 32;
+    var count: u32 = 0;
+    for (0..bytes / 8) |index| {
+        var apart = board_words[index] ^ plain_words[index];
+        while (apart != 0) : (apart >>= step) count += @intFromBool(apart & lane != 0);
+    }
+    return count;
+}
+
+/// What a pass of jobs by the board's rule `rule` is said to be.
+fn ruleName(rule: isize) [*:0]const u8 {
+    return switch (rule) {
+        rtg.tags.RTG_AMD_ENGINE_ALL => "Every job the board's kernels can do handed to them:",
+        rtg.tags.RTG_AMD_ENGINE_NONE => "Every job left to graphics.library, on the same memory:",
+        else => "By the board's own rule:",
+    };
+}
+
 // --- BLITS: the board's own fills and copies -----------------------------------------
 
 /// BLITS' buffers: 2560 x 2880 pixels of four bytes, more than the CPU's
@@ -2762,39 +2868,31 @@ const Blits = struct {
         };
     }
 
-    /// The board's two painted, each pixel its own, and copied into the
-    /// plain two.
+    /// The plain two painted, each pixel its own, and copied into the
+    /// board's two, which are written and not read: in the device's
+    /// memory the CPU reads a load at a time.
     fn paint(blits: Blits, halves: bool) void {
         for (0..2) |which| {
             const seed: u32 = @intCast(which + 1);
+            const plain = blits.pixels[which + 2];
             for (0..blits_height) |row_index| {
                 const y: u32 = @intCast(row_index);
                 if (halves) {
-                    const row: [*]u16 = @ptrCast(@alignCast(blits.pixels[which] + y * blits_pitch));
+                    const row: [*]u16 = @ptrCast(@alignCast(plain + y * blits_pitch));
                     for (0..2 * blits_width) |x| row[x] = halfAt(@intCast(x), y, seed);
                 } else {
-                    const row: [*]u32 = @ptrCast(@alignCast(blits.pixels[which] + y * blits_pitch));
+                    const row: [*]u32 = @ptrCast(@alignCast(plain + y * blits_pitch));
                     for (0..blits_width) |x| row[x] = patternAt(@intCast(x), y, seed);
                 }
             }
-            blits.sys.CopyMem(blits.pixels[which], blits.pixels[which + 2], blits_bytes);
+            blits.sys.CopyMem(plain, blits.pixels[which], blits_bytes);
         }
     }
 
     /// The pixels in which the board's two differ from the plain two.
     fn wrong(blits: Blits, halves: bool) u32 {
         var count: u32 = 0;
-        for (0..2) |which| {
-            if (halves) {
-                const board: [*]const u16 = @ptrCast(@alignCast(blits.pixels[which]));
-                const plain: [*]const u16 = @ptrCast(@alignCast(blits.pixels[which + 2]));
-                for (0..blits_bytes / 2) |index| count += @intFromBool(board[index] != plain[index]);
-            } else {
-                const board: [*]const u32 = @ptrCast(@alignCast(blits.pixels[which]));
-                const plain: [*]const u32 = @ptrCast(@alignCast(blits.pixels[which + 2]));
-                for (0..blits_bytes / 4) |index| count += @intFromBool(board[index] != plain[index]);
-            }
-        }
+        for (0..2) |which| count += differing(blits.pixels[which], blits.pixels[which + 2], blits_bytes, if (halves) 2 else 4);
         return count;
     }
 
@@ -2882,7 +2980,7 @@ fn packedAt(blits: Blits, job: Blit) u32 {
 /// BLITS: the board's own fills and copies, through rtg.library and
 /// drawn through graphics.library, each held to graphics.library's on
 /// plain memory pixel for pixel and timed beside it.
-fn blitsCheck(sys: *ExecBase, dl: *DosBase, millis: u32) i32 {
+fn blitsCheck(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUInfo, millis: u32, place: Place) i32 {
     const rtg_lib = sys.OpenLibrary(rtg.RTGNAME, rtg.RTG_VERSION) orelse {
         _ = Printf(dl, "No %s\n", .{rtg.RTGNAME});
         return dos.RETURN_FAIL;
@@ -2896,10 +2994,17 @@ fn blitsCheck(sys: *ExecBase, dl: *DosBase, millis: u32) i32 {
     };
     defer sys.CloseLibrary(graphics_lib);
 
-    var allocations: [4]?*anyopaque = @splat(null);
+    // The board's two at `place`, the plain two in the machine's memory.
+    var buffers: [2]?BoardBuffer = @splat(null);
+    defer for (&buffers) |*buffer| if (buffer.*) |*held| held.free(sys, ab);
+    var allocations: [2]?*anyopaque = @splat(null);
     defer for (allocations) |allocation| if (allocation) |memory| sys.FreeVec(memory);
     var pixels: [4][*]u8 = undefined;
-    for (&allocations, &pixels) |*allocation, *start| {
+    for (&buffers, 0..) |*buffer, which| {
+        buffer.* = boardBuffer(sys, dl, ab, info, place, blits_bytes) orelse return dos.RETURN_FAIL;
+        pixels[which] = buffer.*.?.pixels;
+    }
+    for (&allocations, pixels[2..]) |*allocation, *start| {
         const memory = sys.AllocVec(blits_bytes + 256, exec.MEMF_ANY) orelse {
             _ = Printf(dl, "No memory for %u bytes\n", .{blits_bytes});
             return dos.RETURN_FAIL;
@@ -2931,48 +3036,61 @@ fn blitsCheck(sys: *ExecBase, dl: *DosBase, millis: u32) i32 {
     const blits = Blits{ .sys = sys, .rb = rb, .gb = @ptrCast(graphics_lib), .pixels = pixels, .bitmaps = bitmaps };
     const wb = arm(sys, dl, millis) orelse return dos.RETURN_FAIL;
     defer wb.DisarmWatchdog();
-    // The board's start of its engine ended, whatever it came to.
+    // The board's start of its engine ended, whatever it came to; its
+    // own rule again at the end, whatever happens.
     _ = rb.BoardControl(board, rtg.boards.RTGCTRL_SETTLED, 0);
-    _ = Printf(dl, "The board's two buffers at %lx and %lx, the plain two at %lx and %lx, %u x %u, four bytes a pixel, or twice as many of two\n", .{
-        @as(u64, @intFromPtr(pixels[0])), @as(u64, @intFromPtr(pixels[1])), @as(u64, @intFromPtr(pixels[2])), @as(u64, @intFromPtr(pixels[3])), blits_width, blits_height,
+    defer _ = rb.BoardControl(board, rtg.tags.RTGCTRL_AMD_ENGINE, rtg.tags.RTG_AMD_ENGINE_SIZE);
+    _ = Printf(dl, "The board's two buffers at %lx and %lx, %s, the plain two at %lx and %lx, %u x %u, four bytes a pixel, or twice as many of two\n", .{
+        @as(u64, @intFromPtr(pixels[0])), @as(u64, @intFromPtr(pixels[1])), place.name(), @as(u64, @intFromPtr(pixels[2])), @as(u64, @intFromPtr(pixels[3])), blits_width, blits_height,
     });
-    _ = Printf(dl, "  %-32s %-8s %9s %9s %8s\n", .{ "job", "board", "board us", "CPU us", "wrong" });
 
-    var taken: u32 = 0;
-    var refused: u32 = 0;
+    const rules: []const isize = if (place == .machine) &.{rtg.tags.RTG_AMD_ENGINE_SIZE} else &.{ rtg.tags.RTG_AMD_ENGINE_SIZE, rtg.tags.RTG_AMD_ENGINE_NONE };
     var all_wrong: u32 = 0;
     var all_right = true;
-    for (blit_jobs) |job| {
-        blits.paint(job.halves);
-        var began = sys.UptimeUs();
-        if (!blits.byLibrary(job, 2)) {
-            _ = Printf(dl, "No RastPort for %s\n", .{job.name});
-            return dos.RETURN_FAIL;
+    for (rules) |rule| {
+        const before = rb.BoardControl(board, rtg.tags.RTGCTRL_AMD_ENGINE, rule);
+        if (before < 0) {
+            _ = Printf(dl, "The board does not take RTGCTRL_AMD_ENGINE (%ld)\n", .{@as(i64, before)});
+            return dos.RETURN_WARN;
         }
-        const library_us = sys.UptimeUs() - began;
-        began = sys.UptimeUs();
-        const answer = blits.byBoard(job) orelse {
-            _ = Printf(dl, "No RastPort for %s\n", .{job.name});
-            return dos.RETURN_FAIL;
-        };
-        const board_us = sys.UptimeUs() - began;
-        const wrong = blits.wrong(job.halves);
-        const said: [*:0]const u8 = if (job.drawn) "drawn" else switch (answer) {
-            rtg.errors.RTGERR_OK => "engine",
-            rtg.errors.RTGERR_NOT_SUPPORTED => "refused",
-            else => "failed",
-        };
-        _ = Printf(dl, "  %-32s %-8s %9lu %9lu %8u\n", .{ job.name, said, board_us, library_us, wrong });
-        if (answer == rtg.errors.RTGERR_OK and !job.drawn) taken += 1;
-        if (answer == rtg.errors.RTGERR_NOT_SUPPORTED) refused += 1;
-        if (answer != rtg.errors.RTGERR_OK and answer != rtg.errors.RTGERR_NOT_SUPPORTED) {
-            _ = Printf(dl, "The board answered %ld: see C:Log\n", .{@as(i64, answer)});
-            all_right = false;
+        if (rules.len > 1) _ = Printf(dl, "%s\n", .{ruleName(rule)});
+        _ = Printf(dl, "  %-32s %-8s %9s %9s %8s\n", .{ "job", "board", "board us", "CPU us", "wrong" });
+        var taken: u32 = 0;
+        var refused: u32 = 0;
+        var pass_wrong: u32 = 0;
+        for (blit_jobs) |job| {
+            blits.paint(job.halves);
+            var began = sys.UptimeUs();
+            if (!blits.byLibrary(job, 2)) {
+                _ = Printf(dl, "No RastPort for %s\n", .{job.name});
+                return dos.RETURN_FAIL;
+            }
+            const library_us = sys.UptimeUs() - began;
+            began = sys.UptimeUs();
+            const answer = blits.byBoard(job) orelse {
+                _ = Printf(dl, "No RastPort for %s\n", .{job.name});
+                return dos.RETURN_FAIL;
+            };
+            const board_us = sys.UptimeUs() - began;
+            const wrong = blits.wrong(job.halves);
+            const said: [*:0]const u8 = if (job.drawn) "drawn" else switch (answer) {
+                rtg.errors.RTGERR_OK => "engine",
+                rtg.errors.RTGERR_NOT_SUPPORTED => "refused",
+                else => "failed",
+            };
+            _ = Printf(dl, "  %-32s %-8s %9lu %9lu %8u\n", .{ job.name, said, board_us, library_us, wrong });
+            if (answer == rtg.errors.RTGERR_OK and !job.drawn) taken += 1;
+            if (answer == rtg.errors.RTGERR_NOT_SUPPORTED) refused += 1;
+            if (answer != rtg.errors.RTGERR_OK and answer != rtg.errors.RTGERR_NOT_SUPPORTED) {
+                _ = Printf(dl, "The board answered %ld: see C:Log\n", .{@as(i64, answer)});
+                all_right = false;
+            }
+            pass_wrong += wrong;
+            wb.FeedWatchdog();
         }
-        all_wrong += wrong;
-        wb.FeedWatchdog();
+        _ = Printf(dl, "%u jobs taken by the board's engine, %u refused and done by graphics.library, %u pixels wrong\n", .{ taken, refused, pass_wrong });
+        all_wrong += pass_wrong;
     }
-    _ = Printf(dl, "%u jobs taken by the board's engine, %u refused and done by graphics.library, %u pixels wrong\n", .{ taken, refused, all_wrong });
     return if (all_right and all_wrong == 0) dos.RETURN_OK else dos.RETURN_WARN;
 }
 
@@ -3106,35 +3224,25 @@ const Drawing = struct {
         while (index < read_through_bytes / 8) : (index += 8) _ = lines[index];
     }
 
-    /// The board's buffer and the plain one painted alike, each pixel its
-    /// own.
+    /// The plain buffer painted, each pixel its own, and copied into the
+    /// board's, which is written and not read.
     fn paint(drawing: Drawing, halves: bool, seed: u32) void {
         for (0..blits_height) |row_index| {
             const y: u32 = @intCast(row_index);
             if (halves) {
-                const row: [*]u16 = @ptrCast(@alignCast(drawing.board_pixels + y * blits_pitch));
+                const row: [*]u16 = @ptrCast(@alignCast(drawing.plain_pixels + y * blits_pitch));
                 for (0..2 * blits_width) |x| row[x] = halfAt(@intCast(x), y, seed);
             } else {
-                const row: [*]u32 = @ptrCast(@alignCast(drawing.board_pixels + y * blits_pitch));
+                const row: [*]u32 = @ptrCast(@alignCast(drawing.plain_pixels + y * blits_pitch));
                 for (0..blits_width) |x| row[x] = patternAt(@intCast(x), y, seed);
             }
         }
-        drawing.sys.CopyMem(drawing.board_pixels, drawing.plain_pixels, blits_bytes);
+        drawing.sys.CopyMem(drawing.plain_pixels, drawing.board_pixels, blits_bytes);
     }
 
     /// The pixels in which the two differ.
     fn wrong(drawing: Drawing, halves: bool) u32 {
-        var count: u32 = 0;
-        if (halves) {
-            const board: [*]const u16 = @ptrCast(@alignCast(drawing.board_pixels));
-            const plain: [*]const u16 = @ptrCast(@alignCast(drawing.plain_pixels));
-            for (0..blits_bytes / 2) |index| count += @intFromBool(board[index] != plain[index]);
-        } else {
-            const board: [*]const u32 = @ptrCast(@alignCast(drawing.board_pixels));
-            const plain: [*]const u32 = @ptrCast(@alignCast(drawing.plain_pixels));
-            for (0..blits_bytes / 4) |index| count += @intFromBool(board[index] != plain[index]);
-        }
-        return count;
+        return differing(drawing.board_pixels, drawing.plain_pixels, blits_bytes, if (halves) 2 else 4);
     }
 
     /// A RastPort for `job` drawing into the board's buffer itself, or
@@ -3219,7 +3327,7 @@ fn paintPicture(pixels: [*]u8) void {
 /// graphics.library's on plain memory pixel for pixel, each timed beside
 /// it: first with every job the board's kernels can do handed to them
 /// (RTG_AMD_ENGINE_ALL), then by the board's own rule.
-fn kernelsCheck(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, millis: u32) i32 {
+fn kernelsCheck(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUInfo, millis: u32, place: Place) i32 {
     const rtg_lib = sys.OpenLibrary(rtg.RTGNAME, rtg.RTG_VERSION) orelse {
         _ = Printf(dl, "No %s\n", .{rtg.RTGNAME});
         return dos.RETURN_FAIL;
@@ -3233,9 +3341,12 @@ fn kernelsCheck(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, millis: u32) i32 
     };
     defer sys.CloseLibrary(graphics_lib);
 
-    // The board's buffer, the plain one, the picture, the shapes' bits,
-    // the tiles' and the memory that fills the caches, each on 256 bytes.
-    const sizes = [_]u32{ blits_bytes, blits_bytes, blits_bytes, shape_pitch * shape_rows, tile_pitch * tile_rows, read_through_bytes };
+    // The board's buffer at `place`; the plain one, the picture, the
+    // shapes' bits, the tiles' and the memory that fills the caches in
+    // the machine's, each on 256 bytes.
+    var buffer = boardBuffer(sys, dl, ab, info, place, blits_bytes) orelse return dos.RETURN_FAIL;
+    defer buffer.free(sys, ab);
+    const sizes = [_]u32{ blits_bytes, blits_bytes, shape_pitch * shape_rows, tile_pitch * tile_rows, read_through_bytes };
     var allocations: [sizes.len]?*anyopaque = @splat(null);
     defer for (allocations) |allocation| if (allocation) |memory| sys.FreeVec(memory);
     var starts: [sizes.len][*]u8 = undefined;
@@ -3251,27 +3362,27 @@ fn kernelsCheck(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, millis: u32) i32 
     defer for (attached) |bitmap| rb.FreeBitMap(bitmap);
     var bitmaps: [2]*rtg.RtgBitMap = undefined;
     for (0..2) |halves| {
-        const described = drawnBitMap(starts[0], halves == 1);
+        const described = drawnBitMap(buffer.pixels, halves == 1);
         const bitmap = rb.AttachBitMap(board, &described) orelse {
-            _ = Printf(dl, "The board does not take a buffer at %lx\n", .{@as(u64, @intFromPtr(starts[0]))});
+            _ = Printf(dl, "The board does not take a buffer at %lx\n", .{@as(u64, @intFromPtr(buffer.pixels))});
             return dos.RETURN_FAIL;
         };
         attached[halves] = bitmap;
         bitmaps[halves] = bitmap;
     }
-    paintPicture(starts[2]);
-    for (0..sizes[3]) |index| starts[3][index] = @truncate(patternAt(@intCast(index), 0, 0x77) >> 11);
-    for (0..sizes[4]) |index| starts[4][index] = @truncate(patternAt(@intCast(index), 1, 0x99) >> 11);
+    paintPicture(starts[1]);
+    for (0..sizes[2]) |index| starts[2][index] = @truncate(patternAt(@intCast(index), 0, 0x77) >> 11);
+    for (0..sizes[3]) |index| starts[3][index] = @truncate(patternAt(@intCast(index), 1, 0x99) >> 11);
     const drawing: Drawing = .{
         .sys = sys,
         .gb = @ptrCast(graphics_lib),
-        .board_pixels = starts[0],
-        .plain_pixels = starts[1],
+        .board_pixels = buffer.pixels,
+        .plain_pixels = starts[0],
         .bitmaps = bitmaps,
-        .picture = starts[2],
-        .shape = starts[3],
-        .tile = starts[4],
-        .evict = starts[5],
+        .picture = starts[1],
+        .shape = starts[2],
+        .tile = starts[3],
+        .evict = starts[4],
     };
     const wb = arm(sys, dl, millis) orelse return dos.RETURN_FAIL;
     defer wb.DisarmWatchdog();
@@ -3279,19 +3390,23 @@ fn kernelsCheck(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, millis: u32) i32 
     // own rule again at the end, whatever happens.
     _ = rb.BoardControl(board, rtg.boards.RTGCTRL_SETTLED, 0);
     defer _ = rb.BoardControl(board, rtg.tags.RTGCTRL_AMD_ENGINE, rtg.tags.RTG_AMD_ENGINE_SIZE);
-    _ = Printf(dl, "The board's buffer at %lx, the plain one at %lx, the picture at %lx, %u x %u, four bytes a pixel, or twice as many of two\n", .{
-        @as(u64, @intFromPtr(starts[0])), @as(u64, @intFromPtr(starts[1])), @as(u64, @intFromPtr(starts[2])), blits_width, blits_height,
+    _ = Printf(dl, "The board's buffer at %lx, %s, the plain one at %lx, the picture at %lx, %u x %u, four bytes a pixel, or twice as many of two\n", .{
+        @as(u64, @intFromPtr(buffer.pixels)), place.name(), @as(u64, @intFromPtr(starts[0])), @as(u64, @intFromPtr(starts[1])), blits_width, blits_height,
     });
 
     var all_right = true;
     var all_wrong: u32 = 0;
-    for ([_]isize{ rtg.tags.RTG_AMD_ENGINE_ALL, rtg.tags.RTG_AMD_ENGINE_SIZE }) |rule| {
+    const rules: []const isize = if (place == .machine)
+        &.{ rtg.tags.RTG_AMD_ENGINE_ALL, rtg.tags.RTG_AMD_ENGINE_SIZE }
+    else
+        &.{ rtg.tags.RTG_AMD_ENGINE_ALL, rtg.tags.RTG_AMD_ENGINE_SIZE, rtg.tags.RTG_AMD_ENGINE_NONE };
+    for (rules) |rule| {
         const before = rb.BoardControl(board, rtg.tags.RTGCTRL_AMD_ENGINE, rule);
         if (before < 0) {
             _ = Printf(dl, "The board does not take RTGCTRL_AMD_ENGINE (%ld)\n", .{@as(i64, before)});
             return dos.RETURN_WARN;
         }
-        _ = Printf(dl, "%s\n", .{@as([*:0]const u8, if (rule == rtg.tags.RTG_AMD_ENGINE_ALL) "Every job the board's kernels can do handed to them:" else "By the board's own rule:")});
+        _ = Printf(dl, "%s\n", .{ruleName(rule)});
         _ = Printf(dl, "  %-32s %-8s %9s %9s %8s\n", .{ "job", "board", "board us", "CPU us", "wrong" });
         var taken: u32 = 0;
         for (drawn_jobs, 0..) |job, index| {
@@ -3421,8 +3536,9 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     if (argv[arg_direct] != 0) return directCheck(sys, dl, ab, info, millis);
     if (argv[arg_bands] != 0) return bandsCheck(sys, dl, ab, info, millis);
     if (argv[arg_video] != 0) return videoCheck(sys, dl, ab, info, millis);
-    if (argv[arg_blits] != 0) return blitsCheck(sys, dl, millis);
-    if (argv[arg_kernels] != 0) return kernelsCheck(sys, dl, ab, millis);
+    const place: Place = if (argv[arg_window] != 0) .window else if (argv[arg_device] != 0) .device else .machine;
+    if (argv[arg_blits] != 0) return blitsCheck(sys, dl, ab, info, millis, place);
+    if (argv[arg_kernels] != 0) return kernelsCheck(sys, dl, ab, info, millis, place);
     if (argv[arg_sleep] != 0) return asleepFor(sys, dl, ab, info, millis, number(argv[arg_sleep]), argv[arg_modes] != 0);
     if (argv[arg_gfx] != 0 or argv[arg_dma] != 0 or argv[arg_gart] != 0 or argv[arg_engine] != 0 or argv[arg_compute] != 0) {
         const then: GraphicsThen = if (argv[arg_compute] != 0) .compute else if (argv[arg_engine] != 0) .engine else if (argv[arg_gart] != 0) .gart else if (argv[arg_dma] != 0) .dma else .nothing;

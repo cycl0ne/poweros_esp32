@@ -28,8 +28,9 @@ const _graphics = @import("../graphics/_graphics.zig");
 /// driver takes a page out of its GART, the hub's TLB is dropped for its
 /// first context, and the entries are free for the next MapGPUMemory. An
 /// engine that reaches the range after is sent to the hub's scratch page
-/// and does not reach the memory. A zero piece, one not in the hub's
-/// range or one it does not hold mapped is cleared and nothing else.
+/// and does not reach the memory. A zero piece, a range of the device's
+/// own memory - which took no entry - one not in the hub's range or one
+/// it does not hold mapped is cleared and nothing else.
 ///
 /// CONTEXT:
 /// - Waits: for another task mapping or unmapping, and for the hub's

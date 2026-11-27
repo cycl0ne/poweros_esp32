@@ -1,17 +1,20 @@
 // SPDX-License-Identifier: MPL-2.0
 //! MapGPUMemory: a range of the machine's memory mapped into the graphics
-//! block's memory hub, so that its engines reach it where it is.
+//! block's memory hub, so that its engines reach it where it is - or a
+//! range of the device's own memory answered with its address to them.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const amdgpu = sdk.resources.amdgpu;
 const AMDGPUBase = @import("../amdgpu.zig").AMDGPUBase;
 const _arena = @import("_arena.zig");
+const _memory = @import("_memory.zig");
 const _graphics = @import("../graphics/_graphics.zig");
 
 /// A range of the machine's memory mapped for the graphics block's
 /// engines: its pages written into the block's memory hub's page table,
-/// and where the engines reach it answered.
+/// and where the engines reach it answered - or, for the device's own
+/// memory, where they reach it through the hub's aperture.
 ///
 /// SYNOPSIS:
 /// ```zig
@@ -22,7 +25,9 @@ const _graphics = @import("../graphics/_graphics.zig");
 ///
 /// INPUTS:
 /// - `address` - the range's first byte, as the CPU reaches it: any
-///   memory of the machine's, at any byte.
+///   memory of the machine's, at any byte, or of the device's own - where
+///   the machine has it, as AllocGPUMemory answers it, or in the device's
+///   memory window.
 /// - `bytes` - how long it is; more than 0.
 /// - `memory` - where to say where it is.
 ///
@@ -30,12 +35,24 @@ const _graphics = @import("../graphics/_graphics.zig");
 /// True with `memory` filled in: `cpu` the address given, `device` where
 /// the graphics block's engines reach the same byte, `bytes` its length.
 /// False, `memory` untouched, where StartGPUGraphics has not turned the
-/// hub on, `bytes` is 0, the hub's page table has no room left for the
-/// range - it maps 512 MiB, in at most 64 ranges at a time - or the hub
-/// does not take its new entries; and on a machine without the device.
+/// hub on, `bytes` is 0, the range lies partly in the device's own memory
+/// and partly not or in the memory window where the device's host data
+/// path cannot be flushed, the hub's page table has no room left for the
+/// range -
+/// it maps 512 MiB, in at most 64 ranges at a time - or the hub does not
+/// take its new entries; and on a machine without the device.
 ///
 /// BEHAVIOR:
-/// The range is handed to CachePreDMA, which says where a device sees it.
+/// A range wholly in the device's own memory (since 1.15) - where the
+/// machine has it, or in the memory window, which shows its first
+/// `window_bytes` - takes no entry: `device` is its place in that memory
+/// to the engines (GPUInfo's `memory_start` and on), which the hub's
+/// aperture sends them to, uncached in the block. The CPU's reads and
+/// writes in the window pass the device's host data path, which holds
+/// writes back: for a range there the CPU's gathered writes are fenced
+/// and the path is flushed, its flush posted by a read of the bus block
+/// (amdgpu_hdp_generic_flush). Any other range is handed to CachePreDMA,
+/// which says where a device sees it.
 /// Each page of 4 KiB it lies in, the first and the last whole, gets an
 /// entry in the table, one after another in the first run of free
 /// entries that holds them all, as the vendor's driver maps a page into
@@ -56,7 +73,13 @@ const _graphics = @import("../graphics/_graphics.zig");
 /// until UnmapGPUMemory has taken it out again. What the engines write
 /// there is the CPU's to read at once, and what the CPU writes theirs:
 /// the hub snoops the CPUs' caches, so nothing is written back or dropped
-/// by hand around a job.
+/// by hand around a job. The device's own memory it does not snoop, and
+/// the CPU reaches that gathered or uncached - the pieces AllocGPUMemory
+/// hands out are written gathered - so what the CPU wrote there is the
+/// engines' once the writes are fenced, which sending a job does; what it
+/// wrote in the window, once the range is mapped, which flushes the path
+/// its writes take. What the engines write in the device's memory the CPU
+/// reads at once either way.
 ///
 /// NOTES:
 /// Only the graphics block's engines reach a mapping - its DMA engine's
@@ -78,6 +101,19 @@ const _graphics = @import("../graphics/_graphics.zig");
 /// ```
 pub fn MapGPUMemory(ab: *AMDGPUBase, address: *anyopaque, bytes: u32, memory: *amdgpu.GPUMemory) bool {
     if (ab.device == null or !ab.graphics_started or bytes == 0) return false;
+    switch (ownPlace(ab, @intFromPtr(address), bytes)) {
+        .apart => {},
+        .across => return false,
+        .machine => |device| {
+            memory.* = .{ .cpu = @intFromPtr(address), .device = device, .bytes = bytes };
+            return true;
+        },
+        .window => |device| {
+            if (!_memory.flushHostPath(ab)) return false;
+            memory.* = .{ .cpu = @intFromPtr(address), .device = device, .bytes = bytes };
+            return true;
+        },
+    }
     const sys = ab.sys_base;
     var length = bytes;
     const machine: u64 = @intFromPtr(sys.CachePreDMA(address, &length, exec.DMAF_ReadFromRAM));
@@ -99,4 +135,28 @@ pub fn MapGPUMemory(ab: *AMDGPUBase, address: *anyopaque, bytes: u32, memory: *a
         .bytes = bytes,
     };
     return true;
+}
+
+/// Where a range lies against the device's own memory: apart from it,
+/// across an edge of it, or in it - where the machine has it or in the
+/// memory window - at that address to the device.
+const OwnPlace = union(enum) { apart, across, machine: u64, window: u64 };
+
+/// `bytes` from `address`, as the CPU reaches them, against the device's
+/// own memory where the machine has it and in its memory window, which
+/// shows its first `window_bytes`.
+fn ownPlace(ab: *const AMDGPUBase, address: u64, bytes: u32) OwnPlace {
+    const end = address + bytes;
+    const machine_end = ab.memory_machine + ab.memory_bytes;
+    const window_end = ab.info.window + @min(ab.info.window_bytes, ab.memory_bytes);
+    if (ab.memory_bytes == 0) return .apart;
+    if (end > ab.memory_machine and address < machine_end) {
+        if (address < ab.memory_machine or end > machine_end) return .across;
+        return .{ .machine = ab.memory_device + (address - ab.memory_machine) };
+    }
+    if (end > ab.info.window and address < window_end) {
+        if (address < ab.info.window or end > window_end) return .across;
+        return .{ .window = ab.memory_device + (address - ab.info.window) };
+    }
+    return .apart;
 }

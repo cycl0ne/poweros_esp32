@@ -88,10 +88,41 @@ pub fn take(ab: *AMDGPUBase, hub: amdgpu.GPUBlock) void {
     const top = @as(u64, word(at, fb_location_top) & field_24) << memory_shift;
     if (top < base) return;
     ab.memory_device = base;
+    ab.info.memory_start = base;
     ab.memory_machine = @as(u64, word(at, fb_offset) & field_24) << memory_shift;
     ab.memory_bytes = top - base + (@as(u64, 1) << memory_shift);
     ab.arena = _arena.of(ab.memory_bytes);
     ab.memory_gathered = gather(ab);
+}
+
+/// The bus block's registers of the device's host data path - the way
+/// the CPU's reads and writes in the memory window go - counted from its
+/// third address, as the bus block 7.7 has them: the flush
+/// (BIF_BX_PF0_HDP_MEM_COHERENCY_FLUSH_CNTL) and the register read after
+/// it (RCC_DEV0_EPF0_0_RCC_CONFIG_MEMSIZE).
+const bus_segment = 2;
+const host_flush_cntl = 0x00f7;
+const config_memsize = 0x00c3;
+
+/// Where the host data path is flushed, kept in the base; nothing where
+/// the bus block is not one whose registers are known.
+pub fn takeBus(ab: *AMDGPUBase, bus: amdgpu.GPUBlock) void {
+    if (bus.major != 7 or bus.minor != 7 or bus.count <= bus_segment) return;
+    const at = @as(usize, @intCast(ab.info.registers)) + @as(usize, bus.addresses[bus_segment]) * 4;
+    ab.host_flush = at + host_flush_cntl * 4;
+    ab.host_posted = at + config_memsize * 4;
+}
+
+/// What the CPU wrote in the memory window passed on to the device's
+/// memory: its gathered writes fenced, the host data path flushed, and a
+/// register read so that the flush is posted (amdgpu_hdp_generic_flush).
+/// False, nothing flushed, where the bus block's registers are not known.
+pub fn flushHostPath(ab: *const AMDGPUBase) bool {
+    if (ab.host_flush == 0) return false;
+    asm volatile ("mfence" ::: .{ .memory = true });
+    reg(ab.host_flush).* = 0;
+    _ = reg(ab.host_posted).*;
+    return true;
 }
 
 /// The part that is handed out made write-combining to the CPU: true when

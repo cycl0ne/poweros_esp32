@@ -1117,6 +1117,11 @@ the job is done. Its addresses are the device's: a piece of the device's
 own memory by its `device` address (`AllocGPUMemory`), a buffer of the
 machine's by where it is mapped for the engines (`MapGPUMemory`), whose
 writes the CPU reads at once, without a cache written back or dropped.
+`MapGPUMemory` answers a buffer of the device's own memory as well -
+where the machine has it, as `AllocGPUMemory` gives it, or in the
+device's memory window - with its `device` address, mapping nothing;
+in the window it first flushes the device's host data path, which the
+CPU's writes there pass, so what the CPU wrote is the kernel's.
 
 ```zig
 const ab: *AMDGPUBase = @ptrCast(sys.OpenResource(amdgpu.AMDGPUNAME) orelse return error.NoDevice);

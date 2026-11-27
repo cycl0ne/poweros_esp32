@@ -37,7 +37,7 @@ const _graphics = @import("graphics/_graphics.zig");
 /// The name it is opened by. The SDK's.
 pub const RESOURCE_NAME = amdgpu.AMDGPUNAME;
 pub const RESOURCE_VERSION = 1;
-pub const RESOURCE_REVISION = 14;
+pub const RESOURCE_REVISION = 15;
 const BUILD_DATE = "27.11.2026";
 const RESOURCE_VERSION_STRING =
     "\x00$VER: " ++ RESOURCE_NAME ++ " " ++
@@ -78,6 +78,8 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     ab.memory_machine = 0;
     ab.memory_bytes = 0;
     ab.memory_gathered = false;
+    ab.host_flush = 0;
+    ab.host_posted = 0;
     ab.arena = .{};
     sys_base.InitSemaphore(&ab.arena_lock);
     ab.security = .{};
@@ -143,6 +145,7 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
         const gpu: *sdk.interface.amdgpu.AMDGPUBase = @ptrCast(&ab.lib);
         var block: amdgpu.GPUBlock = .{};
         if (gpu.FindGPUBlock(amdgpu.GPUBLOCK_MEMORY_HUB, 0, &block)) _memory.take(ab, block);
+        if (gpu.FindGPUBlock(amdgpu.GPUBLOCK_BUS, 0, &block)) _memory.takeBus(ab, block);
         if (gpu.FindGPUBlock(amdgpu.GPUBLOCK_POWER, 0, &block)) _power.take(ab, block);
         if (gpu.FindGPUBlock(amdgpu.GPUBLOCK_SECURITY, 0, &block)) _security.take(ab, block);
         if (gpu.FindGPUBlock(amdgpu.GPUBLOCK_INTERRUPTS, 0, &block)) _interrupt.take(ab, block);

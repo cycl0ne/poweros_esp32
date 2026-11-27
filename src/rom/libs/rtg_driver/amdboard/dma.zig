@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! The board's engine: FillRect, CopyRect and CopyRects done by the
 //! graphics block's DMA engine, whose queue amdgpu.resource runs, on the
-//! machine's memory the buffers are in.
+//! memory the buffers are in - the machine's, or the device's own.
 //!
 //! **Which jobs.** The CPU's cores fill and copy what their caches hold
 //! many times sooner than the engine reaches the memory; once a job's
@@ -39,7 +39,12 @@
 //! each buffer's rows from the first the job touches to the last, taken
 //! out again once the job is done. The hub snoops the CPU's caches, so
 //! nothing is written back or dropped around a job, and the CPU may draw
-//! beside the rectangle meanwhile. A buffer's start and its rows' length
+//! beside the rectangle meanwhile. A buffer of the device's own memory -
+//! a frame, the firmware's framebuffer, a piece of AllocGPUMemory's,
+//! where the machine has it or in the memory window - takes no mapping:
+//! the engine reaches it through the hub's aperture, and the CPU's
+//! gathered writes to it are fenced as the job is sent. A buffer's start
+//! and its rows' length
 //! are whole four bytes, its pixels one, two or four bytes, and the
 //! engine's packets hold a column, a width or a height of up to 16384 and
 //! a row of up to 2^19 pixels; anything else is refused.
@@ -111,10 +116,6 @@ pub const Dma = struct {
     /// The board's kernels, which the process starting the queue starts
     /// once it runs.
     kernels: ?*kernels.Kernels = null,
-    /// The device's memory window as the machine reaches it, which the
-    /// engine is not sent to through the hub: a buffer in it is refused.
-    window_start: u64 = 0,
-    window_end: u64 = 0,
     /// Whether the queue runs and takes the board's jobs: set and read
     /// atomically.
     ready: bool = false,
@@ -164,8 +165,6 @@ pub fn start(dma: *Dma, sys: *ExecBase, gpu: *AMDGPUBase, compute: *kernels.Kern
     dma.* = .{ .gpu = gpu, .cached = cached, .least = cached, .kernels = compute };
     var info: amdgpu.GPUInfo = .{};
     if (!gpu.GetGPUInfo(&info)) return;
-    dma.window_start = info.window;
-    dma.window_end = info.window + info.window_bytes;
     if (dma.cached == 0) {
         exec.kprintf(sys, "%s: the CPU does not say what its caches hold: the graphics block's DMA engine is not used\n", .{dcn.owner});
         return;
@@ -361,7 +360,7 @@ pub fn fill(dma: *Dma, sys: *ExecBase, rb: *RtgBase, bitmap: *rtg.RtgBitMap, are
     const bytes_each = pixelBytes(rb, bitmap.format) orelse return err.RTGERR_NOT_SUPPORTED;
     if (@as(u64, width) * height * bytes_each <= cutOff(dma)) return err.RTGERR_NOT_SUPPORTED;
     const pixels = bitmap.pixels orelse return err.RTGERR_NOT_SUPPORTED;
-    if (!lined(pixels, bitmap.pitch) or !inMemory(dma, bitmap)) return err.RTGERR_NOT_SUPPORTED;
+    if (!lined(pixels, bitmap.pitch)) return err.RTGERR_NOT_SUPPORTED;
     const x: u32 = @intCast(area.x);
     const y: u32 = @intCast(area.y);
     var target: amdgpu.GPUMemory = .{};
@@ -405,7 +404,6 @@ pub fn copy(dma: *Dma, sys: *ExecBase, rb: *RtgBase, src: *rtg.RtgBitMap, dest: 
     const src_pixels = src.pixels orelse return err.RTGERR_NOT_SUPPORTED;
     const dest_pixels = dest.pixels orelse return err.RTGERR_NOT_SUPPORTED;
     if (!lined(src_pixels, src.pitch) or !lined(dest_pixels, dest.pitch)) return err.RTGERR_NOT_SUPPORTED;
-    if (!inMemory(dma, src) or !inMemory(dma, dest)) return err.RTGERR_NOT_SUPPORTED;
     const src_pitch = src.pitch / bytes_each;
     const dest_pitch = dest.pitch / bytes_each;
     if (src_pitch > most_pitch or dest_pitch > most_pitch) return err.RTGERR_NOT_SUPPORTED;
@@ -508,15 +506,6 @@ fn shiftOf(bytes_each: u32) u32 {
 /// as the engine takes them.
 pub fn lined(pixels: [*]u8, pitch: u32) bool {
     return @intFromPtr(pixels) % 4 == 0 and pitch % 4 == 0 and pitch != 0;
-}
-
-/// Whether a buffer lies in the machine's memory, outside the device's
-/// memory window: the window is the device's own memory seen from the
-/// machine, which the hub would send the engine to as the machine's.
-pub fn inMemory(dma: *const Dma, bitmap: *const rtg.RtgBitMap) bool {
-    const first: u64 = @intFromPtr(bitmap.pixels);
-    const end = first + @as(u64, bitmap.pitch) * bitmap.height;
-    return end <= dma.window_start or first >= dma.window_end;
 }
 
 /// `rows` rows of a buffer from row `first`, the last of them to its

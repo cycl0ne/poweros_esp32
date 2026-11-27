@@ -20,14 +20,18 @@ const AMDGPUBase = @import("../amdgpu.zig").AMDGPUBase;
 /// RESULT:
 /// True with `info` filled in: the device's PCI vendor and device ids,
 /// its register window and its memory window as the machine reaches them,
-/// each with its length, and how much memory of its own it has. False on
-/// a machine without the device, with `info` left alone.
+/// each with its length, how much memory of its own it has, and where
+/// that starts to the device (`memory_start`, since 1.15). False on a
+/// machine without the device, with `info` left alone.
 ///
 /// BEHAVIOR:
 /// The device was found, claimed and read once, as the resource started;
 /// what is answered is what was read then. `memory_bytes` is the device's
 /// own answer for its memory - the part of the machine's memory set aside
-/// for it - of which the memory window shows the first `window_bytes`.
+/// for it - of which the memory window shows the first `window_bytes`;
+/// `memory_start` is where its memory hub places it to the device's
+/// engines, so that a byte `n` into the window is `memory_start + n` to
+/// them.
 ///
 /// CONTEXT:
 /// - Waits: no.

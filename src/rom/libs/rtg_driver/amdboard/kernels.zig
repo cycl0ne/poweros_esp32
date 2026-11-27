@@ -53,8 +53,9 @@
 //! rectangle's first to its last, and the picture's, the shape's or the
 //! tile's from the first byte read to the last, each taken out again once
 //! the job is done. The hub snoops the CPU's caches, so nothing is
-//! written back or dropped around a job. A buffer or a picture in the
-//! device's memory window is refused.
+//! written back or dropped around a job. A buffer or a picture of the
+//! device's own memory takes no mapping: the kernels reach it through the
+//! hub's aperture, uncached in the block.
 //!
 //! **A job** is one dispatch over the rectangle, a thread a pixel in
 //! groups of 64 along a row, each group on a span of 64 pixels of the
@@ -183,8 +184,8 @@ pub fn blendPixels(compute: *Kernels, dma: *const Dma, sys: *ExecBase, dest: *rt
     if (strength == 0) return err.RTGERR_OK;
     if (dest.format != .bgra32) return err.RTGERR_NOT_SUPPORTED;
     _ = rgbaOf(picture.format) orelse return err.RTGERR_NOT_SUPPORTED;
-    const target = Target.of(dma, dest, area, 4) orelse return err.RTGERR_NOT_SUPPORTED;
-    const part = Part.of(dma, picture, width, height) orelse return err.RTGERR_NOT_SUPPORTED;
+    const target = Target.of(dest, area, 4) orelse return err.RTGERR_NOT_SUPPORTED;
+    const part = Part.of(picture, width, height) orelse return err.RTGERR_NOT_SUPPORTED;
     if (target.meets(part.start, part.bytes)) return err.RTGERR_NOT_SUPPORTED;
     const gpu = dma.gpu.?;
     var into: amdgpu.GPUMemory = .{};
@@ -223,7 +224,7 @@ pub fn blendRect(compute: *Kernels, dma: *const Dma, sys: *ExecBase, dest: *rtg.
     if (!taken(compute, dma, @as(u64, width) * height >= least_pixels)) return err.RTGERR_NOT_SUPPORTED;
     if (pen >> 24 == 0) return err.RTGERR_OK;
     if (dest.format != .bgra32) return err.RTGERR_NOT_SUPPORTED;
-    const target = Target.of(dma, dest, area, 4) orelse return err.RTGERR_NOT_SUPPORTED;
+    const target = Target.of(dest, area, 4) orelse return err.RTGERR_NOT_SUPPORTED;
     const gpu = dma.gpu.?;
     var into: amdgpu.GPUMemory = .{};
     if (!target.map(gpu, &into)) return err.RTGERR_NOT_SUPPORTED;
@@ -250,8 +251,8 @@ pub fn scalePixels(compute: *Kernels, dma: *const Dma, sys: *ExecBase, dest: *rt
     if (shrinks and covered(width, src_width) * covered(height, src_height) > most_covered) return err.RTGERR_NOT_SUPPORTED;
     if (dest.format != .bgra32) return err.RTGERR_NOT_SUPPORTED;
     _ = rgbaOf(picture.format) orelse return err.RTGERR_NOT_SUPPORTED;
-    const target = Target.of(dma, dest, area, 4) orelse return err.RTGERR_NOT_SUPPORTED;
-    const part = Part.of(dma, picture, src_width, src_height) orelse return err.RTGERR_NOT_SUPPORTED;
+    const target = Target.of(dest, area, 4) orelse return err.RTGERR_NOT_SUPPORTED;
+    const part = Part.of(picture, src_width, src_height) orelse return err.RTGERR_NOT_SUPPORTED;
     if (target.meets(part.start, part.bytes)) return err.RTGERR_NOT_SUPPORTED;
     const gpu = dma.gpu.?;
     var into: amdgpu.GPUMemory = .{};
@@ -293,12 +294,12 @@ pub fn blitTemplate(compute: *Kernels, dma: *const Dma, sys: *ExecBase, rb: *Rtg
     const height: u32 = @intCast(area.height);
     if (!taken(compute, dma, bothColours(shape.flags) and @as(u64, width) * height >= least_pixels)) return err.RTGERR_NOT_SUPPORTED;
     const bytes_each = shapeBytes(rb, dest.format) orelse return err.RTGERR_NOT_SUPPORTED;
-    const target = Target.of(dma, dest, area, bytes_each) orelse return err.RTGERR_NOT_SUPPORTED;
+    const target = Target.of(dest, area, bytes_each) orelse return err.RTGERR_NOT_SUPPORTED;
     // The rows of bits from the shape's first, each to the byte of its
     // last bit.
     const first_row: u64 = @intFromPtr(shape.bits.?) + @as(u64, shape.src_y) * shape.pitch;
     const bits_bytes = @as(u64, height - 1) * shape.pitch + (@as(u64, shape.src_x) + width + 7) / 8;
-    if (bits_bytes > 0xffff_ffff or !apartFromWindow(dma, first_row, bits_bytes) or target.meets(first_row, bits_bytes)) return err.RTGERR_NOT_SUPPORTED;
+    if (bits_bytes > 0xffff_ffff or target.meets(first_row, bits_bytes)) return err.RTGERR_NOT_SUPPORTED;
     const gpu = dma.gpu.?;
     var into: amdgpu.GPUMemory = .{};
     if (!target.map(gpu, &into)) return err.RTGERR_NOT_SUPPORTED;
@@ -335,10 +336,10 @@ pub fn blitPattern(compute: *Kernels, dma: *const Dma, sys: *ExecBase, rb: *RtgB
     const height: u32 = @intCast(area.height);
     if (!taken(compute, dma, bothColours(tile.flags) and @as(u64, width) * height >= least_pixels)) return err.RTGERR_NOT_SUPPORTED;
     const bytes_each = shapeBytes(rb, dest.format) orelse return err.RTGERR_NOT_SUPPORTED;
-    const target = Target.of(dma, dest, area, bytes_each) orelse return err.RTGERR_NOT_SUPPORTED;
+    const target = Target.of(dest, area, bytes_each) orelse return err.RTGERR_NOT_SUPPORTED;
     const tile_start: u64 = @intFromPtr(tile.bits.?);
     const tile_bytes = @as(u64, tile.height - 1) * tile.pitch + (@as(u64, tile.width) + 7) / 8;
-    if (tile_bytes > 0xffff_ffff or !apartFromWindow(dma, tile_start, tile_bytes) or target.meets(tile_start, tile_bytes)) return err.RTGERR_NOT_SUPPORTED;
+    if (tile_bytes > 0xffff_ffff or target.meets(tile_start, tile_bytes)) return err.RTGERR_NOT_SUPPORTED;
     const gpu = dma.gpu.?;
     var into: amdgpu.GPUMemory = .{};
     if (!target.map(gpu, &into)) return err.RTGERR_NOT_SUPPORTED;
@@ -424,12 +425,6 @@ fn covered(size: u32, src_size: u32) u64 {
     return (@as(u64, src_size) + size - 1) / size + 1;
 }
 
-/// Whether `bytes` from `first` lie in the machine's memory, outside the
-/// device's memory window.
-fn apartFromWindow(dma: *const Dma, first: u64, bytes: u64) bool {
-    return first + bytes <= dma.window_start or first >= dma.window_end;
-}
-
 /// The rectangle of a buffer a job lands on: the buffer's rows from the
 /// rectangle's first to its last, and where in them it lies.
 const Target = struct {
@@ -442,11 +437,10 @@ const Target = struct {
 
     /// `area` of `bitmap`, of `bytes_each` bytes a pixel: null for a
     /// buffer the kernels do not draw on - its pixels or rows not on
-    /// their size, in the device's memory window.
-    fn of(dma: *const Dma, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect, bytes_each: u32) ?Target {
+    /// their size.
+    fn of(bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect, bytes_each: u32) ?Target {
         const buffer = bitmap.pixels orelse return null;
         if (@intFromPtr(buffer) % bytes_each != 0 or bitmap.pitch % bytes_each != 0 or bitmap.pitch == 0) return null;
-        if (!dma_file.inMemory(dma, bitmap)) return null;
         if (area.width > most_side or area.height > most_side) return null;
         return .{ .bitmap = bitmap, .x = @intCast(area.x), .y = @intCast(area.y), .width = @intCast(area.width), .height = @intCast(area.height), .bytes_each = bytes_each };
     }
@@ -476,16 +470,15 @@ const Part = struct {
     start: u64,
     bytes: u64,
 
-    /// Null for a picture whose corner is before its first byte, whose
-    /// pixels or rows are not on four bytes, or that lies in the device's
-    /// memory window.
-    fn of(dma: *const Dma, picture: *const rtg.RtgPixels, width: u32, height: u32) ?Part {
+    /// Null for a picture whose corner is before its first byte, or whose
+    /// pixels or rows are not on four bytes.
+    fn of(picture: *const rtg.RtgPixels, width: u32, height: u32) ?Part {
         if (picture.x < 0 or picture.y < 0 or width > most_side or height > most_side) return null;
         const first = picture.pixels orelse return null;
         const corner = @intFromPtr(first) + @as(u64, @intCast(picture.y)) * picture.pitch + @as(u64, @intCast(picture.x)) * 4;
         if (corner % 4 != 0 or picture.pitch % 4 != 0) return null;
         const bytes = @as(u64, height - 1) * picture.pitch + @as(u64, width) * 4;
-        if (bytes > 0xffff_ffff or !apartFromWindow(dma, corner, bytes)) return null;
+        if (bytes > 0xffff_ffff) return null;
         return .{ .start = corner, .bytes = bytes };
     }
 };
