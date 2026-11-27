@@ -764,12 +764,15 @@ fn emitStep(e: *Emit, each: Step, at: u16) Error!void {
         },
         // ntq_emit_txs (nir_to_vir.c:914-960): the level first, then each
         // size the draw writes of the view as a uniform of its own,
-        // minified to the level but an array's layers (since 1.181).
+        // minified to the level but an array's layers (since 1.181), the
+        // third, which a cube of an array's is too, its cubes (since
+        // 1.235). A cube's gradient asks for the first two alone.
         .texture_size => {
             const level = try getSrc(e, each.from[0], 0);
-            const layers = e.work.samplers[each.at].dim == .layers;
+            const dim = e.work.samplers[each.at].dim;
+            const layers = dim == .layers or dim == .cubes;
             for (0..parts) |k| {
-                const array = layers and k == parts - 1;
+                const array = layers and k == 2;
                 const contents: vir.Uniform = if (array) .texture_array_size else switch (k) {
                     0 => .texture_width,
                     1 => .texture_height,
@@ -1941,10 +1944,11 @@ fn emitTex(e: *Emit, each: Step, at: u16) Error!void {
     const return_words = texel_words;
 
     // get_required_tex_tmu_writes (v3d_tex.c:222): S and T, R or I where
-    // the image has a third float, the comparator's TMUDREF, and a bias's
-    // or a level's TMUB (since 1.180), which a fetch of a sample has not
-    // (since 1.209). The input FIFO has 16 slots across all threads.
-    const tmu_writes: u32 = 2 + @as(u32, @intFromBool(dim != .flat)) + @intFromBool(compared) + @intFromBool(each.lookup.leveled());
+    // the image has a third float, I as well for a cube of an array
+    // (since 1.235), the comparator's TMUDREF, and a bias's or a level's
+    // TMUB (since 1.180), which a fetch of a sample has not (since
+    // 1.209). The input FIFO has 16 slots across all threads.
+    const tmu_writes: u32 = 2 + @as(u32, @intFromBool(dim != .flat)) + @intFromBool(dim == .cubes) + @intFromBool(compared) + @intFromBool(each.lookup.leveled());
     while (tmu_writes > 16 / @as(u32, c.threads)) c.threads /= 2;
 
     // Pipelining it would overflow the TMU's FIFOs: flush what waits.
@@ -1954,13 +1958,19 @@ fn emitTex(e: *Emit, each: Step, at: u16) Error!void {
     // handle_tex_src (v3d_tex.c:85): S starts the lookup, so it is kept
     // for the end, and T is written first; then a 3D texture's and a
     // cube's third float to TMUR (:115-120) and a layer to TMUI
-    // (:122-127), the floats past the image's left unread.
+    // (:122-127), a cube of an array's third to TMUR and which cube, the
+    // last, to TMUI (since 1.235), the floats past the image's left
+    // unread.
     const s = try getSrc(e, each.a, 0);
     _ = try tmuWrite(c, .tmut, try getSrc(e, each.a, 1));
     switch (dim) {
         .flat => {},
         .volume, .cube => _ = try tmuWrite(c, .tmur, try getSrc(e, each.a, 2)),
         .layers => _ = try tmuWrite(c, .tmui, try getSrc(e, each.a, 2)),
+        .cubes => {
+            _ = try tmuWrite(c, .tmur, try getSrc(e, each.a, 2));
+            _ = try tmuWrite(c, .tmui, try getSrc(e, each.a, 3));
+        },
     }
     // The comparator after the coordinate, as NIR's sources come
     // (v3d_tex.c:155-157).
@@ -1989,7 +1999,7 @@ fn emitTex(e: *Emit, each: Step, at: u16) Error!void {
     // in its offset fields, as many as the image's coordinate names but
     // a layer (:158-170), and a cube's level disabling the automatic one,
     // which TMUSLOD does for every other image (:135-150; since 1.180).
-    const p2_packed = texConfigP2(each.offsets, each.lookup == .lod and dim == .cube);
+    const p2_packed = texConfigP2(each.offsets, each.lookup == .lod and dim.cubic());
     const needs_p2 = p2_packed != p2_default;
     if (!each.lookup.fetches()) {
         try wrtmuc(c, .tmu_config_p1, p1_packed | @as(u32, each.at) << 24);
@@ -2007,9 +2017,10 @@ fn emitTex(e: *Emit, each: Step, at: u16) Error!void {
 
     // A fetch's lookup is started at TMUSF (v3d_tex.c:375-377; since
     // 1.182), a sample's too (since 1.209), a cube's at TMUSCM
-    // (:378-379), and one at a level the program gives at TMUSLOD
+    // (:378-379), a cube of an array's too, its sampler_dim a cube's
+    // (since 1.235), and one at a level the program gives at TMUSLOD
     // (:380-381).
-    const retiring = try tmuWrite(c, if (each.lookup.fetches()) .tmusf else if (dim == .cube) .tmuscm else if (each.lookup == .lod) .tmuslod else .tmus, s);
+    const retiring = try tmuWrite(c, if (each.lookup.fetches()) .tmusf else if (dim.cubic()) .tmuscm else if (each.lookup == .lod) .tmuslod else .tmus, s);
     // Mesa's own count, which is the mask of the words rather than how
     // many: the scheduler only holds a lookup back for it.
     retiring.ldtmu_count = return_words;
@@ -2071,8 +2082,9 @@ fn emitImageLoadStore(e: *Emit, each: Step, at: u16) Error!void {
         .flat => {},
         .volume => _ = try tmuWrite(c, .tmur, try getSrc(e, each.a, 2)),
         .layers => _ = try tmuWrite(c, .tmui, try getSrc(e, each.a, 2)),
-        // A storage cube is its faces' layers (`compile.Sampler.storage`).
-        .cube => unreachable,
+        // A storage cube is its faces' layers, and so is a cube of an
+        // array (`compile.Sampler.storage`).
+        .cube, .cubes => unreachable,
     }
     for (0..data) |k| _ = try tmuWrite(c, .tmud, try getSrc(e, each.b, k));
     const x = try getSrc(e, each.a, 0);

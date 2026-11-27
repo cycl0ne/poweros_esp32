@@ -162,7 +162,10 @@
 //! array (since 1.82) are an image of two cubes, the second's faces the
 //! first's backwards, read a face of a cube at a time by the fixed form
 //! of a cube of an array and by the one through a sampler, which the V3D
-//! draws since facet 1.234.
+//! draws since facet 1.234. The shipped cubes (since 1.83) are glslc's
+//! sample of a cube of an array at four floats, which the V3D compiles
+//! since facet 1.235, through the sampler; the cores read them as that
+//! form does.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -177,7 +180,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.82 (27.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.83 (27.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -1620,7 +1623,9 @@ fn outputsFragment(fragments: *const shader.Fragments) callconv(.c) void {
 /// for the cores: the texture bound at set 0, binding 0, read through the
 /// sampler beside it at the three floats of varying 0, as the fixed forms
 /// `texture_array_sampled`, `texture_cube_sampled` and
-/// `texture_3d_sampled` read it (since 1.44).
+/// `texture_3d_sampled` read it (since 1.44); and what `shipped_cubes`
+/// does, at the four of it, as `texture_cube_array_sampled` (since
+/// 1.83).
 fn layeredFragment(comptime kind: shader.FixedKind) shader.FragmentFn {
     return &struct {
         fn run(fragments: *const shader.Fragments) callconv(.c) void {
@@ -2952,6 +2957,9 @@ const shipped_entries = [_]shader.Entry{
     // Two colour outs, one into each attachment of a subpass of two
     // (since 1.81).
     shader.fragmentOutputs("shipped two colours", &twoColoursFragment, 0, 2),
+    // A cube of an array, glslc's sample of SampledCubeArray (since
+    // 1.83).
+    shader.fragment("shipped cubes", layeredFragment(.texture_cube_array_sampled), 4),
 };
 const shipped_words = [_]shader.Spirv{
     .{},                                            .{},                                        .{},                                           .{},
@@ -2982,7 +2990,7 @@ const shipped_words = [_]shader.Spirv{
     shader.Spirv.of(&shipped_determinant4),         shader.Spirv.of(&shipped_bits),             shader.Spirv.of(&shipped_vertex_branch),       shader.Spirv.of(&shipped_branches),
     shader.Spirv.of(&shipped_outputs),              shader.Spirv.of(&shipped_vertex_outputs),   Shipped.NestedKept.spirv,                      Shipped.SelectsKept.spirv,
     Shipped.CollapsedKept.spirv,                    shader.Spirv.of(&shipped_fetch_four),       shader.Spirv.of(&shipped_subpass),             shader.Spirv.of(&shipped_stored),
-    shader.Spirv.of(&shipped_drawn_stored),         shader.Spirv.of(&shipped_two_colours),
+    shader.Spirv.of(&shipped_drawn_stored),         shader.Spirv.of(&shipped_two_colours),      shader.Spirv.of(&shipped_cubes),
 };
 
 /// glslc's own output, at -O, for a sample of an image of four at the
@@ -4809,6 +4817,51 @@ const shipped_layers = [_]u32{
     0x0000000B, 0x0000000E, 0x0000000D, 0x0004003D, 0x0000000F, 0x00000012,
     0x00000011, 0x00050057, 0x00000007, 0x00000013, 0x0000000E, 0x00000012,
     0x0003003E, 0x00000009, 0x00000013, 0x000100FD, 0x00010038,
+};
+
+/// glslc's own output, at -O, for a cube of an array at the four floats
+/// of varying 0, the direction and which cube, through the sampler bound
+/// beside it, which the V3D compiles since facet 1.235: the direction
+/// normalized as a cube's, the cube left as it is and written to TMUI
+/// after R, and the lookup at TMUSCM. The cores read it as the fixed
+/// form `texture_cube_array_sampled` does (`layeredFragment`; since
+/// 1.83).
+///
+/// ```glsl
+/// #version 450
+/// layout(set = 0, binding = 0) uniform samplerCubeArray skies;
+/// layout(location = 0) in vec4 color;
+/// layout(location = 0) out vec4 outColor;
+/// void main() {
+///     outColor = texture(skies, color);
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=frag cubes.frag -o cubes.spv   # 117 words
+/// spirv-val --target-env vulkan1.0 cubes.spv           # no output, and 0
+/// ```
+const shipped_cubes = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000013, 0x00000000, 0x00020011,
+    0x00000001, 0x00020011, 0x0000002D, 0x0006000B, 0x00000001, 0x4C534C47,
+    0x6474732E, 0x3035342E, 0x00000000, 0x0003000E, 0x00000000, 0x00000001,
+    0x0007000F, 0x00000004, 0x00000004, 0x6E69616D, 0x00000000, 0x00000009,
+    0x00000010, 0x00030010, 0x00000004, 0x00000007, 0x00040047, 0x00000009,
+    0x0000001E, 0x00000000, 0x00040047, 0x0000000D, 0x00000021, 0x00000000,
+    0x00040047, 0x0000000D, 0x00000022, 0x00000000, 0x00040047, 0x00000010,
+    0x0000001E, 0x00000000, 0x00020013, 0x00000002, 0x00030021, 0x00000003,
+    0x00000002, 0x00030016, 0x00000006, 0x00000020, 0x00040017, 0x00000007,
+    0x00000006, 0x00000004, 0x00040020, 0x00000008, 0x00000003, 0x00000007,
+    0x0004003B, 0x00000008, 0x00000009, 0x00000003, 0x00090019, 0x0000000A,
+    0x00000006, 0x00000003, 0x00000000, 0x00000001, 0x00000000, 0x00000001,
+    0x00000000, 0x0003001B, 0x0000000B, 0x0000000A, 0x00040020, 0x0000000C,
+    0x00000000, 0x0000000B, 0x0004003B, 0x0000000C, 0x0000000D, 0x00000000,
+    0x00040020, 0x0000000F, 0x00000001, 0x00000007, 0x0004003B, 0x0000000F,
+    0x00000010, 0x00000001, 0x00050036, 0x00000002, 0x00000004, 0x00000000,
+    0x00000003, 0x000200F8, 0x00000005, 0x0004003D, 0x0000000B, 0x0000000E,
+    0x0000000D, 0x0004003D, 0x00000007, 0x00000011, 0x00000010, 0x00050057,
+    0x00000007, 0x00000012, 0x0000000E, 0x00000011, 0x0003003E, 0x00000009,
+    0x00000012, 0x000100FD, 0x00010038,
 };
 
 /// glslc's own output, at -O, for a cube, at a direction, which the V3D normalizes as nir_normalize_cubemap_coords does (v3dv_pipeline.c:406) and starts at TMUSCM at the three floats of
@@ -9956,7 +10009,19 @@ const cubes_throughs = [_]Through{
     },
 };
 
-const throughs = shipped_throughs ++ formed_throughs ++ layered_throughs ++ shipped_layered_throughs ++ levelled_throughs ++ sized_throughs ++ fetched_throughs ++ graded_throughs ++ negated_throughs ++ cubes_throughs;
+/// The cubes of an array through glslc's sample of them rather than the
+/// fixed form: the V3D compiles `shipped_cubes` since facet 1.235, and the
+/// cores read it as the form does (since 1.83).
+const shipped_cubes_throughs = shipped: {
+    var made = cubes_throughs;
+    for (&made) |*each| {
+        each.label = "shipped cubes";
+        each.fragment = "shipped cubes";
+    }
+    break :shipped made;
+};
+
+const throughs = shipped_throughs ++ formed_throughs ++ layered_throughs ++ shipped_layered_throughs ++ levelled_throughs ++ sized_throughs ++ fetched_throughs ++ graded_throughs ++ negated_throughs ++ cubes_throughs ++ shipped_cubes_throughs;
 
 /// What the shadow-map cases compare with (`Cases.shadowed`): the
 /// reference less than the depth, and greater (since 1.14).

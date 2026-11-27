@@ -229,7 +229,7 @@ pub const Op = enum(u16) {
     _,
 };
 
-pub const Capability = enum(u32) { shader = 1, geometry = 2, tessellation = 3, float16 = 9, float64 = 10, int64 = 11, int16 = 22, int8 = 39, input_attachment = 40, image_query = 50, derivative_control = 51, variable_pointers = 4442, _ };
+pub const Capability = enum(u32) { shader = 1, geometry = 2, tessellation = 3, float16 = 9, float64 = 10, int64 = 11, int16 = 22, image_cube_array = 34, int8 = 39, input_attachment = 40, sampled_cube_array = 45, image_query = 50, derivative_control = 51, variable_pointers = 4442, _ };
 pub const AddressingModel = enum(u32) { logical = 0, _ };
 pub const MemoryModel = enum(u32) { simple = 0, glsl450 = 1, _ };
 pub const ExecutionModel = enum(u32) { vertex = 0, tessellation_control = 1, tessellation_evaluation = 2, geometry = 3, fragment = 4, gl_compute = 5, _ };

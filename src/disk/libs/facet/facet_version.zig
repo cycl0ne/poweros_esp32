@@ -7824,4 +7824,50 @@ pub const LIBRARY_VERSION = 1;
 /// reboot cured it, and it did not come back over two runs of each
 /// program in the order it came in. The same was seen on 26.11.2026,
 /// during an update.
-pub const LIBRARY_REVISION = 234;
+///
+/// 235: **A cube of an array in a compiled shader on the V3D, the
+/// compiler's half (docs/facet-vulkan10.md item 54, now done).** The
+/// back end takes SampledCubeArray and ImageCubeArray, as v3dv has
+/// imageCubeArray (v3dv_device.c:331), and the SDK's `spirv.Capability`
+/// names them (34 and 45). A sampled cube of an array is a sampler of its
+/// own, `SamplerDim.cubes`, four floats. Its direction is normalized as
+/// a cube's and its fourth float, which cube, left as it is, as
+/// nir_normalize_cubemap_coords leaves an array's index
+/// (nir_normalize_cubemap_coords.c:56-65). Its third float goes to TMUR
+/// and its fourth to TMUI, as handle_tex_src writes them
+/// (v3d_tex.c:108-127), and the lookup starts at TMUSCM, a cube's
+/// (:378-379). TMUI counts among the lookup's writes for the threads
+/// the input FIFO has room for (v3d_tex.c:222). At a level, P2 disables
+/// the automatic level as for a cube (:142-148). A gradient is
+/// lower_gradient_cube_map's level of the direction
+/// (nir_lower_tex.c:707-852). A size is three integers, the third its
+/// cubes, QUNIFORM_TEXTURE_ARRAY_SIZE (nir_to_vir.c:929-930), which the
+/// draw answers in cubes since 1.234 (v3dv_uniforms.c:402-407). A
+/// storage cube of an array is read and written as its faces' layers,
+/// as a storage cube is, its third word to TMUI
+/// (v3d_tex.c:449-480): the draw tells the TMU its layers there
+/// (v3dvx_image.c:171-174). A fetch of a cube of an array and a texel
+/// offset are refused, as for a cube.
+///
+/// Six glslc -O modules are new: a cube of an array sampled, compared,
+/// at a level, with a gradient, its size, and a storage one read and
+/// written. Six host tests take them in place of the one that said the
+/// cube of an array was refused, and a seventh refuses one sampled at
+/// three floats. A lookup's writes before its start are checked in any
+/// order, as can_reorder_tmu_write lets the scheduler place them
+/// (qpu_schedule.c:226). 4573 of the 4576 pass, 3 skipped. Each of 13
+/// mutants of the port fails them.
+/// FacetBoth 1.83 draws glslc's sample of a cube of an array,
+/// `shipped_cubes`, compiled on the V3D, through the sampler, at the
+/// second cube's +z and across an edge of it, as the fixed form's two
+/// cases of 1.82 do.
+///
+/// On the CM5 (package f247) FacetProbe 1.60 is 1084 of 1084, as at
+/// 1.234. FacetBoth 1.83's 326 cases of 1.82 are each as at 1.234. Its
+/// two new ones draw glslc's sample on the V3D as the fixed form is
+/// drawn there: the second cube's +z 0 of 230400 pixels apart, and
+/// across an edge of it 12 apart, 33 at worst, the first of them at
+/// 320,86 as the fixed form's. The cores alone would be 0 apart there:
+/// the 12 are the seam pixels the V3D's TMU reads. The firmware's
+/// mailbox answered before and after each run.
+pub const LIBRARY_REVISION = 235;
