@@ -89,6 +89,11 @@ fn describe(can: *const _instance.Capabilities, format: facet.Format) facet.Form
     // (lvp_formats.c:176-181), a blit's destination, and copied both ways,
     // its rows being its own bytes (`_image.targetTexels`).
     const target: u32 = if (can.texel_targets) attachment | transfer else 0;
+    // One of 32-bit floats likewise, and blended where the device blends
+    // one (`Capabilities.float32_blend`): v3dv gives no BLEND to a format
+    // the V3D's tiles do not mix (`format_supports_blending`,
+    // v3dvx_formats.c:486-512; since 1.228).
+    const float_target: u32 = if (can.float32_blend) target else target & ~@as(u32, facet.FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND);
     // One of whole numbers likewise, not blended (since 1.227): lavapipe
     // leaves BLEND off a pure integer format (lvp_formats.c:176-181), and
     // a pipeline that blends one is refused
@@ -96,7 +101,7 @@ fn describe(can: *const _instance.Capabilities, format: facet.Format) facet.Form
     // destination as v3dv makes every colour attachment one
     // (v3dv_formats.c:176-179), into one of whole numbers of its own sign
     // alone (VUID-vkCmdBlitImage-srcImage-00229, -00230).
-    const whole_target: u32 = if (can.texel_targets) facet.FORMAT_FEATURE_COLOR_ATTACHMENT | facet.FORMAT_FEATURE_BLIT_DST | transfer else 0;
+    const whole_target: u32 = if (can.whole_targets) facet.FORMAT_FEATURE_COLOR_ATTACHMENT | facet.FORMAT_FEATURE_BLIT_DST | transfer else 0;
     return switch (format) {
         // STORAGE_IMAGE in the linear features says the rows of this
         // format may be written through by a function, which is what a
@@ -278,7 +283,7 @@ fn describe(can: *const _instance.Capabilities, format: facet.Format) facet.Form
         },
         .r32g32b32a32_sfloat => .{
             .linear_tiling_features = 0,
-            .optimal_tiling_features = sampled | float_storage | facet.FORMAT_FEATURE_TRANSFER_DST | target |
+            .optimal_tiling_features = sampled | float_storage | facet.FORMAT_FEATURE_TRANSFER_DST | float_target |
                 if (can.kept_floats) facet.FORMAT_FEATURE_TRANSFER_SRC else 0,
             .buffer_features = vertices | texels,
         },
@@ -289,13 +294,13 @@ fn describe(can: *const _instance.Capabilities, format: facet.Format) facet.Form
         // through, where it does not.
         .r32_sfloat => .{
             .linear_tiling_features = 0,
-            .optimal_tiling_features = sampled | float_storage | facet.FORMAT_FEATURE_TRANSFER_DST | target |
+            .optimal_tiling_features = sampled | float_storage | facet.FORMAT_FEATURE_TRANSFER_DST | float_target |
                 if (can.kept_floats) facet.FORMAT_FEATURE_TRANSFER_SRC else 0,
             .buffer_features = vertices | texels,
         },
         // R32G32_SFLOAT an attachment where the tiles keep its floats
         // (since 1.226), and nothing else of an image yet.
-        .r32g32_sfloat => .{ .linear_tiling_features = 0, .optimal_tiling_features = target, .buffer_features = vertices | texels },
+        .r32g32_sfloat => .{ .linear_tiling_features = 0, .optimal_tiling_features = float_target, .buffer_features = vertices | texels },
         .r32g32b32_sfloat => .{ .linear_tiling_features = 0, .optimal_tiling_features = 0, .buffer_features = vertices | texels },
         // A texel buffer and nothing else, since 1.54: no image is kept
         // in these, and no vertex attribute is read in one. The grid is

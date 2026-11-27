@@ -823,7 +823,9 @@ fn laidOut(physical: *_instance.PhysicalDevice, info: *const facet.ImageCreateIn
     // where it is only copied, which the format's TRANSFER_SRC and
     // TRANSFER_DST say it is. One sampled and not drawn is the texture
     // it always was.
-    const drawn_texels = physical.can.texel_targets and targetTexels(info.format) != .none and
+    // The twenty-one of whole numbers where the device draws them
+    // (`Capabilities.whole_targets`, since 1.228).
+    const drawn_texels = (if (wholeTarget(info.format)) physical.can.whole_targets else physical.can.texel_targets) and targetTexels(info.format) != .none and
         (info.usage & (facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_INPUT_ATTACHMENT) != 0 or !in_texels);
     const packed_texels = info.flags & facet.IMAGE_CREATE_PACKED_TEXELS != 0;
     const packs = switch (info.format) {
@@ -1028,6 +1030,11 @@ fn laidOut(physical: *_instance.PhysicalDevice, info: *const facet.ImageCreateIn
     // slices no pass of Vulkan 1.0 draws into.
     const attachment = info.usage & (facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_INPUT_ATTACHMENT) != 0;
     const sampled_rows = info.usage & facet.IMAGE_USAGE_SAMPLED != 0 and (info.samples != 1 or attachment);
+    // What the tiles drew of the fourteen or the twenty-one, read back by
+    // a device that reads none of it where it lies
+    // (`Capabilities.target_reads`): the V3D's TMU, whose texture state
+    // knows none of these formats in its tiles' output (since 1.228).
+    if (drawn_texels and !physical.can.target_reads and (sampled_rows or info.usage & facet.IMAGE_USAGE_INPUT_ATTACHMENT != 0)) return null;
     if (sampled_rows) {
         if (sampledRowFormat(info.format) == null) return null;
         const not_sampled = facet.IMAGE_USAGE_STORAGE | facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT;

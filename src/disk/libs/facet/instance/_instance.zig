@@ -208,8 +208,28 @@ pub const Capabilities = extern struct {
     /// each in its own bytes, a fragment's colour blended against what
     /// they hold in floats and written back at the format's width, as
     /// llvmpipe draws into a surface of its format. The cores have it since
-    /// 1.226. False where none of them is an attachment.
+    /// 1.226, and the V3D since 1.228, its tiles keeping each as v3dv's
+    /// do (`v3d.target`). False where none of them is an attachment.
     texel_targets: bool = false,
+    /// The twenty-one colour attachments of whole numbers of
+    /// docs/facet-vulkan10.md item 36, which the tiles keep as the numbers
+    /// they are and never blend: the cores since 1.227. Until 1.228 this
+    /// was `texel_targets`. False where none of them is an attachment.
+    whole_targets: bool = false,
+    /// A colour attachment of 32-bit floats is blended
+    /// (COLOR_ATTACHMENT_BLEND), as llvmpipe blends every float target.
+    /// False on the V3D, whose tiles blend normalized bytes and
+    /// half-floats alone, as v3dv says (`format_supports_blending`,
+    /// v3dvx_formats.c:486-512), so that a pipeline that blends one is
+    /// refused. (Since 1.228.)
+    float32_blend: bool = false,
+    /// What the tiles drew of the fourteen, or of the twenty-one, is read
+    /// back by the device: sampled where it lies, or read as an input
+    /// attachment. The cores read the rows they drew; the V3D's TMU knows
+    /// none of these formats' texels where its tiles stored them yet, so
+    /// on it an image of one of them that is sampled as well as drawn, or
+    /// read as an input attachment, is refused (since 1.228).
+    target_reads: bool = false,
     /// `input_attachment` descriptors and `SubpassDescription`'s
     /// `input_attachments`: an attachment a later subpass reads pixel by
     /// pixel, out of the image's memory, which is how a deferred pass

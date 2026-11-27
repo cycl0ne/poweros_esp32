@@ -435,6 +435,81 @@ const texture_color_code = varying(4) ++ varying(5) ++ varying(6) ++ varying(7) 
 
 pub const texture_color_fragment = Fragment{ .code = &texture_color_code, .varyings = 6, .uniforms = 2 };
 
+// --- render targets of 32-bit floats (since 1.228) --------------------------
+
+const instr = @import("qpu/instr.zig");
+const pack = @import("qpu/pack.zig");
+
+/// The TLB write's specifier for four 32-bit floats into render target 0,
+/// one sample a pixel: what vir_emit_tlb_color_write builds for a target
+/// in the key's f32_color_rb (nir_to_vir.c:1955-1990), from
+/// TLB_SAMPLE_MODE_PER_PIXEL, render target 0 reversed to 7 at
+/// TLB_RENDER_TARGET_SHIFT, TLB_TYPE_F32_COLOR and a vector size of 4
+/// less one (nir_to_vir.c:1931-1940), over the 0xffffff00 every
+/// specifier has.
+pub const tlb_f32_specifier: u32 = 0xffffff00 | 1 << 2 | 7 << 3 | 0 << 6 | (4 - 1);
+
+/// The low or the high half-float of `from`, as a float, to a magic
+/// address.
+fn fmovMagic(waddr: instr.Waddr, from: Rf, half: instr.InputUnpack) u64 {
+    return pack.pack(&.{ .alu = .{ .add = .{ .op = .fmov, .a = .{ .raddr = from, .unpack = half }, .waddr = instr.magic(waddr) } } }).?;
+}
+
+fn movTo(waddr: instr.Waddr, from: Rf) u64 {
+    return movMagic(instr.magic(waddr), from);
+}
+
+/// `fragment` as it draws into a render target of 32-bit floats, which
+/// the tile buffer takes a float a channel, as Mesa's back end writes one
+/// (vir_emit_tlb_color_write's f32_color_rb half, nir_to_vir.c:2007-2022):
+/// four writes of a float, the first to TLBU with `tlb_f32_specifier`.
+/// Each of its writes of two half-floats becomes two of floats: a word
+/// the TMU or a uniform gave as two half-floats its low one and its high
+/// one, and a VFPACK of two floats the two as they are. The specifier is
+/// the uniform TLBU reads, after the program's own, so it takes one more.
+pub fn wide(comptime fragment: Fragment) Fragment {
+    comptime {
+        @setEvalBranchQuota(200_000);
+        var code: [fragment.code.len * 2]u64 = undefined;
+        var used = 0;
+        var first = true;
+        for (fragment.code) |word| {
+            const inst = pack.unpack(word) orelse unreachable;
+            const add = inst.alu.add;
+            const to_tlb = inst.kind == .alu and add.magic_write and add.waddr == instr.magic(.tlb) and (add.op == .mov or add.op == .vfpack);
+            if (!to_tlb) {
+                code[used] = word;
+                used += 1;
+                continue;
+            }
+            const into: instr.Waddr = if (first) .tlbu else .tlb;
+            first = false;
+            if (add.op == .vfpack) {
+                code[used] = movTo(into, add.a.raddr);
+                code[used + 1] = movTo(.tlb, add.b.raddr);
+            } else {
+                code[used] = fmovMagic(into, add.a.raddr, .l);
+                code[used + 1] = fmovMagic(.tlb, add.a.raddr, .h);
+            }
+            used += 2;
+        }
+        if (first) @compileError("a fragment program that writes no colour");
+        const made = code[0..used].*;
+        var widened = fragment;
+        widened.code = &made;
+        widened.uniforms = fragment.uniforms + 1;
+        return widened;
+    }
+}
+
+pub const wide_color_fragment = wide(color_fragment);
+pub const wide_texture_fragment = wide(texture_fragment);
+pub const wide_texture_color_fragment = wide(texture_color_fragment);
+pub const wide_array_fragment = wide(array_fragment);
+pub const wide_cube_fragment = wide(cube_fragment);
+pub const wide_volume_fragment = wide(volume_fragment);
+pub const wide_shadow_fragment = wide(shadow_fragment);
+
 const std = @import("std");
 
 test "nop is what 7.1 calls it" {
@@ -505,4 +580,65 @@ test "the destinations of the instructions that have them are read off where qpu
 test "a value read and written has its offset and registers in place" {
     try std.testing.expectEqual(@as(u64, 0x39C0_0009_BC03_F080) | MM | WADDR_NOP << WADDR_M_SHIFT, ldvpmIn(9, 2));
     try std.testing.expectEqual(@as(u64, 0x39C0_0000_BE03_F089) | MM | WADDR_NOP << WADDR_M_SHIFT, stvpm(2, 9));
+}
+
+test "a fixed form's program for floats of 32 bits: each write of two half-floats as two floats, the first to TLBU, one uniform more (since 1.228)" {
+    const disasm = @import("qpu/disasm.zig");
+    _ = disasm;
+    // The colour of the vertices: four floats packed in two VFPACKs,
+    // now each moved as it is.
+    const color = wide_color_fragment;
+    try std.testing.expectEqual(color_fragment.code.len + 2, color.code.len);
+    try std.testing.expectEqual(@as(u32, 1), color.uniforms);
+    try std.testing.expectEqual(color_fragment.varyings, color.varyings);
+    const tail = color.code[color.code.len - end_of_program.len - 4 ..][0..4];
+    try std.testing.expectEqual(movTo(.tlbu, 4), tail[0]);
+    try std.testing.expectEqual(movTo(.tlb, 5), tail[1]);
+    try std.testing.expectEqual(movTo(.tlb, 6), tail[2]);
+    try std.testing.expectEqual(movTo(.tlb, 7), tail[3]);
+    try std.testing.expectEqualSlices(u64, &end_of_program, color.code[color.code.len - end_of_program.len ..]);
+    // Nothing before the writes moved.
+    try std.testing.expectEqualSlices(u64, color_fragment.code[0 .. color_fragment.code.len - end_of_program.len - 2], color.code[0 .. color_fragment.code.len - end_of_program.len - 2]);
+
+    // A texture: two words of two half-floats each, now four floats, the
+    // first to TLBU; its two uniforms of the TMU first, the specifier
+    // third.
+    const texture = wide_texture_fragment;
+    try std.testing.expectEqual(@as(u32, 3), texture.uniforms);
+    const writes = texture.code[texture.code.len - end_of_program.len - 4 ..][0..4];
+    try std.testing.expectEqual(fmovMagic(.tlbu, 10, .l), writes[0]);
+    try std.testing.expectEqual(fmovMagic(.tlb, 10, .h), writes[1]);
+    try std.testing.expectEqual(fmovMagic(.tlb, 11, .l), writes[2]);
+    try std.testing.expectEqual(fmovMagic(.tlb, 11, .h), writes[3]);
+    // As the packer reads them back: an FMOV of the low half and of the
+    // high, written to the magic addresses, the first the one that reads
+    // a uniform.
+    const low = pack.unpack(writes[0]).?;
+    try std.testing.expectEqual(instr.AddOp.fmov, low.alu.add.op);
+    try std.testing.expectEqual(instr.InputUnpack.l, low.alu.add.a.unpack);
+    try std.testing.expectEqual(@as(u6, 10), low.alu.add.a.raddr);
+    try std.testing.expectEqual(instr.magic(.tlbu), low.alu.add.waddr);
+    try std.testing.expect(low.alu.add.magic_write);
+    try std.testing.expectEqual(instr.InputUnpack.h, pack.unpack(writes[1]).?.alu.add.a.unpack);
+    try std.testing.expectEqual(instr.magic(.tlb), pack.unpack(writes[1]).?.alu.add.waddr);
+
+    // The texture times the colour: its VFPACKs of products.
+    const both = wide_texture_color_fragment;
+    const products = both.code[both.code.len - end_of_program.len - 4 ..][0..4];
+    try std.testing.expectEqual(movTo(.tlbu, 6), products[0]);
+    try std.testing.expectEqual(movTo(.tlb, 9), products[3]);
+    // Every variant writes the tile buffer four times, once to TLBU.
+    for ([_]Fragment{ wide_color_fragment, wide_texture_fragment, wide_texture_color_fragment, wide_array_fragment, wide_cube_fragment, wide_volume_fragment, wide_shadow_fragment }) |each| {
+        var tlb: u32 = 0;
+        var tlbu: u32 = 0;
+        for (each.code) |word| {
+            const inst = pack.unpack(word) orelse continue;
+            if (!inst.alu.add.magic_write) continue;
+            if (inst.alu.add.waddr == instr.magic(.tlb)) tlb += 1;
+            if (inst.alu.add.waddr == instr.magic(.tlbu)) tlbu += 1;
+        }
+        try std.testing.expectEqual(@as(u32, 3), tlb);
+        try std.testing.expectEqual(@as(u32, 1), tlbu);
+    }
+    try std.testing.expectEqual(@as(u32, 0xFFFF_FF3F), tlb_f32_specifier);
 }

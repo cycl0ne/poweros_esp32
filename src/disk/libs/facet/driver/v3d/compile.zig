@@ -15814,6 +15814,32 @@ test "through Mesa's back end, a module's colour in a key of no render target: n
     try testing.expectEqual(@as(u32, 4), code.varyings);
 }
 
+test "through Mesa's back end, a colour into a render target of 32-bit floats: four floats moved to the TLB, the first to TLBU with its specifier, nothing packed (since 1.228)" {
+    var work: Work = .{};
+    const code = try throughMesaKeyed(&work, Smooth.words, .{ .f32_color_rb = 1 });
+    // The one uniform the program reads is the specifier the TLBU write
+    // takes: vir_emit_tlb_color_write's for f32_color_rb.
+    try testing.expectEqual(@as(usize, 1), code.stream().len);
+    try testing.expectEqual(qpu.tlb_f32_specifier, @as(u32, @bitCast(code.stream()[0].float)));
+    var tlbu: u32 = 0;
+    var tlb: u32 = 0;
+    for (code.words) |word| {
+        var buffer: [disasm.most_text]u8 = undefined;
+        const line = disasm.disasm(word, &buffer).?;
+        try testing.expect(std.mem.indexOf(u8, line, "vfpack") == null);
+        if (std.mem.indexOf(u8, line, "mov tlbu,") != null) tlbu += 1;
+        if (std.mem.indexOf(u8, line, "mov tlb,") != null) tlb += 1;
+    }
+    try testing.expectEqual(@as(u32, 1), tlbu);
+    try testing.expectEqual(@as(u32, 3), tlb);
+    // The same module of half-floats, its key's default: two VFPACKs and
+    // no uniform.
+    var halves: Work = .{};
+    const packed_code = try throughMesa(&halves, Smooth.words);
+    try testing.expectEqual(@as(usize, 0), packed_code.stream().len);
+    try testing.expectEqual(@as(u32, 4), code.varyings);
+}
+
 test "through Mesa's back end, glslc's discard is facet's, to the word" {
     var work: Work = .{};
     const code = try throughMesa(&work, Cutout.words);

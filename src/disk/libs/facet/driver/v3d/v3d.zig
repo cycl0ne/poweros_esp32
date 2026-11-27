@@ -20,6 +20,8 @@ pub const frame = @import("frame.zig");
 pub const qpu = @import("qpu.zig");
 pub const compile = @import("compile.zig");
 pub const tiling = @import("tiling.zig");
+/// What the tiles draw a colour attachment of each format as (since 1.228).
+pub const target = @import("target.zig");
 /// A std.mem.Allocator over exec's AllocVec, for the compiler.
 pub const heap = @import("heap.zig");
 /// The QPU's instructions as Mesa has them (src/broadcom/qpu), which the
@@ -35,6 +37,7 @@ test {
     _ = csd;
     _ = frame;
     _ = tiling;
+    _ = target;
     _ = heap;
     _ = @import("qpu/tests.zig");
     _ = @import("compiler/validate.zig");

@@ -93,6 +93,8 @@ const max_tmu_queue_size = 8;
 
 // The tile buffer's write specifiers (nir_to_vir.c:1930).
 const tlb_type_f16_color: u32 = 3 << 6;
+const tlb_type_f32_color: u32 = 0 << 6;
+const tlb_vec_size_minus_1_shift = 0;
 const tlb_render_target_shift = 3;
 const tlb_sample_mode_per_pixel: u32 = 1 << 2;
 const tlb_f16_swap_hi_lo: u32 = 1 << 1;
@@ -139,6 +141,11 @@ pub const Key = struct {
     /// ATTACHMENT_UNUSED (v3dv_pipeline.c:2137-2142). A part draws one, as
     /// render target 0, or none (since 1.150).
     cbufs: u8 = 1,
+    /// The render targets of 32-bit channels, a bit each, which the TLB
+    /// is written a float at a time (Mesa's f32_color_rb, v3d_compiler.h):
+    /// v3dv sets it for a colour attachment of 32-bit floats
+    /// (v3dv_pipeline.c:1240-1243; since 1.228).
+    f32_color_rb: u8 = 0,
 };
 
 /// A program compiled: its instructions in `c.qpu_insts`, the uniforms it
@@ -2441,21 +2448,37 @@ fn readsReg(inst: *const Inst, r: Reg) bool {
     return false;
 }
 
-/// vir_emit_tlb_color_write (nir_to_vir.c:1955), for a render target of
-/// 16-bit floats and one sample a pixel: two pairs packed to the tile
-/// buffer, the first with its specifier where it is not the one the
-/// register is preloaded with.
+/// vir_emit_tlb_color_write (nir_to_vir.c:1955), for one sample a pixel:
+/// into a render target of 32-bit channels (the key's `f32_color_rb`,
+/// since 1.228) four words, a channel each, the first to TLBU with its
+/// specifier; into any other two pairs packed as half-floats, the first
+/// with its specifier where it is not the one the register is preloaded
+/// with.
 fn emitTlbColorWrite(e: *Emit, rt: u32) Error!void {
     const c = e.c;
     if (e.key.cbufs & (@as(u8, 1) << @intCast(rt)) == 0 or !hasColor(e)) return;
     const num_components = 4;
+    const f32_color = e.key.f32_color_rb & (@as(u8, 1) << @intCast(rt)) != 0;
     var conf: u32 = 0xffffff00;
     conf |= tlb_sample_mode_per_pixel;
     conf |= (7 - rt) << tlb_render_target_shift;
-    conf |= tlb_type_f16_color | tlb_f16_swap_hi_lo;
-    conf |= if (num_components >= 3) tlb_vec_size_4_f16 else tlb_vec_size_2_f16;
+    if (f32_color) {
+        conf |= tlb_type_f32_color;
+        conf |= (num_components - 1) << tlb_vec_size_minus_1_shift;
+    } else {
+        conf |= tlb_type_f16_color | tlb_f16_swap_hi_lo;
+        conf |= if (num_components >= 3) tlb_vec_size_4_f16 else tlb_vec_size_2_f16;
+    }
 
     const color = e.outputs;
+    if (f32_color) {
+        const inst = try c.mulDest(.mov, vir.magicReg(.tlbu), .{color[0]});
+        inst.uniform = try c.getUniformIndex(.constant, conf);
+        if (num_components >= 2) _ = try c.mulDest(.mov, vir.magicReg(.tlb), .{color[1]});
+        if (num_components >= 3) _ = try c.mulDest(.mov, vir.magicReg(.tlb), .{color[2]});
+        if (num_components >= 4) _ = try c.mulDest(.mov, vir.magicReg(.tlb), .{color[3]});
+        return;
+    }
     const inst = try c.addDest(.vfpack, vir.magicReg(.tlb), .{ color[0], color[1] });
     if (conf != ~@as(u32, 0)) {
         inst.dst = vir.magicReg(.tlbu);

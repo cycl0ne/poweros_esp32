@@ -171,6 +171,11 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // three of 8 bits a channel, each kept in the tiles in its own
         // bytes (since 1.226).
         .texel_targets = true,
+        // The twenty-one of whole numbers (since 1.227), floats of 32
+        // bits blended, and what was drawn read back (since 1.228).
+        .whole_targets = true,
+        .float32_blend = true,
+        .target_reads = true,
         // Both go by the pixel at a time way the stencil test goes by:
         // the clamp holds a pixel's depth inside the viewport's range,
         // and the bounds test reads the depth already there.
