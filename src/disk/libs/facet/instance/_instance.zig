@@ -241,11 +241,20 @@ pub const Capabilities = extern struct {
     input_attachments: bool = false,
     /// An input attachment the same subpass draws into: the fragment's
     /// own pixel, read out of the tile (`shader.Fragments.input`, since
-    /// 1.64). The cores have it; the V3D has not, v3dv reading such an
-    /// attachment out of the tile buffer (lower_tlb_input_attachment_instr,
-    /// v3dv_pipeline.c:301-356), which is not ported. False where
+    /// 1.64). The cores have it, and the V3D since 1.237, which reads
+    /// such an attachment out of the tile buffer as v3dv does
+    /// (lower_tlb_input_attachment_instr, v3dv_pipeline.c:301-356): its
+    /// pipelines are keyed by the subpass's `tile_inputs`. False where
     /// CreateRenderPass refuses such a subpass (since 1.216).
     tile_inputs: bool = false,
+    /// A subpass may read several of the colour attachments it draws into
+    /// and still be drawn together, each read out of its own render
+    /// target: v3dv's TLB reads, one of each render target
+    /// (vir_emit_tlb_color_read, nir_to_vir.c:2731-2815). The V3D has it
+    /// (since 1.237). The cores have not: a fragment function is given
+    /// the pixels of one plane, so a subpass that reads two of its own is
+    /// drawn a part for each.
+    every_tile_input: bool = false,
     /// Whether a render pass may keep its stencil attachment: the stencil
     /// load and store ops, a plane of the image's rows beside the depth's
     /// (`s8_uint`, `d16_unorm_s8_uint`), so a stencil outlives its pass

@@ -2288,7 +2288,7 @@ In facet, which attachment a fragment function reads is the descriptor it reads 
 
 ### 52. Carry sampler state into the IR, so a compiled shader honours the bound sampler instead of painting magenta **[critical path]**
 
-*samplers / shader compiler* &mdash; conformance-blocking, large
+*samplers / shader compiler* &mdash; conformance-blocking, large &mdash; **done: the cores' half in 1.83, the V3D's as item 54 (1.140 to 1.235)**
 
 After: nothing — it is the compiler path that exists today
 
@@ -2495,7 +2495,7 @@ Still left out. Each is marked *facet-wide* or *V3D-only*:
 
 ### 56. V3D: input attachments, through SubpassData in the compiler's profile **[critical path]**
 
-*V3D compiler* &mdash; conformance-blocking, large
+*V3D compiler* &mdash; conformance-blocking, large &mdash; **done in 1.214 to 1.216, and the read of an attachment the subpass draws into in 1.237**; three entries left out, all V3D-only but the 32-bit return
 
 After: SubpassData in the compiler's profile
 
@@ -2516,12 +2516,48 @@ Found independently by: features, semantics (both conformance-blocking).
 - **The pass.** Nothing new. A subpass with attachments of its own already makes a frame of its own at CmdNextSubpass, which stores its colour where the next subpass reads it, and the engine invalidates the caches before each job.
 
 Still left out. Each is marked *facet-wide* or *V3D-only*:
-- **A subpass that reads an attachment it draws into**, `error_feature_not_present` at CreateRenderPass on a device without `can.tile_inputs`, which the V3D has not. v3dv reads such an attachment out of the tile buffer (subpass_setup_tlb_input_attachments, v3dv_pass.c:95-130; lower_tlb_input_attachment_instr's load_tile_image, v3dv_pipeline.c:301-356), a TLB read the compiler does not have. Vulkan 1.0 has no feature for this either. *V3D-only*.
+- **A subpass that reads an attachment it draws into**, refused at CreateRenderPass with `error_feature_not_present` on a device without `can.tile_inputs`, which the V3D lacked. *V3D-only*. **Done in 1.237**, below.
 - **SubpassDataMS**, from step 2: an input attachment of four is made and stored, and a pipeline that reads it is refused. *V3D-only*.
 - **A stencil read as an input attachment**, refused as a sampled stencil is (`can.sampled_stencil`, item 58). *V3D-only*.
 - **The 32-bit return** for a variable not RelaxedPrecision, from step 2. *Facet-wide* on the V3D.
 
 The three *V3D-only* entries are the V3D port's own gaps, so the list for the Radeon's has nothing new from them.
+
+**Then the first of them, in 1.237: an input attachment the subpass draws into, read out of the V3D's tile buffer.** Vulkan 1.0 has no feature for such a loop. It is v3dv's way, ported:
+
+- **The subpass.** It says which of its colour locations each input attachment is, by its index, where it draws into it as well. That is `_render.Subpass.tile_inputs`, v3dv's tlb_input_attachment_location (subpass_setup_tlb_input_attachments, v3dv_pass.c:97-135), of the first four indices. A pipeline carries its subpass's (`Pipeline.tile_inputs`), and the V3D keys its fragment program on them (`compile.Key.tile_inputs`; v3dv_pipeline.c:2125-2135).
+- **The compiler.** It reads OpDecorate InputAttachmentIndex (`Sampler.input_index`). A subpassLoad whose index the key gives a render target becomes a `tile_load` of that render target, with no fetch. That is lower_tlb_input_attachment_instr's load_tile_image (v3dv_pipeline.c:301-356) and lower_tlb_load's load_tlb_color_brcm (v3d_nir_lower_load_output.c:26-98). The fetch's place, layer and texture unit go with it. The variable is still counted in info.num_images (pipeline_lower_nir, v3dv_pipeline.c:1875), so Z is still written through.
+- **The back end.** It reads the tile buffer as vir_emit_tlb_color_read does (nir_to_vir.c:2731-2815; `to_vir.emitTlbColorRead`):
+  - A thread switch comes before the first read. Where another switch follows it, the scoreboard is locked on the first switch (tlb_read_config, :2682-2727).
+  - A uniform configures the read, unless the configuration is the default 0xffffffff, as render target 0's four half-floats are.
+  - Half-floats come back two to a word, each half taken apart by an FMOV. 32-bit floats come back one to a read.
+  - Each render target is read once, however often the program reads it. Two loads of one are one step before that, as nir_opt_cse makes them in v3d_optimize_nir (v3dv_pipeline.c:386, :413), so the back end's cache of them, c->color_reads (nir_to_vir.c:2745-2812), is ported but not reached from a module: taken out, it fails no test.
+- **The pass.** `can.tile_inputs` is true on the V3D, and so is the new `can.every_tile_input`. A subpass that reads two of its own attachments is drawn together there, each read out of its own render target; the cores draw it a part for each.
+
+The tests:
+
+- Five host tests are new. Four hold the programs:
+  - glslc's subpassLoad read out of render target 0: twelve instructions, two LDTLB and no uniform.
+  - Render target 1's read, configured by 0xfffffff7, and a 32-bit target's, configured by 0xffffff3f and read a float at a time.
+  - The read beside a varying, after the last thread switch.
+  - Two reads of the attachment, which nir_opt_cse makes one, so the tile buffer is read once.
+- The fifth holds the subpass's side:
+  - the subpass's locations;
+  - a joined subpass after it, which reads none;
+  - an index past four, left out;
+  - a subpass reading two of its own drawn as one part on a device of `every_tile_input`;
+  - and the pipeline carrying the locations.
+- 4580 of the 4583 pass, 3 skipped.
+- FacetProbe 1.62 has the V3D make a subpass that reads two of its own attachments.
+- FacetBoth 1.85's "shipped input attachment of its own" draws the clockwise quad and the glass, then a barrier by region. Then the rectangle goes over them through glslc's subpassLoad of the attachment the subpass draws into, and a second subpass reads that attachment into the picture. It clears the attachment to a colour of its own: "shipped input attachment" leaves the same picture stored in it, which a fetch through the TMU would read and match.
+- On the board (f249, f250): FacetProbe 1088 of 1088. The new case is 11 of 230400 apart, 112 at worst, at the edge pixels "shipped input attachment" has (11 apart, from 154,70). The other 331 cases are as in 1.236.
+
+Left out of it, *V3D-only*:
+- **A depth or stencil the subpass tests and reads**, which v3dv reads out of the tile buffer too (FRAG_RESULT_DEPTH, v3dv_pass.c:123-124; vir_emit_tlb_ds_read, nir_to_vir.c:2817-2841). CreateRenderPass refuses it on every device (item 92).
+- **An index past four**, which v3dv fetches through the TMU (v3dv_pass.c:111-114), as facet does. The V3D's maxPerStageDescriptorInputAttachments is 4, but a subpass may name more input attachments than a stage reads.
+
+Found doing it, *V3D-only*:
+- **An input a fragment program declares and never reads is still a varying.** The walk takes each input variable at its declaration (`readModule`'s inputs), where nir_remove_dead_variables leaves Mesa none of an unread one. The read-twice test's module, glslc's with its varying's load made a second read, keeps four. The vertex program writes them all the same, so nothing is drawn wrongly: the cost is the ldvarys.
 
 ### 57. V3D: storage images, in the layout the TMU reads **[critical path]**
 

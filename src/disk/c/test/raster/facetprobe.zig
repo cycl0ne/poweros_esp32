@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetProbe";
-const VERSION_STRING = "\x00$VER: FacetProbe 1.61 (27.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetProbe 1.62 (27.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "CORES/S,V3D/S,QUIET/S";
@@ -99,11 +99,12 @@ const Can = struct {
     /// the V3D refuses the operand (item 28).
     texel_offsets: bool,
     /// Whether a subpass may read an attachment it draws into. The cores
-    /// read their own rows; the V3D refuses such a pass at
-    /// CreateRenderPass (error_feature_not_present), v3dv reading the
-    /// attachment out of the tile buffer, which its compiler does not yet
-    /// (docs/facet-vulkan10.md item 56). Vulkan has no feature for it, so
-    /// it is read off the device's type, as `samplers` is (since 1.49).
+    /// read their own rows, and the V3D since facet 1.237 the tile
+    /// buffer, as v3dv does; it refused such a pass at CreateRenderPass
+    /// (error_feature_not_present) until then (docs/facet-vulkan10.md
+    /// item 56). Vulkan has no feature for it, so it was read off the
+    /// device's type, as `samplers` is (since 1.49); true on both since
+    /// 1.62.
     tile_inputs: bool,
     /// Whether a depth of 24 bits is drawn into: X8_D24_UNORM_PACK32 and
     /// D24_UNORM_S8_UINT depth attachments. The cores draw one since facet
@@ -208,7 +209,7 @@ const Can = struct {
             // read off the format itself.
             .etc2_textures = formatOf(fb, physical, .etc2_r8g8b8_unorm_block).optimal_tiling_features != 0,
             .texel_offsets = limits.max_texel_offset != 0,
-            .tile_inputs = properties.device_type == .cpu,
+            .tile_inputs = true,
             .depth24 = true,
             .texel_targets = true,
             .whole_targets = true,
@@ -6217,16 +6218,16 @@ fn togetherChecks(probe: *Probe) void {
         probe.check(pipelineOf(probe, apart, module.?, layout.?, .{ .name = "three", .attributes = &attributes, .blends = &@as([3]facet.PipelineColorBlendAttachmentState, @splat(.{})) }) == null, "a fragment function of three colours refused there");
         return;
     }
-    // A device whose programs write several colours and read none of the
-    // attachments they draw into - the V3D since facet 1.233 - draws a
-    // plain subpass of three together, refuses one that reads two of its
-    // own (`tile_inputs`), and draws a program it compiles, not a function
-    // of the program's own that ships no words: the function of three
-    // colours is refused there (since 1.59).
-    if (!probe.can.tile_inputs) {
+    // A device whose programs write several colours - the V3D since
+    // facet 1.233 - draws a plain subpass of three together, makes one
+    // that reads two of its own, each read out of its render target
+    // since facet 1.237 (refused until then, 1.61), and draws a program
+    // it compiles, not a function of the program's own that ships no
+    // words: the function of three colours is refused there (since 1.59).
+    if (!probe.can.fragment_functions) {
         const together = togetherPass(probe, .plain) orelse return probe.check(false, "a plain subpass whose three colour attachments are drawn together");
         probe.check(true, "a plain subpass whose three colour attachments are drawn together");
-        probe.check(togetherPass(probe, .reads_two) == null, "one that reads two of its own refused, the device reading none of them");
+        probe.check(togetherPass(probe, .reads_two) != null, "one that reads two of its own made, each out of its render target");
         probe.check(pipelineOf(probe, together, module.?, layout.?, .{ .name = "three", .attributes = &attributes, .blends = &@as([3]facet.PipelineColorBlendAttachmentState, @splat(.{})) }) == null, "a fragment function of three colours that ships no words refused there");
         return;
     }

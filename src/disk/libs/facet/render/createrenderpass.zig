@@ -342,12 +342,15 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
         // fragment's own pixel, out of the tile (since 1.64).
         var reads_own: [_render.most_attachments]bool = @splat(false);
         var reads_any = false;
+        // Which colour location each input attachment is, by its index,
+        // where it is one (since 1.237).
+        var tiles: [_render.most_tile_inputs]u8 = @splat(_render.no_tile_input);
         if (subpass.input_attachment_count != 0) {
             if (!owner.physical.can.input_attachments) return .error_feature_not_present;
             if (subpass.input_attachment_count > _render.most_attachments) return .error_feature_not_present;
             // VUID-VkSubpassDescription-pInputAttachments-parameter.
             const inputs = subpass.input_attachments orelse return .error_validation_failed;
-            for (inputs[0..subpass.input_attachment_count]) |reference| {
+            for (inputs[0..subpass.input_attachment_count], 0..) |reference, input| {
                 if (reference.attachment == facet.ATTACHMENT_UNUSED) continue;
                 // VUID-VkRenderPassCreateInfo-attachment-00834.
                 if (reference.attachment >= attachments.len) return .error_validation_failed;
@@ -403,7 +406,7 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
                 // region; Vulkan allows the loop without one and leaves
                 // what it reads undefined, and it is drawn the same way.
                 if (subpass.color_attachments) |colors| {
-                    for (colors[0..subpass.color_attachment_count]) |drawn_now| {
+                    for (colors[0..subpass.color_attachment_count], 0..) |drawn_now, location| {
                         if (drawn_now.attachment != reference.attachment) continue;
                         // A colour attachment of a depth format, which no
                         // device draws into (VUID-VkSubpassDescription-pColorAttachments-02648).
@@ -411,6 +414,11 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
                         if (!owner.physical.can.tile_inputs) return .error_feature_not_present;
                         reads_own[reference.attachment] = true;
                         reads_any = true;
+                        // The first location it is at, as v3dv's loop
+                        // breaks at it (v3dv_pass.c:116-122); an index
+                        // past v3dv's four is read through the texture
+                        // unit there (:111-114).
+                        if (input < tiles.len and tiles[input] == _render.no_tile_input) tiles[input] = @intCast(location);
                     }
                 }
                 // Its own depth attachment, tested and read at once in a
@@ -449,13 +457,17 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
         for (colors) |reference| {
             if (reference.attachment < reads_own.len and reads_own[reference.attachment]) own_reads += 1;
         }
-        const together = owner.physical.can.several_outputs and own_reads <= 1;
+        // On a device whose programs read any of them out of the tile
+        // buffer, its own render target each, it is drawn together
+        // whatever it reads (`every_tile_input`, the V3D; since 1.237).
+        const together = owner.physical.can.several_outputs and (own_reads <= 1 or owner.physical.can.every_tile_input);
         // A subpass that reads what it draws is a part of its own: what it
         // reads is the tile as this part starts, so it does not go on in
         // the part before it (since 1.64).
         if (number > 0 and !reads_any and sameTargets(info.subpasses[number - 1], subpass)) {
             plan.subpasses[number] = plan.subpasses[number - 1];
             plan.subpasses[number].joined = true;
+            plan.subpasses[number].tile_inputs = tiles;
             continue;
         }
         var depth_index: ?u32 = null;
@@ -555,6 +567,7 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
             .part_count = if (together or used == 0) 1 else used,
             .color_count = subpass.color_attachment_count,
             .joined = false,
+            .tile_inputs = tiles,
         };
         if (plan.part_count + plan.subpasses[number].part_count > _render.most_parts) return .error_feature_not_present;
         var whole = _render.Part{

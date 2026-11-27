@@ -30,6 +30,9 @@
 //! subpassLoad of an image a first subpass drew into and the pass does
 //! not keep, read by a second subpass at each pixel's own place: the V3D
 //! fetches it through the TMU where the first subpass's frame stored it.
+//! The shipped input attachment of its own (since 1.85) is the same
+//! subpassLoad in the subpass that draws into the image, after a barrier
+//! by region: the V3D reads it out of the tile buffer since facet 1.237.
 //! The texture stored by a function (since 1.76) is written by a compute
 //! function of the program's, each group a texel, and drawn: on the V3D
 //! the function runs on the cores, which write each texel where its TMU
@@ -183,7 +186,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.84 (27.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.85 (27.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -10382,6 +10385,12 @@ const Side = struct {
     input_set_layout: ?*facet.DescriptorSetLayout = null,
     input_layout: ?*facet.PipelineLayout = null,
     input_set: ?*facet.DescriptorSet = null,
+    /// The pass whose first subpass reads `input` where it draws into it,
+    /// its framebuffer, and a set of it in the general layout that loop
+    /// asks for (since 1.85).
+    own_pass: ?*facet.RenderPass = null,
+    own_frame: ?*facet.Framebuffer = null,
+    own_set: ?*facet.DescriptorSet = null,
     /// The texture a compute function writes, its view, the set layout,
     /// layout, pipeline and set it writes it through, and the set a draw
     /// samples it through (since 1.76).
@@ -10531,7 +10540,7 @@ const Side = struct {
         const binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .sampled_image, .stage_flags = facet.SHADER_STAGE_FRAGMENT };
         try expect(fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&binding) }, &side.set_layout), error.Refused);
         // The last two are "shipped stored"'s (since 1.77).
-        try expect(fb.CreateDescriptorPool(device, &.{ .max_sets = formats.len + 10 + layered_count + throughs.len + shadow_ops.len + formats.len * 2 + 4 + 2 }, &side.descriptor_pool), error.Refused);
+        try expect(fb.CreateDescriptorPool(device, &.{ .max_sets = formats.len + 10 + layered_count + throughs.len + shadow_ops.len + formats.len * 2 + 4 + 2 + 1 }, &side.descriptor_pool), error.Refused);
         const layouts: [formats.len]?*facet.DescriptorSetLayout = @splat(side.set_layout);
         try expect(fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = side.descriptor_pool.?, .descriptor_set_count = formats.len, .set_layouts = @ptrCast(&layouts) }, &side.sets), error.Refused);
         for (side.sets, side.texture_views) |set, texture_view| {
@@ -10815,6 +10824,33 @@ const Side = struct {
         const info = facet.DescriptorImageInfo{ .image_view = side.input_view.?, .image_layout = .shader_read_only_optimal };
         const write = facet.WriteDescriptorSet{ .dst_set = side.input_set.?, .dst_binding = 0, .descriptor_type = .input_attachment, .image_info = @ptrCast(&info) };
         fb.UpdateDescriptorSets(device, 1, @ptrCast(&write), 0, null);
+
+        // The same image read by the subpass that draws into it, in the
+        // general layout a loop is in, and by the next one (since 1.85).
+        const own = facet.AttachmentReference{ .attachment = 0, .layout = .general };
+        const own_picture = facet.AttachmentReference{ .attachment = 1, .layout = .general };
+        const own_subpasses = [2]facet.SubpassDescription{
+            .{ .input_attachment_count = 1, .input_attachments = @ptrCast(&own), .color_attachment_count = 1, .color_attachments = @ptrCast(&own) },
+            .{ .input_attachment_count = 1, .input_attachments = @ptrCast(&own), .color_attachment_count = 1, .color_attachments = @ptrCast(&own_picture) },
+        };
+        // The barrier inside the first is by region, as a subpass's
+        // dependency on itself is to say.
+        const own_written = [2]facet.SubpassDependency{
+            .{ .src_subpass = 0, .dst_subpass = 0, .src_stage_mask = written.src_stage_mask, .dst_stage_mask = written.dst_stage_mask, .src_access_mask = written.src_access_mask, .dst_access_mask = written.dst_access_mask, .dependency_flags = facet.DEPENDENCY_BY_REGION },
+            written,
+        };
+        const own_attachments = [2]facet.AttachmentDescription{
+            .{ .format = formats[0], .load_op = .clear, .store_op = .dont_care, .final_layout = .general },
+            attachments[1],
+        };
+        try expect(fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &own_attachments, .subpass_count = 2, .subpasses = &own_subpasses, .dependency_count = 2, .dependencies = &own_written }, &side.own_pass), error.Refused);
+        try expect(fb.CreateFramebuffer(device, &.{ .render_pass = side.own_pass.?, .attachment_count = 2, .attachments = &views, .width = side.width, .height = side.height }, &side.own_frame), error.Refused);
+        var own_sets: [1]?*facet.DescriptorSet = undefined;
+        try expect(fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = side.descriptor_pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&side.input_set_layout) }, &own_sets), error.Refused);
+        side.own_set = own_sets[0].?;
+        const own_info = facet.DescriptorImageInfo{ .image_view = side.input_view.?, .image_layout = .general };
+        const own_write = facet.WriteDescriptorSet{ .dst_set = side.own_set.?, .dst_binding = 0, .descriptor_type = .input_attachment, .image_info = @ptrCast(&own_info) };
+        fb.UpdateDescriptorSets(device, 1, @ptrCast(&own_write), 0, null);
     }
 
     /// A set of `sampler_set_layout` that samples `view` through
@@ -11286,6 +11322,8 @@ const Side = struct {
         fb.DestroyBuffer(device, side.computed);
         fb.DestroyBuffer(device, side.numbers);
         fb.DestroyFence(device, side.fence);
+        fb.DestroyFramebuffer(device, side.own_frame);
+        fb.DestroyRenderPass(device, side.own_pass);
         fb.DestroyFramebuffer(device, side.input_frame);
         fb.DestroyRenderPass(device, side.input_pass);
         fb.DestroyPipelineLayout(device, side.input_layout);
@@ -13001,6 +13039,38 @@ const Cases = struct {
         side.draw(quad_at, 6);
         side.end();
     }
+    /// The same, but the first subpass reads `input` where it draws into
+    /// it: the rectangle drawn over the clockwise quad and the glass
+    /// through glslc's subpassLoad of the pixel under it, after a barrier
+    /// by region; then the second reads it into the first picture, as in
+    /// `inputRead`, over a clear of its own. The V3D reads the first out
+    /// of the tile buffer, its render target 0 (docs/facet-vulkan10.md
+    /// item 56, since facet 1.237), and fetches the second through the
+    /// TMU; the cores give the function the tile's pixels (since 1.85).
+    fn inputOwn(side: *Side) Failure!void {
+        const fb = side.fb;
+        const commands = side.commands.?;
+        // A clear of its own: `inputRead` leaves its picture stored in
+        // `input`, the quad and the glass over its clear, which a fetch
+        // through the TMU would read instead of this pass's tile and
+        // match all the same.
+        const clears = [2]facet.ClearValue{ .{ .color = .{ .float32 = .{ 0.08, 0.32, 0.16, 1 } } }, .{ .color = .{ .float32 = .{ 0.05, 0.1, 0.3, 1 } } } };
+        fb.CmdBeginRenderPass(commands, &.{ .render_pass = side.own_pass.?, .framebuffer = side.own_frame.?, .render_area = side.areaOf(null), .clear_value_count = 2, .clear_values = &clears }, .@"inline");
+        side.state();
+        try side.use(.{ .pass = side.own_pass.? });
+        side.draw(clockwise_at, 6);
+        try side.use(.{ .pass = side.own_pass.?, .blend = true });
+        side.draw(glass_at, 3);
+        const written = facet.MemoryBarrier{ .src_access_mask = facet.ACCESS_COLOR_ATTACHMENT_WRITE, .dst_access_mask = facet.ACCESS_INPUT_ATTACHMENT_READ };
+        fb.CmdPipelineBarrier(commands, facet.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT, facet.PIPELINE_STAGE_FRAGMENT_SHADER, facet.DEPENDENCY_BY_REGION, 1, @ptrCast(&written), 0, null, 0, null);
+        fb.CmdBindDescriptorSets(commands, .graphics, side.input_layout.?, 0, 1, @ptrCast(&side.own_set), 0, null);
+        try side.use(.{ .pass = side.own_pass.?, .vertex = "shipped as it is", .fragment = "shipped subpass", .layout = side.input_layout.? });
+        side.draw(quad_at, 6);
+        fb.CmdNextSubpass(commands, .@"inline");
+        try side.use(.{ .pass = side.own_pass.?, .subpass = 1, .vertex = "shipped as it is", .fragment = "shipped subpass", .layout = side.input_layout.? });
+        side.draw(quad_at, 6);
+        side.end();
+    }
     /// A texture written by the compute function "stored", a group a
     /// texel, then drawn over the quad, nearest. On the V3D the function
     /// runs on the cores, which write each texel where its TMU reads it,
@@ -13367,6 +13437,7 @@ const cases = [_]Case{
     // 1.75: an image a subpass drew into, read by a later one as an input
     // attachment, which the V3D does since facet 1.216 (item 56).
     .{ .name = "shipped input attachment", .run = &Cases.inputRead },
+    .{ .name = "shipped input attachment of its own", .run = &Cases.inputOwn },
     .{ .name = "stored by a function", .run = &Cases.storedByFunction },
     // 1.77: the same texels by glslc's imageStore, which the V3D compiles
     // since facet 1.218 (item 57 step 2).
