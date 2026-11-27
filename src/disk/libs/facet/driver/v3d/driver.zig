@@ -76,6 +76,8 @@ pub const Programs = struct {
     texture_color: u32,
     array: u32,
     cube: u32,
+    /// `qpu.cube_array_fragment` (since 1.234).
+    cube_array: u32,
     volume: u32,
     shadow: u32,
     /// `qpu.no_color_fragment` (since 1.150).
@@ -101,6 +103,7 @@ pub const Colors = struct {
     texture_color: u32,
     array: u32,
     cube: u32,
+    cube_array: u32,
     volume: u32,
     shadow: u32,
 };
@@ -168,8 +171,8 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
             // 1159); the bias is what Vulkan asks at least 2 of, and the
             // field holds -128 to just under 128
             // (`tiling.SamplerState.bias`). A fixed form that wants a
-            // sampler reads it the same way where this device draws it
-            // (`samplesHere`, since 1.141).
+            // sampler reads it the same way (since 1.141; every one since
+            // 1.234).
             said.max_per_stage_descriptor_samplers = compile.most_samplers;
             said.max_sampler_lod_bias = 14;
             said.max_sampler_anisotropy = 16;
@@ -302,14 +305,14 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         .tessellation_on_device = false,
         // No QPU program discards yet, so texture_cutout is refused above.
         .discarding_fragment_forms = false,
-        // Not every fixed form that wants a sampler: the 2D, array, cube
-        // and 3D ones run here since 1.141, their programs the ones of
+        // Every fixed form that wants a sampler, since 1.234: the 2D,
+        // array, cube and 3D ones since 1.141, their programs the ones of
         // the forms without a sampler and the TMU told the bound sampler
-        // whole (`samplesHere` beside makePipeline), and the shadow one
-        // since 1.142, but the cube of an array is refused and drawn on
-        // the cores. A generated program's sampler is the TMU's whole
-        // since 1.140 (`tiling.samplerOf`).
-        .samplers = false,
+        // whole (beside makePipeline), the shadow one since 1.142, and
+        // the cube of an array since 1.234; until then it was refused and
+        // drawn on the cores, and this false. A generated program's
+        // sampler is the TMU's whole since 1.140 (`tiling.samplerOf`).
+        .samplers = true,
         // The TMU's own, 2 to 16 samples, as v3dv has it
         // (v3dv_device.c:349; `tiling.anisotropyOf`). Until 1.140 this was
         // false and the limit 1, as Vulkan asks of a device without it.
@@ -369,9 +372,13 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // Storage buffer stores and atomics in a fragment program,
         // through the TMU (since 1.170).
         .fragment_stores = true,
-        // No QPU program reads a fourth coordinate, so a cube of an array
-        // is refused here: the view as well as the pipeline.
-        .cube_arrays = false,
+        // A cube of an array, as v3dv has imageCubeArray
+        // (v3dv_device.c:331; since 1.234): the view, told the TMU as
+        // many cubes deep (`_play.zig`'s `tmuConfiguration`;
+        // v3dvx_image.c:89-93), and the fixed forms that read it, whose
+        // program writes which cube to TMUI (`qpu.cube_array_fragment`).
+        // Refused, view and pipeline, until 1.234.
+        .cube_arrays = true,
         // ETC2 and EAC are unpacked by the library as they are copied in,
         // which is the same work on either device.
         .etc2_textures = true,
@@ -566,11 +573,11 @@ fn bringUp(sys: *ExecBase, hardware: *Hardware) bool {
 }
 
 /// The fixed forms' programs for 32-bit floats, in `Colors`' order.
-const wide_fragments = [_]*const qpu.Fragment{ &qpu.wide_color_fragment, &qpu.wide_texture_fragment, &qpu.wide_texture_color_fragment, &qpu.wide_array_fragment, &qpu.wide_cube_fragment, &qpu.wide_volume_fragment, &qpu.wide_shadow_fragment };
+const wide_fragments = [_]*const qpu.Fragment{ &qpu.wide_color_fragment, &qpu.wide_texture_fragment, &qpu.wide_texture_color_fragment, &qpu.wide_array_fragment, &qpu.wide_cube_fragment, &qpu.wide_cube_array_fragment, &qpu.wide_volume_fragment, &qpu.wide_shadow_fragment };
 
 /// Every program in one block of the V3D's.
 fn loadPrograms(hardware: *Hardware) bool {
-    const fragments = [_]*const qpu.Fragment{ &qpu.color_fragment, &qpu.texture_fragment, &qpu.texture_color_fragment, &qpu.array_fragment, &qpu.cube_fragment, &qpu.volume_fragment, &qpu.shadow_fragment, &qpu.no_color_fragment, &qpu.words_fragment, &qpu.targeted_color_fragment } ++ wide_fragments;
+    const fragments = [_]*const qpu.Fragment{ &qpu.color_fragment, &qpu.texture_fragment, &qpu.texture_color_fragment, &qpu.array_fragment, &qpu.cube_fragment, &qpu.cube_array_fragment, &qpu.volume_fragment, &qpu.shadow_fragment, &qpu.no_color_fragment, &qpu.words_fragment, &qpu.targeted_color_fragment } ++ wide_fragments;
     var words: usize = qpu.coordinate_program.len;
     for (0..qpu.most_varyings + 1) |varyings| words += qpu.vertexProgram(@intCast(varyings)).len;
     for (fragments) |fragment| words += fragment.code.len;
@@ -597,6 +604,7 @@ fn loadPrograms(hardware: *Hardware) bool {
     hardware.programs.texture_color = put(block, &used, qpu.texture_color_fragment.code);
     hardware.programs.array = put(block, &used, qpu.array_fragment.code);
     hardware.programs.cube = put(block, &used, qpu.cube_fragment.code);
+    hardware.programs.cube_array = put(block, &used, qpu.cube_array_fragment.code);
     hardware.programs.volume = put(block, &used, qpu.volume_fragment.code);
     hardware.programs.shadow = put(block, &used, qpu.shadow_fragment.code);
     hardware.programs.no_color = put(block, &used, qpu.no_color_fragment.code);
@@ -604,7 +612,7 @@ fn loadPrograms(hardware: *Hardware) bool {
     hardware.programs.targeted_color = put(block, &used, qpu.targeted_color_fragment.code);
     var wide: [wide_fragments.len]u32 = undefined;
     for (&wide, wide_fragments) |*address, fragment| address.* = put(block, &used, fragment.code);
-    hardware.programs.wide = .{ .color = wide[0], .texture = wide[1], .texture_color = wide[2], .array = wide[3], .cube = wide[4], .volume = wide[5], .shadow = wide[6] };
+    hardware.programs.wide = .{ .color = wide[0], .texture = wide[1], .texture_color = wide[2], .array = wide[3], .cube = wide[4], .cube_array = wide[5], .volume = wide[6], .shadow = wide[7] };
     hardware.no_color = noColorShader(block, hardware.programs.no_color);
     hardware.space.toGpu(&block);
     hardware.programs_block = block;
@@ -878,34 +886,23 @@ fn madePipeline(pipeline: *Pipeline) facet.Result {
     }
     // A form that drops pixels needs a QPU program that discards, which no
     // fixed form's has yet, so such a pipeline is refused here and drawn
-    // on the cores. Nor is there a program for a cube of an array, which
-    // reads a fourth coordinate (since 1.46). A form that samples through
-    // the sampler bound beside its texture is drawn where `samplesHere`
-    // says, and refused elsewhere.
-    if (fixed.kind == .texture_cube_array or fixed.discards() or (fixed.needsSampler() and !samplesHere(fixed)) or pipeline.varyings != fixed.varyings()) return .error_feature_not_present;
+    // on the cores.
+    //
+    // Every form that samples through the sampler bound beside its
+    // texture is drawn here: it runs the program of the form it is
+    // otherwise, with the TMU told the sampler whole as v3dv packs it
+    // (`_play.zig`'s `textureUniforms`). The 2D texture, the layer of an
+    // array, the cube and the 3D texture since 1.141; the shadow one
+    // since 1.142, whose program writes the reference to TMUDREF, where
+    // the TMU compares (v3d_tex.c:155-157; `qpu.shadow_code`); and a
+    // cube of an array since 1.234, whose program writes which cube to
+    // TMUI (`qpu.cube_array_fragment`). A cube is read over its seams with
+    // the sampler's wraps saying nothing of it, as Vulkan has it (the
+    // spec's "Wrapping Operation") and as the cores read it since 1.60
+    // (`texture.sampleCubeBy`); v3dv packs the wraps as they are whatever
+    // the view (v3dvx_device.c:255-257), and so does this.
+    if (fixed.discards() or pipeline.varyings != fixed.varyings()) return .error_feature_not_present;
     return .success;
-}
-
-/// Whether this device draws `fixed`, a form that samples through the
-/// sampler bound beside its texture. It runs the program of the form it is
-/// otherwise, with the TMU told the sampler whole as v3dv packs it
-/// (`_play.zig`'s `textureUniforms`, since 1.141): a 2D texture, a layer
-/// of an array, a cube and a 3D texture. A cube is read over its seams
-/// with the sampler's wraps saying nothing of it, as Vulkan has it (the
-/// spec's "Wrapping Operation") and as the cores read it since 1.60
-/// (`texture.sampleCubeBy`); v3dv packs the wraps as they are whatever
-/// the view (v3dvx_device.c:255-257), and so does this.
-///
-/// `texture_shadow` since 1.142: its program writes the reference to
-/// TMUDREF, where the TMU compares (v3d_tex.c:155-157; `qpu.shadow_code`),
-/// and the depth it reads is a D16_UNORM laid out as a texture. One it
-/// refuses: `texture_cube_array_sampled`, as no program reads a cube of an
-/// array.
-fn samplesHere(fixed: facet.shader.Fixed) bool {
-    return switch (fixed.kind) {
-        .texture_sampled, .texture_array_sampled, .texture_cube_sampled, .texture_3d_sampled, .texture_shadow => true,
-        else => false,
-    };
 }
 
 /// Whether the pipeline's program covers by its colour's alpha: alpha to

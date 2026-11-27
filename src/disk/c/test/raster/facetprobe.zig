@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetProbe";
-const VERSION_STRING = "\x00$VER: FacetProbe 1.59 (27.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetProbe 1.60 (27.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "CORES/S,V3D/S,QUIET/S";
@@ -79,7 +79,6 @@ const Can = struct {
     pipeline_statistics_queries: bool,
     cube_arrays: bool,
     several_outputs: bool,
-    samplers: bool,
     kept_compressed: bool,
     kept_floats: bool,
     wide_channels: bool,
@@ -180,7 +179,6 @@ const Can = struct {
             .cube_arrays = features.image_cube_array == facet.TRUE,
             // What one fragment function may write.
             .several_outputs = limits.max_fragment_output_attachments > 1,
-            .samplers = properties.device_type == .cpu,
             // A device that keeps a format's bytes as it was given them can
             // copy them back out, which is the transfer bit on a format it
             // cannot otherwise do anything with.
@@ -5679,8 +5677,9 @@ fn heldChecks(probe: *Probe) void {
     const volume_view = probe.viewed(.{ .image = volume_image, .format = .b8g8r8a8_unorm, .view_type = .@"3d" }) orelse
         return probe.check(false, "a view of the 3D image");
     // A view of cubes as an array is made only where the device has them
-    // (`image_cube_array`): not on the V3D, which since 1.141 gets this
-    // far, and whose cases of it are left out below.
+    // (`image_cube_array`): on the cores, and on the V3D since facet
+    // 1.234, which since 1.141 got this far and until 1.234 left its
+    // cases out below.
     const arrays = probe.can.cube_arrays;
     const cubes_view = if (!arrays) null else probe.viewed(.{ .image = cubes_image, .format = .b8g8r8a8_unorm, .view_type = .cube_array, .subresource_range = .{ .layer_count = 12 } }) orelse
         return probe.check(false, "a view of the two cubes as an array of them");
@@ -5746,17 +5745,12 @@ fn heldChecks(probe: *Probe) void {
         return probe.check(false, "one whose form reads a cube through a sampler");
     const of_volume = pipelineOf(probe, pass, module.?, written_pipes.?, .{ .attributes = &attributes, .stride = 12, .name = "volumeby" }) orelse
         return probe.check(false, "one whose form reads a 3D texture through a sampler");
-    // A cube of an array through a sampler is drawn where every form that
-    // reads one is - the cores. The V3D draws the others since 1.141, its
-    // programs those of the forms without a sampler, and has no program
-    // for a cube of an array: refused there, and its checks below left
-    // out. Until 1.141 every form here was refused on the V3D.
+    // A cube of an array through a sampler, on every device that has
+    // cubes of an array: the V3D draws it since facet 1.234, its program
+    // writing which cube to TMUI, and until then refused it, as it
+    // refused every form here until 1.141.
     const of_cubes = pipelineOf(probe, pass, module.?, written_pipes.?, .{ .attributes = &attributes, .stride = 12, .name = "cubesby" });
-    if (probe.can.samplers) {
-        probe.check(of_cubes != null, "one whose form reads a cube of an array through a sampler");
-    } else {
-        probe.check(of_cubes == null, "one whose form reads a cube of an array through a sampler refused where not every form that reads one is drawn");
-    }
+    probe.check((of_cubes != null) == arrays, if (arrays) "one whose form reads a cube of an array through a sampler" else "one whose form reads a cube of an array through a sampler refused where there are none");
     const of_wide = pipelineOf(probe, pass, module.?, written_pipes.?, .{ .attributes = &attributes, .stride = 12, .name = "wideby" }) orelse
         return probe.check(false, "one that reads past the texture's edges");
     const of_held = pipelineOf(probe, pass, module.?, held_pipes.?, .{ .attributes = &attributes, .stride = 12, .name = "wideby" }) orelse

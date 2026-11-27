@@ -91,8 +91,9 @@ const Sampler = _sampler.Sampler;
 /// `texture_shadow`, since 1.49 `texture_array_sampled`,
 /// `texture_cube_sampled` and `texture_3d_sampled`, and since 1.53
 /// `texture_cube_array_sampled`) is refused on a device whose
-/// `Capabilities.samplers` is false, or some of them are: the V3D draws
-/// the 2D, array, cube and 3D ones since 1.141.
+/// `Capabilities.samplers` is false, or some of them are: the V3D drew
+/// the 2D, array, cube and 3D ones since 1.141, and every one since
+/// 1.234.
 ///
 /// CONTEXT:
 /// - Waits: no.

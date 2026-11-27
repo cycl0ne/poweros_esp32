@@ -421,6 +421,34 @@ const cube_code = varying(4) ++ varying(5) ++ varying(6) ++ [_]u64{
 
 pub const cube_fragment = Fragment{ .code = &cube_code, .varyings = 3, .uniforms = 2 };
 
+/// A cube of an array: varyings x, y, z and which cube. The direction is
+/// normalized as a cube's is, and the cube is left as it is, as
+/// nir_normalize_cubemap_coords leaves an array's index
+/// (nir_normalize_cubemap_coords.c:59-65). It goes to TMUI after TMUR,
+/// as handle_tex_src writes an array's index after the coordinate's
+/// other floats (v3d_tex.c:108-127), a float the TMU rounds and holds to
+/// the texture's depth, which the draw makes the view's cubes
+/// (v3dvx_image.c:89-93); the lookup is a cube's, at TMUSCM
+/// (v3d_tex.c:378-379). Since 1.234.
+const cube_array_code = varying(4) ++ varying(5) ++ varying(6) ++ varying(7) ++ [_]u64{
+    fmaxAbs(12, 4, 5),
+    fmaxAbs(12, 12, 6),
+    recip(13, 12),
+    nop,
+    nop,
+    fmul(4, 4, 13),
+    fmul(5, 5, 13),
+    fmul(6, 6, 13),
+    movMagic(WADDR_TMUT, 5),
+    movMagic(WADDR_TMUR, 6),
+    movMagic(WADDR_TMUI, 7),
+    wrtmuc,
+    wrtmuc,
+    movMagic(WADDR_TMUSCM, 4),
+} ++ sample_end;
+
+pub const cube_array_fragment = Fragment{ .code = &cube_array_code, .varyings = 4, .uniforms = 2 };
+
 /// A texture as `texture_code` has it, times the colour of the vertices:
 /// varyings s, t, red, green, blue, alpha.
 const texture_color_code = varying(4) ++ varying(5) ++ varying(6) ++ varying(7) ++ varying(8) ++ varying(9) ++ sampled(4, 5) ++ [_]u64{
@@ -558,6 +586,7 @@ pub const wide_texture_fragment = wide(texture_fragment);
 pub const wide_texture_color_fragment = wide(texture_color_fragment);
 pub const wide_array_fragment = wide(array_fragment);
 pub const wide_cube_fragment = wide(cube_fragment);
+pub const wide_cube_array_fragment = wide(cube_array_fragment);
 pub const wide_volume_fragment = wide(volume_fragment);
 pub const wide_shadow_fragment = wide(shadow_fragment);
 
@@ -617,7 +646,7 @@ test "fmul and fadd read and write where qpu_pack.c puts them" {
 }
 
 test "a program keeps to the registers a thread has, on both sides and in its signals" {
-    const programs = [_]Fragment{ flat_fragment, color_fragment, texture_fragment, texture_color_fragment, array_fragment, cube_fragment, volume_fragment, shadow_fragment };
+    const programs = [_]Fragment{ flat_fragment, color_fragment, texture_fragment, texture_color_fragment, array_fragment, cube_fragment, cube_array_fragment, volume_fragment, shadow_fragment };
     for (programs) |fragment| {
         var waits: u32 = 0;
         for (fragment.code, 0..) |instruction, at| {
@@ -703,7 +732,7 @@ test "a fixed form's program for floats of 32 bits: each write of two half-float
     try std.testing.expectEqual(movTo(.tlbu, 6), products[0]);
     try std.testing.expectEqual(movTo(.tlb, 9), products[3]);
     // Every variant writes the tile buffer four times, once to TLBU.
-    for ([_]Fragment{ wide_color_fragment, wide_texture_fragment, wide_texture_color_fragment, wide_array_fragment, wide_cube_fragment, wide_volume_fragment, wide_shadow_fragment }) |each| {
+    for ([_]Fragment{ wide_color_fragment, wide_texture_fragment, wide_texture_color_fragment, wide_array_fragment, wide_cube_fragment, wide_cube_array_fragment, wide_volume_fragment, wide_shadow_fragment }) |each| {
         var tlb: u32 = 0;
         var tlbu: u32 = 0;
         for (each.code) |word| {
@@ -716,6 +745,30 @@ test "a fixed form's program for floats of 32 bits: each write of two half-float
         try std.testing.expectEqual(@as(u32, 1), tlbu);
     }
     try std.testing.expectEqual(@as(u32, 0xFFFF_FF3F), tlb_f32_specifier);
+}
+
+test "a cube of an array is the cube's program and a fourth varying, which cube, written to TMUI after TMUR as handle_tex_src writes an array's index, the lookup at TMUSCM (since 1.234)" {
+    const cube = cube_fragment.code;
+    const cubes = cube_array_fragment.code;
+    try std.testing.expectEqual(@as(u32, 4), cube_array_fragment.varyings);
+    try std.testing.expectEqual(cube_fragment.uniforms, cube_array_fragment.uniforms);
+    try std.testing.expectEqual(cube.len + 4, cubes.len);
+    // The cube's three varyings, then the fourth into rf7.
+    try std.testing.expectEqualSlices(u64, cube[0..9], cubes[0..9]);
+    try std.testing.expectEqualSlices(u64, &varying(7), cubes[9..12]);
+    // The direction normalized and written to T and R as a cube's is,
+    // the cube left out of it (nir_normalize_cubemap_coords.c:59-65).
+    try std.testing.expectEqualSlices(u64, cube[9..19], cubes[12..22]);
+    try std.testing.expectEqual(movMagic(WADDR_TMUR, 6), cubes[21]);
+    try std.testing.expectEqual(movMagic(WADDR_TMUI, 7), cubes[22]);
+    // The configuration, the lookup at TMUSCM and the rest as the cube's.
+    try std.testing.expectEqualSlices(u64, cube[19..], cubes[23..]);
+    try std.testing.expectEqual(movMagic(WADDR_TMUSCM, 4), cubes[25]);
+    // Nothing but the varying writes rf7.
+    for (cubes, 0..) |word, at| {
+        if (at >= 9 and at < 12) continue;
+        for (destinations(word)) |side| if (side) |to| try std.testing.expect(to != 7);
+    }
 }
 
 test "the colour of the vertices into a render target but 0: its first VFPACK to TLBU, a uniform more, and each target's specifier Mesa's (since 1.233)" {

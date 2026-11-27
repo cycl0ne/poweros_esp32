@@ -7771,4 +7771,57 @@ pub const LIBRARY_VERSION = 1;
 /// the quad's edge, where the two rasterizers' edges differ as in the
 /// other cases: inside it, and over the triangle added, both render
 /// targets match the cores'.
-pub const LIBRARY_REVISION = 233;
+///
+/// 234: **A cube of an array on the V3D, through the fixed forms
+/// (docs/facet-vulkan10.md item 54: the fixed forms' half of what was
+/// left).** v3dv has imageCubeArray (v3dv_device.c:331), and so does the
+/// V3D now: `cube_arrays` is true, so a view of type `cube_array` is made
+/// there, and `texture_cube_array` and `texture_cube_array_sampled` are
+/// drawn there rather than on the cores. Their program,
+/// `qpu.cube_array_fragment`, is the cube's with a fourth varying, which
+/// cube, written to TMUI after TMUR, as handle_tex_src writes an array's
+/// index after the coordinate's other floats (v3d_tex.c:108-127). The
+/// direction is normalized as a cube's and the index left as it is, as
+/// nir_normalize_cubemap_coords leaves it
+/// (nir_normalize_cubemap_coords.c:59-65), and the lookup starts at
+/// TMUSCM (v3d_tex.c:378-379). It has a variant for 32-bit floats,
+/// `qpu.wide_cube_array_fragment`. A view says it is of cubes
+/// (`ImageView.cubes`). The TMU is told it as many cubes deep where it
+/// is sampled and as many layers deep where it is read as a storage
+/// image, as v3dv packs a cube array's two states (v3dvx_image.c:89-93,
+/// :171-174). Its size answers its cubes either way
+/// (v3dv_uniforms.c:402-407). The TMU holds the index to that depth, so
+/// a cube past the last reads as the last, as on the cores. With the
+/// cube of an array drawn there, every fixed form that reads a sampler
+/// is: `samplers` is true on the V3D, and `samplesHere`, which picked
+/// those that were, is gone.
+///
+/// A host test is new: the cube of an array's program is the cube's, with
+/// the fourth varying into rf7 written nowhere else, and its TMUI write
+/// after TMUR and before the configuration. 4569 of the 4572 pass, 3
+/// skipped. FacetProbe 1.60 has no `samplers` field any more, which said
+/// "the cores": its checks of both forms, which were left out on the V3D,
+/// run there. FacetBoth 1.82 has an image of two cubes, the second's faces
+/// the first's backwards. The fixed form of a cube of an array reads a
+/// face of either cube from it, past the last and filtered, and the form
+/// through a sampler reads the second cube's +z and across an edge of
+/// it. Each of 7 mutants of the cube of an array's program fails the
+/// host tests; `_play.zig` and `driver.zig` the host tests do not reach,
+/// and the board holds them.
+///
+/// On the CM5 (package f246) FacetProbe 1.60 is 1084 of 1084, 1075 at
+/// 1.233: the nine checks of cubes of an array that were left out run
+/// on the V3D, among them which cube, the second's faces, a cube past
+/// the last read as the last, and a view that begins at the second cube
+/// read as cube 0. FacetBoth 1.82's 318 cases of 1.81 are each as at
+/// 1.233. Of its 8 new ones, 6 are 0 of 230400 pixels apart. The two
+/// across an edge of the second cube are 14 apart, 192 at worst, and,
+/// through a sampler, 12 apart, 33 at worst: the seam pixels where the
+/// one cube's same cases are 14 apart, their first pixels the same.
+/// Once, after the update and a first FacetProbe that passed, the
+/// VideoCore firmware stopped answering its mailbox (CpuClock: "The
+/// firmware does not answer"), so the V3D could not be started; a
+/// reboot cured it, and it did not come back over two runs of each
+/// program in the order it came in. The same was seen on 26.11.2026,
+/// during an update.
+pub const LIBRARY_REVISION = 234;

@@ -296,8 +296,9 @@ pub const Capabilities = extern struct {
     /// levels round a point mixed, a bias on the level and a clamp,
     /// mirrored and bordered edges, and a comparison with a reference. A
     /// device without it refuses such a pipeline, as with a dropping form,
-    /// or some of them: the V3D draws the 2D, array, cube and 3D ones
-    /// since 1.141 and refuses the shadow one and the cube of an array. Samplers are made and
+    /// or some of them: the V3D drew the 2D, array, cube and 3D ones
+    /// since 1.141, the shadow one since 1.142 and the cube of an array
+    /// since 1.234, and has it since. Samplers are made and
     /// written into sets on either. This one differs
     /// between the devices of a machine, though it is down here: a field is
     /// added at the end so that none already there moves.
@@ -374,8 +375,9 @@ pub const Capabilities = extern struct {
     /// (`shader.FixedKind.texture_cube_array`, varyings x, y, z and which
     /// cube, and since 1.53 `texture_cube_array_sampled`, the same through
     /// a sampler). False where both the view and such a pipeline are
-    /// refused - Vulkan's `imageCubeArray`. The cores have it since 1.46;
-    /// no QPU program of the V3D reads the fourth coordinate.
+    /// refused - Vulkan's `imageCubeArray`. The cores have it since 1.46,
+    /// the V3D since 1.234, its program writing which cube to TMUI
+    /// (`qpu.cube_array_fragment`).
     cube_arrays: bool = false,
     /// ETC2 and EAC: `etc2_r8g8b8_unorm_block`,
     /// `etc2_r8g8b8a1_unorm_block`, `etc2_r8g8b8a8_unorm_block`,

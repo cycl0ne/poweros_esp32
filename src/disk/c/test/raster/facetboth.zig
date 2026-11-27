@@ -158,7 +158,11 @@
 //! locations 0 and 1 in the subpass of two attachments, which the V3D
 //! writes into two render targets of the one frame (facet 1.233), laid
 //! over the clear and then added over themselves where the glass
-//! triangle lies, each target blended by its own state.
+//! triangle lies, each target blended by its own state. The cubes of an
+//! array (since 1.82) are an image of two cubes, the second's faces the
+//! first's backwards, read a face of a cube at a time by the fixed form
+//! of a cube of an array and by the one through a sampler, which the V3D
+//! draws since facet 1.234.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -173,7 +177,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.81 (27.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.82 (27.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -511,6 +515,29 @@ fn cubeVertex(vertices: *const shader.Vertices) callconv(.c) void {
             else => .{ 1 - uv[0], -b * 0.7, uv[0] },
         };
         vertices.output(@intCast(k))[0..7].* = .{ p[0], p[1], p[2], p[3], towards[0], towards[1], towards[2] };
+    }
+}
+
+/// A face of a cube of an array (since 1.82): instance 7c + f is face f of
+/// cube c, as `cubeVertex` has face f, and which cube is the fourth
+/// varying. Past the second cube it reads as the last.
+fn cubesVertex(vertices: *const shader.Vertices) callconv(.c) void {
+    for (0..vertices.count) |k| {
+        const p = plain(vertices, k, 1);
+        const uv = vertices.input(@intCast(k), 2);
+        const a = uv[0] * 2 - 1;
+        const b = uv[1] * 2 - 1;
+        const towards: [3]f32 = switch (vertices.instance % 7) {
+            0 => .{ 1, -b, -a },
+            1 => .{ -1, -b, a },
+            2 => .{ a, 1, b },
+            3 => .{ a, -1, -b },
+            4 => .{ a, -b, 1 },
+            5 => .{ -a, -b, -1 },
+            else => .{ 1 - uv[0], -b * 0.7, uv[0] },
+        };
+        const which: f32 = @floatFromInt(vertices.instance / 7);
+        vertices.output(@intCast(k))[0..8].* = .{ p[0], p[1], p[2], p[3], towards[0], towards[1], towards[2], which };
     }
 }
 
@@ -9435,6 +9462,7 @@ const plain_entries = [_]shader.Entry{
     shader.vertex("array", &arrayVertex, 3),
     shader.vertex("small array", &smallArrayVertex, 3),
     shader.vertex("cube", &cubeVertex, 3),
+    shader.vertex("cubes", &cubesVertex, 4),
     shader.vertex("volume", &volumeVertex, 3),
     shader.vertex("tilted", &tiltedVertex, 4),
     shader.vertex("whole at a half", shadowVertex(0.5), 3),
@@ -9443,11 +9471,14 @@ const plain_entries = [_]shader.Entry{
     shader.fixedFragment("array bilinear", .{ .kind = .texture_array, .sampling = .{ .filter = .bilinear } }),
     shader.fixedFragment("cube", .{ .kind = .texture_cube, .sampling = .{ .filter = .nearest } }),
     shader.fixedFragment("cube bilinear", .{ .kind = .texture_cube, .sampling = .{ .filter = .bilinear } }),
+    shader.fixedFragment("cubes", .{ .kind = .texture_cube_array, .sampling = .{ .filter = .nearest } }),
+    shader.fixedFragment("cubes bilinear", .{ .kind = .texture_cube_array, .sampling = .{ .filter = .bilinear } }),
     shader.fixedFragment("volume", .{ .kind = .texture_3d, .sampling = .{ .filter = .nearest } }),
     shader.fixedFragment("volume bilinear", .{ .kind = .texture_3d, .sampling = .{ .filter = .bilinear } }),
     shader.fixedFragment("sampled", .{ .kind = .texture_sampled }),
     shader.fixedFragment("array sampled", .{ .kind = .texture_array_sampled }),
     shader.fixedFragment("cube sampled", .{ .kind = .texture_cube_sampled }),
+    shader.fixedFragment("cubes sampled", .{ .kind = .texture_cube_array_sampled }),
     shader.fixedFragment("volume sampled", .{ .kind = .texture_3d_sampled }),
     shader.fixedFragment("shadow", .{ .kind = .texture_shadow }),
     shader.fixedFragment("color", .{ .kind = .color }),
@@ -9561,6 +9592,8 @@ const Through = struct {
         first_level,
         array,
         cube,
+        /// The two cubes of an array (since 1.82).
+        cubes,
         volume,
     };
 };
@@ -9899,7 +9932,31 @@ const negated_throughs = [_]Through{
     },
 };
 
-const throughs = shipped_throughs ++ formed_throughs ++ layered_throughs ++ shipped_layered_throughs ++ levelled_throughs ++ sized_throughs ++ fetched_throughs ++ graded_throughs ++ negated_throughs;
+/// The cubes of an array through a sampler, the fixed form
+/// `texture_cube_array_sampled`, which the V3D draws since facet 1.234
+/// (since 1.82): the second cube's +z, and across an edge of it.
+const cubes_throughs = [_]Through{
+    .{
+        .label = "cubes",
+        .what = "through a sampler, the second's +z",
+        .fragment = "cubes sampled",
+        .info = .{ .mag_filter = .nearest, .min_filter = .nearest, .max_lod = facet.texture.lod_unclamped },
+        .vertex = "cubes",
+        .instance = 7 + 4,
+        .view = .cubes,
+    },
+    .{
+        .label = "cubes",
+        .what = "through a sampler, the second's across an edge",
+        .fragment = "cubes sampled",
+        .info = .{ .max_lod = facet.texture.lod_unclamped },
+        .vertex = "cubes",
+        .instance = 7 + 6,
+        .view = .cubes,
+    },
+};
+
+const throughs = shipped_throughs ++ formed_throughs ++ layered_throughs ++ shipped_layered_throughs ++ levelled_throughs ++ sized_throughs ++ fetched_throughs ++ graded_throughs ++ negated_throughs ++ cubes_throughs;
 
 /// What the shadow-map cases compare with (`Cases.shadowed`): the
 /// reference less than the depth, and greater (since 1.14).
@@ -9916,6 +9973,8 @@ const unpacked_side: u32 = 16;
 const Layered = enum(u8) {
     array,
     cube,
+    /// Two cubes, twelve layers, viewed as an array of them (since 1.82).
+    cubes,
     volume,
     /// One of the array's layers, as a texture of one.
     array_layer,
@@ -10764,6 +10823,7 @@ const Side = struct {
                 .first_level => side.first_level,
                 .array => side.layered_views[@intFromEnum(Layered.array)],
                 .cube => side.layered_views[@intFromEnum(Layered.cube)],
+                .cubes => side.layered_views[@intFromEnum(Layered.cubes)],
                 .volume => side.layered_views[@intFromEnum(Layered.volume)],
             };
             const info = facet.DescriptorImageInfo{ .sampler = made.*, .image_view = read };
@@ -10846,6 +10906,7 @@ const Side = struct {
         const kept = facet.Format.r8g8b8a8_unorm;
         try side.image(.{ .format = kept, .extent = square, .mip_levels = array_levels, .array_layers = array_layers, .usage = usage | facet.IMAGE_USAGE_TRANSFER_SRC }, 0, side.layeredImage(.array));
         try side.image(.{ .format = kept, .flags = facet.IMAGE_CREATE_CUBE_COMPATIBLE, .extent = square, .array_layers = 6, .usage = usage }, 0, side.layeredImage(.cube));
+        try side.image(.{ .format = kept, .flags = facet.IMAGE_CREATE_CUBE_COMPATIBLE, .extent = square, .array_layers = 12, .usage = usage }, 0, side.layeredImage(.cubes));
         try side.image(.{ .format = kept, .image_type = .@"3d", .extent = .{ .width = volume_side, .height = volume_side, .depth = volume_depth }, .usage = usage }, 0, side.layeredImage(.volume));
         try side.image(.{ .format = kept, .extent = square, .array_layers = 2, .usage = usage }, 0, side.layeredImage(.copied));
         const small = facet.Extent3D{ .width = unpacked_side, .height = unpacked_side };
@@ -10854,6 +10915,7 @@ const Side = struct {
         const array = side.layeredImage(.array).*.?;
         try side.layeredView(.array, .{ .image = array, .format = kept, .view_type = .@"2d_array" });
         try side.layeredView(.cube, .{ .image = side.layeredImage(.cube).*.?, .format = kept, .view_type = .cube });
+        try side.layeredView(.cubes, .{ .image = side.layeredImage(.cubes).*.?, .format = kept, .view_type = .cube_array });
         try side.layeredView(.volume, .{ .image = side.layeredImage(.volume).*.?, .format = kept, .view_type = .@"3d" });
         try side.layeredView(.array_layer, .{ .image = array, .format = kept, .subresource_range = .{ .level_count = 1, .base_array_layer = 2, .layer_count = 1 } });
         try side.layeredView(.copied, .{ .image = side.layeredImage(.copied).*.?, .format = kept, .subresource_range = .{ .base_array_layer = 1, .layer_count = 1 } });
@@ -10890,6 +10952,17 @@ const Side = struct {
                 used += 4;
             };
             fb.CmdCopyBufferToImage(commands, side.layered_staging.?, side.layeredImage(.cube).*.?, .transfer_dst_optimal, 1, @ptrCast(&region));
+        }
+        // The second cube's faces the first's backwards, so that a face
+        // read from the wrong cube shows.
+        for (0..12) |layer| {
+            const region = facet.BufferImageCopy{ .buffer_offset = used, .image_subresource = .{ .base_array_layer = @intCast(layer) }, .image_extent = square };
+            const face = if (layer < 6) layer else 11 - layer;
+            for (0..layer_side) |y| for (0..layer_side) |x| {
+                staged[used..][0..4].* = layerTexel(face, 0, x, y);
+                used += 4;
+            };
+            fb.CmdCopyBufferToImage(commands, side.layered_staging.?, side.layeredImage(.cubes).*.?, .transfer_dst_optimal, 1, @ptrCast(&region));
         }
         const slices = facet.BufferImageCopy{ .buffer_offset = used, .image_extent = .{ .width = volume_side, .height = volume_side, .depth = volume_depth } };
         for (0..volume_depth) |slice| for (0..volume_side) |y| for (0..volume_side) |x| {
@@ -13126,6 +13199,12 @@ const cases = [_]Case{
     .{ .name = "cube, -z", .run = Cases.layer(.cube, "cube", "cube", 5) },
     .{ .name = "cube, across an edge", .run = Cases.layer(.cube, "cube", "cube", 6) },
     .{ .name = "cube, filtered", .run = Cases.layer(.cube, "cube", "cube bilinear", 4) },
+    .{ .name = "cubes, the first's +z", .run = Cases.layer(.cubes, "cubes", "cubes", 4) },
+    .{ .name = "cubes, the second's -x", .run = Cases.layer(.cubes, "cubes", "cubes", 7 + 1) },
+    .{ .name = "cubes, the second's +z", .run = Cases.layer(.cubes, "cubes", "cubes", 7 + 4) },
+    .{ .name = "cubes, the second's across an edge", .run = Cases.layer(.cubes, "cubes", "cubes", 7 + 6) },
+    .{ .name = "cubes, past the last", .run = Cases.layer(.cubes, "cubes", "cubes", 14 + 4) },
+    .{ .name = "cubes, filtered", .run = Cases.layer(.cubes, "cubes", "cubes bilinear", 7 + 4) },
     .{ .name = "3D, slice 0", .run = Cases.layer(.volume, "volume", "volume", 0) },
     .{ .name = "3D, slice 3", .run = Cases.layer(.volume, "volume", "volume", 3) },
     .{ .name = "3D, slice 7", .run = Cases.layer(.volume, "volume", "volume", 7) },

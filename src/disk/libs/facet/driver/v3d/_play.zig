@@ -1719,10 +1719,11 @@ fn pickOf(source: facet.texture.Swizzle.Source) tiling.Pick {
 }
 
 /// The TMU's two words for the texture bound at `set`, `binding`, read
-/// as `how` says, `compared` with the reference the program writes.
-/// Null without a texture bound, with one of a format the TMU does not
-/// read, a comparison of anything but a depth, or with no memory.
-fn tmuConfiguration(queue: *Queue, set: u32, binding: u32, how: tiling.Sampled, compared: bool) ?Configuration {
+/// as `how` says, `compared` with the reference the program writes, and
+/// as a storage image where `storage`. Null without a texture bound,
+/// with one of a format the TMU does not read, a comparison of anything
+/// but a depth, or with no memory.
+fn tmuConfiguration(queue: *Queue, set: u32, binding: u32, how: tiling.Sampled, compared: bool, storage: bool) ?Configuration {
     const player = playerOf(queue);
     // A dispatch's storage images are its own sets' (since 1.218).
     const sampled = resourcesOf(player).sampled(set, binding, 0) orelse return null;
@@ -1754,7 +1755,15 @@ fn tmuConfiguration(queue: *Queue, set: u32, binding: u32, how: tiling.Sampled, 
     // is its `layer_bytes`, as v3dv tells them (v3dvx_image.c:107,
     // v3dv_image.c:135): the TMU finds a smaller level's from there.
     const first_layer = if (image.volume) 0 else view.base_layer * image.layer_bytes;
-    tiling.writeTextureState(state.cpu[0..tiling.texture_state_bytes], &layout, texels, picks, @intCast(@intFromPtr(image.data) + first_layer), view.base_level, view.base_level + view.level_count - 1, view.layer_count, @intCast(image.layer_bytes));
+    // A view of cubes is as many cubes deep where it is sampled, the
+    // index a cube's lookup takes at TMUI, and as many layers where it
+    // is read as a storage image, its faces' layers, as v3dv packs a
+    // cube array's two states (v3dvx_image.c:89-93, :171-174); a size
+    // query answers its cubes either way (v3dv_uniforms.c:402-407; since
+    // 1.234).
+    const cubes = if (view.cubes) view.layer_count / 6 else view.layer_count;
+    const depth = if (storage) view.layer_count else cubes;
+    tiling.writeTextureState(state.cpu[0..tiling.texture_state_bytes], &layout, texels, picks, @intCast(@intFromPtr(image.data) + first_layer), view.base_level, view.base_level + view.level_count - 1, depth, @intCast(image.layer_bytes));
     const sampler = carve(queue, tiling.sampler_state_bytes, tiling.sampler_state_alignment) orelse return null;
     tiling.writeSamplerState(sampler.cpu[0..tiling.sampler_state_bytes], how.state);
     // vk_image_view's extent is its first level's (vk_image.c), which v3dv
@@ -1764,7 +1773,7 @@ fn tmuConfiguration(queue: *Queue, set: u32, binding: u32, how: tiling.Sampled, 
         @max(image.width >> @intCast(level), 1),
         @max(image.height >> @intCast(level), 1),
         if (image.volume) @max(image.layers >> @intCast(level), 1) else 1,
-        view.layer_count,
+        cubes,
         view.level_count,
     };
     return .{ .texture = tiling.parameter0(state.address), .sampler = tiling.parameter1(sampler.address, how.unnormalized), .sizes = sizes };
@@ -1792,13 +1801,13 @@ fn textureUniforms(queue: *Queue, fixed: shader.Fixed) ?u32 {
             .nearest => .nearest,
             .bilinear => .bilinear,
         };
-        const wrap: tiling.Wrap = if (fixed.kind == .texture_cube) .clamp else switch (fixed.sampling.address) {
+        const wrap: tiling.Wrap = if (fixed.kind == .texture_cube or fixed.kind == .texture_cube_array) .clamp else switch (fixed.sampling.address) {
             .wrap => .repeat,
             .clamp => .clamp,
         };
         break :own .{ .state = .{ .mag = filter, .min = filter, .wrap = @splat(wrap) } };
     };
-    const made = tmuConfiguration(queue, 0, 0, how, dref) orelse return null;
+    const made = tmuConfiguration(queue, 0, 0, how, dref, false) orelse return null;
     // And after the two, where the program writes 32-bit floats, the
     // specifier its TLBU write reads (`qpu.wide`, since 1.228).
     const wide = fixedWide(playerOf(queue));
@@ -1823,6 +1832,7 @@ fn colorsOf(player: *const Player) driver.Colors {
         .texture_color = programs.texture_color,
         .array = programs.array,
         .cube = programs.cube,
+        .cube_array = programs.cube_array,
         .volume = programs.volume,
         .shadow = programs.shadow,
     };
@@ -1883,7 +1893,7 @@ fn sampledBy(queue: *Queue, which: compile.Sampler) ?Configuration {
     // state: the TMU is pointed at the view with a default one, as v3dv
     // binds one for a txf with none (v3dv_pipeline.c:1877-1891, :833-841;
     // since 1.216).
-    if (which.input_attachment) return tmuConfiguration(queue, which.set, which.binding, tiling.samplerOf(&input_sampler, false).?, false);
+    if (which.input_attachment) return tmuConfiguration(queue, which.set, which.binding, tiling.samplerOf(&input_sampler, false).?, false, false);
     // A fragment program's storage image, as a dispatch's (since 1.219).
     if (which.storage) return storageBy(queue, which);
     const player = playerOf(queue);
@@ -1891,7 +1901,7 @@ fn sampledBy(queue: *Queue, which: compile.Sampler) ?Configuration {
     // A program that compares writes the reference to TMUDREF, and the
     // sampler's comparison goes to the TMU with it (since 1.143).
     const how = tiling.samplerOf(sampler, which.compared) orelse return null;
-    return tmuConfiguration(queue, which.set, which.binding, how, which.compared);
+    return tmuConfiguration(queue, which.set, which.binding, how, which.compared, false);
 }
 
 /// The TMU's state of a storage image of a dispatch (since 1.218) or a
@@ -1908,7 +1918,7 @@ fn storageBy(queue: *Queue, which: compile.Sampler) ?Configuration {
     const player = playerOf(queue);
     const texels = resourcesOf(player).written(which.set, which.binding, 0) orelse return null;
     const view: *const _image.ImageView = @fieldParentPtr("texels", texels);
-    const made = tmuConfiguration(queue, which.set, which.binding, tiling.samplerOf(&input_sampler, false).?, false) orelse return null;
+    const made = tmuConfiguration(queue, which.set, which.binding, tiling.samplerOf(&input_sampler, false).?, false, true) orelse return null;
     keepStorage(player, .{ .at = view.image.data.?, .bytes = @intCast(view.image.bytes) });
     return made;
 }
@@ -2200,14 +2210,16 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
         // programs of the forms they are otherwise, the TMU told the
         // sampler (`textureUniforms`, since 1.141).
         // And the shadow one, whose program writes the reference (since
-        // 1.142).
-        .texture, .texture_color, .texture_array, .texture_cube, .texture_3d, .texture_sampled, .texture_array_sampled, .texture_cube_sampled, .texture_3d_sampled, .texture_shadow => {
+        // 1.142), and a cube of an array, which writes which cube to TMUI
+        // (`qpu.cube_array_fragment`, since 1.234).
+        .texture, .texture_color, .texture_array, .texture_cube, .texture_cube_array, .texture_3d, .texture_sampled, .texture_array_sampled, .texture_cube_sampled, .texture_cube_array_sampled, .texture_3d_sampled, .texture_shadow => {
             if (fixed.kind == .texture_color) carried = .{ .colors_from = 2 };
             fragment = switch (fixed.kind) {
                 .texture, .texture_sampled => programs.texture,
                 .texture_color => programs.texture_color,
                 .texture_array, .texture_array_sampled => programs.array,
                 .texture_cube, .texture_cube_sampled => programs.cube,
+                .texture_cube_array, .texture_cube_array_sampled => programs.cube_array,
                 .texture_shadow => programs.shadow,
                 else => programs.volume,
             };
@@ -2265,9 +2277,8 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
             }
         },
         // Refused when the pipeline was made (driver.zig): no fixed form's
-        // program drops pixels or reads a cube of an array
-        // (`samplesHere`), so none of these reaches a frame here.
-        .texture_cutout, .texture_cube_array, .texture_cube_array_sampled => return,
+        // program drops pixels, so this never reaches a frame here.
+        .texture_cutout => return,
     };
     if (no_color) {
         const made = &player.hardware.no_color;

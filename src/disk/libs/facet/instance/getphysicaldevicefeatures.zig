@@ -54,11 +54,11 @@ const PhysicalDevice = _instance.PhysicalDevice;
 /// `max_clip_distances` must read 0. Each `of(...)` below therefore ties a
 /// limit as well, and `_instance.limits` says which.
 ///
-/// What a program may usefully branch on per device is `sampler_anisotropy`
-/// and `image_cube_array`, which the cores have and a CM5's V3D has not,
-/// with the limits saying the rest of what differs - that V3D takes one
-/// sampled image a stage where the cores take as many as a set will hold
-/// (`GetPhysicalDeviceProperties`).
+/// What a program may usefully branch on per device is in the features
+/// that differ between the two - the cores have `image_cube_array`, and
+/// so does a CM5's V3D since 1.234, as v3dv has it (v3dv_device.c:331) -
+/// with the limits saying the rest of what differs, such as how many
+/// sampled images a stage takes (`GetPhysicalDeviceProperties`).
 ///
 /// **What is no longer asked here.** Six of facet's 49 were facet's own
 /// idea with no Vulkan meaning - `own_fragment_functions`,
