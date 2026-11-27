@@ -7509,4 +7509,44 @@ pub const LIBRARY_VERSION = 1;
 /// R8G8_SINT below 0 and held, and is refused a pipeline that blends
 /// either. On the CM5 (packages f234 and f235) FacetProbe is 1012 of
 /// 1012 and FacetBoth's 316 cases are each as at 1.226.
-pub const LIBRARY_REVISION = 227;
+/// 228: **The V3D draws the fourteen colour attachments of 0 to 1 and of
+/// floats (docs/facet-vulkan10.md item 36, step 3 of four).** Each is its
+/// own output image format in the tile buffer, at the internal type and
+/// the bits a pixel v3dv gives it (`v3d.target`, v3dvx_formats.c:124-196;
+/// `cl.internalOf`, `get_internal_type_bpp_for_output_format`,
+/// v3dvx_formats.c:338-465): sRGB, A2B10G10R10 and the half-floats in
+/// 16-bit floats, 64 bits a pixel for four channels, and four 32-bit
+/// floats in 128. Render target 0's config takes the type and clamp
+/// (`cl.typeClamp`, v3dvx_cmd_buffer.c:856-884) and the clear packed for
+/// the type as v3dv packs it, in one, two or three packets by the bits a
+/// pixel (`cl.renderTarget`, `cl.clearColor`; v3dvx_cmd_buffer.c:
+/// 1151-1185, `get_hw_clear_color`, v3dvx_device.c:289-334), and the
+/// tile is chosen by those bits (v3dv_pass.c:365-371). A colour of 32-bit
+/// floats goes to the TLB a float at a time under the F32 specifier: from
+/// Mesa's back end by the key's f32_color_rb (`vir_emit_tlb_color_write`,
+/// nir_to_vir.c:1955; v3dv_pipeline.c:1240-1243; `compile.Key.f32_color_rb`),
+/// and from the fixed forms by programs of their own (`qpu.wide`,
+/// `driver.Programs.wide`). The tiles mix normalized bytes and
+/// half-floats alone (`format_supports_blending`, v3dvx_formats.c:
+/// 486-512), so on the V3D the three of 32-bit floats have no BLEND
+/// (`Capabilities.float32_blend`) and resolve on the CPU after the frame,
+/// as v3dv resolves what the TLB cannot (`format_supports_tlb_resolve`,
+/// :468-483). A format of no alpha reads a destination alpha as 1
+/// (`dst_alpha_one`, v3dvx_pipeline.c:121). A pipeline keeps the colour
+/// format each part of its subpass draws (`Pipeline.part_formats`).
+/// The twenty-one stay the cores' (`Capabilities.whole_targets`, which
+/// was `texel_targets` until now). On the V3D an image of the fourteen
+/// drawn and read back, sampled or as an input attachment, is refused,
+/// its TMU reading none of them where its tiles stored them
+/// (`Capabilities.target_reads`).
+///
+/// One host test is new (a device shaped as the V3D), four of the V3D
+/// module's and one of the compile, and four are turned to
+/// `whole_targets`. Seventeen mutations of the new code, each run against
+/// the host tests, were all killed. FacetProbe 1.56 draws eight of the
+/// fourteen on both devices by the fixed colour form and three by a
+/// program compiled from SPIR-V, each byte as it should be, and reads
+/// `kept_floats` off the halves' STORAGE_IMAGE. On the CM5 (packages f236
+/// to f238) FacetProbe is 1038 of 1038 and FacetBoth's 316 cases are each
+/// as at 1.227.
+pub const LIBRARY_REVISION = 228;

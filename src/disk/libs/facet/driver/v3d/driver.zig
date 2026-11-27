@@ -80,6 +80,21 @@ pub const Programs = struct {
     shadow: u32,
     /// `qpu.no_color_fragment` (since 1.150).
     no_color: u32,
+    /// The fixed forms' programs for a render target of 32-bit floats
+    /// (`qpu.wide`, since 1.228): each reads one uniform more, the TLB
+    /// write's specifier, after its own.
+    wide: Colors,
+};
+
+/// The programs of the fixed forms that write a colour.
+pub const Colors = struct {
+    color: u32,
+    texture: u32,
+    texture_color: u32,
+    array: u32,
+    cube: u32,
+    volume: u32,
+    shadow: u32,
 };
 
 /// What the V3D has while anything uses it. Its job, and its table, are
@@ -386,6 +401,16 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // (lower_tlb_input_attachment_instr, v3dv_pipeline.c:301-356).
         .input_attachments = true,
         .tile_inputs = false,
+        // The fourteen colour attachments of 0 to 1 and of floats of
+        // docs/facet-vulkan10.md item 36, each in its own output format
+        // and internal type (`v3d.target`, since 1.228). Not the
+        // twenty-one of whole numbers yet; floats of 32 bits not blended,
+        // the tiles mixing bytes and half-floats alone; and none of them
+        // read back by the TMU.
+        .texel_targets = true,
+        .whole_targets = false,
+        .float32_blend = false,
+        .target_reads = false,
         // A dynamic buffer descriptor is a pointer and a range, shifted
         // by what the bind gave: the function that reads it is the
         // program's, so every device takes one.
@@ -525,9 +550,12 @@ fn bringUp(sys: *ExecBase, hardware: *Hardware) bool {
     return true;
 }
 
+/// The fixed forms' programs for 32-bit floats, in `Colors`' order.
+const wide_fragments = [_]*const qpu.Fragment{ &qpu.wide_color_fragment, &qpu.wide_texture_fragment, &qpu.wide_texture_color_fragment, &qpu.wide_array_fragment, &qpu.wide_cube_fragment, &qpu.wide_volume_fragment, &qpu.wide_shadow_fragment };
+
 /// Every program in one block of the V3D's.
 fn loadPrograms(hardware: *Hardware) bool {
-    const fragments = [_]*const qpu.Fragment{ &qpu.color_fragment, &qpu.texture_fragment, &qpu.texture_color_fragment, &qpu.array_fragment, &qpu.cube_fragment, &qpu.volume_fragment, &qpu.shadow_fragment, &qpu.no_color_fragment };
+    const fragments = [_]*const qpu.Fragment{ &qpu.color_fragment, &qpu.texture_fragment, &qpu.texture_color_fragment, &qpu.array_fragment, &qpu.cube_fragment, &qpu.volume_fragment, &qpu.shadow_fragment, &qpu.no_color_fragment } ++ wide_fragments;
     var words: usize = qpu.coordinate_program.len;
     for (0..qpu.most_varyings + 1) |varyings| words += qpu.vertexProgram(@intCast(varyings)).len;
     for (fragments) |fragment| words += fragment.code.len;
@@ -557,6 +585,9 @@ fn loadPrograms(hardware: *Hardware) bool {
     hardware.programs.volume = put(block, &used, qpu.volume_fragment.code);
     hardware.programs.shadow = put(block, &used, qpu.shadow_fragment.code);
     hardware.programs.no_color = put(block, &used, qpu.no_color_fragment.code);
+    var wide: [wide_fragments.len]u32 = undefined;
+    for (&wide, wide_fragments) |*address, fragment| address.* = put(block, &used, fragment.code);
+    hardware.programs.wide = .{ .color = wide[0], .texture = wide[1], .texture_color = wide[2], .array = wide[3], .cube = wide[4], .volume = wide[5], .shadow = wide[6] };
     hardware.no_color = noColorShader(block, hardware.programs.no_color);
     hardware.space.toGpu(&block);
     hardware.programs_block = block;
@@ -860,6 +891,13 @@ fn samplesHere(fixed: facet.shader.Fixed) bool {
     };
 }
 
+/// The TLB takes a colour of `format` a 32-bit float at a time
+/// (`v3d.target.Target.wide`).
+fn wideTarget(format: facet.Format) bool {
+    const target = v3d.target.of(format) orelse return false;
+    return target.wide();
+}
+
 /// Whether the pipeline's program covers by its colour's alpha: alpha to
 /// coverage, at four samples (`makePipeline`).
 fn coverageOf(pipeline: *const Pipeline) bool {
@@ -883,8 +921,16 @@ fn compiled(pipeline: *Pipeline) facet.Result {
     const work = _objects.create(sys, compile.Work) orelse return .error_out_of_host_memory;
     defer _objects.destroy(sys, work);
     // Keyed as v3dv keys it: alpha to coverage, and render target 0 where
-    // the subpass draws a colour (v3dv_pipeline.c:2137-2142, since 1.150).
-    const key = compile.Key{ .sample_alpha_to_coverage = coverageOf(pipeline), .cbufs = if (pipeline.colorless) 0 else 1 };
+    // the subpass draws a colour (v3dv_pipeline.c:2137-2142, since 1.150),
+    // written a float at a time where it is of 32-bit floats
+    // (f32_color_rb, v3dv_pipeline.c:1240-1243; since 1.228). Each part of
+    // a subpass drawn in parts is render target 0 of its own frame with the
+    // one program: parts of both widths are not compiled for.
+    const wide = wideTarget(pipeline.part_formats[0]);
+    for (pipeline.part_formats[1..]) |format| {
+        if (format != .undefined and wideTarget(format) != wide) return .error_feature_not_present;
+    }
+    const key = compile.Key{ .sample_alpha_to_coverage = coverageOf(pipeline), .cbufs = if (pipeline.colorless) 0 else 1, .f32_color_rb = @intFromBool(wide) };
     const code = compile.compileThroughMesa(work, pipeline.fragment_words, v3d.heap.of(sys), key) catch |err| return switch (err) {
         error.OutOfMemory => .error_out_of_host_memory,
         else => .error_feature_not_present,

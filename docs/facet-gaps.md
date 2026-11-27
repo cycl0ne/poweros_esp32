@@ -546,7 +546,10 @@ exist now. What is left out:
   and on the cores since 1.226 the fourteen of 0 to 1 and of floats of
   docs/facet-vulkan10.md item 36, read as the format's texels, and since
   1.227 its twenty-one of whole numbers, read as their numbers
-  (`shader.Attachment.intAt`): every other is `error_validation_failed`
+  (`shader.Attachment.intAt`). On the V3D since 1.228 the fourteen say
+  COLOR_ATTACHMENT too, but an image of one read as an input attachment
+  is refused (`Capabilities.target_reads`): its TMU reads none of them
+  where its tiles stored them. Every other is `error_validation_failed`
   (VUID-VkSubpassDescription-pInputAttachments-02647; since 1.135,
   `error_format_not_supported` before).
 - **Nothing is checked against the layout**: `AttachmentReference.layout`
@@ -715,6 +718,8 @@ Vulkan allows them, and facet does not do them.
 | A `storage_image` layout on a device that writes none (`storage_images`): none since 1.217, the V3D until then (docs/facet-vulkan10.md item 57) | `descriptor/createdescriptorsetlayout.zig` |
 | A fixed fragment form that drops pixels, on the V3D: the QPUs have no program that discards | `driver/v3d/driver.zig` |
 | A fixed fragment form that samples through a sampler, on the V3D: nor one that reads a sampler | `driver/v3d/driver.zig` |
+| A blend into R32_SFLOAT, R32G32_SFLOAT or R32G32B32A32_SFLOAT on the V3D, whose tiles mix bytes and half-floats alone: the formats say no COLOR_ATTACHMENT_BLEND there, as v3dv's do (`float32_blend`, the cores' since 1.226; since 1.228) | `pipeline/creategraphicspipelines.zig` |
+| A program compiled through Mesa's back end for a subpass drawn a part for each colour attachment whose parts are of 32-bit floats beside another width, on the V3D: one program draws every part, its TLB write keyed one way (since 1.228) | `driver/v3d/driver.zig` |
 | A depth attachment kept, whose image has no memory behind it | `render/createframebuffer.zig` |
 | A view of a level smaller than the framebuffer, of an image that is not, until docs/facet-vulkan10.md item 92 (`error_initialization_failed` until 1.134). Both this and the row above are answered once every view has been held to Vulkan's rules | `render/createframebuffer.zig` |
 
@@ -730,7 +735,7 @@ is past its answer (-mipLevels-02255, -arrayLayers-02256).
 
 | What | Where it is refused |
 |---|---|
-| An image both INPUT_ATTACHMENT and TRANSIENT_ATTACHMENT; one both INPUT_ATTACHMENT and STORAGE but as a colour attachment written through is (above); on a device whose images lie in a layout of its own, the V3D, one sampled as well as drawn into until 1.210 (docs/facet-vulkan10.md item 48's V3D half) and one read as an input attachment until 1.216 (item 56), the cores' since 1.119. On the V3D an input attachment that is linear or 3D, or of a format its TMU does not read | `image/createimage.zig` |
+| An image both INPUT_ATTACHMENT and TRANSIENT_ATTACHMENT; one both INPUT_ATTACHMENT and STORAGE but as a colour attachment written through is (above); on a device whose images lie in a layout of its own, the V3D, one sampled as well as drawn into until 1.210 (docs/facet-vulkan10.md item 48's V3D half) and one read as an input attachment until 1.216 (item 56), the cores' since 1.119. On the V3D an input attachment that is linear or 3D, or of a format its TMU does not read; and since 1.228 an image of the fourteen of docs/facet-vulkan10.md item 36 both drawn and read back, sampled or as an input attachment (`Capabilities.target_reads`) | `image/createimage.zig` |
 | A sampled depth image on a device that samples none (`sampled_depth`; the V3D until 1.142), or of a format that holds a stencil on one that samples no stencil, the V3D (`sampled_stencil`, since 1.142); a transient one, or one written through as a storage image; one of more levels than halving its longer side gives, which VkImageCreateInfo forbids whatever the query says (-mipLevels-00958); or of type `3d`. Any of the three depth formats is taken since 1.58, and the two of 24 bits of depth since 1.222, an attachment of those refused on a device that draws none (`depth24`: the cores since 1.223, the V3D since 1.224; docs/facet-vulkan10.md item 35); levels of its own since 1.63, and a view of it names one plane, or both at once since 1.94 for a framebuffer, sampling the depth (`image/createimageview.zig`) | `image/createimage.zig` |
 | Shapes Vulkan has the query take, until docs/facet-vulkan10.md item 94: an image of the transfers alone in a format that is kept for a function; a depth or stencil format without DEPTH_STENCIL_ATTACHMENT - sampled, or for the transfers or TRANSIENT_ATTACHMENT alone; a 3D image deeper than a slice for the transfers alone or as a colour or input attachment, CreateImage making such an image a slice deep, which the query declines; and an optimal colour attachment written through of more than one level or layer, past the one of each the query answers | `image/createimage.zig` |
 

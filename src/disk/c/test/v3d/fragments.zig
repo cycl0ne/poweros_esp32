@@ -156,7 +156,7 @@ pub const Scene = struct {
             .image = scene.image.address,
             .stride = stride,
             .swap_rb = false,
-            .clear = how.clear,
+            .target = .{ .clear = .{ how.clear, 0, 0, 0 } },
             .tile_lists = scene.tile_lists.address,
             .binned = true,
             .load = how.load,

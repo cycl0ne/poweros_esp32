@@ -114,8 +114,11 @@ pub const Frame = struct {
     format: u64 = cl.OUTPUT_RGBA8,
     /// The image is blue first, not red.
     swap_rb: bool,
-    /// As it lies in the tile buffer: red in the low byte.
-    clear: u32,
+    /// Render target 0 in the tile buffer: its bits a pixel, its type and
+    /// clamp, and the colour it clears to as the buffer holds it, red
+    /// lowest (`cl.clearColor`). Normalized bytes at 32 bits a pixel by
+    /// default, which every colour was drawn at until 1.228.
+    target: cl.RenderTarget = .{},
     /// The binner's lists, or memory the renderer will not read.
     tile_lists: u32,
     /// Whether the binner ran, so that a tile has a list to draw.
@@ -390,7 +393,7 @@ pub fn writeRender(list: *List, frame: *const Frame, tiles: TileList, inside: ?T
     const tiles_x = frame.tilesX();
     const tiles_y = frame.tilesY();
     cl.renderingCommon(list, frame.width, frame.height, frame.tile, frame.depth or frame.stencil, frame.depth24, frame.four);
-    if (frame.color) cl.renderTarget0(list, frame.tile.width, frame.clear) else cl.unusedRenderTarget(list);
+    if (frame.color) cl.renderTarget(list, frame.tile.width, frame.target) else cl.unusedRenderTarget(list);
     cl.zsClear(list, frame.clear_depth, frame.clear_stencil);
     cl.tileListInitialBlock(list);
     cl.tileListBase(list, frame.tile_lists);
@@ -470,7 +473,7 @@ test "the tile is v3d_choose_tile_size's at 7.1, at one sample and at four" {
 test "a frame of four takes its tile, its multisample bit, and a mask and oversampling for each draw" {
     var memory: [256]u8 = undefined;
     var list = List{ .at = &memory, .address = 0x1000 };
-    var frame = Frame{ .width = 100, .height = 40, .image = 0x10_0000, .stride = 400, .swap_rb = false, .clear = 0, .tile_lists = 0x20_0000, .binned = false };
+    var frame = Frame{ .width = 100, .height = 40, .image = 0x10_0000, .stride = 400, .swap_rb = false, .tile_lists = 0x20_0000, .binned = false };
     try std.testing.expectEqual(@as(u32, 2), frame.tilesX());
     try std.testing.expectEqual(@as(u32, 1), frame.tilesY());
     frame.four = true;
@@ -520,7 +523,7 @@ test "a frame of four takes its tile, its multisample bit, and a mask and oversa
 test "a draw's state writes its program's flat and non-perspective flags, or zeroes them, and at its most fits what a part of the list keeps" {
     var memory: [256]u8 = undefined;
     var list = List{ .at = &memory, .address = 0x1000 };
-    var frame = Frame{ .width = 100, .height = 40, .image = 0x10_0000, .stride = 400, .swap_rb = false, .clear = 0, .tile_lists = 0x20_0000, .binned = false };
+    var frame = Frame{ .width = 100, .height = 40, .image = 0x10_0000, .stride = 400, .swap_rb = false, .tile_lists = 0x20_0000, .binned = false };
     const plain = DrawState{ .clip = .{ .left = 0, .top = 0, .right = 100, .bottom = 40 }, .x = 0, .y = 0, .width = 100, .height = 40 };
     writeDrawState(&list, &frame, &plain);
     // ZERO_ALL of each last, as v3dv writes them for a program of none
@@ -565,7 +568,6 @@ test "a frame of four samples loads and stores all of them, the colour where its
         .stride = 7,
         .memory = cl.MEMORY_UIF_XOR,
         .swap_rb = true,
-        .clear = 0,
         .tile_lists = 0x20_0000,
         .binned = false,
         .load = true,
@@ -613,7 +615,7 @@ test "a frame of four samples loads and stores all of them, the colour where its
         }
     }
     // A frame in rows, as every frame was before: raster, the first sample.
-    frame = .{ .width = 64, .height = 64, .image = 0x10_0000, .stride = 256, .swap_rb = false, .clear = 0, .tile_lists = 0x20_0000, .binned = false, .load = true };
+    frame = .{ .width = 64, .height = 64, .image = 0x10_0000, .stride = 256, .swap_rb = false, .tile_lists = 0x20_0000, .binned = false, .load = true };
     list.used = 0;
     writeTileList(&list, &frame, true);
     const rows = seen(&memory, 1);
@@ -631,7 +633,6 @@ test "a frame of no colour configures the unused render target, and its tiles mo
         .image = 0,
         .stride = 0,
         .swap_rb = false,
-        .clear = 0,
         .tile_lists = 0x20_0000,
         .binned = false,
         .color = false,
@@ -688,7 +689,6 @@ test "a frame of D24_UNORM_S8_UINT loads the plane its ops load and stores both 
         .image = 0,
         .stride = 0,
         .swap_rb = false,
-        .clear = 0,
         .tile_lists = 0x20_0000,
         .binned = false,
         .color = false,
@@ -739,7 +739,6 @@ test "a frame of four that resolves stores the average into the resolve's rows, 
         .stride = 7,
         .memory = cl.MEMORY_UIF_XOR,
         .swap_rb = true,
-        .clear = 0,
         .tile_lists = 0x20_0000,
         .binned = false,
         .four = true,

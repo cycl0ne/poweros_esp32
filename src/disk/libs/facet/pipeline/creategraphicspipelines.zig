@@ -406,6 +406,7 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
         // 0xAARRGGBB of, writing none (since 1.226).
         .written = if (fragment == null) .colors else fragment_entry.written(),
         .colorless = pass.parts[subpass.first_part].color_count == 0,
+        .part_formats = partFormats(pass, subpass),
         .replayed = subpass.part_count > 1,
         .fragment_stage = fragment != null,
         .viewport = null,
@@ -711,4 +712,15 @@ fn colorFormatOf(pass: *const _render.RenderPass, subpass: _render.Subpass, inde
         if (index >= part.output and index - part.output < part.color_count) return part.color_formats[index - part.output];
     }
     return null;
+}
+
+/// The format of the colour attachment each part of `subpass` draws first
+/// (`Pipeline.part_formats`).
+fn partFormats(pass: *const _render.RenderPass, subpass: _render.Subpass) [_render.most_colors]facet.Format {
+    var formats: [_render.most_colors]facet.Format = @splat(.undefined);
+    const parts = pass.parts[subpass.first_part..][0..@min(subpass.part_count, _render.most_colors)];
+    for (parts, formats[0..parts.len]) |part, *format| {
+        if (part.color_count != 0) format.* = part.color_formats[0];
+    }
+    return formats;
 }

@@ -3529,8 +3529,8 @@ test "storage images of whole numbers: a texel written and read back as the numb
     // tiles keep none, as the V3D's, both are refused still.
     const tiles = _objects.of(_instance.PhysicalDevice, bench.physical);
     for ([2]bool{ true, false }) |keeps| {
-        tiles.can.texel_targets = keeps;
-        defer tiles.can.texel_targets = true;
+        tiles.can.whole_targets = keeps;
+        defer tiles.can.whole_targets = true;
         const infos = [2]facet.ImageCreateInfo{
             .{ .format = .r32g32b32a32_uint, .extent = .{ .width = 8, .height = 8 }, .usage = facet.IMAGE_USAGE_TRANSFER_DST | facet.IMAGE_USAGE_TRANSFER_SRC },
             .{ .format = .r8g8b8a8_uint, .extent = .{ .width = 8, .height = 8 }, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT },
@@ -9875,10 +9875,13 @@ test "a device that samples no depth, as the V3D sampled none until 1.142: the f
         .{ .feature = "whole_textures", .format = .r16g16b16a16_uint },
     };
     // A device that keeps none of them keeps no colour attachment in its
-    // own bytes either (`Capabilities.texel_targets`, since 1.226), which
-    // would copy R16G16B16A16_SFLOAT both ways: the V3D.
+    // own bytes either (`Capabilities.texel_targets`, since 1.226, and
+    // `whole_targets`, since 1.228), which would copy R16G16B16A16_SFLOAT
+    // and R16G16B16A16_UINT both ways: the V3D until 1.228.
     physical.can.texel_targets = false;
     defer physical.can.texel_targets = true;
+    physical.can.whole_targets = false;
+    defer physical.can.whole_targets = true;
     inline for (kept) |one| {
         try testing.expect(@field(physical.can, one.feature));
         fb.GetPhysicalDeviceFormatProperties(bench.physical, one.format, &properties);
@@ -19440,7 +19443,7 @@ test "a float colour attachment of four samples a pixel resolved, one of two lay
     }
 }
 
-test "a device whose tiles keep no colour attachment in its own bytes, as the V3D's, says none of the fourteen is one and makes no pass or image of them as one (since 1.226)" {
+test "a device whose tiles keep no colour attachment in its own bytes, as the V3D's until 1.228, says none of the fourteen is one and makes no pass or image of them as one (since 1.226)" {
     var bench = try Bench.up();
     defer bench.down();
     const fb = bench.rig.fb;
@@ -19460,6 +19463,77 @@ test "a device whose tiles keep no colour attachment in its own bytes, as the V3
         try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImage(device, &.{ .format = format, .extent = .{ .width = 8, .height = 8 }, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT }, &refused));
         try testing.expect(refused == null);
     }
+}
+
+test "a device whose tiles draw the fourteen as the V3D's do: each a colour attachment of its own format, blended but for the three of 32-bit floats, and never an image both drawn and read back (since 1.228)" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
+    physical.can.float32_blend = false;
+    defer physical.can.float32_blend = true;
+    physical.can.target_reads = false;
+    defer physical.can.target_reads = true;
+    const shaders = try module(&bench, &SubpassScene.code);
+    defer fb.DestroyShaderModule(device, shaders);
+    const layout = try pipelineLayout(&bench, &.{}, 0);
+    defer fb.DestroyPipelineLayout(device, layout);
+    const additive = facet.PipelineColorBlendAttachmentState{ .blend_enable = true, .dst_color_blend_factor = .one, .dst_alpha_blend_factor = .one };
+    const floats = [3]facet.Format{ .r32_sfloat, .r32g32_sfloat, .r32g32b32a32_sfloat };
+    const extent = facet.Extent3D{ .width = 8, .height = 8 };
+    var unblended: u32 = 0;
+    for (texel_targets) |format| {
+        const wide = std.mem.indexOfScalar(facet.Format, &floats, format) != null;
+        var properties: facet.FormatProperties = undefined;
+        fb.GetPhysicalDeviceFormatProperties(bench.physical, format, &properties);
+        try testing.expect(properties.optimal_tiling_features & facet.FORMAT_FEATURE_COLOR_ATTACHMENT != 0);
+        const blends = properties.optimal_tiling_features & facet.FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND != 0;
+        try testing.expectEqual(!wide, blends);
+        if (!blends) unblended += 1;
+        const description = facet.AttachmentDescription{ .format = format, .load_op = .clear, .store_op = .store, .final_layout = .color_attachment_optimal };
+        const result, const pass = samplesPass(&bench, &.{description}, null, null);
+        try testing.expectEqual(facet.Result.success, result);
+        defer fb.DestroyRenderPass(device, pass);
+        // A pipeline that blends into it is refused where the tiles do
+        // not mix it; one that does not is made, the format of what its
+        // subpass draws kept on it for a driver to key its colour on.
+        const mixed, const mixing = makePipeline(&bench, .{ .module = shaders, .name = "white", .layout = layout, .pass = pass.?, .blend = additive });
+        try testing.expectEqual(if (wide) facet.Result.error_validation_failed else facet.Result.success, mixed);
+        if (mixing != null) fb.DestroyPipeline(device, mixing);
+        const plain, const pipeline = makePipeline(&bench, .{ .module = shaders, .name = "white", .layout = layout, .pass = pass.? });
+        try testing.expectEqual(facet.Result.success, plain);
+        defer fb.DestroyPipeline(device, pipeline);
+        const kept = _objects.of(_pipeline.Pipeline, pipeline.?).part_formats;
+        try testing.expectEqual(format, kept[0]);
+        try testing.expectEqual(facet.Format.undefined, kept[1]);
+        // An image drawn into and copied out is made; one sampled as well,
+        // or read as an input attachment, is not.
+        var image: ?*facet.Image = null;
+        try testing.expectEqual(facet.Result.success, fb.CreateImage(device, &.{ .format = format, .extent = extent, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_TRANSFER_SRC }, &image));
+        fb.DestroyImage(device, image);
+        for ([2]u32{ facet.IMAGE_USAGE_SAMPLED, facet.IMAGE_USAGE_INPUT_ATTACHMENT }) |read| {
+            var refused: ?*facet.Image = null;
+            try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImage(device, &.{ .format = format, .extent = extent, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT | read }, &refused));
+            try testing.expect(refused == null);
+        }
+    }
+    try testing.expectEqual(@as(u32, 3), unblended);
+    // The three of 1.227 are drawn and read back as they were: what the
+    // TMU samples where the tiles stored it.
+    var drawn: ?*facet.Image = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateImage(device, &.{ .format = .b8g8r8a8_unorm, .extent = extent, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_SAMPLED }, &drawn));
+    fb.DestroyImage(device, drawn);
+    // On the cores, which blend floats and read back what they drew, the
+    // same are made.
+    physical.can.float32_blend = true;
+    physical.can.target_reads = true;
+    var properties: facet.FormatProperties = undefined;
+    fb.GetPhysicalDeviceFormatProperties(bench.physical, .r32_sfloat, &properties);
+    try testing.expect(properties.optimal_tiling_features & facet.FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND != 0);
+    var read_back: ?*facet.Image = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateImage(device, &.{ .format = .r16g16b16a16_sfloat, .extent = extent, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_SAMPLED }, &read_back));
+    fb.DestroyImage(device, read_back);
 }
 
 /// What the tests of the whole numbers draw with: the push constants'
@@ -19857,8 +19931,9 @@ test "a device whose tiles keep no whole numbers, as the V3D's, says none of the
     const fb = bench.rig.fb;
     const device = bench.device;
     const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
-    physical.can.texel_targets = false;
-    defer physical.can.texel_targets = true;
+    // `Capabilities.whole_targets` since 1.228, `texel_targets` before.
+    physical.can.whole_targets = false;
+    defer physical.can.whole_targets = true;
     for (whole_targets) |format| {
         var properties: facet.FormatProperties = undefined;
         fb.GetPhysicalDeviceFormatProperties(bench.physical, format, &properties);

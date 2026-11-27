@@ -178,7 +178,7 @@ fn clearTest(sys: *ExecBase, dl: *DosBase, space: *v3d.Space, engine: *v3d.Engin
         .image = image.address,
         .stride = stride,
         .swap_rb = false,
-        .clear = test_clear,
+        .target = .{ .clear = .{ test_clear, 0, 0, 0 } },
         .tile_lists = lists.address,
         .binned = false,
     };
@@ -324,7 +324,7 @@ fn triangleTest(sys: *ExecBase, dl: *DosBase, space: *v3d.Space, engine: *v3d.En
         .image = if (how.unmapped_image) unmapped_address else image.address,
         .stride = stride,
         .swap_rb = false,
-        .clear = background,
+        .target = .{ .clear = .{ background, 0, 0, 0 } },
         .tile_lists = tile_lists.address,
         .binned = true,
     };
