@@ -153,14 +153,9 @@ pub const Scene = struct {
         scene.frame = .{
             .width = width,
             .height = height,
-            .image = scene.image.address,
-            .stride = stride,
-            .swap_rb = false,
-            .target = .{ .clear = .{ how.clear, 0, 0, 0 } },
+            .colors = .{ .{ .image = scene.image.address, .stride = stride, .target = .{ .clear = .{ how.clear, 0, 0, 0 } }, .load = how.load, .clear_inside = how.clear_inside }, null, null, null },
             .tile_lists = scene.tile_lists.address,
             .binned = true,
-            .load = how.load,
-            .clear_inside = how.clear_inside,
             .depth = how.depth,
             .clear_depth = how.clear_depth,
             .area = how.area,
@@ -247,11 +242,11 @@ pub const Scene = struct {
     fn finish(scene: *Scene) bool {
         v3d.frame.endBin(&scene.bin);
         var tile_list = cl.List{ .at = scene.lists.cpu, .address = scene.lists.address };
-        v3d.frame.writeTileList(&tile_list, &scene.frame, scene.frame.load);
+        v3d.frame.writeTileList(&tile_list, &scene.frame, false);
         var inside: ?v3d.frame.TileList = null;
-        if (scene.frame.clear_inside) {
+        if (scene.frame.clearsInside()) {
             var plain = cl.List{ .at = scene.lists.cpu + 512, .address = scene.lists.address + 512 };
-            v3d.frame.writeTileList(&plain, &scene.frame, false);
+            v3d.frame.writeTileList(&plain, &scene.frame, true);
             inside = .{ .start = plain.address, .end = plain.here() };
         }
         var render = cl.List{ .at = scene.lists.cpu + 1024, .address = scene.lists.address + 1024 };

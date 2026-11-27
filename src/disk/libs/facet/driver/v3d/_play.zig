@@ -636,18 +636,17 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, part
     if (left == right or top == bottom) return;
     const whole = left == 0 and top == 0 and right == framebuffer.width and bottom == framebuffer.height;
     const clears = has_color and command.parts[part].color_loads[0] == .clear;
-    // The tile its samples and its one render target fit, at the bits a
-    // pixel the target takes in the tile buffer (32 whatever the format
-    // until 1.228; 64 for half-floats and sRGB, 128 for four floats), or
-    // none: v3dv's tile from its subpass's internal bpp (v3dv_pass.c:
-    // 365-371). Four samples where the
-    // colour has four, which its depth has too, Vulkan having a subpass's
+    // The tile its samples and its render targets fit (`chooseTile` of
+    // the frame's `colorBytes`, below), at the bits a pixel each target
+    // takes in the tile buffer (32 whatever the format until 1.228; 64
+    // for half-floats and sRGB, 128 for four floats), or none: v3dv's
+    // tile from its subpass's total bpp (v3dv_pass.c:353-371). Four
+    // samples where the colour has four, which its depth has too, Vulkan having a subpass's
     // attachments of one count (since 1.147, docs/facet-vulkan10.md item
     // 61, step V4); in a part of no colour, where its depth has, and in
     // one of no attachment where its first draw's pipeline has
     // (`restartAtFour`, V8).
     const four = if (image) |each| each.samples > 1 else command.parts[part].samples > 1;
-    const tile = frames.chooseTile(if (has_color) 4 * drawn.internal().bpp.words() else 0, four);
     const color = command.clear_colors[part];
     player.image = image;
     // The layer the view begins at, an image kept in rows having layers
@@ -669,9 +668,10 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, part
     player.tmu_dirty_rcl = false;
     player.storage_count = 0;
     player.storage_over = false;
-    player.frame = .{
-        .width = framebuffer.width,
-        .height = framebuffer.height,
+    // The part's colour is render target 0 of its frame, the one its
+    // programs write (the frame takes a render target of each colour
+    // attachment since 1.232, `frames.Frame.colors`).
+    const drawn_color: ?frames.Color = if (image != null) .{
         .image = address + @as(u32, @intCast(player.image_first)),
         .stride = place.stride,
         .memory = place.memory,
@@ -681,11 +681,16 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, part
         // it: red in the low byte for normalized bytes, and the clear's
         // own words for the others (`cl.clearColor`, since 1.228).
         .target = drawn.renderTarget(color, command.clear_values[part]),
+        .load = !clears or !whole,
+        .clear_inside = clears and !whole,
+    } else null;
+    player.frame = .{
+        .width = framebuffer.width,
+        .height = framebuffer.height,
+        .colors = .{ drawn_color, null, null, null },
         // `startBinning`'s, once it has made them.
         .tile_lists = 0,
         .binned = false,
-        .load = has_color and (!clears or !whole),
-        .clear_inside = clears and !whole,
         .depth = command.parts[part].tests_depth,
         .depth24 = command.parts[part].depth_bits == 24,
         .clear_depth = @as(f32, @floatFromInt(command.clear_depth)) / @as(f32, @floatFromInt(_render.depthUnits(command.parts[part].depth_bits))),
@@ -698,9 +703,8 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, part
         },
         .area = if (whole) null else player.area,
         .four = four,
-        .tile = tile,
-        .color = has_color,
     };
+    player.frame.tile = frames.chooseTile(player.frame.colorBytes(), four);
     player.color_layer = if (has_color) framebuffer.colors[0].base_layer else 0;
     player.target = drawn;
     // The colour's resolve attachment, in a frame of four. The tiles
@@ -733,7 +737,7 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, part
         const resolved = colorPlace(into, view.base_level, view.base_layer, framebuffer.height);
         player.resolve_first = resolved.first;
         player.resolve_bytes = resolved.bytes;
-        player.frame.resolve = .{ .image = at + @as(u32, @intCast(resolved.first)), .stride = resolved.stride, .memory = resolved.memory };
+        player.frame.colors[0].?.resolve = .{ .image = at + @as(u32, @intCast(resolved.first)), .stride = resolved.stride, .memory = resolved.memory };
     };
     // A depth or a stencil kept in memory and stored, over a render area
     // a tile the renderer renders sticks out of, is loaded first whatever
@@ -773,6 +777,13 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, part
             if (stencil_inside) @truncate(player.frame.clear_stencil) else null,
         );
     }
+}
+
+/// Whether the tiles resolve the part's colour, render target 0, as they
+/// are stored (`frames.Color.resolve`), and the CPU does not after.
+fn resolvedByTiles(player: *const Player) bool {
+    const color = player.frame.colors[0] orelse return false;
+    return color.resolve != null;
 }
 
 /// The frame's tile lists, tile state and binner's list made for its
@@ -817,7 +828,7 @@ fn restartAtFour(queue: *Queue, pipeline: *const Pipeline) bool {
     // Any attachment gives the frame its count, which its pipelines have
     // (VUID-VkGraphicsPipelineCreateInfo-multisampledRenderToSingleSampled-06853,
     // held to in CreateGraphicsPipelines).
-    if (player.frame.color or player.frame.depth or player.frame.stencil) return true;
+    if (player.frame.hasColor() or player.frame.depth or player.frame.stencil) return true;
     player.frame.four = true;
     player.frame.tile = frames.chooseTile(0, true);
     // The counter is started again in the new list by the first draw
@@ -940,7 +951,7 @@ fn clearAttachment(queue: *Queue, command: *const _command.ClearAttachment) void
         // No colour in a frame of none, where a colour attachment the
         // clear names is an unused one, whose clear has no effect (since
         // 1.150).
-        if (aspect & facet.IMAGE_ASPECT_COLOR != 0 and command.output == player.output and player.frame.color) 0xF else 0,
+        if (aspect & facet.IMAGE_ASPECT_COLOR != 0 and command.output == player.output and player.frame.hasColor()) 0xF else 0,
         if (aspect & facet.IMAGE_ASPECT_DEPTH != 0 and player.frame.depth) command.depth else null,
         if (aspect & facet.IMAGE_ASPECT_STENCIL != 0 and player.frame.stencil) @truncate(command.stencil) else null,
     );
@@ -960,7 +971,7 @@ fn clearRectangle(queue: *Queue, clip: frames.Area, color: [4]u32, channels: u32
     // In a frame of no colour, the program of no colour, which reads no
     // varying and writes the depth the rasterizer made, the rectangle's
     // own (since 1.150).
-    const no_color = !player.frame.color;
+    const no_color = !player.frame.hasColor();
     const words = !no_color and player.target.wide();
     const varyings: u32 = if (no_color or words) 0 else 4;
     const corners = [_]u32{ 0, 1, 2, 2, 1, 3 };
@@ -1028,14 +1039,14 @@ fn endRenderPass(queue: *Queue) void {
 
     const lists = carve(queue, 4096, 16) orelse return;
     var tile_list = cl.List{ .at = lists.cpu, .address = lists.address };
-    frames.writeTileList(&tile_list, &player.frame, player.frame.load);
+    frames.writeTileList(&tile_list, &player.frame, false);
     const tiles = frames.TileList{ .start = tile_list.address, .end = tile_list.here() };
     // A second list, without the load, for the supertiles the cleared area
     // covers whole: nothing of the image is wanted under a clear.
     var inside: ?frames.TileList = null;
-    if (player.frame.clear_inside) {
+    if (player.frame.clearsInside()) {
         var plain = cl.List{ .at = lists.cpu + 256, .address = lists.address + 256 };
-        frames.writeTileList(&plain, &player.frame, false);
+        frames.writeTileList(&plain, &player.frame, true);
         inside = .{ .start = plain.address, .end = plain.here() };
     }
     var render = cl.List{ .at = lists.cpu + 512, .address = lists.address + 512 };
@@ -1058,7 +1069,7 @@ fn endRenderPass(queue: *Queue) void {
     const kept_bytes: usize = if (player.frame.kept != null) player.kept_bytes else 0;
     if (player.frame.kept != null) space.rangeToGpu(player.kept_image.?.data.? + player.kept_first, kept_bytes);
     // And the rows the tiles resolve into, for the same reason.
-    if (player.frame.resolve != null) space.rangeToGpu(player.resolve_view.?.image.data.? + player.resolve_first, player.resolve_bytes);
+    if (resolvedByTiles(player)) space.rangeToGpu(player.resolve_view.?.image.data.? + player.resolve_first, player.resolve_bytes);
 
     sys.ObtainSemaphore(&device.base.v3d_lock);
     defer sys.ReleaseSemaphore(&device.base.v3d_lock);
@@ -1089,7 +1100,7 @@ fn endRenderPass(queue: *Queue) void {
     }
     if (image) |each| space.rangeFromGpu(each.data.? + player.image_first, image_bytes);
     if (player.frame.kept) |kept| if (kept.store) space.rangeFromGpu(player.kept_image.?.data.? + player.kept_first, kept_bytes);
-    if (player.frame.resolve != null) space.rangeFromGpu(player.resolve_view.?.image.data.? + player.resolve_first, player.resolve_bytes);
+    if (resolvedByTiles(player)) space.rangeFromGpu(player.resolve_view.?.image.data.? + player.resolve_first, player.resolve_bytes);
     addTallies(player, space);
     if (rendered != .done) return lost(player, sys, rendered, "rendering");
     // A resolve the tiles could not do, over the render area, from the
@@ -1103,7 +1114,7 @@ fn endRenderPass(queue: *Queue) void {
     const color_image = image orelse return;
     // What the CPU wrote goes out before the TMU reads it, where the
     // resolve attachment is sampled as well (since 1.210).
-    if (player.resolve_view) |view| if (player.frame.resolve == null) {
+    if (player.resolve_view) |view| if (!resolvedByTiles(player)) {
         _transfer.resolveRectangle(color_image, player.color_layer, .{ area.left, area.top }, view.image, view.base_level, view.base_layer, .{ area.left, area.top }, area.right - area.left, area.bottom - area.top);
         texturesToGpu(queue, view.image);
     };
@@ -1138,7 +1149,13 @@ fn lost(player: *const Player, sys: *ExecBase, finished: v3d.Engine.Finished, wh
         @as(u64, player.frame.width),
         @as(u64, player.frame.height),
         @as(u64, @intFromBool(player.binned)),
-        @as(u64, @intFromBool(player.frame.load)),
+        @as(u64, loaded: {
+            var mask: u64 = 0;
+            for (player.frame.configured(), 0..) |each, number| if (each) |drawn| if (drawn.load) {
+                mask |= @as(u64, 1) << @intCast(number);
+            };
+            break :loaded mask;
+        }),
         @as(u64, @intFromBool(player.frame.depth)),
         @as(u64, area.left),
         @as(u64, area.top),
@@ -2074,7 +2091,7 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
     // drops no pixel: what it leaves is the depth and the stencil, which
     // the program of no colour leaves the same. A compiled program was
     // compiled for its subpass (`Pipeline.colorless`) and draws itself.
-    var no_color = !player.frame.color and fixed.kind != .none;
+    var no_color = !player.frame.hasColor() and fixed.kind != .none;
     if (!no_color) switch (fixed.kind) {
         .color => {
             carried = .{ .colors_from = 0 };
@@ -2131,7 +2148,7 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
             // A uniform buffer the program reads and the draw has not
             // bound is what has gone wrong too (since 1.160).
             const lacking = found != made.sampled().len or !buffersBound(queue, made.stream());
-            if (lacking and !player.frame.color) {
+            if (lacking and !player.frame.hasColor()) {
                 // No colour to say what has gone wrong with: the depth
                 // drawn as if nothing dropped a pixel.
                 no_color = true;

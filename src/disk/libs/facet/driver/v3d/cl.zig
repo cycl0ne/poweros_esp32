@@ -98,6 +98,19 @@ pub const OUTPUT_S8: u64 = 44;
 pub const OUTPUT_D24S8: u64 = 43;
 pub const STORE_NONE: u64 = 8;
 pub const STORE_RENDER_TARGET_0: u64 = 0;
+
+/// The render targets a frame has here: facet's colour attachments a
+/// subpass (`_render.most_colors`), V3D_MAX_RENDER_TARGETS being 8 at 7.1
+/// (v3d_limits.h:44), each of a buffer of its own (since 1.232).
+pub const most_render_targets: u32 = 4;
+
+/// Render target `number`'s buffer of the tiles, loaded or stored:
+/// "Render target 0" to 7 are 0 to 7 (v3d_packet.xml), as v3dv names each
+/// RENDER_TARGET_0 + i (v3dvx_cmd_buffer.c:278-279, 669-686).
+pub fn renderTargetBuffer(number: u32) u64 {
+    std.debug.assert(number < most_render_targets);
+    return STORE_RENDER_TARGET_0 + number;
+}
 /// The tiles' depth and their stencil, which are stored and loaded as the
 /// render target is.
 pub const STORE_Z: u64 = 9;
@@ -163,15 +176,19 @@ pub fn log2Tile(pixels: u32) u32 {
 /// "Multisample Mode (4x)" bit at 42, as v3dv sets it from its frame's
 /// tiling (v3dvx_cmd_buffer.c:977): the tiles then hold four samples a
 /// pixel, which is also why they are smaller (`v3d_choose_tile_size`,
-/// v3d_util.c:170-171).
-pub fn renderingCommon(list: *List, width: u32, height: u32, tile: Tile, depth: bool, depth24: bool, four: bool) void {
+/// v3d_util.c:170-171). `targets` is "Number of Render Targets", at 4 and
+/// one less: v3dv's MAX2(color_count, 1), a subpass's colour attachments
+/// the unused among them, and one for none (v3dvx_cmd_buffer.c:975; since
+/// 1.232, 1 before).
+pub fn renderingCommon(list: *List, width: u32, height: u32, tile: Tile, depth: bool, depth24: bool, four: bool, targets: u32) void {
+    std.debug.assert(targets >= 1 and targets <= most_render_targets);
     const log2_width = @as(u64, log2Tile(tile.width));
     const log2_height = @as(u64, log2Tile(tile.height));
     const multisample: u64 = @as(u64, @intFromBool(four)) << 42;
     const no_depth_buffer: u64 = @as(u64, @intFromBool(!depth)) << 44;
     const depth_type: u64 = @as(u64, if (depth24) 1 else 2) << 47;
     list.byte(TILE_RENDERING_MODE_CFG);
-    list.double(@as(u64, width) << 8 | @as(u64, height) << 24 | multisample | no_depth_buffer | 1 << 46 | depth_type |
+    list.double(@as(u64, targets - 1) << 4 | @as(u64, width) << 8 | @as(u64, height) << 24 | multisample | no_depth_buffer | 1 << 46 | depth_type |
         log2_width << 52 | log2_height << 55);
 }
 
@@ -302,7 +319,7 @@ fn unorm8(value: f32) u8 {
     return @intFromFloat(@round(value * 255));
 }
 
-/// What render target 0 is: its bits a pixel, its type and clamp, and
+/// What a render target is: its bits a pixel, its type and clamp, and
 /// the colour it clears to, `clearColor`'s. The defaults are what every
 /// colour was drawn at until 1.228: 32 bits of normalized bytes.
 pub const RenderTarget = struct {
@@ -311,36 +328,46 @@ pub const RenderTarget = struct {
     clear: [4]u32 = @splat(0),
 };
 
-/// Render target 0, by 7.1's three packets of it (v3dvx_cmd_buffer.c:
-/// 1151-1185): the first with its stride, its bits a pixel, its type and
-/// clamp and the clear colour's low 32 bits; the second, of a target of
-/// 64 bits or more, the next 40; the third, of one of 128, the last 56.
+/// Render target `number`, at `base` in the tile buffer, by 7.1's three
+/// packets of it (v3dvx_cmd_buffer.c:1151-1185): the first with its
+/// stride, its bits a pixel, its type and clamp, its base address and the
+/// clear colour's low 32 bits; the second, of a target of 64 bits or more,
+/// the next 40; the third, of one of 128, the last 56; each naming it.
 /// Its stride is in 128 bits for two rows of the tile, at four samples as
 /// at one (`v3d_compute_rt_row_row_stride_128_bits`, v3d_util.c:316-325,
-/// as v3dvx_cmd_buffer.c:1155-1157 calls it). It is the first target, at
-/// the tile buffer's start: base address 0.
-pub fn renderTarget(list: *List, tile_width: u32, target: RenderTarget) void {
-    const stride: u64 = tile_width * target.bpp.words() / 2;
+/// as v3dvx_cmd_buffer.c:1155-1157 calls it). `base` is in 512 bits; what
+/// is returned is the next target's, past the tile's rows of this one, as
+/// v3dv adds `tile_height * stride / 8` after each (:1159-1166). The
+/// first target is at 0. Since 1.232 the target's number and base: render
+/// target 0 alone, at 0, before.
+pub fn renderTarget(list: *List, tile: Tile, number: u32, base: u32, target: RenderTarget) u32 {
+    std.debug.assert(number < most_render_targets);
+    const stride: u32 = tile.width * target.bpp.words() / 2;
     const clear = target.clear;
+    const named: u64 = @as(u64, number) << 3;
     list.byte(TILE_RENDERING_MODE_CFG);
-    list.double(2 | (stride - 1) << 18 | @as(u64, @intFromEnum(target.bpp)) << 25 | @as(u64, target.type_clamp) << 27 | @as(u64, clear[0]) << 32);
+    list.double(2 | named | @as(u64, base) << 7 | @as(u64, stride - 1) << 18 | @as(u64, @intFromEnum(target.bpp)) << 25 | @as(u64, target.type_clamp) << 27 | @as(u64, clear[0]) << 32);
     if (target.bpp != .@"32") {
         list.byte(TILE_RENDERING_MODE_CFG);
-        list.double(3 | (@as(u64, clear[1]) | @as(u64, clear[2] & 0xFF) << 32) << 24);
+        list.double(3 | named | (@as(u64, clear[1]) | @as(u64, clear[2] & 0xFF) << 32) << 24);
     }
     if (target.bpp == .@"128") {
         list.byte(TILE_RENDERING_MODE_CFG);
-        list.double(4 | (@as(u64, clear[2] >> 8) | @as(u64, clear[3]) << 24) << 8);
+        list.double(4 | named | (@as(u64, clear[2] >> 8) | @as(u64, clear[3]) << 24) << 8);
     }
+    return base + tile.height * stride / 8;
 }
 
-/// The render target of a frame of no colour: one is still configured,
-/// flagged unused by a stride of 1, which packs to 0 (v3dvx_cmd_buffer.c:
-/// 1189-1197; v3d_packet.xml's Stride is minus_one), its other fields 0
-/// (since 1.150).
-pub fn unusedRenderTarget(list: *List) void {
+/// A render target that is configured and unused: of a frame of no colour,
+/// or of an unused attachment a subpass has before others (since 1.232).
+/// It is flagged unused by a stride of 1, which packs to 0
+/// (v3dvx_cmd_buffer.c:1080-1086, 1189-1197; v3d_packet.xml's Stride is
+/// minus_one), named, its other fields 0, and takes no room in the tile
+/// buffer: v3dv moves no base address past it (since 1.150).
+pub fn unusedRenderTarget(list: *List, number: u32) void {
+    std.debug.assert(number < most_render_targets);
     list.byte(TILE_RENDERING_MODE_CFG);
-    list.double(2);
+    list.double(2 | @as(u64, number) << 3);
 }
 
 /// The last of the rendering mode's packets: depth and stencil's clear.
@@ -908,7 +935,7 @@ test "the packets have Mesa's lengths and its fields" {
     var memory: [64]u8 = undefined;
     var list = List{ .at = &memory, .address = 0x1000 };
 
-    renderingCommon(&list, 1280, 720, .{ .width = 64, .height = 64 }, false, false, false);
+    renderingCommon(&list, 1280, 720, .{ .width = 64, .height = 64 }, false, false, false, 1);
     try std.testing.expectEqual(@as(u32, 9), list.used);
     // Image size at 8 and 24, early-Z off at 46, log2 of the tile at 52, 55.
     try std.testing.expectEqual(@as(u8, 121), memory[0]);
@@ -921,7 +948,7 @@ test "the packets have Mesa's lengths and its fields" {
     // The tiles' depth of 16 bits at 47, and of 24 where asked (since 1.224).
     try std.testing.expectEqual(@as(u64, 2), common >> 47 & 0xF);
     list.used = 0;
-    renderingCommon(&list, 1280, 720, .{ .width = 64, .height = 64 }, true, true, false);
+    renderingCommon(&list, 1280, 720, .{ .width = 64, .height = 64 }, true, true, false, 1);
     const deep = std.mem.readInt(u64, memory[1..9], .little);
     try std.testing.expectEqual(@as(u64, 1), deep >> 47 & 0xF);
     try std.testing.expectEqual(@as(u64, 0), deep >> 44 & 1);
@@ -965,7 +992,7 @@ test "the 4x fields lie where v3d_packet.xml has them, and one sample's packets 
 
     // COMMON: the multisample bit at 42, and the tile's log2 width at 52
     // and height at 55 apart, 32 x 16 being one of v3d_choose_tile_size's.
-    renderingCommon(&list, 800, 600, .{ .width = 32, .height = 16 }, true, false, true);
+    renderingCommon(&list, 800, 600, .{ .width = 32, .height = 16 }, true, false, true, 1);
     const four = std.mem.readInt(u64, memory[1..9], .little);
     try std.testing.expectEqual(@as(u64, 1), four >> 42 & 1);
     try std.testing.expectEqual(@as(u64, 0), four >> 44 & 1);
@@ -974,7 +1001,7 @@ test "the 4x fields lie where v3d_packet.xml has them, and one sample's packets 
     try std.testing.expectEqual(@as(u64, 800), four >> 8 & 0xFFFF);
     try std.testing.expectEqual(@as(u64, 600), four >> 24 & 0xFFFF);
     list.used = 0;
-    renderingCommon(&list, 800, 600, .{ .width = 32, .height = 16 }, true, false, false);
+    renderingCommon(&list, 800, 600, .{ .width = 32, .height = 16 }, true, false, false, 1);
     const one = std.mem.readInt(u64, memory[1..9], .little);
     try std.testing.expectEqual(four & ~(@as(u64, 1) << 42), one);
 
@@ -993,7 +1020,7 @@ test "the 4x fields lie where v3d_packet.xml has them, and one sample's packets 
     // The render target's stride, from the width alone, and what 1.227
     // wrote for every colour: one packet, normalized bytes at 32 bits.
     list.used = 0;
-    renderTarget(&list, 32, .{ .clear = .{ 0x8040_20FF, 0, 0, 0 } });
+    try std.testing.expectEqual(@as(u32, 32 * 16 / 8), renderTarget(&list, .{ .width = 32, .height = 32 }, 0, 0, .{ .clear = .{ 0x8040_20FF, 0, 0, 0 } }));
     try std.testing.expectEqual(@as(u32, 9), list.used);
     const target = std.mem.readInt(u64, memory[1..9], .little);
     try std.testing.expectEqual(@as(u64, 15), target >> 18 & 0x7F);
@@ -1186,7 +1213,7 @@ test "render targets of 64 and 128 bits: their stride, their type and clamp, and
     // target's, 64 bits (1) at 25, 16f (9) at 27.
     const halves = clearColor(.float16, .{ @bitCast(@as(f32, 1.5)), @bitCast(@as(f32, -2)), @bitCast(@as(f32, 0.25)), @bitCast(@as(f32, 4)) });
     try std.testing.expectEqual([4]u32{ 0xC000_3E00, 0x4400_3400, 0, 0 }, halves);
-    renderTarget(&list, 32, .{ .bpp = .@"64", .type_clamp = typeClamp(.float16, false, false), .clear = halves });
+    _ = renderTarget(&list, .{ .width = 32, .height = 16 }, 0, 0, .{ .bpp = .@"64", .type_clamp = typeClamp(.float16, false, false), .clear = halves });
     try std.testing.expectEqual(@as(u32, 18), list.used);
     const first = std.mem.readInt(u64, memory[1..9], .little);
     try std.testing.expectEqual(@as(u64, 2), first & 7);
@@ -1204,7 +1231,7 @@ test "render targets of 64 and 128 bits: their stride, their type and clamp, and
     list.used = 0;
     const floats = [4]u32{ 0x1122_3344, 0x5566_7788, 0x99AA_BBCC, 0xDDEE_FF00 };
     try std.testing.expectEqual(floats, clearColor(.float32, floats));
-    renderTarget(&list, 16, .{ .bpp = .@"128", .type_clamp = typeClamp(.float32, false, false), .clear = floats });
+    _ = renderTarget(&list, .{ .width = 16, .height = 8 }, 0, 0, .{ .bpp = .@"128", .type_clamp = typeClamp(.float32, false, false), .clear = floats });
     try std.testing.expectEqual(@as(u32, 27), list.used);
     const one = std.mem.readInt(u64, memory[1..9], .little);
     const two = std.mem.readInt(u64, memory[10..18], .little);
@@ -1222,8 +1249,43 @@ test "render targets of 64 and 128 bits: their stride, their type and clamp, and
 
     // A target of 32 bits of floats is one packet still.
     list.used = 0;
-    renderTarget(&list, 64, .{ .type_clamp = typeClamp(.float32, false, false), .clear = .{ @bitCast(@as(f32, -3)), 0, 0, 0 } });
+    _ = renderTarget(&list, .{ .width = 64, .height = 64 }, 0, 0, .{ .type_clamp = typeClamp(.float32, false, false), .clear = .{ @bitCast(@as(f32, -3)), 0, 0, 0 } });
     try std.testing.expectEqual(@as(u32, 9), list.used);
+}
+
+test "a render target names its number in each of its packets and its base address in the first, the next one past its tile's rows, and the common packet counts them (since 1.232)" {
+    var memory: [64]u8 = undefined;
+    var list = List{ .at = &memory, .address = 0 };
+    // Four floats in a tile of 64 by 32: a stride of 128 (64 pixels of
+    // four words, two rows in 128 bits), 32 rows of it in 512 bits after
+    // it, 32 * 128 / 8 (v3dvx_cmd_buffer.c:1159-1166).
+    const floats = RenderTarget{ .bpp = .@"128", .type_clamp = typeClamp(.float32, false, false) };
+    try std.testing.expectEqual(@as(u32, 100 + 512), renderTarget(&list, .{ .width = 64, .height = 32 }, 3, 100, floats));
+    try std.testing.expectEqual(@as(u32, 27), list.used);
+    for (0..3) |k| {
+        const fields = std.mem.readInt(u64, memory[1 + 9 * k ..][0..8], .little);
+        try std.testing.expectEqual(@as(u64, 2 + k), fields & 7);
+        try std.testing.expectEqual(@as(u64, 3), fields >> 3 & 7);
+    }
+    const first = std.mem.readInt(u64, memory[1..9], .little);
+    try std.testing.expectEqual(@as(u64, 100), first >> 7 & 0x7FF);
+    try std.testing.expectEqual(@as(u64, 127), first >> 18 & 0x7F);
+    // A word a pixel in a tile of 32 by 16: 16 rows of a stride of 16.
+    list.used = 0;
+    try std.testing.expectEqual(@as(u32, 7 + 16 * 16 / 8), renderTarget(&list, .{ .width = 32, .height = 16 }, 1, 7, .{}));
+    // The unused one, named and nothing else.
+    list.used = 0;
+    unusedRenderTarget(&list, 2);
+    try std.testing.expectEqual(@as(u64, 2 | 2 << 3), std.mem.readInt(u64, memory[1..9], .little));
+    // "Number of Render Targets" at 4, minus one; nothing else moves.
+    list.used = 0;
+    renderingCommon(&list, 800, 600, .{ .width = 32, .height = 16 }, true, false, false, 4);
+    const four = std.mem.readInt(u64, memory[1..9], .little);
+    try std.testing.expectEqual(@as(u64, 3), four >> 4 & 0xF);
+    list.used = 0;
+    renderingCommon(&list, 800, 600, .{ .width = 32, .height = 16 }, true, false, false, 1);
+    try std.testing.expectEqual(four & ~(@as(u64, 0xF) << 4), std.mem.readInt(u64, memory[1..9], .little));
+    try std.testing.expectEqual(@as(u64, 2), renderTargetBuffer(2));
 }
 
 test "the tile buffer's type for each output, the clamp v3dv gives it, and a clear packed as v3dv packs it (since 1.228)" {
