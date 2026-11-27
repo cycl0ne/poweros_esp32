@@ -84,6 +84,10 @@ pub const Programs = struct {
     /// (`qpu.wide`, since 1.228): each reads one uniform more, the TLB
     /// write's specifier, after its own.
     wide: Colors,
+    /// `qpu.words_fragment`: a clear's four words into a render target
+    /// taken a word a channel, of 32-bit floats or whole numbers, as v3dv
+    /// clears one (since 1.229).
+    words: u32,
 };
 
 /// The programs of the fixed forms that write a colour.
@@ -403,12 +407,13 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         .tile_inputs = false,
         // The fourteen colour attachments of 0 to 1 and of floats of
         // docs/facet-vulkan10.md item 36, each in its own output format
-        // and internal type (`v3d.target`, since 1.228). Not the
-        // twenty-one of whole numbers yet; floats of 32 bits not blended,
-        // the tiles mixing bytes and half-floats alone; and none of them
-        // read back by the TMU.
+        // and internal type (`v3d.target`, since 1.228), and since 1.229
+        // its twenty-one of whole numbers, written a word a channel and
+        // held to the channel by the tiles (`cl.typeClamp`). Floats of 32
+        // bits not blended, the tiles mixing bytes and half-floats alone;
+        // and none of them read back by the TMU.
         .texel_targets = true,
-        .whole_targets = false,
+        .whole_targets = true,
         .float32_blend = false,
         .target_reads = false,
         // A dynamic buffer descriptor is a pointer and a range, shifted
@@ -555,7 +560,7 @@ const wide_fragments = [_]*const qpu.Fragment{ &qpu.wide_color_fragment, &qpu.wi
 
 /// Every program in one block of the V3D's.
 fn loadPrograms(hardware: *Hardware) bool {
-    const fragments = [_]*const qpu.Fragment{ &qpu.color_fragment, &qpu.texture_fragment, &qpu.texture_color_fragment, &qpu.array_fragment, &qpu.cube_fragment, &qpu.volume_fragment, &qpu.shadow_fragment, &qpu.no_color_fragment } ++ wide_fragments;
+    const fragments = [_]*const qpu.Fragment{ &qpu.color_fragment, &qpu.texture_fragment, &qpu.texture_color_fragment, &qpu.array_fragment, &qpu.cube_fragment, &qpu.volume_fragment, &qpu.shadow_fragment, &qpu.no_color_fragment, &qpu.words_fragment } ++ wide_fragments;
     var words: usize = qpu.coordinate_program.len;
     for (0..qpu.most_varyings + 1) |varyings| words += qpu.vertexProgram(@intCast(varyings)).len;
     for (fragments) |fragment| words += fragment.code.len;
@@ -585,6 +590,7 @@ fn loadPrograms(hardware: *Hardware) bool {
     hardware.programs.volume = put(block, &used, qpu.volume_fragment.code);
     hardware.programs.shadow = put(block, &used, qpu.shadow_fragment.code);
     hardware.programs.no_color = put(block, &used, qpu.no_color_fragment.code);
+    hardware.programs.words = put(block, &used, qpu.words_fragment.code);
     var wide: [wide_fragments.len]u32 = undefined;
     for (&wide, wide_fragments) |*address, fragment| address.* = put(block, &used, fragment.code);
     hardware.programs.wide = .{ .color = wide[0], .texture = wide[1], .texture_color = wide[2], .array = wide[3], .cube = wide[4], .volume = wide[5], .shadow = wide[6] };
@@ -923,7 +929,8 @@ fn compiled(pipeline: *Pipeline) facet.Result {
     // Keyed as v3dv keys it: alpha to coverage, and render target 0 where
     // the subpass draws a colour (v3dv_pipeline.c:2137-2142, since 1.150),
     // written a float at a time where it is of 32-bit floats
-    // (f32_color_rb, v3dv_pipeline.c:1240-1243; since 1.228). Each part of
+    // (f32_color_rb, v3dv_pipeline.c:1240-1243; since 1.228) and a word at
+    // a time where it is of whole numbers (:1253-1256; since 1.229). Each part of
     // a subpass drawn in parts is render target 0 of its own frame with the
     // one program: parts of both widths are not compiled for.
     const wide = wideTarget(pipeline.part_formats[0]);

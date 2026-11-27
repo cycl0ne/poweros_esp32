@@ -33192,3 +33192,162 @@ pub const glslc_storage_vertex = [_]u32{
     0x00050041, 0x0000001D, 0x0000001E, 0x0000001A, 0x0000000F, 0x0003003E,
     0x0000001E, 0x0000001C, 0x000100FD, 0x00010038,
 };
+
+/// glslc's own output for the push constants' four words as unsigned whole numbers (since facet 1.229): what a target of
+/// whole numbers is drawn with, Mesa's back end writing the four words to
+/// the TLB as they are under f32_color_rb (v3dv_pipeline.c:1253-1256).
+///
+/// ```glsl
+/// #version 450
+/// layout(location = 0) out uvec4 ocolor;
+/// layout(push_constant) uniform Push { uvec4 u; } push;
+/// void main() { ocolor = push.u; }
+/// ```
+///
+/// ```sh
+/// glslc -fshader-stage=frag uints.frag -o uints.spv   # 143 words
+/// spirv-val --target-env vulkan1.0 uints.spv  # no output, and 0
+/// ```
+///
+/// ```
+///                OpCapability Shader
+///           %1 = OpExtInstImport "GLSL.std.450"
+///                OpMemoryModel Logical GLSL450
+///                OpEntryPoint Fragment %main "main" %ocolor
+///                OpExecutionMode %main OriginUpperLeft
+///                OpSource GLSL 450
+///                OpSourceExtension "GL_GOOGLE_cpp_style_line_directive"
+///                OpSourceExtension "GL_GOOGLE_include_directive"
+///                OpName %main "main"
+///                OpName %ocolor "ocolor"
+///                OpName %Push "Push"
+///                OpMemberName %Push 0 "u"
+///                OpName %push "push"
+///                OpDecorate %ocolor Location 0
+///                OpDecorate %Push Block
+///                OpMemberDecorate %Push 0 Offset 0
+///        %void = OpTypeVoid
+///           %3 = OpTypeFunction %void
+///        %uint = OpTypeInt 32 0
+///      %v4uint = OpTypeVector %uint 4
+/// %_ptr_Output_v4uint = OpTypePointer Output %v4uint
+///      %ocolor = OpVariable %_ptr_Output_v4uint Output
+///        %Push = OpTypeStruct %v4uint
+/// %_ptr_PushConstant_Push = OpTypePointer PushConstant %Push
+///        %push = OpVariable %_ptr_PushConstant_Push PushConstant
+///         %int = OpTypeInt 32 1
+///       %int_0 = OpConstant %int 0
+/// %_ptr_PushConstant_v4uint = OpTypePointer PushConstant %v4uint
+///        %main = OpFunction %void None %3
+///           %5 = OpLabel
+///          %16 = OpAccessChain %_ptr_PushConstant_v4uint %push %int_0
+///          %17 = OpLoad %v4uint %16
+///                OpStore %ocolor %17
+///                OpReturn
+///                OpFunctionEnd
+/// ```
+pub const glslc_whole_unsigned = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000012, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0006000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00000009, 0x00030010, 0x00000004,
+    0x00000007, 0x00030003, 0x00000002, 0x000001C2, 0x000A0004, 0x475F4C47,
+    0x4C474F4F, 0x70635F45, 0x74735F70, 0x5F656C79, 0x656E696C, 0x7269645F,
+    0x69746365, 0x00006576, 0x00080004, 0x475F4C47, 0x4C474F4F, 0x6E695F45,
+    0x64756C63, 0x69645F65, 0x74636572, 0x00657669, 0x00040005, 0x00000004,
+    0x6E69616D, 0x00000000, 0x00040005, 0x00000009, 0x6C6F636F, 0x0000726F,
+    0x00040005, 0x0000000A, 0x68737550, 0x00000000, 0x00040006, 0x0000000A,
+    0x00000000, 0x00000075, 0x00040005, 0x0000000C, 0x68737570, 0x00000000,
+    0x00040047, 0x00000009, 0x0000001E, 0x00000000, 0x00030047, 0x0000000A,
+    0x00000002, 0x00050048, 0x0000000A, 0x00000000, 0x00000023, 0x00000000,
+    0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00040015,
+    0x00000006, 0x00000020, 0x00000000, 0x00040017, 0x00000007, 0x00000006,
+    0x00000004, 0x00040020, 0x00000008, 0x00000003, 0x00000007, 0x0004003B,
+    0x00000008, 0x00000009, 0x00000003, 0x0003001E, 0x0000000A, 0x00000007,
+    0x00040020, 0x0000000B, 0x00000009, 0x0000000A, 0x0004003B, 0x0000000B,
+    0x0000000C, 0x00000009, 0x00040015, 0x0000000D, 0x00000020, 0x00000001,
+    0x0004002B, 0x0000000D, 0x0000000E, 0x00000000, 0x00040020, 0x0000000F,
+    0x00000009, 0x00000007, 0x00050036, 0x00000002, 0x00000004, 0x00000000,
+    0x00000003, 0x000200F8, 0x00000005, 0x00050041, 0x0000000F, 0x00000010,
+    0x0000000C, 0x0000000E, 0x0004003D, 0x00000007, 0x00000011, 0x00000010,
+    0x0003003E, 0x00000009, 0x00000011, 0x000100FD, 0x00010038,
+};
+
+/// glslc's own output for the push constants' four words as signed whole numbers (since facet 1.229): what a target of
+/// whole numbers is drawn with, Mesa's back end writing the four words to
+/// the TLB as they are under f32_color_rb (v3dv_pipeline.c:1253-1256).
+///
+/// ```glsl
+/// #version 450
+/// layout(location = 0) out ivec4 ocolor;
+/// layout(push_constant) uniform Push { ivec4 s; } push;
+/// void main() { ocolor = push.s; }
+/// ```
+///
+/// ```sh
+/// glslc -fshader-stage=frag sints.frag -o sints.spv   # 139 words
+/// spirv-val --target-env vulkan1.0 sints.spv  # no output, and 0
+/// ```
+///
+/// ```
+///                OpCapability Shader
+///           %1 = OpExtInstImport "GLSL.std.450"
+///                OpMemoryModel Logical GLSL450
+///                OpEntryPoint Fragment %main "main" %ocolor
+///                OpExecutionMode %main OriginUpperLeft
+///                OpSource GLSL 450
+///                OpSourceExtension "GL_GOOGLE_cpp_style_line_directive"
+///                OpSourceExtension "GL_GOOGLE_include_directive"
+///                OpName %main "main"
+///                OpName %ocolor "ocolor"
+///                OpName %Push "Push"
+///                OpMemberName %Push 0 "s"
+///                OpName %push "push"
+///                OpDecorate %ocolor Location 0
+///                OpDecorate %Push Block
+///                OpMemberDecorate %Push 0 Offset 0
+///        %void = OpTypeVoid
+///           %3 = OpTypeFunction %void
+///         %int = OpTypeInt 32 1
+///       %v4int = OpTypeVector %int 4
+/// %_ptr_Output_v4int = OpTypePointer Output %v4int
+///      %ocolor = OpVariable %_ptr_Output_v4int Output
+///        %Push = OpTypeStruct %v4int
+/// %_ptr_PushConstant_Push = OpTypePointer PushConstant %Push
+///        %push = OpVariable %_ptr_PushConstant_Push PushConstant
+///       %int_0 = OpConstant %int 0
+/// %_ptr_PushConstant_v4int = OpTypePointer PushConstant %v4int
+///        %main = OpFunction %void None %3
+///           %5 = OpLabel
+///          %15 = OpAccessChain %_ptr_PushConstant_v4int %push %int_0
+///          %16 = OpLoad %v4int %15
+///                OpStore %ocolor %16
+///                OpReturn
+///                OpFunctionEnd
+/// ```
+pub const glslc_whole_signed = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000011, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0006000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00000009, 0x00030010, 0x00000004,
+    0x00000007, 0x00030003, 0x00000002, 0x000001C2, 0x000A0004, 0x475F4C47,
+    0x4C474F4F, 0x70635F45, 0x74735F70, 0x5F656C79, 0x656E696C, 0x7269645F,
+    0x69746365, 0x00006576, 0x00080004, 0x475F4C47, 0x4C474F4F, 0x6E695F45,
+    0x64756C63, 0x69645F65, 0x74636572, 0x00657669, 0x00040005, 0x00000004,
+    0x6E69616D, 0x00000000, 0x00040005, 0x00000009, 0x6C6F636F, 0x0000726F,
+    0x00040005, 0x0000000A, 0x68737550, 0x00000000, 0x00040006, 0x0000000A,
+    0x00000000, 0x00000073, 0x00040005, 0x0000000C, 0x68737570, 0x00000000,
+    0x00040047, 0x00000009, 0x0000001E, 0x00000000, 0x00030047, 0x0000000A,
+    0x00000002, 0x00050048, 0x0000000A, 0x00000000, 0x00000023, 0x00000000,
+    0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00040015,
+    0x00000006, 0x00000020, 0x00000001, 0x00040017, 0x00000007, 0x00000006,
+    0x00000004, 0x00040020, 0x00000008, 0x00000003, 0x00000007, 0x0004003B,
+    0x00000008, 0x00000009, 0x00000003, 0x0003001E, 0x0000000A, 0x00000007,
+    0x00040020, 0x0000000B, 0x00000009, 0x0000000A, 0x0004003B, 0x0000000B,
+    0x0000000C, 0x00000009, 0x0004002B, 0x00000006, 0x0000000D, 0x00000000,
+    0x00040020, 0x0000000E, 0x00000009, 0x00000007, 0x00050036, 0x00000002,
+    0x00000004, 0x00000000, 0x00000003, 0x000200F8, 0x00000005, 0x00050041,
+    0x0000000E, 0x0000000F, 0x0000000C, 0x0000000D, 0x0004003D, 0x00000007,
+    0x00000010, 0x0000000F, 0x0003003E, 0x00000009, 0x00000010, 0x000100FD,
+    0x00010038,
+};

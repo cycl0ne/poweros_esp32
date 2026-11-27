@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetProbe";
-const VERSION_STRING = "\x00$VER: FacetProbe 1.56 (27.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetProbe 1.57 (27.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "CORES/S,V3D/S,QUIET/S";
@@ -119,10 +119,10 @@ const Can = struct {
     /// (docs/facet-vulkan10.md item 36). Every device, so true; the field
     /// stays for the checks of one that draws none.
     texel_targets: bool,
-    /// The twenty-one of whole numbers: the cores' since facet 1.227, not
-    /// the V3D's yet. Read off the device's type, as `tile_inputs` is, the
-    /// format features being what is checked against it. Until 1.56 this
-    /// was `texel_targets`.
+    /// The twenty-one of whole numbers: the cores' since facet 1.227, and
+    /// since 1.229 (FacetProbe 1.57) the V3D's, so both devices'. Kept for
+    /// the checks of one that draws none, the format features being what
+    /// is checked against it. Until 1.56 this was `texel_targets`.
     whole_targets: bool,
     /// The three of 32-bit floats blended: the cores', not the V3D's, whose
     /// tiles mix normalized bytes and half-floats alone, as v3dv's do.
@@ -191,7 +191,10 @@ const Can = struct {
             // device that draws them says, copying out what it drew.
             .kept_floats = halves & facet.FORMAT_FEATURE_STORAGE_IMAGE != 0,
             .wide_channels = wide != 0,
-            .whole_textures = whole != 0,
+            // Whole numbers a texture keeps are sampled. Until 1.57 any
+            // feature of theirs, which since facet 1.229 the V3D says of
+            // them as attachments alone.
+            .whole_textures = whole & facet.FORMAT_FEATURE_SAMPLED_IMAGE != 0,
             .small_texels = small != 0,
             .depth_bounds = features.depth_bounds == facet.TRUE,
             .depth_clamp = features.depth_clamp == facet.TRUE,
@@ -210,7 +213,7 @@ const Can = struct {
             .tile_inputs = properties.device_type == .cpu,
             .depth24 = true,
             .texel_targets = true,
-            .whole_targets = properties.device_type == .cpu,
+            .whole_targets = true,
             .float32_blend = properties.device_type == .cpu,
             .target_reads = properties.device_type == .cpu,
             .fragment_functions = properties.device_type == .cpu,
@@ -7364,7 +7367,9 @@ fn fixedTargetsDrawn(probe: *Probe, cases: []const FixedCase) void {
 // --- facet 1.227: colour attachments of whole numbers -----------------------
 
 /// The push constants' four words as whole numbers, unsigned and signed
-/// (`shader.Written.uints`, `.sints`, since facet 1.227).
+/// (`shader.Written.uints`, `.sints`, since facet 1.227), and since 1.57
+/// the same as glslc compiles them, for the V3D (facet 1.229): the
+/// cores run the functions, the V3D the words.
 const WholeWriter = struct {
     const entries = [_]facet.shader.Entry{
         facet.shader.vertex("main", &Flat.vertex, 0),
@@ -7372,7 +7377,72 @@ const WholeWriter = struct {
         facet.shader.vertex("signed", &Flat.vertex, 0),
         facet.shader.fragmentWriting("signed", &Wider.fragment, 0, 1, .sints),
     };
-    const code = facet.shader.Code{ .entry_count = entries.len, .entries = &entries };
+    const words = [_]facet.shader.Spirv{ .{}, .of(&unsigned), .{}, .of(&signed) };
+    const code = facet.shader.Module{ .entry_count = entries.len, .entries = &entries, .spirv = &words, .spirv_count = words.len };
+
+    /// ```glsl
+    /// #version 450
+    /// layout(location = 0) out uvec4 ocolor;
+    /// layout(push_constant) uniform Push { uvec4 u; } push;
+    /// void main() { ocolor = push.u; }
+    /// ```
+    ///
+    /// `glslc -fshader-stage=frag`, and `spirv-val --target-env
+    /// vulkan1.0` passes it.
+    const unsigned = [_]u32{
+        0x07230203, 0x00010000, 0x000D000B, 0x00000012, 0x00000000, 0x00020011,
+        0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+        0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0006000F, 0x00000004,
+        0x00000004, 0x6E69616D, 0x00000000, 0x00000009, 0x00030010, 0x00000004,
+        0x00000007, 0x00030003, 0x00000002, 0x000001C2, 0x000A0004, 0x475F4C47,
+        0x4C474F4F, 0x70635F45, 0x74735F70, 0x5F656C79, 0x656E696C, 0x7269645F,
+        0x69746365, 0x00006576, 0x00080004, 0x475F4C47, 0x4C474F4F, 0x6E695F45,
+        0x64756C63, 0x69645F65, 0x74636572, 0x00657669, 0x00040005, 0x00000004,
+        0x6E69616D, 0x00000000, 0x00040005, 0x00000009, 0x6C6F636F, 0x0000726F,
+        0x00040005, 0x0000000A, 0x68737550, 0x00000000, 0x00040006, 0x0000000A,
+        0x00000000, 0x00000075, 0x00040005, 0x0000000C, 0x68737570, 0x00000000,
+        0x00040047, 0x00000009, 0x0000001E, 0x00000000, 0x00030047, 0x0000000A,
+        0x00000002, 0x00050048, 0x0000000A, 0x00000000, 0x00000023, 0x00000000,
+        0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00040015,
+        0x00000006, 0x00000020, 0x00000000, 0x00040017, 0x00000007, 0x00000006,
+        0x00000004, 0x00040020, 0x00000008, 0x00000003, 0x00000007, 0x0004003B,
+        0x00000008, 0x00000009, 0x00000003, 0x0003001E, 0x0000000A, 0x00000007,
+        0x00040020, 0x0000000B, 0x00000009, 0x0000000A, 0x0004003B, 0x0000000B,
+        0x0000000C, 0x00000009, 0x00040015, 0x0000000D, 0x00000020, 0x00000001,
+        0x0004002B, 0x0000000D, 0x0000000E, 0x00000000, 0x00040020, 0x0000000F,
+        0x00000009, 0x00000007, 0x00050036, 0x00000002, 0x00000004, 0x00000000,
+        0x00000003, 0x000200F8, 0x00000005, 0x00050041, 0x0000000F, 0x00000010,
+        0x0000000C, 0x0000000E, 0x0004003D, 0x00000007, 0x00000011, 0x00000010,
+        0x0003003E, 0x00000009, 0x00000011, 0x000100FD, 0x00010038,
+    };
+
+    /// The same of `ivec4`.
+    const signed = [_]u32{
+        0x07230203, 0x00010000, 0x000D000B, 0x00000011, 0x00000000, 0x00020011,
+        0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+        0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0006000F, 0x00000004,
+        0x00000004, 0x6E69616D, 0x00000000, 0x00000009, 0x00030010, 0x00000004,
+        0x00000007, 0x00030003, 0x00000002, 0x000001C2, 0x000A0004, 0x475F4C47,
+        0x4C474F4F, 0x70635F45, 0x74735F70, 0x5F656C79, 0x656E696C, 0x7269645F,
+        0x69746365, 0x00006576, 0x00080004, 0x475F4C47, 0x4C474F4F, 0x6E695F45,
+        0x64756C63, 0x69645F65, 0x74636572, 0x00657669, 0x00040005, 0x00000004,
+        0x6E69616D, 0x00000000, 0x00040005, 0x00000009, 0x6C6F636F, 0x0000726F,
+        0x00040005, 0x0000000A, 0x68737550, 0x00000000, 0x00040006, 0x0000000A,
+        0x00000000, 0x00000073, 0x00040005, 0x0000000C, 0x68737570, 0x00000000,
+        0x00040047, 0x00000009, 0x0000001E, 0x00000000, 0x00030047, 0x0000000A,
+        0x00000002, 0x00050048, 0x0000000A, 0x00000000, 0x00000023, 0x00000000,
+        0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00040015,
+        0x00000006, 0x00000020, 0x00000001, 0x00040017, 0x00000007, 0x00000006,
+        0x00000004, 0x00040020, 0x00000008, 0x00000003, 0x00000007, 0x0004003B,
+        0x00000008, 0x00000009, 0x00000003, 0x0003001E, 0x0000000A, 0x00000007,
+        0x00040020, 0x0000000B, 0x00000009, 0x0000000A, 0x0004003B, 0x0000000B,
+        0x0000000C, 0x00000009, 0x0004002B, 0x00000006, 0x0000000D, 0x00000000,
+        0x00040020, 0x0000000E, 0x00000009, 0x00000007, 0x00050036, 0x00000002,
+        0x00000004, 0x00000000, 0x00000003, 0x000200F8, 0x00000005, 0x00050041,
+        0x0000000E, 0x0000000F, 0x0000000C, 0x0000000D, 0x0004003D, 0x00000007,
+        0x00000010, 0x0000000F, 0x0003003E, 0x00000009, 0x00000010, 0x000100FD,
+        0x00010038,
+    };
 };
 
 /// The twenty-one, as docs/facet-vulkan10.md item 36 names them.
@@ -7414,7 +7484,7 @@ fn wholeTargetChecks(probe: *Probe) void {
     probe.check(passes, "and a pass of each is made");
 
     var module: ?*facet.ShaderModule = null;
-    if (fb.CreateShaderModule(device, &.{ .code = &WholeWriter.code }, &module) != .success) return probe.check(false, "the shader module");
+    if (fb.CreateShaderModule(device, &.{ .flags = facet.SHADER_MODULE_CREATE_SPIRV, .code_size = @sizeOf(facet.shader.Module), .code = &WholeWriter.code }, &module) != .success) return probe.check(false, "the shader module");
     _ = Probe.keep(&probe.modules, module);
     const range = facet.PushConstantRange{ .size = 16 };
     var layout: ?*facet.PipelineLayout = null;
@@ -7431,9 +7501,12 @@ fn wholeTargetChecks(probe: *Probe) void {
 
     // Numbers past what a float carries and below 0, drawn and cleared,
     // read back as the format keeps them; and a pipeline that blends one
-    // refused.
-    const Case = struct { format: facet.Format, name: [*:0]const u8, bytes: u32, clear: [4]u32, drawn: [4]u32, inside: [16]u8, outside: [16]u8, says: [*:0]const u8 };
-    const cases = [2]Case{
+    // refused. Since 1.57 on the V3D as well, and four more, each also
+    // cleared by CmdClearAttachments in a square of the middle that the
+    // triangle leaves (facet 1.229): the pass's clear, the program's and
+    // the rectangle's.
+    const Case = struct { format: facet.Format, name: [*:0]const u8, bytes: u32, clear: [4]u32, drawn: [4]u32, inside: [16]u8, outside: [16]u8, says: [*:0]const u8, again: [4]u32 = .{ 7, 0, 0, 9 }, middle: [16]u8 = .{ 7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 9, 0, 0, 0 } };
+    const cases = [6]Case{
         .{
             .format = .r32g32b32a32_uint,
             .name = "main",
@@ -7453,6 +7526,53 @@ fn wholeTargetChecks(probe: *Probe) void {
             .inside = .{ 0xFB, 0x7F, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
             .outside = .{ 0x80, 0x7F, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
             .says = "R8G8_SINT: below 0 kept, and 300 held to 127",
+            .middle = .{ 7, 0 } ++ @as([14]u8, @splat(0)),
+        },
+        .{
+            .format = .r8g8b8a8_uint,
+            .name = "main",
+            .bytes = 4,
+            .clear = .{ 1, 2, 3, 4 },
+            .drawn = .{ 300, 255, 0, 7 },
+            .inside = .{ 0xFF, 0xFF, 0, 7 } ++ @as([12]u8, @splat(0)),
+            .outside = .{ 1, 2, 3, 4 } ++ @as([12]u8, @splat(0)),
+            .says = "R8G8B8A8_UINT: 300 held to 255",
+            .middle = .{ 7, 0, 0, 9 } ++ @as([12]u8, @splat(0)),
+        },
+        .{
+            .format = .r16g16b16a16_uint,
+            .name = "main",
+            .bytes = 8,
+            .clear = .{ 1, 65535, 0, 2 },
+            .drawn = .{ 70000, 65535, 1, 0x8000_0000 },
+            .inside = .{ 0xFF, 0xFF, 0xFF, 0xFF, 1, 0, 0xFF, 0xFF } ++ @as([8]u8, @splat(0)),
+            .outside = .{ 1, 0, 0xFF, 0xFF, 0, 0, 2, 0 } ++ @as([8]u8, @splat(0)),
+            .says = "R16G16B16A16_UINT: 70000 and 2^31 held to 65535",
+            .middle = .{ 7, 0, 0, 0, 0, 0, 9, 0 } ++ @as([8]u8, @splat(0)),
+        },
+        .{
+            .format = .a2b10g10r10_uint_pack32,
+            .name = "main",
+            .bytes = 4,
+            .clear = .{ 0, 1023, 0, 1 },
+            .drawn = .{ 1023, 5, 512, 3 },
+            .inside = .{ 0xFF, 0x17, 0x00, 0xE0 } ++ @as([12]u8, @splat(0)),
+            .outside = .{ 0x00, 0xFC, 0x0F, 0x40 } ++ @as([12]u8, @splat(0)),
+            .says = "A2B10G10R10_UINT_PACK32: ten bits of each colour and two of alpha",
+            .again = .{ 7, 0, 0, 1 },
+            .middle = .{ 7, 0, 0, 0x40 } ++ @as([12]u8, @splat(0)),
+        },
+        .{
+            .format = .r32_sint,
+            .name = "signed",
+            .bytes = 4,
+            .clear = .{ @bitCast(@as(i32, -7)), 0, 0, 0 },
+            .drawn = .{ 0x8000_0000, 0, 0, 0 },
+            .inside = .{ 0, 0, 0, 0x80 } ++ @as([12]u8, @splat(0)),
+            .outside = .{ 0xF9, 0xFF, 0xFF, 0xFF } ++ @as([12]u8, @splat(0)),
+            .says = "R32_SINT: -2^31 drawn and -7 cleared",
+            .again = .{ 1, 0, 0, 0 },
+            .middle = .{ 1, 0, 0, 0 } ++ @as([12]u8, @splat(0)),
         },
     };
     for (cases) |one| {
@@ -7475,10 +7595,16 @@ fn wholeTargetChecks(probe: *Probe) void {
         fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
         fb.CmdPushConstants(commands, layout.?, facet.SHADER_STAGE_FRAGMENT, 0, 16, &one.drawn);
         fb.CmdDraw(commands, 3, 1, 0, 0);
+        // A square of the middle's lower right, past the triangle.
+        const again = facet.ClearAttachment{ .clear_value = .{ .color = .{ .uint32 = one.again } } };
+        const square = facet.ClearRect{ .rect = .{ .offset = .{ .x = side / 2, .y = side / 2 }, .extent = .{ .width = side / 4, .height = side / 4 } } };
+        fb.CmdClearAttachments(commands, 1, @ptrCast(&again), 1, @ptrCast(&square));
         fb.CmdEndRenderPass(commands);
         fb.CmdCopyImageToBuffer(commands, color[0], .general, back, 1, @ptrCast(&facet.BufferImageCopy{ .image_extent = extent }));
         if (!probe.submit()) return probe.check(false, "the frame submitted");
         const last = (side * side - 1) * one.bytes;
+        const middle = (side / 2 * side + side / 2) * one.bytes;
         probe.check(std.mem.eql(u8, one.inside[0..one.bytes], backed[0..one.bytes]) and std.mem.eql(u8, one.outside[0..one.bytes], backed[last..][0..one.bytes]), one.says);
+        probe.check(std.mem.eql(u8, one.middle[0..one.bytes], backed[middle..][0..one.bytes]), "and CmdClearAttachments' words over the middle, as they are");
     }
 }

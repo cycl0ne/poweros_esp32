@@ -19536,6 +19536,62 @@ test "a device whose tiles draw the fourteen as the V3D's do: each a colour atta
     fb.DestroyImage(device, read_back);
 }
 
+test "a device whose tiles draw the twenty-one as the V3D's do: each a colour attachment of its own format, never blended, kept for the key, and never an image both drawn and read back (since 1.229)" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
+    physical.can.float32_blend = false;
+    defer physical.can.float32_blend = true;
+    physical.can.target_reads = false;
+    defer physical.can.target_reads = true;
+    try testing.expect(physical.can.whole_targets);
+    const shaders = try module(&bench, &SubpassScene.code);
+    defer fb.DestroyShaderModule(device, shaders);
+    const layout = try pipelineLayout(&bench, &.{}, 0);
+    defer fb.DestroyPipelineLayout(device, layout);
+    const additive = facet.PipelineColorBlendAttachmentState{ .blend_enable = true, .dst_color_blend_factor = .one, .dst_alpha_blend_factor = .one };
+    const extent = facet.Extent3D{ .width = 8, .height = 8 };
+    const wanted = facet.FORMAT_FEATURE_COLOR_ATTACHMENT | facet.FORMAT_FEATURE_BLIT_DST | facet.FORMAT_FEATURE_TRANSFER_SRC | facet.FORMAT_FEATURE_TRANSFER_DST;
+    for (whole_targets) |format| {
+        var properties: facet.FormatProperties = undefined;
+        fb.GetPhysicalDeviceFormatProperties(bench.physical, format, &properties);
+        try testing.expectEqual(wanted, properties.optimal_tiling_features & wanted);
+        try testing.expect(properties.optimal_tiling_features & facet.FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND == 0);
+        const description = facet.AttachmentDescription{ .format = format, .load_op = .clear, .store_op = .store, .final_layout = .color_attachment_optimal };
+        const result, const pass = samplesPass(&bench, &.{description}, null, null);
+        try testing.expectEqual(facet.Result.success, result);
+        defer fb.DestroyRenderPass(device, pass);
+        // Never blended (VUID-VkGraphicsPipelineCreateInfo-blendEnable-04717);
+        // drawn, the format kept on the pipeline for the driver to key its
+        // words on (f32_color_rb, v3dv_pipeline.c:1253-1256).
+        const mixed, const mixing = makePipeline(&bench, .{ .module = shaders, .name = "white", .layout = layout, .pass = pass.?, .blend = additive });
+        try testing.expectEqual(facet.Result.error_validation_failed, mixed);
+        try testing.expect(mixing == null);
+        const plain, const pipeline = makePipeline(&bench, .{ .module = shaders, .name = "white", .layout = layout, .pass = pass.? });
+        try testing.expectEqual(facet.Result.success, plain);
+        defer fb.DestroyPipeline(device, pipeline);
+        try testing.expectEqual(format, _objects.of(_pipeline.Pipeline, pipeline.?).part_formats[0]);
+        // Drawn into and copied out, made; sampled as well, or read as an
+        // input attachment, not: the TMU reads none of them where the
+        // tiles stored it.
+        var image: ?*facet.Image = null;
+        try testing.expectEqual(facet.Result.success, fb.CreateImage(device, &.{ .format = format, .extent = extent, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_TRANSFER_SRC | facet.IMAGE_USAGE_TRANSFER_DST }, &image));
+        fb.DestroyImage(device, image);
+        for ([2]u32{ facet.IMAGE_USAGE_SAMPLED, facet.IMAGE_USAGE_INPUT_ATTACHMENT }) |read| {
+            var refused: ?*facet.Image = null;
+            try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImage(device, &.{ .format = format, .extent = extent, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT | read }, &refused));
+            try testing.expect(refused == null);
+        }
+    }
+    // The cores, which read back what they drew, make the same sampled.
+    physical.can.target_reads = true;
+    var read_back: ?*facet.Image = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateImage(device, &.{ .format = .r32g32b32a32_uint, .extent = extent, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_SAMPLED }, &read_back));
+    fb.DestroyImage(device, read_back);
+}
+
 /// What the tests of the whole numbers draw with: the push constants'
 /// four words as numbers, unsigned or signed, and an input attachment's
 /// numbers each with one added. (Since 1.227.)
@@ -19925,7 +19981,7 @@ test "whole numbers of four samples resolved by keeping one, read by the next su
     }
 }
 
-test "a device whose tiles keep no whole numbers, as the V3D's, says none of the twenty-one is a colour attachment and makes no pass or image of them as one (since 1.227)" {
+test "a device whose tiles keep no whole numbers, as the V3D's until 1.229, says none of the twenty-one is a colour attachment and makes no pass or image of them as one (since 1.227)" {
     var bench = try Bench.up();
     defer bench.down();
     const fb = bench.rig.fb;

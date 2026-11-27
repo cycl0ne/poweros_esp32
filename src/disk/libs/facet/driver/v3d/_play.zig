@@ -762,7 +762,7 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, part
         clearRectangle(
             queue,
             player.area,
-            drawn.clearFloats(color, command.clear_values[part]),
+            drawn.clearWords(color, command.clear_values[part]),
             if (colors_inside) 0xF else 0,
             if (depth_inside) player.frame.clear_depth else null,
             if (stencil_inside) @truncate(player.frame.clear_stencil) else null,
@@ -931,7 +931,7 @@ fn clearAttachment(queue: *Queue, command: *const _command.ClearAttachment) void
     clearRectangle(
         queue,
         .{ .left = left, .top = top, .right = right, .bottom = bottom },
-        player.target.clearFloats(command.color, command.words),
+        player.target.clearWords(command.color, command.words),
         // No colour in a frame of none, where a colour attachment the
         // clear names is an unused one, whose clear has no effect (since
         // 1.150).
@@ -942,8 +942,12 @@ fn clearAttachment(queue: *Queue, command: *const _command.ClearAttachment) void
 }
 
 /// A rectangle over the whole image, cut to `clip`, writing the `channels` of
-/// the colour and the depth and the stencil given.
-fn clearRectangle(queue: *Queue, clip: frames.Area, rgba: [4]f32, channels: u32, depth: ?f32, stencil: ?u8) void {
+/// the colour and the depth and the stencil given. The colour is its four
+/// words, `Target.clearWords`': into a target the TLB takes a word a
+/// channel they are the program's uniforms, moved to it untouched
+/// (`qpu.words_fragment`, as v3dv clears with push constants; since
+/// 1.229), and otherwise four floats the vertices carry.
+fn clearRectangle(queue: *Queue, clip: frames.Area, color: [4]u32, channels: u32, depth: ?f32, stencil: ?u8) void {
     const player = playerOf(queue);
     // Nothing to write: a colour the frame does not draw, and neither
     // plane (since 1.150, where it drew a rectangle that wrote nothing).
@@ -952,7 +956,8 @@ fn clearRectangle(queue: *Queue, clip: frames.Area, rgba: [4]f32, channels: u32,
     // varying and writes the depth the rasterizer made, the rectangle's
     // own (since 1.150).
     const no_color = !player.frame.color;
-    const varyings: u32 = if (no_color) 0 else 4;
+    const words = !no_color and player.target.wide();
+    const varyings: u32 = if (no_color or words) 0 else 4;
     const corners = [_]u32{ 0, 1, 2, 2, 1, 3 };
     const indices = carve(queue, @sizeOf(@TypeOf(corners)), 4) orelse return;
     @memcpy(indices.cpu[0..@sizeOf(@TypeOf(corners))], std.mem.asBytes(&corners));
@@ -962,7 +967,7 @@ fn clearRectangle(queue: *Queue, clip: frames.Area, rgba: [4]f32, channels: u32,
     const half_height = @as(f32, @floatFromInt(player.frame.height)) / 2;
     const viewport = ViewportScale{ .half_width = half_width, .half_height = half_height, .scale = 1, .offset = 0 };
     for ([4][2]f32{ .{ -1, -1 }, .{ 1, -1 }, .{ -1, 1 }, .{ 1, 1 } }, 0..) |corner, k| {
-        writeRecord(vertices.cpu + k * stride, &[4]f32{ corner[0], corner[1], depth orelse 0, 1 }, &viewport, varyings, .{ .constant = rgba });
+        writeRecord(vertices.cpu + k * stride, &[4]f32{ corner[0], corner[1], depth orelse 0, 1 }, &viewport, varyings, .{ .constant = @bitCast(color) });
     }
     const stencil_face = cl.StencilFace{ .fail = 1, .pass = 2, .depth_fail = 1, .compare = cl.COMPARE_ALWAYS, .compare_mask = 0, .write_mask = 0xFF, .reference = stencil orelse 0 };
     const state = frames.DrawState{
@@ -978,11 +983,13 @@ fn clearRectangle(queue: *Queue, clip: frames.Area, rgba: [4]f32, channels: u32,
     const hardware = player.hardware;
     const uniforms = if (no_color)
         streamOf(queue, hardware.no_color.stream(), &.{}, null, 0, .{}) orelse return noRoom(queue, "a clear with no memory for its uniforms")
+    else if (words)
+        wordUniforms(queue, color) orelse return noRoom(queue, "a clear with no memory for its uniforms")
     else
         colorUniforms(queue) orelse return noRoom(queue, "a clear with no memory for its uniforms");
     if (!roomOnList(queue)) return noRoom(queue, "a clear with no memory for the binner's list");
     frames.writeDrawState(&player.bin, &player.frame, &state);
-    const fragment = if (no_color) hardware.no_color.address else colorsOf(player).color;
+    const fragment = if (no_color) hardware.no_color.address else if (words) hardware.programs.words else colorsOf(player).color;
     if (!sendVertices(queue, vertices.address, varyings, fragment, uniforms, if (no_color) &hardware.no_color else null)) return;
     cl.indexBufferSetup(&player.bin, indices.address, @sizeOf(@TypeOf(corners)));
     cl.indexedPrimList(&player.bin, cl.PRIM_TRIANGLES, corners.len);
@@ -1740,6 +1747,16 @@ fn colorsOf(player: *const Player) driver.Colors {
 fn colorUniforms(queue: *Queue) ?u32 {
     const place = carve(queue, 4, 4) orelse return null;
     if (playerOf(queue).target.wide()) std.mem.writeInt(u32, place.cpu[0..4], qpu.tlb_f32_specifier, .little);
+    return place.address;
+}
+
+/// `qpu.words_fragment`'s uniforms: the clear's four words, then the
+/// specifier its TLBU write reads (since 1.229).
+fn wordUniforms(queue: *Queue, color: [4]u32) ?u32 {
+    const place = carve(queue, 20, 4) orelse return null;
+    const into: [*]u32 = @ptrCast(@alignCast(place.cpu));
+    @memcpy(into[0..4], &color);
+    into[4] = qpu.tlb_f32_specifier;
     return place.address;
 }
 

@@ -7549,4 +7549,38 @@ pub const LIBRARY_VERSION = 1;
 /// `kept_floats` off the halves' STORAGE_IMAGE. On the CM5 (packages f236
 /// to f238) FacetProbe is 1038 of 1038 and FacetBoth's 316 cases are each
 /// as at 1.227.
-pub const LIBRARY_REVISION = 228;
+/// 229: **The V3D draws the twenty-one colour attachments of whole
+/// numbers (docs/facet-vulkan10.md item 36, step 4 of four).** Each is its
+/// own output image format, at the internal type v3dv gives it
+/// (`v3d.target`, v3dvx_formats.c:133-197; `cl.internalOf`), held to the
+/// channel's range by its clamped type (`cl.typeClamp`,
+/// `V3D_RENDER_TARGET_TYPE_CLAMP_*_CLAMPED`, v3dvx_cmd_buffer.c:856-884),
+/// and cleared to its words as `get_hw_clear_color` packs them
+/// (v3dvx_device.c:289-334). A program's colour of whole numbers goes to
+/// the TLB a word at a time under the F32 specifier, as v3dv keys a pure
+/// integer target with f32_color_rb (v3dv_pipeline.c:1253-1256): the
+/// SPIR-V front end takes a fragment output of integers
+/// (`compile.zig`, where it refused one until now), and Mesa's back end
+/// moves its words as they are (`vir_emit_tlb_color_write`,
+/// nir_to_vir.c:1955). A clear drawn as a rectangle, by
+/// CmdClearAttachments or over a render area its tiles stick out of, into
+/// any target taken a word a channel is a program of its own that moves
+/// four uniforms to the TLB untouched (`qpu.words_fragment`,
+/// `driver.Programs.words`), as v3dv clears with its push constants
+/// (`get_color_clear_rect_fs`, v3dv_meta_clear.c:421-440): the vertices'
+/// colour passed each word through the varyings' float arithmetic, which
+/// flushes a whole number below 2^23 to 0. They are never blended and
+/// resolve on the CPU, keeping sample 0. `Capabilities.whole_targets` is
+/// the V3D's as well; an image of them drawn and read back is refused
+/// there as one of the fourteen is (`Capabilities.target_reads`).
+///
+/// One host test is new (a device shaped as the V3D), two of the V3D
+/// module's and one of the compile, and one old compile test is turned
+/// round (an integer colour out compiles). Fourteen mutations of the new
+/// code, each run against the host tests, were all killed. FacetProbe
+/// 1.57 draws six of the twenty-one on both devices from SPIR-V beside
+/// the cores' functions, each cleared by the pass and by
+/// CmdClearAttachments, and reads `whole_textures` off SAMPLED_IMAGE. On
+/// the CM5 (packages f239 and f240) FacetProbe is 1070 of 1070 and
+/// FacetBoth's 316 cases are each as at 1.227.
+pub const LIBRARY_REVISION = 229;

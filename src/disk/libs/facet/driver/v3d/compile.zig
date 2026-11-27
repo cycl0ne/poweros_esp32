@@ -3276,9 +3276,12 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 // An integer varying is a vertex program's to write, and a
                 // fragment program's to read where it is Flat, as Vulkan
                 // has it (since 1.190). An integer attribute is not
-                // ported, and the tile buffer takes floats (since 1.165).
+                // ported. A fragment program's colour of whole numbers is
+                // its words, which a target of whole numbers takes as
+                // they are under f32_color_rb (v3dv_pipeline.c:1253-1256;
+                // since 1.229, the tile buffer taking floats alone before).
                 if (isIntegerType(work, pointee) and class != .function) {
-                    const varying = if (work.stage == .vertex) class == .output else class == .input and work.interpolation[id] == .flat;
+                    const varying = if (work.stage == .vertex) class == .output else class == .output or class == .input and work.interpolation[id] == .flat;
                     if (!varying) return Error.Type;
                 }
                 work.thing[id] = .variable;
@@ -15840,6 +15843,43 @@ test "through Mesa's back end, a colour into a render target of 32-bit floats: f
     try testing.expectEqual(@as(u32, 4), code.varyings);
 }
 
+test "through Mesa's back end, whole numbers into a target of them: the push constants' four words moved to the TLB as they are, the first to TLBU with the F32 specifier, nothing packed or converted (since 1.229)" {
+    // v3dv keys a pure integer target as one of 32-bit floats
+    // (v3dv_pipeline.c:1253-1256), and vir_emit_tlb_color_write writes
+    // its words as it writes floats (nir_to_vir.c:1955).
+    for ([2][]const u32{ &reference.glslc_whole_unsigned, &reference.glslc_whole_signed }) |words| {
+        var work: Work = .{};
+        const code = try throughMesaKeyed(&work, words, .{ .f32_color_rb = 1 });
+        var pushed: u32 = 0;
+        var specifiers: u32 = 0;
+        for (code.stream()) |word| switch (word) {
+            .push => |place| {
+                try testing.expect(place < 4);
+                pushed |= @as(u32, 1) << @intCast(place);
+            },
+            .float => |value| {
+                try testing.expectEqual(qpu.tlb_f32_specifier, @as(u32, @bitCast(value)));
+                specifiers += 1;
+            },
+            else => return error.TestUnexpectedResult,
+        };
+        try testing.expectEqual(@as(u32, 0xF), pushed);
+        try testing.expectEqual(@as(u32, 1), specifiers);
+        var tlbu: u32 = 0;
+        var tlb: u32 = 0;
+        for (code.words) |word| {
+            var buffer: [disasm.most_text]u8 = undefined;
+            const line = disasm.disasm(word, &buffer).?;
+            for ([_][]const u8{ "vfpack", "ftoi", "itof", "ftoui", "utof" }) |never| try testing.expect(std.mem.indexOf(u8, line, never) == null);
+            if (std.mem.indexOf(u8, line, "mov tlbu,") != null) tlbu += 1;
+            if (std.mem.indexOf(u8, line, "mov tlb,") != null) tlb += 1;
+        }
+        try testing.expectEqual(@as(u32, 1), tlbu);
+        try testing.expectEqual(@as(u32, 3), tlb);
+        try testing.expectEqual(@as(u32, 0), code.varyings);
+    }
+}
+
 test "through Mesa's back end, glslc's discard is facet's, to the word" {
     var work: Work = .{};
     const code = try throughMesa(&work, Cutout.words);
@@ -18028,14 +18068,16 @@ test "an integer operation of constants is folded as NIR's 32-bit arithmetic is:
     try testing.expectEqual(Tag.integer, work.steps[try integerOf(&work, .iadd, input, try of.word(&work, 1))].tag);
 }
 
-test "a 32-bit integer is computed, compared and converted, but no varying and no colour is one, and a division of it fits the tables" {
+test "a 32-bit integer is computed, compared and converted, but no interpolated varying is one, and a division of it fits the tables" {
     // The colour in made a vector of integers, the push constants' ivec4:
     // a varying of them would want flat interpolation, which is not
-    // ported, and is refused by its type. The colour out the same: it
-    // would want an integer format of the tile buffer.
+    // ported, and is refused by its type. The colour out the same was
+    // refused until 1.229, wanting an integer format of the tile buffer;
+    // a target of whole numbers takes its words since.
     var work: Work = .{};
     try testing.expectError(Error.Type, throughMesa(&work, &comptime patched(&reference.glslc_integers, .type_pointer, 0, 2, 7)));
-    try testing.expectError(Error.Type, throughMesa(&work, &comptime patched(&reference.glslc_integers, .type_pointer, 5, 2, 7)));
+    var out: Work = .{};
+    _ = try throughMesa(&out, &comptime patched(&reference.glslc_integers, .type_pointer, 5, 2, 7));
     // Its first OpIMul, the push constants' s.y times s.z, made OpSDiv:
     // nir_lower_idiv's lowering of it on top of the program's other
     // steps, more than the tables of 128 held (since 1.187) and fewer
