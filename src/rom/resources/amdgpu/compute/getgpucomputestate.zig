@@ -32,8 +32,10 @@ const _graphics = @import("../graphics/_graphics.zig");
 /// scheduler's firmware versions, of its first pipe and of the mapper;
 /// whether the queue is mapped (CP_HQD_ACTIVE) and its read and write
 /// pointers in words as its registers read now, with the queue selected;
-/// and the block's status (GRBM_STATUS) and its compute processor's
-/// (CP_CPC_STATUS).
+/// the block's status (GRBM_STATUS) and its compute processor's
+/// (CP_CPC_STATUS); and, since 1.16, the queue's scratch: where it is to
+/// the device, its bytes and the waves it holds, 0 until a kernel with
+/// private memory has been sent (SendGPUKernel).
 ///
 /// CONTEXT:
 /// - Waits: only for the queue's lock.
@@ -88,6 +90,9 @@ pub fn GetGPUComputeState(ab: *AMDGPUBase, state: *amdgpu.GPUComputeState) bool 
         .queue_written = queue_written,
         .status = at(ab, _compute.GRBM_STATUS).*,
         .compute_status = at(ab, _compute.CP_CPC_STATUS).*,
+        .scratch = ab.scratch.device,
+        .scratch_bytes = ab.scratch.bytes,
+        .scratch_waves = ab.scratch_waves,
     };
     return true;
 }

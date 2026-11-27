@@ -332,7 +332,11 @@
 //! the device's memory between guards of a page each way, over as much of
 //! the machine's, placed 100 bytes into a page and mapped for it
 //! (MapGPUMemory), every word and every guard checked, and over 16 MiB of
-//! each, timed, the machine's every word checked. The queue and the
+//! each, timed, the machine's every word checked; then its kernel `spill`,
+//! which keeps a table in each thread's private memory, dispatched twice
+//! over the 64 KiB of the device's memory - the queue's scratch made for
+//! it the first time and printed - every word checked against the table
+//! worked out here, and `fill` once more after it. The queue and the
 //! engine's registers are printed at the end. The watchdog is armed for
 //! it.
 //!
@@ -435,7 +439,7 @@ const graphics_library = sdk.graphics;
 const GraphicsBase = sdk.interface.graphics.GraphicsBase;
 
 pub const COMMAND_NAME = "Gpu";
-const VERSION_STRING = "\x00$VER: Gpu 1.31 (27.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Gpu 1.32 (27.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,SLEEP/K/N,RANGE/S,POINTER/S,MIRROR/S,OVERLAY/S,DIRECT/S,BANDS/S,VIDEO/S,GFX/S,DMA/S,GART/S,ENGINE/S,BLITS/S,COMPUTE/S,KERNELS/S,DEVICE/S,WINDOW/S,BLOCK/K/N,WATCHDOG/K/N";
@@ -2118,17 +2122,37 @@ fn dispatchFill(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUI
     return @max(1, sys.UptimeUs() - began);
 }
 
-/// What a dispatch of `fill` over `count` words after `guard_words` of
-/// guard left: how many of its words hold `fill_value` plus their
-/// number, the first that does not and what it holds, and how many of
-/// the guards' words on either side still hold `guard_value`.
+/// The kernels of kernels/fill.zig COMPUTE dispatches, and the word each
+/// writes into word `index`: `fill` its value plus the word's number,
+/// `spill` the sum over its table, worked out here as it works it out.
+const TestKernel = enum { fill, spill };
+
+fn meantWord(which: TestKernel, index: u32) u32 {
+    if (which == .fill) return fill_value +% index;
+    var table: [128]u32 = undefined;
+    for (0..128) |at| {
+        const step: u32 = @intCast(at);
+        table[(step *% 5 +% fill_value) & 127] = index +% step;
+    }
+    var sum: u32 = 0;
+    for (0..128) |at| {
+        const step: u32 = @intCast(at);
+        sum +%= table[(step *% 3 +% index) & 127] *% (step + 1);
+    }
+    return sum;
+}
+
+/// What a dispatch of `which` over `count` words after `guard_words` of
+/// guard left: how many of its words hold what it writes, the first that
+/// does not and what it holds, and how many of the guards' words on
+/// either side still hold `guard_value`.
 const KernelSeen = struct { right: u32, first_wrong: u32, wrong_value: u32, kept: u32 };
 
-fn kernelSeen(words: [*]volatile u32, count: u32, guard_words: u32) KernelSeen {
+fn kernelSeen(words: [*]volatile u32, count: u32, guard_words: u32, which: TestKernel) KernelSeen {
     var seen: KernelSeen = .{ .right = 0, .first_wrong = count, .wrong_value = 0, .kept = 0 };
     for (0..count) |index| {
         const value = words[guard_words + index];
-        if (value == fill_value +% @as(u32, @intCast(index))) {
+        if (value == meantWord(which, @intCast(index))) {
             seen.right += 1;
         } else if (seen.first_wrong == count) {
             seen.first_wrong = @intCast(index);
@@ -2144,9 +2168,9 @@ fn kernelSeen(words: [*]volatile u32, count: u32, guard_words: u32) KernelSeen {
 
 /// A dispatch's words said: how many were right, and the first that was
 /// not; false where any was not or a guard was not kept.
-fn kernelRight(dl: *DosBase, seen: KernelSeen, count: u32, guard_words: u32) bool {
+fn kernelRight(dl: *DosBase, seen: KernelSeen, count: u32, guard_words: u32, which: TestKernel) bool {
     if (seen.right != count) {
-        _ = Printf(dl, "  the first word not right is word %u: %08x, %08x meant\n", .{ seen.first_wrong, seen.wrong_value, fill_value +% seen.first_wrong });
+        _ = Printf(dl, "  the first word not right is word %u: %08x, %08x meant\n", .{ seen.first_wrong, seen.wrong_value, meantWord(which, seen.first_wrong) });
     }
     return seen.right == count and seen.kept == 2 * guard_words;
 }
@@ -2249,11 +2273,11 @@ fn computeCheck(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUI
 
     for (0..piece_bytes / 4) |index| words[index] = guard_value;
     const device_us = dispatchFill(sys, dl, ab, info, graphics, &kernel, piece.device + guard_bytes, count) orelse return dos.RETURN_ERROR;
-    var seen = kernelSeen(words, count, guard_words);
+    var seen = kernelSeen(words, count, guard_words, .fill);
     _ = Printf(dl, "The kernel over %u words of the device's memory at %lx, %u groups of %u: done in %lu us; %u of its %u words right, %u of the guards' %u kept\n", .{
         count, piece.device + guard_bytes, count / fill_group, fill_group, device_us, seen.right, count, seen.kept, 2 * guard_words,
     });
-    if (!kernelRight(dl, seen, count, guard_words)) all_right = false;
+    if (!kernelRight(dl, seen, count, guard_words, .fill)) all_right = false;
     wb.FeedWatchdog();
 
     const ram = ramBuffer(sys, piece_bytes) orelse {
@@ -2273,11 +2297,11 @@ fn computeCheck(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUI
     };
     const ram_device = mapped.device;
     ab.UnmapGPUMemory(&mapped);
-    seen = kernelSeen(ram.words, count, guard_words);
+    seen = kernelSeen(ram.words, count, guard_words, .fill);
     _ = Printf(dl, "The kernel over %u words of the machine's memory at %lx, mapped at %lx: done in %lu us; %u of its %u words right, %u of the guards' %u kept\n", .{
         count, @as(u64, @intFromPtr(ram.at)) + guard_bytes, ram_device + guard_bytes, ram_us, seen.right, count, seen.kept, 2 * guard_words,
     });
-    if (!kernelRight(dl, seen, count, guard_words)) all_right = false;
+    if (!kernelRight(dl, seen, count, guard_words, .fill)) all_right = false;
     wb.FeedWatchdog();
 
     const long_bytes = compute_long_bytes + 2 * guard_bytes;
@@ -2301,13 +2325,13 @@ fn computeCheck(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUI
     };
     ab.UnmapGPUMemory(&long_mapped);
     _ = ab.GetGPUComputeState(&state);
-    seen = kernelSeen(long.words, long_count, guard_words);
+    seen = kernelSeen(long.words, long_count, guard_words, .fill);
     _ = Printf(dl, "The kernel over %u MiB of the machine's memory, mapped, %u groups: done in %lu us, %lu MB/s; %u of its %u words right, %u of the guards' %u kept; %u interrupts\n", .{
         compute_long_bytes >> 20,            long_count / fill_group, long_us,   @as(u64, compute_long_bytes) / long_us,
         seen.right,                          long_count,              seen.kept, 2 * guard_words,
         state.interrupts -% long_interrupts,
     });
-    if (!kernelRight(dl, seen, long_count, guard_words)) all_right = false;
+    if (!kernelRight(dl, seen, long_count, guard_words, .fill)) all_right = false;
     wb.FeedWatchdog();
 
     var long_piece: amdgpu.GPUMemory = .{};
@@ -2327,6 +2351,35 @@ fn computeCheck(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUI
     } else {
         _ = Printf(dl, "No room in the device's memory for %u MiB\n", .{compute_long_bytes >> 20});
     }
+
+    var spill: amdgpu.GPUKernel = .{};
+    if (!ab.FindGPUKernel(&code, "spill", &spill)) {
+        _ = Printf(dl, "The code object has no kernel spill that can be run: see C:Log\n", .{});
+        return dos.RETURN_ERROR;
+    }
+    _ = Printf(dl, "Its kernel spill at %lx: resource words %08x %08x %08x, %u bytes of private memory a lane, properties %x\n", .{
+        spill.code, spill.rsrc1, spill.rsrc2, spill.rsrc3, spill.private_bytes, spill.properties,
+    });
+    for (1..3) |run| {
+        for (0..piece_bytes / 4) |index| words[index] = guard_value;
+        const spill_us = dispatchFill(sys, dl, ab, info, graphics, &spill, piece.device + guard_bytes, count) orelse return dos.RETURN_ERROR;
+        _ = ab.GetGPUComputeState(&state);
+        seen = kernelSeen(words, count, guard_words, .spill);
+        _ = Printf(dl, "The kernel spill over %u words of the device's memory, its run %u: done in %lu us; %u of its %u words right, %u of the guards' %u kept; the queue's scratch %u bytes at %lx, %u waves\n", .{
+            count,               @as(u32, @intCast(run)), spill_us,            seen.right, count, seen.kept, 2 * guard_words,
+            state.scratch_bytes, state.scratch,           state.scratch_waves,
+        });
+        if (!kernelRight(dl, seen, count, guard_words, .spill)) all_right = false;
+        wb.FeedWatchdog();
+    }
+    for (0..piece_bytes / 4) |index| words[index] = guard_value;
+    const again_us = dispatchFill(sys, dl, ab, info, graphics, &kernel, piece.device + guard_bytes, count) orelse return dos.RETURN_ERROR;
+    seen = kernelSeen(words, count, guard_words, .fill);
+    _ = Printf(dl, "The kernel fill again over %u words of the device's memory, with the scratch set: done in %lu us; %u of its %u words right, %u of the guards' %u kept\n", .{
+        count, again_us, seen.right, count, seen.kept, 2 * guard_words,
+    });
+    if (!kernelRight(dl, seen, count, guard_words, .fill)) all_right = false;
+    wb.FeedWatchdog();
 
     _ = Printf(dl, "At the end:\n", .{});
     printComputeQueue(dl, ab);

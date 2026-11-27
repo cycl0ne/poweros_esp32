@@ -37,7 +37,7 @@ const _graphics = @import("graphics/_graphics.zig");
 /// The name it is opened by. The SDK's.
 pub const RESOURCE_NAME = amdgpu.AMDGPUNAME;
 pub const RESOURCE_VERSION = 1;
-pub const RESOURCE_REVISION = 15;
+pub const RESOURCE_REVISION = 16;
 const BUILD_DATE = "27.11.2026";
 const RESOURCE_VERSION_STRING =
     "\x00$VER: " ++ RESOURCE_NAME ++ " " ++
@@ -139,6 +139,11 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     ab.compute_end_int = .{};
     ab.compute_slot = 0;
     ab.compute_slot_jobs = @splat(0);
+    ab.shader_engines = 0;
+    ab.compute_units = 0;
+    ab.scratch = .{};
+    ab.scratch_wave_bytes = 0;
+    ab.scratch_waves = 0;
     sys_base.InitSemaphore(&ab.compute_lock);
     sys_base.InitSemaphore(&ab.compute_wait_lock);
     if (_device.take(ab)) {
@@ -150,6 +155,10 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
         if (gpu.FindGPUBlock(amdgpu.GPUBLOCK_SECURITY, 0, &block)) _security.take(ab, block);
         if (gpu.FindGPUBlock(amdgpu.GPUBLOCK_INTERRUPTS, 0, &block)) _interrupt.take(ab, block);
         if (gpu.FindGPUBlock(amdgpu.GPUBLOCK_GRAPHICS, 0, &block)) _graphics.take(ab, block);
+        if (_table.sizes(ab.table)) |sizes| {
+            ab.shader_engines = sizes.engines;
+            ab.compute_units = sizes.units;
+        }
         tell(ab);
         _bios.take(ab);
         _connectors.take(ab);
@@ -223,6 +232,10 @@ fn tell(ab: *AMDGPUBase) void {
             block.addresses[1],
             block.addresses[2],
         });
+    }
+
+    if (ab.compute_units != 0) {
+        exec.kprintf(sys, "%s:   graphics block: %u shader engines, %u compute units\n", .{ RESOURCE_NAME, ab.shader_engines, ab.compute_units });
     }
 
     var block: amdgpu.GPUBlock = .{};

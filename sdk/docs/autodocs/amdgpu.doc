@@ -480,8 +480,10 @@ amdgpu.resource/WaitGPUDMA
 	scheduler's firmware versions, of its first pipe and of the mapper;
 	whether the queue is mapped (CP_HQD_ACTIVE) and its read and write
 	pointers in words as its registers read now, with the queue selected;
-	and the block's status (GRBM_STATUS) and its compute processor's
-	(CP_CPC_STATUS).
+	the block's status (GRBM_STATUS) and its compute processor's
+	(CP_CPC_STATUS); and, since 1.16, the queue's scratch: where it is to
+	the device, its bytes and the waves it holds, 0 until a kernel with
+	private memory has been sent (SendGPUKernel).
 
    CONTEXT
 	- Waits: only for the queue's lock.
@@ -1106,11 +1108,15 @@ amdgpu.resource/WaitGPUDMA
 	The job's number, which WaitGPUCompute waits for; 0 where the queue
 	does not run (StartGPUCompute), where the kernel takes anything a
 	dispatch does not hand it - values in its registers other than the
-	address of its arguments, scratch memory, a trap handler - or more
+	address of its arguments, a stack that grows as it runs, a trap
+	handler - or more private memory than a wave's scratch holds, more
 	than 64 KiB of group memory or 256 bytes of arguments, where a
 	dimension of the dispatch is 0, a group has more than 1024 threads,
-	or the engine makes no room in its ring within a second. Why a kernel
-	is refused is said in the system's log.
+	where the scratch its private memory needs cannot be made - the
+	graphics block's compute units not known, no room in the device's
+	memory, or the queue not idle within a second - or the engine makes no
+	room in its ring within a second. Why a kernel is refused is said in
+	the system's log.
 
    BEHAVIOR
 	Under the queue's lock the arguments are copied into the next of the
@@ -1119,14 +1125,27 @@ amdgpu.resource/WaitGPUDMA
 	as SendGPUCompute puts one: the engine's caches made to see memory as
 	the CPU left it; the group's size set, the code's address, its
 	resource words - the group memory it takes put in the second, in
-	blocks of 512 bytes - no limits on where its waves run, no scratch, the
-	slot's address in its first two scalar registers; then its groups
-	dispatched from the first, in waves of 32 lanes where the kernel's
-	properties say so (GPUKERNEL_WAVE32); and the job's end, once every
-	group has run.
+	blocks of 512 bytes - no limits on where its waves run, the queue's
+	scratch, the slot's address in its first two scalar registers; then
+	its groups dispatched from the first, in waves of 32 lanes where the
+	kernel's properties say so (GPUKERNEL_WAVE32); and the job's end, once
+	every group has run.
+
+	Since 1.16 a kernel's private memory - the bytes its descriptor gives
+	each of its lanes - is the queue's scratch: a piece of the device's
+	memory made the first time a kernel needs one, holding 32 waves for
+	each of the graphics block's compute units, each wave with its lanes'
+	private bytes on 256 bytes and 256 more. A kernel that needs more for
+	a wave than the piece holds waits, under the lock, for every job sent
+	before it to be done; then the piece is given back and made again at
+	its size. Every dispatch is told where the piece is and how many waves
+	of what size it holds, one of a kernel without private memory too, as
+	the waves of one sent before it may still be using it.
 
    CONTEXT
-	- Waits: for a slot and for room in the ring, a second at most each.
+	- Waits: for a slot and for room in the ring, a second at most each;
+	  where the scratch is made again, for the queue to be idle, a second
+	  at most.
 	- Interrupts: no.
 	- Locks: takes the queue's lock.
 	- Process: a Task will do.
@@ -1134,17 +1153,25 @@ amdgpu.resource/WaitGPUDMA
    OWNERSHIP
 	The arguments are copied: they are the caller's again on return. The
 	memory they name and the code object must stay until the job is done.
+	The scratch is the resource's, kept once made.
 
    NOTES
 	The kernel's addresses are the device's: its arguments name memory by
 	its `device` address (AllocGPUMemory, MapGPUMemory). A kernel that
 	reads more of its arguments than the dispatch hands it reads zeros
-	past them, up to 256 bytes.
+	past them, up to 256 bytes. The scratch grows and is never made
+	smaller: a kernel with a large private array holds that much of the
+	device's memory from then on - on the NucBox, 32 waves for each of its
+	12 compute units, 384 times a wave's bytes.
 
    BUGS
-	A kernel that needs scratch memory, the dispatch's own packet, its
-	queue or a dispatch number in its registers, or its arguments loaded
-	into registers before it starts, cannot be run.
+	A kernel whose stack grows as it runs - recursion, a call it cannot
+	see the end of, an array of a size it works out - or that needs the
+	dispatch's own packet, its queue or a dispatch number in its
+	registers, or its arguments loaded into registers before it starts,
+	cannot be run. On a part whose table gives the graphics block's sizes
+	in a later form than the first four, a kernel with private memory is
+	refused.
 
    SEE ALSO
 	`LoadGPUCode`, `FindGPUKernel`, `SendGPUCompute`, `WaitGPUCompute`

@@ -289,6 +289,52 @@ fn tableAt(memory: Window) ?usize {
     return null;
 }
 
+/// The graphics block's shader engines and compute units.
+pub const Sizes = struct { engines: u32, units: u32 };
+
+/// In the table's header, its version, where its list of the tables it
+/// holds starts in each version and how long an entry of it is, and the
+/// graphics block's table's place in that list; in that table, its
+/// version and form, its engines, its two kinds of pairs of compute units
+/// and its arrays, and the last form read.
+const binary_version_at = 4;
+const binary_tables_at = 12;
+const binary_tables_v2_at = 16;
+const table_entry_bytes = 8;
+const graphics_table = 1;
+const graphics_version_at = 4;
+const graphics_form_at = 6;
+const graphics_engines_at = 12;
+const graphics_pairs_at = 16;
+const graphics_other_pairs_at = 20;
+const graphics_arrays_at = 76;
+const graphics_form_last = 3;
+
+/// The graphics block's sizes, as the table's own table of the block
+/// says them (amdgpu_discovery_get_gfx_info): its shader engines, the
+/// arrays each engine has and the pairs of compute units each array has,
+/// of two kinds, in the first four forms of the table's first version.
+/// Null where the table holds none, or one in another form or with sizes
+/// past any the vendor makes.
+pub fn sizes(table: usize) ?Sizes {
+    const tables: usize = switch (word16(table + binary_version_at)) {
+        0, 1 => binary_tables_at,
+        2 => binary_tables_v2_at,
+        else => return null,
+    };
+    const offset = word16(table + tables + graphics_table * table_entry_bytes);
+    if (offset == 0 or offset + graphics_arrays_at + 4 > table_bytes) return null;
+    const graphics = table + offset;
+    if (word16(graphics + graphics_version_at) != 1 or word16(graphics + graphics_form_at) > graphics_form_last) return null;
+    const engines = word32(graphics + graphics_engines_at);
+    const arrays = word32(graphics + graphics_arrays_at);
+    const pairs = word32(graphics + graphics_pairs_at);
+    const other_pairs = word32(graphics + graphics_other_pairs_at);
+    if (engines == 0 or engines > 16 or arrays == 0 or arrays > 16 or pairs > 64 or other_pairs > 64) return null;
+    if (pairs + other_pairs == 0) return null;
+    return .{ .engines = engines, .units = engines * arrays * 2 * (pairs + other_pairs) };
+}
+
 fn word8(at: usize) u8 {
     return sdk.hardware.mmio.reg8(at).*;
 }
@@ -387,6 +433,39 @@ test "a block is found by its kind and instance, in either width" {
 
         try testing.expect(!block(table, amdgpu.GPUBLOCK_POWER, 0, &found));
     }
+}
+
+test "the graphics block's sizes, from the table's table of it" {
+    var room: [1024]u8 align(4) = undefined;
+    makeTable(&room, false);
+    const table = @intFromPtr(&room);
+    try testing.expectEqual(@as(?Sizes, null), sizes(table));
+
+    const graphics = 768;
+    std.mem.writeInt(u16, room[binary_tables_at + graphics_table * table_entry_bytes ..][0..2], graphics, .little);
+    std.mem.writeInt(u16, room[graphics + graphics_version_at ..][0..2], 1, .little);
+    std.mem.writeInt(u16, room[graphics + graphics_form_at ..][0..2], 3, .little);
+    std.mem.writeInt(u32, room[graphics + graphics_engines_at ..][0..4], 1, .little);
+    std.mem.writeInt(u32, room[graphics + graphics_pairs_at ..][0..4], 3, .little);
+    std.mem.writeInt(u32, room[graphics + graphics_arrays_at ..][0..4], 2, .little);
+    try testing.expectEqual(@as(?Sizes, .{ .engines = 1, .units = 12 }), sizes(table));
+    std.mem.writeInt(u32, room[graphics + graphics_other_pairs_at ..][0..4], 1, .little);
+    try testing.expectEqual(@as(?Sizes, .{ .engines = 1, .units = 16 }), sizes(table));
+
+    // A later form is not read.
+    std.mem.writeInt(u16, room[graphics + graphics_form_at ..][0..2], 4, .little);
+    try testing.expectEqual(@as(?Sizes, null), sizes(table));
+    std.mem.writeInt(u16, room[graphics + graphics_form_at ..][0..2], 0, .little);
+
+    // The header's second version has its list four bytes further on.
+    std.mem.writeInt(u16, room[binary_version_at..][0..2], 2, .little);
+    try testing.expectEqual(@as(?Sizes, null), sizes(table));
+    std.mem.writeInt(u16, room[binary_tables_v2_at + graphics_table * table_entry_bytes ..][0..2], graphics, .little);
+    try testing.expectEqual(@as(?Sizes, .{ .engines = 1, .units = 16 }), sizes(table));
+
+    // Sizes past any the vendor makes are not believed.
+    std.mem.writeInt(u32, room[graphics + graphics_engines_at ..][0..4], 0xffff_ffff, .little);
+    try testing.expectEqual(@as(?Sizes, null), sizes(table));
 }
 
 test "a walk passes every block once, and a table without its list has none" {

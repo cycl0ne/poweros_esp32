@@ -48,6 +48,23 @@
 //! arguments are copied into one of 64 slots of 256 bytes of the piece,
 //! taken in turn; a slot is taken again only once the job that last took
 //! it is done.
+//!
+//! **Scratch.** A kernel's private memory is the queue's scratch, as the
+//! vendor's Vulkan driver gives a compute queue its own on this block
+//! (radv_emit_compute_scratch): a piece of the device's memory, its
+//! address set before each dispatch (COMPUTE_DISPATCH_SCRATCH_BASE) with
+//! how many waves it holds for each shader engine and how much each has,
+//! in 256 bytes (COMPUTE_TMPRING_SIZE, ac_get_scratch_tmpring_size). A
+//! wave has its lanes' private bytes on 256 bytes and 256 more, which
+//! makes its count odd and spreads the waves over the memory's channels
+//! (ac_compute_scratch_wavesize); the piece holds 32 waves for each
+//! compute unit (RADV's scratch_waves), and at least a group's worth for
+//! each engine, as a group whose waves cannot all have scratch never
+//! starts. The block points each wave's scratch at its own part itself,
+//! so a kernel takes no register for it. A wave's size stays as it is
+//! while a dispatch may still use the piece, which is why a kernel that
+//! needs more waits for the queue to be idle before the piece is made
+//! again.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -105,6 +122,7 @@ pub const CP_HQD_PQ_WPTR_HI: Register = .{ .segment = 0, .offset = 0x1fe0 };
 pub const COMPUTE_NUM_THREAD_X: u32 = 0x1ba7;
 pub const COMPUTE_PGM_LO: u32 = 0x1bac;
 pub const COMPUTE_PGM_RSRC1: u32 = 0x1bb2;
+pub const COMPUTE_DISPATCH_SCRATCH_BASE_LO: u32 = 0x1bb0;
 pub const COMPUTE_RESOURCE_LIMITS: u32 = 0x1bb5;
 pub const COMPUTE_TMPRING_SIZE: u32 = 0x1bb8;
 pub const COMPUTE_PGM_RSRC3: u32 = 0x1bc8;
@@ -144,6 +162,12 @@ const RSRC2_USER_SGPR_MASK: u32 = 0x1f << RSRC2_USER_SGPR_SHIFT;
 const RSRC2_TRAP_PRESENT: u32 = 1 << 6;
 const RSRC2_LDS_SIZE_SHIFT = 15;
 const RSRC2_LDS_SIZE_MASK: u32 = 0x1ff << RSRC2_LDS_SIZE_SHIFT;
+const TMPRING_WAVES_MASK: u32 = 0xfff;
+const TMPRING_WAVESIZE_SHIFT = 12;
+const TMPRING_WAVESIZE_MASK: u32 = 0x7fff << TMPRING_WAVESIZE_SHIFT;
+/// In a kernel's descriptor's properties, that its stack grows as it
+/// runs, past the private bytes it gives (USES_DYNAMIC_STACK).
+const KERNEL_DYNAMIC_STACK: u32 = 1 << 11;
 const COMPUTE_SHADER_EN: u32 = 1 << 0;
 const FORCE_START_AT_000: u32 = 1 << 2;
 const ORDER_MODE: u32 = 1 << 6;
@@ -528,7 +552,45 @@ pub fn setConfig(register: u32, value: u32) [3]u32 {
 }
 
 /// The words of a kernel's dispatch.
-pub const dispatch_words = 31;
+pub const dispatch_words = 35;
+
+/// The scratch a dispatch is told of: the piece's address to the device,
+/// and the waves it holds for each shader engine with their size as
+/// COMPUTE_TMPRING_SIZE has them; all 0 where the queue has none.
+pub const Scratch = struct {
+    base: u64 = 0,
+    tmpring: u32 = 0,
+
+    /// A piece at `base` of `waves` waves of `wave_bytes` each, shared
+    /// between `engines` shader engines.
+    pub fn of(base: u64, waves: u32, wave_bytes: u32, engines: u32) Scratch {
+        const each = @min(waves / @max(engines, 1), TMPRING_WAVES_MASK);
+        return .{ .base = base, .tmpring = each | (wave_bytes >> 8 << TMPRING_WAVESIZE_SHIFT & TMPRING_WAVESIZE_MASK) };
+    }
+};
+
+/// The bytes a wave of `kernel` keeps in scratch: its lanes' private
+/// bytes on 256 bytes, and 256 more where that makes an even count of
+/// them (ac_compute_scratch_wavesize); 0 for a kernel with none.
+pub fn waveBytes(kernel: *const amdgpu.GPUKernel) u64 {
+    if (kernel.private_bytes == 0) return 0;
+    const lanes: u64 = if (kernel.properties & amdgpu.GPUKERNEL_WAVE32 != 0) 32 else 64;
+    return (@as(u64, kernel.private_bytes) * lanes + 255) & ~@as(u64, 255) | 256;
+}
+
+/// The most a wave may keep in scratch, as COMPUTE_TMPRING_SIZE holds it.
+pub const wave_bytes_most: u64 = @as(u64, TMPRING_WAVESIZE_MASK >> TMPRING_WAVESIZE_SHIFT) << 8;
+
+/// The waves a queue's scratch holds on a block of `engines` shader
+/// engines and `units` compute units: 32 a unit (RADV's scratch_waves),
+/// at least the 32 waves of a group of 1024 threads for each engine, a
+/// whole number for each engine and no more than the register holds for
+/// one.
+pub fn scratchWaves(engines: u32, units: u32) u32 {
+    const shared = @max(engines, 1);
+    const each = @min(@max(32 * units / shared, 32), TMPRING_WAVES_MASK);
+    return each * shared;
+}
 
 /// The groups of 512 bytes the group memory a kernel takes is given in.
 pub fn groupBlocks(group_bytes: u32) u32 {
@@ -538,10 +600,10 @@ pub fn groupBlocks(group_bytes: u32) u32 {
 /// A kernel's dispatch (radv_emit_dispatch_packets), for a block whose
 /// first address is `first`: the group's size, the code's address, its
 /// resource words - the group memory it takes put in the second - no
-/// limits on where its waves run, no scratch, the address of its
+/// limits on where its waves run, the queue's scratch, the address of its
 /// arguments in its first two scalar registers, and the dispatch of
 /// `groups` groups from the first.
-pub fn dispatch(into: *[dispatch_words]u32, first: u32, kernel: *const amdgpu.GPUKernel, groups: [3]u32, threads: [3]u32, arguments: u64) void {
+pub fn dispatch(into: *[dispatch_words]u32, first: u32, kernel: *const amdgpu.GPUKernel, groups: [3]u32, threads: [3]u32, arguments: u64, scratch: Scratch) void {
     const sh = struct {
         fn at(base: u32, register: u32) u32 {
             return base + register - sh_registers_first;
@@ -551,28 +613,32 @@ pub fn dispatch(into: *[dispatch_words]u32, first: u32, kernel: *const amdgpu.GP
     var initiator = COMPUTE_SHADER_EN | FORCE_START_AT_000 | ORDER_MODE;
     if (kernel.properties & amdgpu.GPUKERNEL_WAVE32 != 0) initiator |= CS_W32_EN;
     into.* = .{
-        packet(OP_SET_SH_REG, 4),           sh.at(first, COMPUTE_NUM_THREAD_X),             threads[0],                            threads[1],                        threads[2],
-        packet(OP_SET_SH_REG, 3),           sh.at(first, COMPUTE_PGM_LO),                   @truncate(kernel.code >> 8),           @truncate(kernel.code >> 40),      packet(OP_SET_SH_REG, 3),
-        sh.at(first, COMPUTE_PGM_RSRC1),    kernel.rsrc1,                                   rsrc2,                                 packet(OP_SET_SH_REG, 2),          sh.at(first, COMPUTE_PGM_RSRC3),
-        kernel.rsrc3,                       packet(OP_SET_SH_REG, 2),                       sh.at(first, COMPUTE_RESOURCE_LIMITS), 0,                                 packet(OP_SET_SH_REG, 2),
-        sh.at(first, COMPUTE_TMPRING_SIZE), 0,                                              packet(OP_SET_SH_REG, 3),              sh.at(first, COMPUTE_USER_DATA_0), @truncate(arguments),
-        @truncate(arguments >> 32),         packet(OP_DISPATCH_DIRECT, 4) | SHADER_COMPUTE, groups[0],                             groups[1],                         groups[2],
-        initiator,
+        packet(OP_SET_SH_REG, 4),                       sh.at(first, COMPUTE_NUM_THREAD_X), threads[0],                            threads[1],                   threads[2],
+        packet(OP_SET_SH_REG, 3),                       sh.at(first, COMPUTE_PGM_LO),       @truncate(kernel.code >> 8),           @truncate(kernel.code >> 40), packet(OP_SET_SH_REG, 3),
+        sh.at(first, COMPUTE_PGM_RSRC1),                kernel.rsrc1,                       rsrc2,                                 packet(OP_SET_SH_REG, 2),     sh.at(first, COMPUTE_PGM_RSRC3),
+        kernel.rsrc3,                                   packet(OP_SET_SH_REG, 2),           sh.at(first, COMPUTE_RESOURCE_LIMITS), 0,                            packet(OP_SET_SH_REG, 3),
+        sh.at(first, COMPUTE_DISPATCH_SCRATCH_BASE_LO), @truncate(scratch.base >> 8),       @truncate(scratch.base >> 40),         packet(OP_SET_SH_REG, 2),     sh.at(first, COMPUTE_TMPRING_SIZE),
+        scratch.tmpring,                                packet(OP_SET_SH_REG, 3),           sh.at(first, COMPUTE_USER_DATA_0),     @truncate(arguments),         @truncate(arguments >> 32),
+        packet(OP_DISPATCH_DIRECT, 4) | SHADER_COMPUTE, groups[0],                          groups[1],                             groups[2],                    initiator,
     };
 }
 
 /// Why a kernel cannot be run as a dispatch asks, or null where it can:
 /// only the address of its arguments in its first two scalar registers
-/// and waves of 32 or 64 lanes are known; no scratch, no trap handler, at
+/// and waves of 32 or 64 lanes are known; private memory of the size its
+/// descriptor gives, which a wave's scratch holds; no trap handler, at
 /// most 64 KiB of group memory, 256 bytes of arguments and 1024 threads
 /// in a group.
 pub fn refusal(kernel: *const amdgpu.GPUKernel, groups: [3]u32, threads: [3]u32, argument_bytes: u32) ?[*:0]const u8 {
     if (kernel.code == 0 or kernel.code & 0xff != 0) return "its code is not on 256 bytes";
+    if (kernel.properties & KERNEL_DYNAMIC_STACK != 0) return "its stack grows as it runs, past the private memory it gives";
     if (kernel.properties & ~(amdgpu.GPUKERNEL_ARGUMENTS | amdgpu.GPUKERNEL_WAVE32) != 0) return "it takes values in its registers that are not handed to it";
     const user = (kernel.rsrc2 & RSRC2_USER_SGPR_MASK) >> RSRC2_USER_SGPR_SHIFT;
     const meant: u32 = if (kernel.properties & amdgpu.GPUKERNEL_ARGUMENTS != 0) 2 else 0;
     if (user != meant) return "its scalar registers are not the address of its arguments";
-    if (kernel.private_bytes != 0 or kernel.rsrc2 & RSRC2_SCRATCH_EN != 0) return "it uses scratch memory";
+    if (kernel.private_bytes == 0 and kernel.rsrc2 & RSRC2_SCRATCH_EN != 0) return "it uses scratch memory of no size";
+    if (kernel.private_bytes != 0 and kernel.rsrc2 & RSRC2_SCRATCH_EN == 0) return "its private memory is not given its waves";
+    if (waveBytes(kernel) > wave_bytes_most) return "its private memory is more than a wave's scratch holds";
     if (kernel.rsrc2 & RSRC2_TRAP_PRESENT != 0) return "it needs a trap handler";
     if (kernel.group_bytes > 64 * 1024) return "it takes more than 64 KiB of group memory";
     if (kernel.argument_bytes > amdgpu.GPUKERNEL_ARGUMENTS_MAX or argument_bytes > amdgpu.GPUKERNEL_ARGUMENTS_MAX) return "its arguments take more than 256 bytes";
@@ -969,16 +1035,19 @@ test "a kernel's dispatch" {
         .properties = amdgpu.GPUKERNEL_ARGUMENTS | amdgpu.GPUKERNEL_WAVE32,
     };
     var words_out: [dispatch_words]u32 = undefined;
-    dispatch(&words_out, 0x1260, &kernel, .{ 4, 1, 1 }, .{ 64, 1, 1 }, 0x80_0001_e100);
+    dispatch(&words_out, 0x1260, &kernel, .{ 4, 1, 1 }, .{ 64, 1, 1 }, 0x80_0001_e100, .{});
     try testing.expectEqualSlices(u32, &.{
-        0xC003_7600,                   0x1260 + 0x1ba7 - 0x2c00, 64,             1,           1,
-        0xC002_7600,                   0x020c,                   0x8004_0215,    0,           0xC002_7600,
-        0x0212,                        0xe0af_0100,              0x84 | 2 << 15, 0xC001_7600, 0x0228,
-        0x10,                          0xC001_7600,              0x0215,         0,           0xC001_7600,
-        0x0218,                        0,                        0xC002_7600,    0x0240,      0x0001_e100,
-        0x80,                          0xC003_1502,              4,              1,           1,
-        1 | 1 << 2 | 1 << 6 | 1 << 15,
+        0xC003_7600, 0x1260 + 0x1ba7 - 0x2c00, 64,             1,           1,
+        0xC002_7600, 0x020c,                   0x8004_0215,    0,           0xC002_7600,
+        0x0212,      0xe0af_0100,              0x84 | 2 << 15, 0xC001_7600, 0x0228,
+        0x10,        0xC001_7600,              0x0215,         0,           0xC002_7600,
+        0x0210,      0,                        0,              0xC001_7600, 0x0218,
+        0,           0xC002_7600,              0x0240,         0x0001_e100, 0x80,
+        0xC003_1502, 4,                        1,              1,           1 | 1 << 2 | 1 << 6 | 1 << 15,
     }, &words_out);
+    dispatch(&words_out, 0x1260, &kernel, .{ 4, 1, 1 }, .{ 64, 1, 1 }, 0x80_0001_e100, Scratch.of(0x80_0400_0000, 384, 16640, 1));
+    try testing.expectEqualSlices(u32, &.{ 0xC002_7600, 0x0210, 0x8004_0000, 0, 0xC001_7600, 0x0218, 384 | 65 << 12 }, words_out[19..26]);
+    try testing.expectEqual(@as(u32, 384 | 2 << 12), Scratch.of(0, 768, 512, 2).tmpring);
     try testing.expect(refusal(&kernel, .{ 4, 1, 1 }, .{ 64, 1, 1 }, 16) == null);
     try testing.expect(refusal(&kernel, .{ 4, 1, 1 }, .{ 64, 32, 1 }, 16) != null);
     try testing.expect(refusal(&kernel, .{ 0, 1, 1 }, .{ 64, 1, 1 }, 16) != null);
@@ -986,12 +1055,40 @@ test "a kernel's dispatch" {
     var scratch = kernel;
     scratch.private_bytes = 16;
     try testing.expect(refusal(&scratch, .{ 1, 1, 1 }, .{ 64, 1, 1 }, 16) != null);
+    scratch.rsrc2 |= RSRC2_SCRATCH_EN;
+    try testing.expect(refusal(&scratch, .{ 1, 1, 1 }, .{ 64, 1, 1 }, 16) == null);
+    scratch.private_bytes = 0;
+    try testing.expect(refusal(&scratch, .{ 1, 1, 1 }, .{ 64, 1, 1 }, 16) != null);
+    scratch.private_bytes = 1 << 20;
+    try testing.expect(refusal(&scratch, .{ 1, 1, 1 }, .{ 64, 1, 1 }, 16) != null);
+    var dynamic = scratch;
+    dynamic.private_bytes = 16;
+    dynamic.properties |= KERNEL_DYNAMIC_STACK;
+    try testing.expect(refusal(&dynamic, .{ 1, 1, 1 }, .{ 64, 1, 1 }, 16) != null);
     var dispatch_pointer = kernel;
     dispatch_pointer.properties |= 1 << 1;
     try testing.expect(refusal(&dispatch_pointer, .{ 1, 1, 1 }, .{ 64, 1, 1 }, 16) != null);
     try testing.expectEqual(@as(u32, 0), groupBlocks(0));
     try testing.expectEqual(@as(u32, 1), groupBlocks(512));
     try testing.expectEqual(@as(u32, 128), groupBlocks(65536));
+}
+
+test "a wave's scratch, and how many waves the queue's holds" {
+    var kernel: amdgpu.GPUKernel = .{ .properties = amdgpu.GPUKERNEL_WAVE32 };
+    try testing.expectEqual(@as(u64, 0), waveBytes(&kernel));
+    kernel.private_bytes = 516;
+    try testing.expectEqual(@as(u64, 16640), waveBytes(&kernel));
+    kernel.private_bytes = 1;
+    try testing.expectEqual(@as(u64, 256), waveBytes(&kernel));
+    kernel.private_bytes = 16;
+    try testing.expectEqual(@as(u64, 768), waveBytes(&kernel));
+    kernel.properties = 0;
+    try testing.expectEqual(@as(u64, 1280), waveBytes(&kernel));
+    try testing.expectEqual(@as(u32, 384), scratchWaves(1, 12));
+    try testing.expectEqual(@as(u32, 32), scratchWaves(1, 0));
+    try testing.expectEqual(@as(u32, 64), scratchWaves(2, 1));
+    try testing.expectEqual(@as(u32, 3072), scratchWaves(6, 96));
+    try testing.expectEqual(@as(u32, 4095), scratchWaves(1, 200));
 }
 
 test "the scheduler's frames, at the places the vendor's header gives" {

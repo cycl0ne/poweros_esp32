@@ -167,6 +167,17 @@ pub const AMDGPUBase = extern struct {
     compute_end_int: exec.Interrupt = .{},
     compute_slot: u32 = 0,
     compute_slot_jobs: [compute_slots]u32 = @splat(0),
+    /// The graphics block's shader engines and compute units, as the
+    /// device's table says; 0 where it does not.
+    shader_engines: u32 = 0,
+    compute_units: u32 = 0,
+    /// The compute engine's scratch, under the queue's lock: the piece of
+    /// the device's memory its kernels' waves keep their private memory
+    /// in, the bytes each wave has of it and how many waves it holds - all
+    /// 0 until a kernel needs one.
+    scratch: amdgpu.GPUMemory = .{},
+    scratch_wave_bytes: u32 = 0,
+    scratch_waves: u32 = 0,
     compute_lock: exec.SignalSemaphore,
     compute_wait_lock: exec.SignalSemaphore,
 };

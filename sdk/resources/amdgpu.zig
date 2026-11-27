@@ -247,8 +247,10 @@ pub const GPUWRITE_CONFIRM: u32 = 1 << 20;
 /// end of a job; the versions of the scheduler's firmware and of its
 /// second pipe's, which maps the queue; whether the queue is mapped, and
 /// how far the engine has read and been told of it, in words, as its
-/// registers read now; and the graphics block's status and its compute
-/// processor's.
+/// registers read now; the graphics block's status and its compute
+/// processor's; and the queue's scratch - where it is to the device, its
+/// bytes and the waves it holds - all 0 until a kernel with private
+/// memory has been sent.
 pub const GPUComputeState = extern struct {
     ring: u64 align(4) = 0,
     ring_bytes: u32 = 0,
@@ -264,6 +266,9 @@ pub const GPUComputeState = extern struct {
     queue_written: u32 = 0,
     status: u32 = 0,
     compute_status: u32 = 0,
+    scratch: u64 align(4) = 0,
+    scratch_bytes: u32 = 0,
+    scratch_waves: u32 = 0,
 };
 
 /// A code object loaded by LoadGPUCode: the piece of the device's memory
