@@ -455,15 +455,33 @@ pub const SamplerDim = enum(u8) {
     /// GLSL_SAMPLER_DIM_CUBE: a direction, normalized
     /// (nir_normalize_cubemap_coords, v3dv_pipeline.c:406), its third
     /// float in TMUR and the lookup started at TMUSCM rather than TMUS
-    /// (v3d_tex.c:380-381). A cube of an array is refused, as
-    /// SampledCubeArray is not in the profile.
+    /// (v3d_tex.c:380-381).
     cube,
+    /// GLSL_SAMPLER_DIM_CUBE arrayed, of SampledCubeArray: a cube's
+    /// direction, normalized and in S, T and R as a cube's, and which
+    /// cube as its fourth float, left as it is by
+    /// nir_normalize_cubemap_coords (nir_normalize_cubemap_coords.c:
+    /// 59-65), in TMUI after R (handle_tex_src, v3d_tex.c:108-127): the
+    /// TMU rounds it and holds it to the view's cubes, which the draw
+    /// makes its depth (v3dvx_image.c:89-93). A size names its cubes
+    /// last (v3dv_uniforms.c:402-407; since 1.235). A storage image of
+    /// ImageCubeArray is of `layers` instead, as a storage cube is.
+    cubes,
 
     /// glsl_get_sampler_dim_coordinate_components and the layer
     /// (spirv_to_nir.c:3280-3283): the floats of the coordinate a sample
     /// reads.
     pub fn components(dim: SamplerDim) u8 {
-        return if (dim == .flat) 2 else 3;
+        return switch (dim) {
+            .flat => 2,
+            .layers, .volume, .cube => 3,
+            .cubes => 4,
+        };
+    }
+
+    /// Whether a sample of it is a cube's, at TMUSCM.
+    pub fn cubic(dim: SamplerDim) bool {
+        return dim == .cube or dim == .cubes;
     }
 };
 
@@ -474,8 +492,10 @@ pub const SamplerDim = enum(u8) {
 pub const profile: spirv.Profile = .{
     // ImageQuery, which an image's size and levels need (since 1.181);
     // InputAttachment, which an input attachment's SubpassData needs
-    // (since 1.215).
-    .capabilities = &.{ .shader, .image_query, .input_attachment },
+    // (since 1.215); SampledCubeArray and ImageCubeArray, which a cube
+    // of an array needs, sampled and as a storage image, as v3dv has
+    // imageCubeArray (v3dv_device.c:331; since 1.235).
+    .capabilities = &.{ .shader, .image_query, .input_attachment, .sampled_cube_array, .image_cube_array },
     .opcodes = &.{
         .capability,                   .memory_model,                   .entry_point,                    .execution_mode,
         .decorate,                     .type_void,                      .type_float,                     .type_vector,
@@ -2878,9 +2898,10 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 // profile's and Sampled to 1 already, or 2 for SubpassData:
                 // a 2D image, a 3D one or a cube (since 1.179), each its
                 // `SamplerDim`, or an input attachment (since 1.215). An
-                // arrayed 2D one has its layer in TMUI; a cube of an
-                // array needs SampledCubeArray, which `look` refuses, and
-                // a 3D one cannot be arrayed (SPIR-V's OpTypeImage). A
+                // arrayed 2D one has its layer in TMUI, and so has a cube
+                // of an array its cube, of SampledCubeArray (since
+                // 1.235); a 3D one cannot be arrayed (SPIR-V's
+                // OpTypeImage). A
                 // multisampled one is a 2D one, of layers or not, vtn's
                 // GLSL_SAMPLER_DIM_MS (spirv_to_nir.c:2431; since 1.209).
                 // Depth is taken whatever it says since 1.143: whether a
@@ -2899,15 +2920,17 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 // shaderStorageImageMultisample is false. A cube is read
                 // and written as its six faces' layers, the face the
                 // coordinate's third word in TMUI, as for an array
-                // (vir_image_emit_register_writes, v3d_tex.c:449-480);
-                // a cube of an array wants ImageCubeArray, which `look`
-                // refuses.
+                // (vir_image_emit_register_writes, v3d_tex.c:449-480),
+                // and so is a cube of an array, of ImageCubeArray, its
+                // third word six times the cube and the face (since
+                // 1.235): the draw tells the TMU its layers, not its
+                // cubes (v3dvx_image.c:89-93, :171-174).
                 if (operands[6] == 2 and dim != .subpass_data) {
                     if (operands[5] == 1) return Error.Refused;
                     work.sampler_dim[id] = switch (dim) {
                         .dim_2d => if (arrayed) .layers else .flat,
                         .dim_3d => if (arrayed) return Error.Refused else .volume,
-                        .cube => if (arrayed) return Error.Refused else .layers,
+                        .cube => .layers,
                         else => return Error.Refused,
                     };
                     work.storage_image.set(id);
@@ -2921,7 +2944,7 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 work.sampler_dim[id] = switch (dim) {
                     .dim_2d => if (arrayed) .layers else .flat,
                     .dim_3d => if (arrayed) return Error.Refused else .volume,
-                    .cube => if (arrayed) return Error.Refused else .cube,
+                    .cube => if (arrayed) .cubes else .cube,
                     // An input attachment, which try_lower_input_load
                     // reads with a txf of is_array, the layer its
                     // coordinate's third word (nir_lower_input_attachments.c:
@@ -8768,7 +8791,8 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
             // its lod source (spirv_to_nir.c:3384-3386), as many integers
             // as nir_tex_instr_dest_size gives the image (nir.c): two for
             // a 2D image and a cube, three for a 3D one and a 2D array,
-            // the array's layers last (since 1.181).
+            // the array's layers last (since 1.181), and for a cube of an
+            // array its cubes last (since 1.235).
             if (operands.len != 4) return Error.Body;
             const type_id = try idOf(operands[0]);
             if (!isIntegerType(work, type_id)) return Error.Type;
@@ -8778,7 +8802,7 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
             const kind = try kindOf(work, type_id);
             const sizes: u32 = switch (work.samplers[which].dim) {
                 .flat, .cube => 2,
-                .layers, .volume => 3,
+                .layers, .volume, .cubes => 3,
             };
             if (kind.parts() != sizes) return Error.Type;
             const level = try operand(work, operands[3], .f32x1);
@@ -11219,7 +11243,7 @@ fn readSample(work: *Work, op: spirv.Op, operands: []const u32) Error!void {
     const which = work.sampler_of[try idOf(operands[2])];
     if (which == none) return Error.Body;
     const dim = work.samplers[which].dim;
-    if (fetch and dim == .cube) return Error.Body;
+    if (fetch and dim.cubic()) return Error.Body;
     const multisampled = work.samplers[which].multisampled;
     if (multisampled and !fetch) return Error.Body;
     var ms_index: ?u16 = null;
@@ -11470,7 +11494,7 @@ fn sizeOfStorage(work: *Work, operands: []const u32) Error!void {
         .flat => kind == .f32x2,
         .layers => kind == .f32x2 or kind == .f32x3,
         .volume => kind == .f32x3,
-        .cube => false,
+        .cube, .cubes => false,
     };
     if (!fits) return Error.Type;
     work.step_of[id] = try put(work, .{ .tag = .image_size, .kind = kind, .at = which });
@@ -11488,7 +11512,7 @@ fn sizeOfStorage(work: *Work, operands: []const u32) Error!void {
 ///
 /// A cube's is `cubeGradientLevel` (since 1.184; refused at 1.183).
 fn gradientLevel(work: *Work, which: u16, dim: SamplerDim, coordinate: u16, dx: u32, dy: u32) Error!u16 {
-    if (dim == .cube) return cubeGradientLevel(work, which, coordinate, dx, dy);
+    if (dim.cubic()) return cubeGradientLevel(work, which, try directionOf(work, coordinate), dx, dy);
     const count: u8 = if (dim == .layers) 2 else dim.components();
     const kind = std.enums.fromInt(Kind, count) orelse return Error.Type;
     const ddx = try operand(work, dx, kind);
@@ -11586,7 +11610,7 @@ fn pairOf(work: *Work, first: u16, second: u16) Error!u16 {
 fn texelOffsets(work: *const Work, word: u32, dim: SamplerDim) Error![3]i8 {
     const id = try idOf(word);
     const count: u8 = if (dim == .layers) 2 else dim.components();
-    if (dim == .cube) return Error.Body;
+    if (dim.cubic()) return Error.Body;
     if (!isConstant(work, id) or work.wide[id] != count) return Error.Type;
     var made: [3]i8 = @splat(0);
     for (made[0..count], 0..) |*each, k| {
@@ -11637,7 +11661,41 @@ fn sampledAt(work: *Work, word: u32, dim: SamplerDim) Error!u16 {
         std.enums.fromInt(Kind, work.wide[id]) orelse return Error.Type;
     if (kind.parts() < dim.components()) return Error.Type;
     const coordinate = try operand(work, word, kind);
-    return if (dim == .cube) normalizedCube(work, coordinate) else coordinate;
+    return switch (dim) {
+        .cube => normalizedCube(work, coordinate),
+        .cubes => normalizedCubes(work, coordinate),
+        else => coordinate,
+    };
+}
+
+/// A cube of an array's coordinate, nir_normalize_cubemap_coords's
+/// (nir_normalize_cubemap_coords.c:56-65): the direction normalized as a
+/// cube's is, and the fourth float, which cube, after it as it was, which
+/// nir_vector_insert_imm puts back where the product of all four was
+/// (since 1.235).
+fn normalizedCubes(work: *Work, coordinate: u16) Error!u16 {
+    const direction = try normalizedCube(work, coordinate);
+    var made: Step = .{ .tag = .construct, .kind = .f32x4 };
+    for (0..3) |k| made.from[k] = direction;
+    made.part = .{ 0, 1, 2, 0 };
+    const which = partOf(work, coordinate, 3);
+    made.from[3] = which.step;
+    made.part[3] = which.part;
+    return put(work, made);
+}
+
+/// A coordinate's first three floats, nir_trim_vector's: the coordinate
+/// itself where it has three, and a vector made of them where it has more
+/// (since 1.235; `normalizedCube`'s own before).
+fn directionOf(work: *Work, coordinate: u16) Error!u16 {
+    if (work.steps[coordinate].kind == .f32x3) return coordinate;
+    var trimmed: Step = .{ .tag = .construct, .kind = .f32x3 };
+    for (0..3) |k| {
+        const of = partOf(work, coordinate, @intCast(k));
+        trimmed.from[k] = of.step;
+        trimmed.part[k] = of.part;
+    }
+    return put(work, trimmed);
 }
 
 /// nir_normalize_cubemap_coords (v3dv_pipeline.c:406;
@@ -11648,16 +11706,7 @@ fn sampledAt(work: *Work, word: u32, dim: SamplerDim) Error!u16 {
 /// (nir_builtin_builder.h:84-91). The TMU finds the face and the place on
 /// it from what is left (since 1.179).
 fn normalizedCube(work: *Work, coordinate: u16) Error!u16 {
-    var direction = coordinate;
-    if (work.steps[coordinate].kind != .f32x3) {
-        var trimmed: Step = .{ .tag = .construct, .kind = .f32x3 };
-        for (0..3) |k| {
-            const of = partOf(work, coordinate, @intCast(k));
-            trimmed.from[k] = of.step;
-            trimmed.part[k] = of.part;
-        }
-        direction = try put(work, trimmed);
-    }
+    const direction = try directionOf(work, coordinate);
     const magnitudes = try put(work, .{ .tag = .abs, .kind = .f32x3, .a = direction });
     var largest = try floatOf(work, .{ .step = magnitudes, .part = 0 });
     for (1..3) |k| {
@@ -13922,9 +13971,118 @@ test "a cube or an array of depths compared takes the floats its image names of 
     try testing.expect(writtenWith(layers_code, "fmul", tmuSource(layers_code, "tmui", &names, &into).?));
 }
 
-test "a cube of an array is refused, which needs SampledCubeArray" {
+test "a cube of an array, of SampledCubeArray, is sampled at its direction normalized as a cube's and its cube as it is: the third float to TMUR, the fourth to TMUI, the lookup at TMUSCM (since 1.235)" {
+    // nir_normalize_cubemap_coords leaves an array's index as it was
+    // (nir_normalize_cubemap_coords.c:56-65); handle_tex_src writes it to
+    // TMUI after R (v3d_tex.c:108-127), and a cube's lookup is TMUSCM
+    // (:378-379), its sampler_dim a cube's.
     var work: Work = .{};
-    try testing.expectError(Error.Refused, throughMesa(&work, &reference.glslc_cube_array));
+    const code = try throughMesa(&work, &reference.glslc_cubes);
+    try testing.expectEqual(Sampler{ .set = 0, .binding = 0, .dim = .cubes }, code.sampled()[0]);
+    const sampled = try onlySample(&work);
+    const coordinate = work.steps[sampled.a];
+    try testing.expectEqual(Tag.construct, coordinate.tag);
+    try testing.expectEqual(Kind.f32x4, coordinate.kind);
+    const normalized = work.steps[coordinate.from[0]];
+    try testing.expectEqual(Tag.mul, normalized.tag);
+    try testing.expectEqual(Kind.f32x3, normalized.kind);
+    try testing.expectEqual(Tag.recip, work.steps[normalized.b].tag);
+    for (0..3) |k| {
+        try testing.expectEqual(coordinate.from[0], coordinate.from[k]);
+        try testing.expectEqual(@as(u8, @intCast(k)), coordinate.part[k]);
+        try testing.expect(isInputPart(&work, normalized.a, @intCast(k), @intCast(k)));
+    }
+    // Which cube, the colour's fourth float, as it was.
+    try testing.expect(isInputPart(&work, sampled.a, 3, 3));
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .abs));
+    try testing.expectEqual(@as(usize, 2), stepsOf(&work, .max));
+    // The writes before the start in any order, as can_reorder_tmu_write
+    // lets the scheduler place them (qpu_schedule.c:226).
+    try expectTmuWritesEnding(code, &.{ "tmut", "tmur", "tmui" }, "tmuscm");
+    var names: [8][2][16]u8 = undefined;
+    var into: [8]TmuWrite = undefined;
+    for ([_][]const u8{ "tmut", "tmur", "tmuscm" }) |name| try testing.expect(writtenWith(code, "fmul", tmuSource(code, name, &names, &into).?));
+    try testing.expect(!writtenWith(code, "fmul", tmuSource(code, "tmui", &names, &into).?));
+    // glslc's cube of 1.0, a constant the module constructs the
+    // coordinate with: the same four writes.
+    var constant: Work = .{};
+    const constant_code = try throughMesa(&constant, &reference.glslc_cube_array);
+    try testing.expectEqual(SamplerDim.cubes, constant_code.sampled()[0].dim);
+    try expectTmuWritesEnding(constant_code, &.{ "tmut", "tmur", "tmui" }, "tmuscm");
+}
+
+test "a cube of an array sampled at three floats is refused, as its coordinate names the cube fourth (since 1.235)" {
+    // glsl_get_sampler_dim_coordinate_components and the layer
+    // (spirv_to_nir.c:3280-3283): four floats, the three of the
+    // direction and which cube. glslc_cube's image made arrayed, its
+    // operand Arrayed 1, is sampled at the direction alone.
+    var work: Work = .{};
+    try expectRefusal(Error.Type, throughMesa(&work, &comptime patched(&reference.glslc_cube, .type_image, 0, 4, 1)));
+}
+
+test "a cube of an array of depths compared writes the reference to TMUDREF beside the cube's TMUI, a cube of an array at a level has P2 disable the automatic level and its level to TMUB, both started at TMUSCM (since 1.235)" {
+    // handle_tex_src's order of NIR's sources: the coordinate's T, R and
+    // I, then the comparator (v3d_tex.c:108-157) and the level, and a
+    // cube's txl disables the automatic level in P2 (:142-148).
+    var shadow: Work = .{};
+    const shadow_code = try throughMesa(&shadow, &reference.glslc_cubes_shadow);
+    try testing.expectEqual(Sampler{ .set = 0, .binding = 0, .compared = true, .dim = .cubes }, shadow_code.sampled()[0]);
+    try expectTmuWritesEnding(shadow_code, &.{ "tmut", "tmur", "tmui", "tmudref" }, "tmuscm");
+    // Five writes, TMUI's among them, which four threads have no room
+    // for (v3d_tex.c:222, :265-266).
+    try testing.expectEqual(@as(u8, 2), shadow_code.threads);
+    var lod: Work = .{};
+    const lod_code = try throughMesa(&lod, &reference.glslc_cubes_lod);
+    try testing.expectEqual(Lookup.lod, (try onlySample(&lod)).lookup);
+    try expectTmuWritesEnding(lod_code, &.{ "tmut", "tmur", "tmui", "tmub" }, "tmuscm");
+    try testing.expectEqual(@as(u8, 2), lod_code.threads);
+    const stream = lod_code.stream();
+    try testing.expectEqualSlices(Word, &sampledStream(0x00F00002), stream[stream.len - 3 ..]);
+}
+
+test "a cube of an array's gradient is the level lower_gradient_cube_map makes of its direction, the width alone read, and its size is three integers, its cubes the draw's array size (since 1.235)" {
+    // lower_gradient_cube_map reads the coordinate's first three floats
+    // and the size's first (nir_lower_tex.c:707-852); ntq_emit_txs takes
+    // QUNIFORM_TEXTURE_ARRAY_SIZE for an array's last
+    // (nir_to_vir.c:929-930), which v3dv answers in cubes for a cube of
+    // an array (v3dv_uniforms.c:402-407).
+    var grad: Work = .{};
+    const grad_code = try throughMesa(&grad, &reference.glslc_cubes_grad);
+    const sampler: Word = .{ .sampler = .{ .bits = per_pixel_mask } };
+    const width: Word = .{ .texture_size = .{ .field = .width } };
+    const p2: Word = .{ .float = @bitCast(@as(u32, 0x00F00002)) };
+    const stream = grad_code.stream();
+    try testing.expectEqual(width, stream[0]);
+    try testing.expectEqualSlices(Word, &[_]Word{ .{ .texture = 0 }, sampler, p2 }, stream[stream.len - 3 ..]);
+    for (stream) |word| try testing.expect(!std.meta.eql(word, Word{ .texture_size = .{ .field = .array_size } }) and !std.meta.eql(word, Word{ .texture_size = .{ .field = .height } }));
+    try testing.expectEqual(Lookup.lod, (try onlySample(&grad)).lookup);
+    try expectTmuWritesEnding(grad_code, &.{ "tmut", "tmur", "tmui", "tmub" }, "tmuscm");
+    var size: Work = .{};
+    const size_code = try throughMesa(&size, &reference.glslc_cubes_size);
+    try testing.expectEqualSlices(Word, &sizesOf(&.{ .width, .height, .array_size }), size_code.stream());
+    try testing.expectEqual(@as(usize, 2), countOf(size_code, "shr "));
+}
+
+test "a storage cube of an array, of ImageCubeArray, is read and written as its faces' layers, the third word to TMUI, and its size's third the draw's array size (since 1.235)" {
+    // vir_image_emit_register_writes writes a cube's and an array's
+    // third word to TMUI (v3d_tex.c:449-480), the faces of a cube of an
+    // array six to a cube, which v3dv's storage state counts as layers
+    // (v3dvx_image.c:89-93, :171-174); ntq_emit_image_size's array size
+    // is its cubes (nir_to_vir.c:2653-2679; v3dv_uniforms.c:402-407).
+    var work: Work = .{};
+    const code = try computeThroughMesa(&work, &reference.glslc_cubes_storage);
+    try testing.expectEqual(Sampler{ .set = 0, .binding = 0, .dim = .layers, .storage = true }, code.sampled()[0]);
+    try testing.expectEqual(@as(usize, 2), countOf(code, "mov tmui"));
+    try testing.expectEqual(@as(usize, 0), countOf(code, "mov tmur"));
+    var sizes: usize = 0;
+    for (code.stream()) |word| switch (word) {
+        .texture_size => |size| {
+            try testing.expectEqual(TextureSize.Field.array_size, size.field);
+            sizes += 1;
+        },
+        else => {},
+    };
+    try testing.expectEqual(@as(usize, 1), sizes);
 }
 
 /// The uniform stream of a sample whose P2 is `p2`: its texture, its

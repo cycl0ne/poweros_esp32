@@ -149,7 +149,7 @@ and sampled as of 1.119 and a view of another format of an image as of
 pixel in 1.148 and 1.149 (item 61's V1 to V6), and a subpass of no
 colour attachment, a pipeline of no fragment stage and a subpass of no
 attachment at four in 1.150 (items 43 and 85, and V8) - so the
-magenta item 52 is about now belongs to item 54 alone, item 28's
+magenta item 52 is about now belongs to item 54 alone (done in 1.235), item 28's
 remainder is a QPU back end that refuses the operand at pipeline
 creation, item 17's is a vertex program that keeps its varyings in
 registers and so stops at eight, item 22's is a render list played once
@@ -2343,7 +2343,7 @@ Found independently by: features, semantics, doc-staleness (3 strands).
 
 ### 54. V3D: a QPU program that reads the bound sampler for every form, with unnormalized coordinates and anisotropy **[critical path]**
 
-*V3D compiler and TMU* &mdash; conformance-blocking, large
+*V3D compiler and TMU* &mdash; conformance-blocking, large &mdash; **done in 1.235 (the sampler state in 1.140, the fixed forms in 1.141, the cube of an array in 1.234 and 1.235)**
 
 After: The SPIR-V -> QPU compiler; its 1.77-1.79 sampler path is the beachhead
 
@@ -2415,9 +2415,30 @@ On the board (package f246):
 - Its 8 new cases read an image of two cubes, the second's faces the first's backwards. 6 are 0 of 230400 pixels apart. The two across an edge of the second cube are 14 apart, and 12 through a sampler. Those are the seam pixels where the one cube's same cases are 14 apart, their first pixels the same.
 - Once, after the update and a first FacetProbe that passed, the VideoCore firmware stopped answering its mailbox, so the V3D could not start. A reboot cured it, and it did not come back over two runs of each program in the same order. The same was seen on 26.11.2026, during an update.
 
-Still left out. Each is marked *facet-wide* or *V3D-only*:
+Still left out at 1.234: a compiled shader that samples a cube of an array, the compiler's half. It was done in 1.235, below.
 
-- **A compiled shader that samples a cube of an array.** The back end still refuses SampledCubeArray (`glslc_cube_array`), and ImageCubeArray for a storage image. It is the compiler's half, next. *V3D-only*: the cores have no SPIR-V back end (item 71).
+**Then the compiled shader's cube of an array, in 1.235: the compiler's half, and with it the item.** The back end takes SampledCubeArray and ImageCubeArray, as v3dv has imageCubeArray (v3dv_device.c:331). The SDK's `spirv.Capability` names them (34 and 45). Each piece is ported:
+
+- **The sample.** A sampled cube of an array is a sampler of its own, `SamplerDim.cubes`, of four floats. Its direction is normalized as a cube's. The fourth float, which cube, is left as it is, as nir_normalize_cubemap_coords leaves an array's index (nir_normalize_cubemap_coords.c:56-65). handle_tex_src writes the third float to TMUR and the fourth to TMUI (v3d_tex.c:108-127), and the lookup starts at TMUSCM, a cube's (:378-379). TMUI counts among the lookup's writes for the threads the input FIFO has room for (v3d_tex.c:222). At a level, P2 disables the automatic level, as for a cube (:142-148). A gradient is lower_gradient_cube_map's level of the direction (nir_lower_tex.c:707-852).
+- **The size.** It is three integers, the third its cubes, QUNIFORM_TEXTURE_ARRAY_SIZE (nir_to_vir.c:929-930). The draw has answered in cubes since 1.234 (v3dv_uniforms.c:402-407).
+- **A storage image.** A storage cube of an array is read and written as its faces' layers, as a storage cube is, its third word to TMUI (v3d_tex.c:449-480). The draw tells the TMU its layers there (v3dvx_image.c:171-174).
+- **What stays refused.** A fetch of a cube of an array and a texel offset, as for a cube: SPIR-V gives a cube neither.
+
+The tests:
+
+- Six glslc -O modules are new: a cube of an array sampled, compared, at a level, with a gradient, its size, and a storage one read and written.
+- Six host tests take them, in place of the one that said a cube of an array was refused. A seventh refuses one sampled at three floats.
+- The writes before a lookup's start are checked in any order, as can_reorder_tmu_write lets the scheduler place them (qpu_schedule.c:226).
+- 4573 of the 4576 pass, 3 skipped, and each of 13 mutants of the port fails them.
+- FacetBoth 1.83 draws glslc's sample, `shipped_cubes`, compiled on the V3D, at the fixed form's two cases through a sampler.
+
+On the board (package f247):
+
+- FacetProbe 1.60 passes 1084 of 1084, as at 1.234.
+- FacetBoth 1.83's 326 cases of 1.82 are each as at 1.234.
+- Its two new ones draw as the fixed form does on the V3D. The second cube's +z is 0 of 230400 pixels apart. Across an edge it is 12 apart, 33 at worst, the first at 320,86 as the fixed form's: the seam pixels the V3D's TMU reads, which the cores alone would not differ at.
+
+Nothing of this item is left out. Every fixed form that reads a sampler is drawn on the V3D, and every sampled image the profile names compiles there: 2D, a 2D array, 3D, a cube and a cube of an array. *V3D-only* throughout: the cores have no SPIR-V back end (item 71), and draw the fixed forms as they always have.
 
 ### 55. V3D: a fragment program that writes several colour attachments in one call **[critical path]**
 
