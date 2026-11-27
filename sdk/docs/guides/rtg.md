@@ -1723,6 +1723,34 @@ with `fw`. Once it has its board, `fw.0` is gone, the framebuffer is
 `amd.0`'s first frame, intuition moves the screens over, and
 audio.device moves the sound to the display's link.
 
+**What `amd` drives, and what it needs.** `amd` drives a display engine
+of version 3.1.4 - the NucBox's Radeon 780M has one - as one board,
+`amd.0`, on the connector the firmware lit. On an HDMI connector it
+takes every mode the monitor names up to 340 MHz, plays the monitor's
+speakers, sends the mode's infoframe, puts the monitor to sleep and
+sets its brightness over DDC/CI; on a DVI connector the same up to 165
+MHz, without sound or infoframe. On a DisplayPort connector the monitor
+is named from its EDID, read over the line's AUX channel, and the link
+stays the firmware's, in its mode: no other mode is set on it, the
+monitor is not put to sleep and its brightness is not set. A USB-C
+socket's DisplayPort, tunnelled through the machine's USB4 controller,
+is not driven. What it does past the firmware's mode stands on the
+device's own processors, each running firmware from
+`DEVS:firmware/amdgpu/`, which `scripts/fetch-amdgpu.sh` puts on the
+x86-64 disk: every other mode and the monitor's sleep need the display
+controller's (`dcn_3_1_4_dmcub.bin`); the drawing on the device's
+engines needs the security processor's table of contents
+(`psp_13_0_4_toc.bin`) and the graphics block's eight files - its
+command processor's three (`gc_11_0_1_pfp.bin`, `gc_11_0_1_me.bin`,
+`gc_11_0_1_mec.bin`), its RLC's (`gc_11_0_1_rlc.bin`), its scheduler's
+two pipes' (`gc_11_0_1_mes_2.bin`, `gc_11_0_1_mes1.bin`), its power
+controller's (`gc_11_0_1_imu.bin`) and its DMA engine's
+(`sdma_6_0_1.bin`); and the video decoder that films are decoded on
+(videodec.resource) needs `vcn_4_0_2.bin`. A file that is missing costs
+only what stands on it, and the log says so: without the controller's
+the board keeps the firmware's mode and is blank instead of asleep, and
+without the graphics block's every drawing is the cores'.
+
 `amd.0` has a connector: the one the video BIOS lists whose PHY drives
 the link the firmware lit, its DDC and hot-plug lines found through the
 BIOS's table of GPIO pins. Its `detect` reads whether the hot-plug line

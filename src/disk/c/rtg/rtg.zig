@@ -15,6 +15,19 @@
 //! into and, for a display that refreshes itself, how the stream is
 //! doing.
 //!
+//! A board is named after the driver that made it and a number, in the
+//! order that driver made its boards: `rgb.0` an RGB panel the chip
+//! scans itself, `dcs.0` a panel that keeps its own picture and takes it
+//! over a command bus, `dsi.0` a panel on a MIPI-DSI link, `qemu.0`
+//! Espressif QEMU's display, `fw.0` the picture a PC's UEFI firmware lit
+//! or QEMU's ramfb, `virtio.0` QEMU's virtio GPU, `bcm2711.0` and
+//! `bcm2712.0` the first HDMI port of a Raspberry Pi 4 or Compute Module
+//! 4 and of a Compute Module 5, `jh7110.0` the VisionFive 2's HDMI port,
+//! and `amd.0` the connector an AMD display's firmware lit. A device is
+//! named by where it is: a panel of the board by its number among the
+//! panels (`panel.0`), a display function on PCI by its bus, device and
+//! function (`pci.65:00.0`).
+//!
 //! The switches pick sections rather than repeat the name: MODES, MEMORY
 //! and STATS each print that one section, for the board named or for every
 //! board; DRIVERS, DEVICES and BOARDS print one list alone, which is what
