@@ -295,8 +295,11 @@ pub const Sizes = struct { engines: u32, units: u32 };
 /// In the table's header, its version, where its list of the tables it
 /// holds starts in each version and how long an entry of it is, and the
 /// graphics block's table's place in that list; in that table, its
-/// version and form, its engines, its two kinds of pairs of compute units
-/// and its arrays, and the last form read.
+/// version and form - in the first version its engines, its two kinds of
+/// pairs of compute units and its arrays, in the fourth form four kinds
+/// of pairs for each of two arrays, in the fifth the two kinds for its
+/// second array; in the second version its engines, its units an array
+/// and its arrays.
 const binary_version_at = 4;
 const binary_tables_at = 12;
 const binary_tables_v2_at = 16;
@@ -308,14 +311,21 @@ const graphics_engines_at = 12;
 const graphics_pairs_at = 16;
 const graphics_other_pairs_at = 20;
 const graphics_arrays_at = 76;
-const graphics_form_last = 3;
+const graphics_four_kinds_at = 132;
+const graphics_second_array_at = 164;
+const graphics_units_v2_at = 16;
+const graphics_arrays_v2_at = 20;
 
 /// The graphics block's sizes, as the table's own table of the block
 /// says them (amdgpu_discovery_get_gfx_info): its shader engines, the
-/// arrays each engine has and the pairs of compute units each array has,
-/// of two kinds, in the first four forms of the table's first version.
-/// Null where the table holds none, or one in another form or with sizes
-/// past any the vendor makes.
+/// arrays each engine has and the compute units each array has. In the
+/// first version an array has twice its pairs of both kinds; in its
+/// fourth form twice the pairs of all four kinds of the array that has
+/// more, each kind given for the first array and the second in turn; in
+/// its fifth the count of both kinds of the array that has more, as it
+/// is. In the second version the table says each count. Null where the
+/// table holds none, or one of a later version, or sizes past any the
+/// vendor makes.
 pub fn sizes(table: usize) ?Sizes {
     const tables: usize = switch (word16(table + binary_version_at)) {
         0, 1 => binary_tables_at,
@@ -323,16 +333,44 @@ pub fn sizes(table: usize) ?Sizes {
         else => return null,
     };
     const offset = word16(table + tables + graphics_table * table_entry_bytes);
-    if (offset == 0 or offset + graphics_arrays_at + 4 > table_bytes) return null;
+    if (offset == 0) return null;
     const graphics = table + offset;
-    if (word16(graphics + graphics_version_at) != 1 or word16(graphics + graphics_form_at) > graphics_form_last) return null;
+    const version = word16(graphics + graphics_version_at);
+    const form = word16(graphics + graphics_form_at);
+    const last: usize = switch (version) {
+        1 => switch (form) {
+            4 => graphics_four_kinds_at + 8 * 4,
+            5 => graphics_second_array_at + 2 * 4,
+            else => graphics_arrays_at + 4,
+        },
+        2 => graphics_arrays_v2_at + 4,
+        else => return null,
+    };
+    if (offset + last > table_bytes) return null;
     const engines = word32(graphics + graphics_engines_at);
-    const arrays = word32(graphics + graphics_arrays_at);
-    const pairs = word32(graphics + graphics_pairs_at);
-    const other_pairs = word32(graphics + graphics_other_pairs_at);
-    if (engines == 0 or engines > 16 or arrays == 0 or arrays > 16 or pairs > 64 or other_pairs > 64) return null;
-    if (pairs + other_pairs == 0) return null;
-    return .{ .engines = engines, .units = engines * arrays * 2 * (pairs + other_pairs) };
+    const arrays_at: usize = if (version == 2) graphics_arrays_v2_at else graphics_arrays_at;
+    const arrays = word32(graphics + arrays_at);
+    var units: u64 = undefined;
+    if (version == 2) {
+        units = word32(graphics + graphics_units_v2_at);
+    } else if (form == 4) {
+        // Each kind for the first array, then for the second.
+        var first: u64 = 0;
+        var second: u64 = 0;
+        for (0..4) |kind| {
+            first += word32(graphics + graphics_four_kinds_at + kind * 8);
+            second += word32(graphics + graphics_four_kinds_at + kind * 8 + 4);
+        }
+        units = 2 * @max(first, second);
+    } else if (form == 5) {
+        const first = @as(u64, word32(graphics + graphics_pairs_at)) + word32(graphics + graphics_other_pairs_at);
+        const second = @as(u64, word32(graphics + graphics_second_array_at)) + word32(graphics + graphics_second_array_at + 4);
+        units = @max(first, second);
+    } else {
+        units = 2 * (@as(u64, word32(graphics + graphics_pairs_at)) + word32(graphics + graphics_other_pairs_at));
+    }
+    if (engines == 0 or engines > 16 or arrays == 0 or arrays > 16 or units == 0 or units > 128) return null;
+    return .{ .engines = engines, .units = engines * arrays * @as(u32, @intCast(units)) };
 }
 
 fn word8(at: usize) u8 {
@@ -357,15 +395,15 @@ const testing = std.testing;
 pub fn makeTable(room: []align(4) u8, wide: bool) void {
     @memset(room, 0);
     const put16 = struct {
-        fn f(r: []u8, at: usize, v: u16) void {
-            std.mem.writeInt(u16, r[at..][0..2], v, .little);
+        fn put(bytes: []u8, at: usize, word: u16) void {
+            std.mem.writeInt(u16, bytes[at..][0..2], word, .little);
         }
-    }.f;
+    }.put;
     const put32 = struct {
-        fn f(r: []u8, at: usize, v: u32) void {
-            std.mem.writeInt(u32, r[at..][0..4], v, .little);
+        fn put(bytes: []u8, at: usize, word: u32) void {
+            std.mem.writeInt(u32, bytes[at..][0..4], word, .little);
         }
-    }.f;
+    }.put;
     put32(room, 0, binary_mark);
     const list = 64;
     put16(room, binary_list_at, list);
@@ -442,29 +480,74 @@ test "the graphics block's sizes, from the table's table of it" {
     try testing.expectEqual(@as(?Sizes, null), sizes(table));
 
     const graphics = 768;
-    std.mem.writeInt(u16, room[binary_tables_at + graphics_table * table_entry_bytes ..][0..2], graphics, .little);
-    std.mem.writeInt(u16, room[graphics + graphics_version_at ..][0..2], 1, .little);
-    std.mem.writeInt(u16, room[graphics + graphics_form_at ..][0..2], 3, .little);
-    std.mem.writeInt(u32, room[graphics + graphics_engines_at ..][0..4], 1, .little);
-    std.mem.writeInt(u32, room[graphics + graphics_pairs_at ..][0..4], 3, .little);
-    std.mem.writeInt(u32, room[graphics + graphics_arrays_at ..][0..4], 2, .little);
+    const put16 = struct {
+        fn put(bytes: []u8, at: usize, word: u16) void {
+            std.mem.writeInt(u16, bytes[at..][0..2], word, .little);
+        }
+    }.put;
+    const put32 = struct {
+        fn put(bytes: []u8, at: usize, word: u32) void {
+            std.mem.writeInt(u32, bytes[at..][0..4], word, .little);
+        }
+    }.put;
+    put16(&room, binary_tables_at + graphics_table * table_entry_bytes, graphics);
+    put16(&room, graphics + graphics_version_at, 1);
+    put16(&room, graphics + graphics_form_at, 3);
+    put32(&room, graphics + graphics_engines_at, 1);
+    put32(&room, graphics + graphics_pairs_at, 3);
+    put32(&room, graphics + graphics_arrays_at, 2);
     try testing.expectEqual(@as(?Sizes, .{ .engines = 1, .units = 12 }), sizes(table));
-    std.mem.writeInt(u32, room[graphics + graphics_other_pairs_at ..][0..4], 1, .little);
+    put32(&room, graphics + graphics_other_pairs_at, 1);
+    try testing.expectEqual(@as(?Sizes, .{ .engines = 1, .units = 16 }), sizes(table));
+    // A form past the fifth is read as the first.
+    put16(&room, graphics + graphics_form_at, 6);
     try testing.expectEqual(@as(?Sizes, .{ .engines = 1, .units = 16 }), sizes(table));
 
-    // A later form is not read.
-    std.mem.writeInt(u16, room[graphics + graphics_form_at ..][0..2], 4, .little);
+    // The fourth form: twice the pairs of all four kinds of the array
+    // that has more - here the second, 2 + 1 + 2 + 1 against 1 + 1 + 1.
+    put16(&room, graphics + graphics_form_at, 4);
+    for ([_]u32{ 1, 2, 1, 1, 1, 2, 0, 1 }, 0..) |count, kind| put32(&room, graphics + graphics_four_kinds_at + kind * 4, count);
+    try testing.expectEqual(@as(?Sizes, .{ .engines = 1, .units = 2 * 2 * 6 }), sizes(table));
+
+    // The fifth: the count of both kinds of the array that has more, as
+    // it is - the first, 3 + 1, against the second's 2 + 1.
+    put16(&room, graphics + graphics_form_at, 5);
+    put32(&room, graphics + graphics_second_array_at, 2);
+    put32(&room, graphics + graphics_second_array_at + 4, 1);
+    try testing.expectEqual(@as(?Sizes, .{ .engines = 1, .units = 2 * 4 }), sizes(table));
+    put32(&room, graphics + graphics_second_array_at, 5);
+    try testing.expectEqual(@as(?Sizes, .{ .engines = 1, .units = 2 * 6 }), sizes(table));
+
+    // The second version says its units an array and its arrays.
+    put16(&room, graphics + graphics_version_at, 2);
+    put16(&room, graphics + graphics_form_at, 1);
+    put32(&room, graphics + graphics_engines_at, 2);
+    put32(&room, graphics + graphics_units_v2_at, 10);
+    put32(&room, graphics + graphics_arrays_v2_at, 2);
+    try testing.expectEqual(@as(?Sizes, .{ .engines = 2, .units = 40 }), sizes(table));
+
+    // A later version is not read.
+    put16(&room, graphics + graphics_version_at, 3);
     try testing.expectEqual(@as(?Sizes, null), sizes(table));
-    std.mem.writeInt(u16, room[graphics + graphics_form_at ..][0..2], 0, .little);
+    // The second version's counts lie where the first version's pairs
+    // do: those back as they were.
+    put16(&room, graphics + graphics_version_at, 1);
+    put16(&room, graphics + graphics_form_at, 0);
+    put32(&room, graphics + graphics_engines_at, 1);
+    put32(&room, graphics + graphics_pairs_at, 3);
+    put32(&room, graphics + graphics_other_pairs_at, 1);
 
     // The header's second version has its list four bytes further on.
-    std.mem.writeInt(u16, room[binary_version_at..][0..2], 2, .little);
+    put16(&room, binary_version_at, 2);
     try testing.expectEqual(@as(?Sizes, null), sizes(table));
-    std.mem.writeInt(u16, room[binary_tables_v2_at + graphics_table * table_entry_bytes ..][0..2], graphics, .little);
+    put16(&room, binary_tables_v2_at + graphics_table * table_entry_bytes, graphics);
     try testing.expectEqual(@as(?Sizes, .{ .engines = 1, .units = 16 }), sizes(table));
 
     // Sizes past any the vendor makes are not believed.
-    std.mem.writeInt(u32, room[graphics + graphics_engines_at ..][0..4], 0xffff_ffff, .little);
+    put32(&room, graphics + graphics_engines_at, 0xffff_ffff);
+    try testing.expectEqual(@as(?Sizes, null), sizes(table));
+    put32(&room, graphics + graphics_engines_at, 1);
+    put32(&room, graphics + graphics_pairs_at, 0xffff_fff0);
     try testing.expectEqual(@as(?Sizes, null), sizes(table));
 }
 

@@ -1594,9 +1594,7 @@ A kernel whose stack grows as it runs - recursion, a call it cannot
 see the end of, an array of a size it works out - or that needs the
 dispatch's own packet, its queue or a dispatch number in its
 registers, or its arguments loaded into registers before it starts,
-cannot be run. On a part whose table gives the graphics block's sizes
-in a later form than the first four, a kernel with private memory is
-refused.
+cannot be run.
 
 **SEE ALSO**
 
