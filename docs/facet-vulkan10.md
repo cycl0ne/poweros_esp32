@@ -2400,6 +2400,25 @@ FacetProbe 1.45 checks all three and passes its 864 checks, 362 of them on the V
 
 Found independently by: features (3 items: samplers, unnormalized, anisotropy), semantics (2 items) — 5 findings merged.
 
+**Then the cube of an array, in 1.234: the fixed forms' half of what was left, and with it `samplers`.** v3dv has imageCubeArray (v3dv_device.c:331), and the TMU reads a cube of an array with no help from the library. Three pieces were missing, each ported:
+
+- **The program.** `qpu.cube_array_fragment` is the cube's program with a fourth varying, which cube, written to TMUI after TMUR. That is how handle_tex_src writes an array's index after the coordinate's other floats (v3d_tex.c:108-127). The direction is normalized as a cube's, and the index is left as it is, as nir_normalize_cubemap_coords leaves it (nir_normalize_cubemap_coords.c:59-65). The lookup starts at TMUSCM (:378-379). `texture_cube_array` runs it, and so does `texture_cube_array_sampled` with the TMU told the bound sampler, as the other sampled forms are since 1.141. Both have a variant for 32-bit floats (`qpu.wide_cube_array_fragment`).
+- **The view.** A view of type `cube_array` says so (`ImageView.cubes`). The TMU is told it as many cubes deep where it is sampled, and as many layers deep where it is read as a storage image. v3dv packs a cube array's two states the same way (v3dvx_image.c:89-93, :171-174). A size query answers its cubes either way (v3dv_uniforms.c:402-407). The TMU holds the index to the depth, so a cube past the last reads as the last, as on the cores.
+- **The capabilities.** `cube_arrays` is true, so Vulkan's imageCubeArray is true on the V3D. `samplers` is true too, since every fixed form that reads a sampler is now drawn there. `samplesHere`, which picked the ones that were, is gone.
+
+FacetProbe's checks of both forms, which were left out on the V3D, now run there unchanged: which cube, a face of the second cube, past the last, and a view from layer 6. Its `samplers` field, which said "the cores", is gone with the gate it was.
+
+On the board (package f246):
+
+- FacetProbe 1.60 passes 1084 of 1084 (1075 at 1.233): the nine checks of cubes of an array that were left out on the V3D pass there.
+- FacetBoth 1.82's 318 cases of 1.81 are each as at 1.233.
+- Its 8 new cases read an image of two cubes, the second's faces the first's backwards. 6 are 0 of 230400 pixels apart. The two across an edge of the second cube are 14 apart, and 12 through a sampler. Those are the seam pixels where the one cube's same cases are 14 apart, their first pixels the same.
+- Once, after the update and a first FacetProbe that passed, the VideoCore firmware stopped answering its mailbox, so the V3D could not start. A reboot cured it, and it did not come back over two runs of each program in the same order. The same was seen on 26.11.2026, during an update.
+
+Still left out. Each is marked *facet-wide* or *V3D-only*:
+
+- **A compiled shader that samples a cube of an array.** The back end still refuses SampledCubeArray (`glslc_cube_array`), and ImageCubeArray for a storage image. It is the compiler's half, next. *V3D-only*: the cores have no SPIR-V back end (item 71).
+
 ### 55. V3D: a fragment program that writes several colour attachments in one call **[critical path]**
 
 *V3D compiler* &mdash; conformance-blocking, large &mdash; **done in 1.233 (steps 1 to 3 in 1.231 to 1.233)**
@@ -3965,7 +3984,7 @@ Found independently by: features (3 items), semantics (3 items) — 6 findings m
 - sparse, about 400, behind item 12 and an exec call that maps pages;
 - V3D pipeline statistics, 0, which Mesa does not have.
 
-All optional in Vulkan 1.0, all absent, each a clean capability to add rather than a conformance bug — recorded so they are not mistaken for debt. geometryShader: no SHADER_STAGE_GEOMETRY bit at all; needs the stage, an entry kind, and a primitive stream the binner takes from somewhere other than the vertex array. textureCompressionASTC_LDR: no format and no decoder anywhere in the tree. sparseBinding and the residency bits: memory is exec's and bound whole. robustBufferAccess: nothing in the tree, and with it absent out-of-bounds access is undefined, which Vulkan permits. pipelineStatisticsQuery on the V3D: nothing counts what its QPUs were given, so the kind is refused there; needs the binner's and renderer's perfmon counters read as the frame is drawn, the way the occlusion counter already is — not compiler work, which the to-do document's unlock table miscredits. imageCubeArray on the V3D: no QPU program reads the fourth coordinate, so a cube_array view and texture_cube_array are refused; needs Dim::Cube and arrayed images in the profile.
+All optional in Vulkan 1.0, all absent, each a clean capability to add rather than a conformance bug — recorded so they are not mistaken for debt. geometryShader: no SHADER_STAGE_GEOMETRY bit at all; needs the stage, an entry kind, and a primitive stream the binner takes from somewhere other than the vertex array. textureCompressionASTC_LDR: no format and no decoder anywhere in the tree. sparseBinding and the residency bits: memory is exec's and bound whole. robustBufferAccess: nothing in the tree, and with it absent out-of-bounds access is undefined, which Vulkan permits. pipelineStatisticsQuery on the V3D: nothing counts what its QPUs were given, so the kind is refused there; needs the binner's and renderer's perfmon counters read as the frame is drawn, the way the occlusion counter already is — not compiler work, which the to-do document's unlock table miscredits. imageCubeArray on the V3D: no QPU program reads the fourth coordinate, so a cube_array view and texture_cube_array are refused; needs Dim::Cube and arrayed images in the profile. *(Done for the fixed forms in 1.234, under item 54: imageCubeArray is true on the V3D. The compiler's half is item 54's next step.)*
 
 > Verified: BlendFactor and the stage bits as above; `grep -i astc` across sdk/ and src/disk/libs/facet/ hits only prose at facet_version.zig:1075; `grep -i robust` across both trees returns nothing; driver/v3d/driver.zig:166 `.pipeline_statistics_queries = false` (occlusion is true on both, driver.zig:165 and cpu.zig:128), :192 `.cube_arrays = false`; refusals at createquerypool.zig:83-84 and driver.zig:460.
 

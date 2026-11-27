@@ -181,6 +181,12 @@ pub const ImageView = struct {
     level_count: u32,
     base_layer: u32 = 0,
     layer_count: u32 = 1,
+    /// Whether it is of type `cube_array`: its layers cubes of six one
+    /// after another, which the V3D's TMU is told as many cubes deep where
+    /// it samples them and as many layers where it reads them as a storage
+    /// image, as v3dv packs a view of VK_IMAGE_VIEW_TYPE_CUBE_ARRAY
+    /// (v3dvx_image.c:89-93, :171-174; since 1.234).
+    cubes: bool = false,
     /// `texture`: the levels it takes, as a sample reads them.
     texels: texture.Texture = undefined,
     /// Its component swizzle, which its texels apply (since 1.120): kept
