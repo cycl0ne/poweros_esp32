@@ -15910,6 +15910,37 @@ test "through Mesa's back end, a pixel dropped: the comparison into the flags, S
     });
 }
 
+test "texture_cutout's programs are what Mesa's back end makes of facet's cut-out shader, word for word: into half-floats, into 32-bit floats, and with no render target (since 1.236)" {
+    // As `qpu.no_color_code` is held to compileNoColor: the fixed form's
+    // programs are Mesa's, keyed as v3dv keys a subpass of each
+    // (v3dv_pipeline.c:1240-1243, :2137-2142), and what the shader
+    // record says of them is what Mesa says.
+    const keys = [_]Key{ .{}, .{ .f32_color_rb = 1 }, .{ .cbufs = 0 } };
+    const programs = [_]qpu.Fragment{ qpu.cutout_fragment, qpu.wide_cutout_fragment, qpu.colorless_cutout_fragment };
+    for (keys, programs) |key, fragment| {
+        var work: Work = .{};
+        const code = try throughMesaKeyed(&work, Cutout.words, key);
+        try testing.expectEqualSlices(u64, code.words, fragment.code);
+        try testing.expectEqual(code.varyings, fragment.varyings);
+        try testing.expectEqual(code.uniform_count, fragment.uniforms);
+        try testing.expectEqual(code.threads, fragment.threads);
+        try testing.expectEqual(code.center_w, fragment.center_w);
+        try testing.expectEqual(code.lock_scoreboard_on_first_thrsw, fragment.lock_scoreboard_on_first_thrsw);
+        try testing.expectEqual(code.writes_z, fragment.writes_z);
+        try testing.expectEqual(code.disable_ez, fragment.disable_ez);
+        try testing.expect(fragment.writes_z and fragment.disable_ez);
+        // The stream the draw writes for them (`_play.zig`'s
+        // `textureUniforms`): P0 and P1, the per-pixel mask set in P1,
+        // the depth's specifier, and, into 32-bit floats, the colour's.
+        const stream = code.stream();
+        try testing.expectEqual(@as(usize, if (key.f32_color_rb != 0) 4 else 3), stream.len);
+        try testing.expectEqual(Word{ .texture = 0 }, stream[0]);
+        try testing.expectEqual(Word{ .sampler = .{ .bits = per_pixel_mask } }, stream[1]);
+        try testing.expectEqual(qpu.no_color_specifier, @as(u32, @bitCast(stream[2].float)));
+        if (key.f32_color_rb != 0) try testing.expectEqual(qpu.tlb_f32_specifier, @as(u32, @bitCast(stream[3].float)));
+    }
+}
+
 test "through Mesa's back end, alpha to coverage: FTOC of the colour's alpha, kept of MSF by SETMSF, then Z written through before the colour" {
     var work: Work = .{};
     const code = try throughMesaKeyed(&work, Smooth.words, .{ .sample_alpha_to_coverage = true });

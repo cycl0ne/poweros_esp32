@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetProbe";
-const VERSION_STRING = "\x00$VER: FacetProbe 1.60 (27.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetProbe 1.61 (27.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "CORES/S,V3D/S,QUIET/S";
@@ -4358,6 +4358,9 @@ const Shapes = struct {
         facet.shader.fixedFragment("main", .{ .kind = .texture, .sampling = .{ .filter = .nearest, .address = .clamp } }),
         facet.shader.vertex("cubes", &cubes, 4),
         facet.shader.fixedFragment("cubes", .{ .kind = .texture_cube_array, .sampling = .{ .filter = .nearest, .address = .clamp } }),
+        // The fixed cut-out (`cutoutChecks`, since 1.61).
+        facet.shader.vertex("cutout", &flat, 2),
+        facet.shader.fixedFragment("cutout", .{ .kind = .texture_cutout, .sampling = .{ .filter = .nearest, .address = .clamp } }),
     };
     const code = facet.shader.Code{ .entry_count = entries.len, .entries = &entries };
 
@@ -6938,6 +6941,7 @@ fn probeDevice(fb: *FacetBase, dl: *DosBase, instance: *facet.Instance, physical
     levelClearChecks(&probe);
     targetChecks(&probe);
     fixedTargetChecks(&probe);
+    cutoutChecks(&probe);
     compiledTargetChecks(&probe);
     wholeTargetChecks(&probe);
     return .{ probe.passed, probe.failed };
@@ -7133,6 +7137,117 @@ fn targetChecks(probe: *Probe) void {
         if (!probe.submit()) return probe.check(false, "the frame submitted");
         const last = (side * side - 1) * one.bytes;
         probe.check(std.mem.eql(u8, one.inside[0..one.bytes], backed[0..one.bytes]) and std.mem.eql(u8, one.outside[0..one.bytes], backed[last..][0..one.bytes]), one.says);
+    }
+}
+
+// --- facet 1.236: the fixed cut-out ------------------------------------------
+
+/// The fixed cut-out, `texture_cutout`, which the V3D draws since facet
+/// 1.236 by the program Mesa's back end makes of a cut-out shader: a
+/// texture of four texels across the picture - red and opaque, blue and
+/// clear, green at an alpha of 128 and white at 127 - each pixel whose
+/// texel's alpha is under a half dropped, so that the clear shows there.
+/// 128 is the first byte kept and 127 the last dropped, on the cores
+/// (`shader.cutout_alpha`) and on the V3D, whose TMU hands the alpha back
+/// as a half-float its program compares with 0.5. Into 8888, and into a
+/// target of 32-bit floats, which the V3D's program for floats writes a
+/// float a channel; there the green's alpha is held above a half and no
+/// nearer, as the V3D's half-float of 128/255 is not the cores' float of
+/// it.
+fn cutoutChecks(probe: *Probe) void {
+    const fb = probe.fb;
+    const device = probe.device.?;
+    defer probe.give();
+    const texels = [4][4]u8{ .{ 255, 0, 0, 255 }, .{ 0, 0, 255, 0 }, .{ 0, 255, 0, 128 }, .{ 255, 255, 255, 127 } };
+    const row = facet.Extent3D{ .width = texels.len, .height = 1 };
+    const texture = probe.bound(.{ .format = .r8g8b8a8_unorm, .extent = row, .usage = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST }, 0) orelse
+        return probe.check(false, "a texture of four texels for the cut-out");
+    const texture_view = probe.viewed(.{ .image = texture, .format = .r8g8b8a8_unorm }) orelse return probe.check(false, "a view of it");
+    const source, const source_bytes = probe.buffer(64, facet.BUFFER_USAGE_TRANSFER_SRC) orelse return probe.check(false, "a buffer its texels come from");
+    @memcpy(source_bytes[0..16], std.mem.asBytes(&texels));
+    const copied = probe.record() orelse return probe.check(false, "a recording");
+    fb.CmdCopyBufferToImage(copied, source, texture, .general, 1, @ptrCast(&facet.BufferImageCopy{ .image_extent = row }));
+    if (!probe.submit()) return probe.check(false, "the copy into the texture submitted");
+
+    var module: ?*facet.ShaderModule = null;
+    if (fb.CreateShaderModule(device, &.{ .code = &Shapes.code }, &module) != .success) return probe.check(false, "the shader module");
+    _ = Probe.keep(&probe.modules, module);
+    const binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .sampled_image, .descriptor_count = 1, .stage_flags = facet.SHADER_STAGE_FRAGMENT };
+    var set_layout: ?*facet.DescriptorSetLayout = null;
+    if (fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&binding) }, &set_layout) != .success) return probe.check(false, "a set layout of a sampled image");
+    defer fb.DestroyDescriptorSetLayout(device, set_layout);
+    var layout: ?*facet.PipelineLayout = null;
+    if (fb.CreatePipelineLayout(device, &.{ .set_layout_count = 1, .set_layouts = @ptrCast(&set_layout) }, &layout) != .success) return probe.check(false, "the pipeline layout");
+    _ = Probe.keep(&probe.layouts, layout);
+    var pool: ?*facet.DescriptorPool = null;
+    if (fb.CreateDescriptorPool(device, &.{ .max_sets = 1 }, &pool) != .success) return probe.check(false, "a descriptor pool");
+    defer fb.DestroyDescriptorPool(device, pool);
+    var sets: [1]?*facet.DescriptorSet = undefined;
+    if (fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&set_layout) }, &sets) != .success) return probe.check(false, "a descriptor set");
+    const info = facet.DescriptorImageInfo{ .image_view = texture_view };
+    const write = facet.WriteDescriptorSet{ .dst_set = sets[0].?, .dst_binding = 0, .descriptor_type = .sampled_image, .descriptor_count = 1, .image_info = @ptrCast(&info) };
+    fb.UpdateDescriptorSets(device, 1, @ptrCast(&write), 0, null);
+
+    const vertex_buffer, const vertex_bytes = probe.buffer(256, facet.BUFFER_USAGE_VERTEX_BUFFER) orelse return probe.check(false, "a vertex buffer");
+    const quad = [6][5]f32{
+        .{ -1, -1, 0.5, 0, 0 },
+        .{ 1, -1, 0.5, 1, 0 },
+        .{ -1, 1, 0.5, 0, 1 },
+        .{ -1, 1, 0.5, 0, 1 },
+        .{ 1, -1, 0.5, 1, 0 },
+        .{ 1, 1, 0.5, 1, 1 },
+    };
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(quad))], std.mem.asBytes(&quad));
+    const attributes = [2]facet.VertexInputAttributeDescription{
+        .{ .location = 0, .binding = 0, .format = .r32g32b32_sfloat },
+        .{ .location = 1, .binding = 0, .format = .r32g32_sfloat, .offset = 12 },
+    };
+    const offset: u64 = 0;
+    const extent = facet.Extent3D{ .width = side, .height = side };
+    const area = facet.Rect2D{ .extent = .{ .width = side, .height = side } };
+    const clears = [1]facet.ClearValue{.{ .color = .{ .float32 = .{ 0, 0, 0, 1 } } }};
+    for ([2]facet.Format{ .b8g8r8a8_unorm, .r32g32b32a32_sfloat }) |format| {
+        const bytes: u32 = if (format == .b8g8r8a8_unorm) 4 else 16;
+        const color = probe.image(.{ .format = format, .extent = extent, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_TRANSFER_SRC }, 0) orelse
+            return probe.check(false, "a colour attachment for the cut-out");
+        const description = facet.AttachmentDescription{ .format = format, .load_op = .clear, .store_op = .store, .final_layout = .color_attachment_optimal };
+        const reference = facet.AttachmentReference{ .attachment = 0, .layout = .color_attachment_optimal };
+        const subpass = facet.SubpassDescription{ .color_attachment_count = 1, .color_attachments = @ptrCast(&reference) };
+        const pass = probe.renderPass(.{ .attachment_count = 1, .attachments = @ptrCast(&description), .subpass_count = 1, .subpasses = @ptrCast(&subpass) }) orelse
+            return probe.check(false, "a pass of it");
+        const frame = probe.framebuffer(pass, &.{color[1]}) orelse return probe.check(false, "a framebuffer over it");
+        const pipeline = pipelineOf(probe, pass, module.?, layout.?, .{ .attributes = &attributes, .stride = 20, .name = "cutout" }) orelse
+            return probe.check(false, "a pipeline of the fixed cut-out");
+        const back, const backed = probe.buffer(side * side * 16, facet.BUFFER_USAGE_TRANSFER_DST) orelse return probe.check(false, "a buffer to read it into");
+        @memset(backed[0 .. side * side * 16], 0xAA);
+        const commands = probe.record() orelse return probe.check(false, "a recording");
+        fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = frame, .render_area = area, .clear_value_count = 1, .clear_values = &clears }, .@"inline");
+        fb.CmdBindPipeline(commands, .graphics, pipeline);
+        fb.CmdBindDescriptorSets(commands, .graphics, layout.?, 0, 1, @ptrCast(&sets), 0, null);
+        fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+        fb.CmdDraw(commands, 6, 1, 0, 0);
+        fb.CmdEndRenderPass(commands);
+        fb.CmdCopyImageToBuffer(commands, color[0], .general, back, 1, @ptrCast(&facet.BufferImageCopy{ .image_extent = extent }));
+        if (!probe.submit()) return probe.check(false, "the cut-out's frame submitted");
+        // The middle of each quarter across, half way down: a texel each.
+        var right = true;
+        for (0..texels.len) |k| {
+            const x = side / 8 + k * (side / 4);
+            const at = ((side / 2) * side + x) * bytes;
+            const kept = texels[k][3] >= 128;
+            if (format == .b8g8r8a8_unorm) {
+                const t = texels[k];
+                const wanted: [4]u8 = if (kept) .{ t[2], t[1], t[0], t[3] } else .{ 0, 0, 0, 255 };
+                right = right and std.mem.eql(u8, &wanted, backed[at..][0..4]);
+            } else {
+                const found: [4]f32 = @bitCast(backed[at..][0..16].*);
+                const t = texels[k];
+                const wanted: [3]f32 = if (kept) .{ @floatFromInt(t[0] / 255), @floatFromInt(t[1] / 255), @floatFromInt(t[2] / 255) } else .{ 0, 0, 0 };
+                const alpha_right = if (!kept) found[3] == 1 else if (t[3] == 255) found[3] == 1 else found[3] > 0.5 and found[3] < 0.503;
+                right = right and std.mem.eql(f32, &wanted, found[0..3]) and alpha_right;
+            }
+        }
+        probe.check(right, if (format == .b8g8r8a8_unorm) "the fixed cut-out into 8888: the opaque and the half-opaque texels kept, the clear and the one just under a half dropped" else "and into R32G32B32A32_SFLOAT, a float a channel");
     }
 }
 

@@ -165,7 +165,10 @@
 //! draws since facet 1.234. The shipped cubes (since 1.83) are glslc's
 //! sample of a cube of an array at four floats, which the V3D compiles
 //! since facet 1.235, through the sampler; the cores read them as that
-//! form does.
+//! form does. The fixed cut-out (since 1.84), `texture_cutout`, which
+//! the V3D draws since facet 1.236 by the program Mesa's back end makes
+//! of a cut-out shader, is drawn over the quad, in front of the far
+//! triangle, and into a shadow map in a pass of the depth alone.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -180,7 +183,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.83 (27.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.84 (27.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -9537,6 +9540,9 @@ const plain_entries = [_]shader.Entry{
     shader.fixedFragment("color", .{ .kind = .color }),
     shader.fixedFragment("texture", .{ .kind = .texture, .sampling = .{ .filter = .bilinear } }),
     shader.fixedFragment("nearest", .{ .kind = .texture, .sampling = .{ .filter = .nearest } }),
+    // The texture with a pixel dropped where its alpha is under a half,
+    // as "shipped cutout" drops one (since 1.84).
+    shader.fixedFragment("cutout", .{ .kind = .texture_cutout, .sampling = .{ .filter = .nearest } }),
     shader.fixedFragment("nearest 565", .{ .kind = .texture, .sampling = .{ .format = .rgb565, .filter = .nearest } }),
     shader.fixedFragment("clamp", .{ .kind = .texture, .sampling = .{ .filter = .bilinear, .address = .clamp } }),
     shader.fixedFragment("modulate", .{ .kind = .texture_color, .sampling = .{ .filter = .nearest } }),
@@ -12394,8 +12400,19 @@ const Cases = struct {
     /// How a shadow map is drawn: in its pass with the first picture, as
     /// it was until 1.18; or in a pass of it alone, by the fixed form of
     /// colour, by a shipped shader that the V3D compiles for a subpass of
-    /// no colour, or by no fragment stage at all (since 1.18).
-    const Drawn = enum { with_color, fixed, shipped, stageless };
+    /// no colour, or by no fragment stage at all (since 1.18); or by the
+    /// fixed cut-out over the quad, whose dropped pixels leave the map's
+    /// clear (since 1.84).
+    const Drawn = enum { with_color, fixed, shipped, stageless, cutout };
+    /// The fixed cut-out's shadow map, in a pass of the depth alone:
+    /// compared less than 0.6, red where a pixel was dropped and the map
+    /// kept its clear of 1, black where the quad's 0.5 was kept (since
+    /// 1.84). On the V3D its program of no colour drops the pixels too
+    /// (facet 1.236).
+    fn shadowedCutout(side: *Side) Failure!void {
+        try shadowMap(side, false, .cutout);
+        try lookAtShadow(side, 0, "whole at 0.6", "shadow");
+    }
     /// The shadow map less than a half, drawn as `drawn` says.
     fn shadowedAlone(comptime tilted: bool, comptime drawn: Drawn) *const fn (side: *Side) Failure!void {
         return &struct {
@@ -12421,6 +12438,10 @@ const Cases = struct {
         var options = Options{ .test_depth = true, .write_depth = true, .pass = if (alone) side.shadow_alone.? else side.shadow_pass.?, .colors = if (alone) 0 else 1 };
         switch (drawn) {
             .with_color, .fixed => {},
+            .cutout => {
+                options.vertex = "texture";
+                options.fragment = "cutout";
+            },
             .shipped => {
                 options.vertex = "as it is";
                 options.fragment = "shipped smooth";
@@ -12432,6 +12453,10 @@ const Cases = struct {
             options.topology = .triangle_fan;
             try side.use(options);
             side.draw(fan_at, 5);
+        } else if (drawn == .cutout) {
+            side.texture(0);
+            try side.use(options);
+            side.draw(quad_at, 6);
         } else {
             try side.use(options);
             side.draw(far_at, 3);
@@ -12745,15 +12770,25 @@ const Cases = struct {
     /// The texture with half its checks dropped, in front of the far
     /// triangle and drawn first: the triangle shows where a pixel was
     /// dropped, and only there. A dropped pixel that wrote its depth
-    /// all the same would hide it.
-    fn cutoutInFront(side: *Side) Failure!void {
-        side.begin(.{});
-        side.sampled();
-        try side.use(.{ .vertex = "texture", .fragment = "shipped cutout", .layout = side.sampler_layout.?, .test_depth = true, .write_depth = true });
-        side.draw(quad_at, 6);
-        try side.use(.{ .test_depth = true, .write_depth = true });
-        side.draw(far_at, 3);
-        side.end();
+    /// all the same would hide it. By the shipped cut-out, through the
+    /// combined image sampler, or by the fixed form (since 1.84).
+    fn cutoutInFront(comptime fixed: bool) *const fn (side: *Side) Failure!void {
+        return &struct {
+            fn run(side: *Side) Failure!void {
+                side.begin(.{});
+                if (fixed) {
+                    side.texture(0);
+                    try side.use(.{ .vertex = "texture", .fragment = "cutout", .test_depth = true, .write_depth = true });
+                } else {
+                    side.sampled();
+                    try side.use(.{ .vertex = "texture", .fragment = "shipped cutout", .layout = side.sampler_layout.?, .test_depth = true, .write_depth = true });
+                }
+                side.draw(quad_at, 6);
+                try side.use(.{ .test_depth = true, .write_depth = true });
+                side.draw(far_at, 3);
+                side.end();
+            }
+        }.run;
     }
     fn missing(side: *Side) Failure!void {
         side.begin(.{});
@@ -13154,7 +13189,11 @@ const cases = [_]Case{
     .{ .name = "shipped push times colour", .run = Cases.tinted },
     .{ .name = "shipped cutout", .run = Cases.shipped("texture", "shipped cutout", true, quad_at) },
     .{ .name = "shipped cutout the other way", .run = Cases.shipped("texture", "shipped cutout other", true, quad_at) },
-    .{ .name = "shipped cutout in front", .run = Cases.cutoutInFront },
+    .{ .name = "shipped cutout in front", .run = Cases.cutoutInFront(false) },
+    // The fixed cut-out, which the V3D draws since facet 1.236 (since
+    // 1.84).
+    .{ .name = "cutout", .run = Cases.textured("cutout", 0, quad_at) },
+    .{ .name = "cutout in front", .run = Cases.cutoutInFront(true) },
     .{ .name = "shipped float arithmetic", .run = Cases.shipped("as it is", "shipped arithmetic", false, clockwise_at) },
     .{ .name = "shipped GLSL.std.450 calls", .run = Cases.shipped("as it is", "shipped called", false, clockwise_at) },
     .{ .name = "shipped chosen floats", .run = Cases.shipped("as it is", "shipped chosen", false, clockwise_at) },
@@ -13342,6 +13381,7 @@ const cases = [_]Case{
     .{ .name = "shadow map alone, a slope less than a half", .run = Cases.shadowedAlone(true, .fixed) },
     .{ .name = "shadow map alone, generated", .run = Cases.shadowedAlone(false, .shipped) },
     .{ .name = "shadow map alone, no fragment stage", .run = Cases.shadowedAlone(false, .stageless) },
+    .{ .name = "shadow map alone, of the cutout", .run = Cases.shadowedCutout },
     // Drawn again over a part, which keeps the rest (since 1.19).
     .{ .name = "shadow map alone, drawn again over a part", .run = &Cases.shadowedOverPart },
     .{ .name = "pre-pass of no colour", .run = Cases.prepassed(false, false, false) },
