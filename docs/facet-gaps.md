@@ -446,18 +446,24 @@ and write mask. Every device has it
 (`PhysicalDeviceFeatures.independent_blend`), an attachment being drawn as
 a pass of its own either way.
 
-Since 1.51 a subpass's colour attachments may be drawn **together**
-instead: SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER in `SubpassDescription.flags`
-(facet.library's own), and a fragment entry made by
-`shader.fragmentOutputs` writes all of them in the one call
-(`shader.Fragments.colorsOf`). The vertices are then worked once, the
-triangles binned once and a quad's fragment function called once for every
-attachment, each still blended its own way into a plane of each tile's
-own - a G-buffer's three or four planes for the price of one pass. Only the
-cores do it (`PhysicalDeviceFeatures.several_outputs`), and a pipeline of
-such a subpass has to write exactly its attachments
-(`error_invalid_shader_nv`). Without the flag a subpass of several is drawn
-once for each, as it always was, `shader.Resources.output` saying which.
+Since 1.230 the cores draw a subpass's colour attachments **together**,
+as lavapipe does, every subpass of several (docs/facet-vulkan10.md item
+80): a fragment entry made by `shader.fragmentOutputs` writes its colours
+at locations 0 upwards in the one call (`shader.Fragments.colorsOf`), and
+each attachment takes the one at its location. The vertices are worked
+once, the triangles binned once and a quad's fragment function called once
+for every attachment, each still blended its own way into a plane of each
+tile's own - a G-buffer's three or four planes for the price of one pass.
+An attachment at a location past the function's colours is left as it
+is, as llvmpipe blends only a colour buffer the shader has an output for
+(lp_state_fs.c:3618-3623): a `fragment` entry's one colour is the first
+attachment's. From 1.51 to 1.229 that took facet's own
+SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER in `SubpassDescription.flags` and a
+function of exactly the subpass's count; without it a subpass of several
+was drawn once for each, `shader.Resources.output` saying which, and every
+attachment took the one colour. The V3D, whose programs write one colour,
+still draws a subpass of several once for each, and an attachment past
+location 0 is left as it is there too (item 55).
 
 Blend constants are the pipeline's one set shared by all its attachments,
 as in Vulkan, or one set each where
@@ -707,7 +713,6 @@ Vulkan allows them, and facet does not do them.
 |---|---|
 | An attachment of 2, 8, 16, 32 or 64 samples, or of four on a device that does not draw them: the V3D, until item 61's V5. A count that is none of Vulkan's is `error_validation_failed` since 1.134 | `render/createrenderpass.zig` |
 | A subpass with no colour attachment, on a device that draws none: the V3D, until docs/facet-vulkan10.md item 43's V3D half (`colorless_subpasses`, the cores' since 1.113) | `render/createrenderpass.zig` |
-| A colour reference of `ATTACHMENT_UNUSED` in a subpass whose colours go together (`SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER`), until docs/facet-vulkan10.md item 80; drawn apart it is taken since 1.118. Of colours drawn together, one but the first read as an input attachment, until item 80 too (`error_initialization_failed` until 1.134) | `render/createrenderpass.zig` |
 | A pipeline of no fragment stage that draws, on a device with a processor of its own: the V3D, until docs/facet-vulkan10.md item 85's V3D half (the cores' since 1.115; one that draws nothing, the V3D's since 1.134) | `driver/v3d/driver.zig` |
 | A depth bias on a device that takes none: every device takes one since 1.47 (`depth_bias`) | `pipeline/creategraphicspipelines.zig` |
 | An input attachment on a device that reads none (`input_attachments`): none since 1.216, the V3D until then. One the subpass draws into, on a device that reads none out of the tile: the V3D (`tile_inputs`) | `render/createrenderpass.zig` |

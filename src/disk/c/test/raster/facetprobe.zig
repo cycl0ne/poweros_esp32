@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetProbe";
-const VERSION_STRING = "\x00$VER: FacetProbe 1.57 (27.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetProbe 1.58 (27.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "CORES/S,V3D/S,QUIET/S";
@@ -1738,8 +1738,12 @@ fn blendChecks(probe: *Probe) void {
     if (fb.CreatePipelineLayout(probe.device.?, &.{}, &layout) != .success) return probe.check(false, "the pipeline layout");
     _ = Probe.keep(&probe.layouts, layout);
 
-    // The first attachment keeps what is there, the second takes the
-    // colour: the same draw, mixed each its own way.
+    // The first attachment keeps what is there by its own blend state,
+    // where the second's would have it take the colour: the same draw,
+    // mixed each its own way. The second is at a location the fixed
+    // function writes nothing at, and keeps its clear too (since 1.230;
+    // it took the one colour until then), as llvmpipe writes only a
+    // colour buffer its shader has an output for.
     const keeps = facet.PipelineColorBlendAttachmentState{ .blend_enable = true, .src_color_blend_factor = .zero, .dst_color_blend_factor = .one, .src_alpha_blend_factor = .zero, .dst_alpha_blend_factor = .one };
     const takes = facet.PipelineColorBlendAttachmentState{};
     const differing = [2]facet.PipelineColorBlendAttachmentState{ keeps, takes };
@@ -1771,8 +1775,7 @@ fn blendChecks(probe: *Probe) void {
     @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(vertices))], std.mem.asBytes(&vertices));
 
     const offset: u64 = 0;
-    // What the vertices carry, and what the clear left.
-    const white: u32 = 0xFFFF_FFFF;
+    // What the clear left, which the vertices' white would cover.
     const blue: u32 = 0xFF00_00FF;
     const clears = [2]facet.ClearValue{ .{ .color = .{ .float32 = .{ 0, 0, 1, 1 } } }, .{ .color = .{ .float32 = .{ 0, 0, 1, 1 } } } };
     const area = facet.Rect2D{ .extent = .{ .width = side, .height = side } };
@@ -1788,8 +1791,8 @@ fn blendChecks(probe: *Probe) void {
     const second_pixels, const second_pitch = probe.mapped(second[0], second_memory) orelse return probe.check(false, "the second picture read back");
     probe.checkEqual(blue, pixelAt(first_pixels, first_pitch, 8, 8), "the attachment that keeps what is there kept the clear");
     probe.checkEqual(blue, pixelAt(first_pixels, first_pitch, 40, 52), "and in another tile");
-    probe.checkEqual(white, pixelAt(second_pixels, second_pitch, 8, 8), "the attachment that takes the colour took it");
-    probe.checkEqual(white, pixelAt(second_pixels, second_pitch, 40, 52), "and in another tile");
+    probe.checkEqual(blue, pixelAt(second_pixels, second_pitch, 8, 8), "the attachment the function writes no colour for kept the clear");
+    probe.checkEqual(blue, pixelAt(second_pixels, second_pitch, 40, 52), "and in another tile");
 }
 
 // --- 1.33: the depth bias ----------------------------------------------------
@@ -6106,8 +6109,9 @@ fn cutChecks(probe: *Probe) void {
 // --- 1.51: a subpass's colour attachments drawn together --------------------
 
 /// Three colour attachments written in the one fragment call
-/// (`shader.fragmentOutputs`, SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER), and
-/// the same three written one at a time as they were before.
+/// (`shader.fragmentOutputs`; with facet's own
+/// SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER until 1.230), and the same three
+/// written one at a time.
 const Together = struct {
     /// How often a fragment function was called in the last draw.
     var calls: u32 = 0;
@@ -6142,12 +6146,12 @@ const Together = struct {
         }
     }
 
-    /// The one colour a replayed subpass writes, the attachment being
-    /// drawn saying which.
+    /// The one colour of a `fragment` entry, red, at location 0 (the
+    /// attachment being drawn saying which until 1.230).
     fn one(fragments: *const facet.shader.Fragments) callconv(.c) void {
         calls += 1;
         outputs = fragments.output_count;
-        facet.shader.fill(fragments, colors[@min(fragments.resources.output, 2)]);
+        facet.shader.fill(fragments, colors[0]);
     }
 
     const entries = [_]facet.shader.Entry{
@@ -6161,8 +6165,12 @@ const Together = struct {
     const code = facet.shader.Code{ .entry_count = entries.len, .entries = &entries };
 };
 
-/// A pass of three colour attachments, drawn together or one at a time.
-fn togetherPass(probe: *Probe, together: bool) ?*facet.RenderPass {
+/// A pass of three colour attachments: a plain subpass of them; one that
+/// reads two of them as input attachments, which the cores draw once for
+/// each (since 1.230); or one carrying a flag, facet's own former
+/// SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER, which Vulkan has not.
+const TogetherShape = enum { plain, reads_two, flagged };
+fn togetherPass(probe: *Probe, shape: TogetherShape) ?*facet.RenderPass {
     const descriptions = [3]facet.AttachmentDescription{
         .{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .general },
         .{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .general },
@@ -6174,7 +6182,9 @@ fn togetherPass(probe: *Probe, together: bool) ?*facet.RenderPass {
         .{ .attachment = 2, .layout = .general },
     };
     const subpass = facet.SubpassDescription{
-        .flags = if (together) facet.SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER else 0,
+        .flags = if (shape == .flagged) 1 << 31 else 0,
+        .input_attachment_count = if (shape == .reads_two) 2 else 0,
+        .input_attachments = if (shape == .reads_two) references[1..].ptr else null,
         .color_attachment_count = 3,
         .color_attachments = &references,
     };
@@ -6196,13 +6206,14 @@ fn togetherChecks(probe: *Probe) void {
     _ = Probe.keep(&probe.layouts, layout);
     const attributes = [1]facet.VertexInputAttributeDescription{.{ .location = 0, .binding = 0, .format = .r32g32b32_sfloat }};
 
-    // The flag is the cores': a device whose fragment programs each write
-    // the one colour refuses the pass outright, and the subpass without
-    // it is drawn once for each attachment as it always was.
+    // facet's own flag is gone, Vulkan having no flag of a subpass: refused
+    // on every device (since 1.230).
+    probe.check(togetherPass(probe, .flagged) == null, "a subpass flag Vulkan has not refused, facet's own former one among them");
+    // A device whose fragment programs each write the one colour draws a
+    // plain subpass of three once for each attachment.
     if (!probe.can.several_outputs) {
-        probe.check(togetherPass(probe, true) == null, "a subpass drawn together refused where a fragment program writes the one colour");
-        const apart = togetherPass(probe, false) orelse return probe.check(false, "the same subpass drawn once for each");
-        probe.check(true, "the same subpass drawn once for each");
+        const apart = togetherPass(probe, .plain) orelse return probe.check(false, "a subpass of three colours drawn once for each");
+        probe.check(true, "a subpass of three colours drawn once for each");
         // A fragment function of several colours is refused there as
         // well - and so is one of the program's own, every fragment
         // program of such a device being a fixed form.
@@ -6210,9 +6221,12 @@ fn togetherChecks(probe: *Probe) void {
         return;
     }
 
-    const pass = togetherPass(probe, true) orelse return probe.check(false, "a subpass whose three colour attachments are drawn together");
-    probe.check(true, "a subpass whose three colour attachments are drawn together");
-    const apart = togetherPass(probe, false) orelse return probe.check(false, "the same three drawn once for each");
+    // The cores draw it together, a plain Vulkan subpass (since 1.230), and
+    // one that reads two of its colours once for each.
+    const pass = togetherPass(probe, .plain) orelse return probe.check(false, "a plain subpass whose three colour attachments are drawn together");
+    probe.check(true, "a plain subpass whose three colour attachments are drawn together");
+    if (!probe.can.tile_inputs) return probe.check(false, "the cores read their own attachments");
+    const apart = togetherPass(probe, .reads_two) orelse return probe.check(false, "one that reads two of them, drawn once for each");
 
     var pictures: [3]struct { *facet.ImageView, [*]const u8, u32 } = undefined;
     for (&pictures) |*picture| {
@@ -6272,13 +6286,32 @@ fn togetherChecks(probe: *Probe) void {
         probe.checkEqual(want, pixelAt(picture[1], picture[2], side / 2, side / 2), "each attachment holds the colour the one call wrote it");
     }
 
-    // The same three drawn once for each: three times the calls.
-    const each = pipelineOf(probe, apart, module.?, layout.?, .{ .name = "one", .attributes = &attributes, .blends = &plain }) orelse
-        return probe.check(false, "a pipeline of the one colour for the pass that draws them apart");
+    // The same three drawn once for each: three times the calls, each
+    // part taking the colour at its own location (since 1.230).
+    const each = pipelineOf(probe, apart, module.?, layout.?, .{ .name = "three", .attributes = &attributes, .blends = &plain }) orelse
+        return probe.check(false, "a pipeline of three colours for the pass that draws them apart");
     Together.calls = 0;
     if (!draw(probe, apart, apart_frame, each, vertex_buffer, &offset, null)) return probe.check(false, "the frame drawn apart submitted");
-    probe.checkEqual(1, Together.outputs, "a fragment function of one colour is told it writes one");
     probe.checkEqual(@as(u64, 3) * together_calls, Together.calls, "drawing them apart calls the fragment function three times over");
+    var by_location = true;
+    for (pictures, Together.colors) |picture, want| {
+        if (pixelAt(picture[1], picture[2], side / 2, side / 2) != want) by_location = false;
+    }
+    probe.check(by_location, "and each part takes the colour at its own location");
+
+    // A function of one colour writes location 0: the first attachment
+    // takes it, the others keep their clear, as llvmpipe blends only a
+    // colour buffer the shader has an output for (since 1.230: every
+    // part took a colour of its own until then).
+    const first_alone = pipelineOf(probe, pass, module.?, layout.?, .{ .name = "one", .attributes = &attributes, .blends = &plain }) orelse
+        return probe.check(false, "a pipeline of the one colour in the subpass drawn together");
+    Together.calls = 0;
+    if (!draw(probe, pass, frame, first_alone, vertex_buffer, &offset, null)) return probe.check(false, "the frame of one colour submitted");
+    probe.checkEqual(1, Together.outputs, "a fragment function of one colour is told it writes one");
+    probe.checkEqual(together_calls, Together.calls, "and is called once a quad for all three");
+    probe.checkEqual(Together.colors[0], pixelAt(pictures[0][1], pictures[0][2], side / 2, side / 2), "the first attachment takes the one colour");
+    probe.checkEqual(0xFF00_0000, pixelAt(pictures[1][1], pictures[1][2], side / 2, side / 2), "the second keeps its clear");
+    probe.checkEqual(0xFF00_0000, pixelAt(pictures[2][1], pictures[2][2], side / 2, side / 2), "and so does the third");
 
     // Each attachment cleared to its own colour, both ways round: the
     // clears belong to the subpass's attachments in order, whether one
@@ -6327,11 +6360,6 @@ fn togetherChecks(probe: *Probe) void {
     probe.checkEqual(0xFFFF_FFFF, pixelAt(pictures[0][1], pictures[0][2], side / 2, side / 2), "the one set a command gave over all of them");
     checkNearColor(probe, 0xFF40_4040, pixelAt(pictures[1][1], pictures[1][2], side / 2, side / 2), "and one attachment's own over that");
     probe.checkEqual(0xFFFF_FFFF, pixelAt(pictures[2][1], pictures[2][2], side / 2, side / 2), "the others left with the shared set");
-
-    // Refused: a fragment function that writes other than the subpass's
-    // colour attachments, either way round.
-    probe.check(pipelineOf(probe, pass, module.?, layout.?, .{ .name = "one", .attributes = &attributes, .blends = &plain }) == null, "a function of one colour refused a subpass drawn together");
-    probe.check(pipelineOf(probe, apart, module.?, layout.?, .{ .name = "three", .attributes = &attributes, .blends = &plain }) == null, "a function of three refused a subpass drawn apart");
 }
 
 /// Two colours within `apart` of each other in every channel: what a

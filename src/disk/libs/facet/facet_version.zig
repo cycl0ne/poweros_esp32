@@ -7583,4 +7583,46 @@ pub const LIBRARY_VERSION = 1;
 /// CmdClearAttachments, and reads `whole_textures` off SAMPLED_IMAGE. On
 /// the CM5 (packages f239 and f240) FacetProbe is 1070 of 1070 and
 /// FacetBoth's 316 cases are each as at 1.227.
-pub const LIBRARY_REVISION = 229;
+///
+/// 230: **A Vulkan subpass of several colour attachments is drawn
+/// together on the cores, each attachment taking the fragment function's
+/// colour at its location (docs/facet-vulkan10.md item 80).** facet's own
+/// SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER is gone from the SDK, and with it
+/// `shader.Resources.output`: a subpass flag of any kind is
+/// `error_validation_failed`. Where the fragment functions write several
+/// (`Capabilities.several_outputs`), every subpass of several is the one
+/// part, a plane of the tiles for each attachment at its location
+/// (`_render.Part.locations`), which its blend state is at. A fragment
+/// entry writes any count of colours at locations 0 upwards
+/// (`shader.fragmentOutputs`), whatever the subpass has; a plane at a
+/// location past them is left as it is, as llvmpipe blends only a colour
+/// buffer the shader has an output for (lp_state_fs.c:3618-3623) and v3d
+/// writes no render target it has none for (`vir_emit_tlb_color_write`,
+/// nir_to_vir.c:1958), so a `fragment` entry's one colour is the first
+/// attachment's alone where every attachment took it until now. An
+/// ATTACHMENT_UNUSED colour drawn together has no plane, and the one
+/// attachment a subpass reads of its own is its first plane; a subpass
+/// that reads two is drawn once for each, each part taking its location's
+/// colour. The tiles keep a batch's room for four colours a part.
+/// CmdClearAttachments in a part that draws several clears the plane it
+/// names, in that plane's format and on the framebuffer's other layers
+/// (the fault 1.91 found). The V3D still draws a subpass of several once
+/// for each (item 55), and a part past location 0 now writes no colour.
+///
+/// One host test is new (CmdClearAttachments in a subpass drawn
+/// together), and 4557 of the 4560 pass, 3 skipped. Of 23 mutants of the
+/// new code, 22 failed the host tests; the one that lived found a blend
+/// state's format by its plane, not its location, and the together test
+/// now blends bytes beside whole numbers each way round, which fails it.
+/// FacetProbe 1.58 draws a plain subpass of three together on the cores,
+/// by location, and reading two of its own once for each. Its blend
+/// check's second attachment, at a location the fixed function writes
+/// nothing at, keeps its clear. FacetProbe 1.58 as first built (package
+/// f241) still wanted the second of two attachments to take a function's
+/// one colour, and two refusals that are gone; mended (f242), it is 1074
+/// of 1074 on the CM5. FacetBoth's 316 cases are each as at 1.227 but for
+/// the two whose second picture a subpass of two colours draws with a
+/// function of one: that picture keeps what was there on both devices,
+/// "two attachments, second" 0 of 230400 pixels apart where it was 11,
+/// "subpasses, second picture" 5 where it was 8.
+pub const LIBRARY_REVISION = 230;

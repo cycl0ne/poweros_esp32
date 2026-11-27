@@ -1477,22 +1477,6 @@ pub const IMAGE_CREATE_CUBE_COMPATIBLE: u32 = 1 << 4;
 /// (Since 1.48.)
 pub const IMAGE_CREATE_PACKED_TEXELS: u32 = 1 << 31;
 
-/// facet.library's own, in `SubpassDescription.flags`: the subpass's
-/// colour attachments are drawn **together**, in one pass over the tiles,
-/// by a fragment function that writes all of them in the one call
-/// (`shader.fragmentOutputs`, `shader.Fragments.colorsOf`). Without it a
-/// subpass of several colour attachments is drawn once for each, every
-/// command of the pass played again with `shader.Resources.output` saying
-/// which - the vertices worked and the triangles binned over again - and
-/// a fragment function writing the one colour.
-///
-/// Refused with `error_feature_not_present` where
-/// `Capabilities.several_outputs` is false, and with
-/// `error_invalid_shader_nv` for a pipeline of such a subpass whose
-/// fragment entry does not write exactly the subpass's colour
-/// attachments. (Since 1.51.)
-pub const SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER: u32 = 1 << 31;
-
 pub const ImageCreateInfo = extern struct {
     flags: u32 = 0,
     image_type: ImageType = .@"2d",

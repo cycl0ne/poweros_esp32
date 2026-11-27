@@ -568,8 +568,7 @@ pub const Attachments = struct {
     /// (`Target.initAll`). (Since 1.51.)
     more: [most_colors - 1]Color = @splat(.{}),
     /// How many colour attachments the frame draws: 1, and `color`
-    /// alone, which is every frame until a subpass asks for several
-    /// (SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER).
+    /// alone, unless its subpass draws several together.
     color_count: u32 = 1,
     depth: Depth = .{},
     stencil: Stencil = .{},
@@ -741,12 +740,13 @@ pub const Tile = struct {
     /// after another, `tile_pixels` words each; null where the frame
     /// draws the one colour. (Since 1.51.)
     extras: ?[*]u32 = null,
-    /// This part's room for a batch's colours, one colour attachment
-    /// after another, `batch_color_words` each and one more run than
-    /// there are extra planes: what the fragment function writes for all
-    /// of them in the one call, before each goes into its own plane.
-    /// Null where the frame draws the one colour, whose colours go on the
-    /// stack as they always did. (Since 1.51.)
+    /// This part's room for a batch's colours, one location after
+    /// another, `batch_color_words` each and `most_colors` runs: what a
+    /// fragment function that writes several writes for all of them in
+    /// the one call, before each plane takes the one at its location. A
+    /// function that writes the one colour has its colours on the stack,
+    /// as they always were. (Since 1.51; a run for each attachment, and
+    /// null for a frame of one, until 1.230.)
     extra_colors: ?[*][4]u32 = null,
     /// The planes of samples 1 to `samples` - 1 of every colour
     /// attachment, `samples` - 1 of the first's and then of each after,
@@ -774,10 +774,11 @@ pub const Tile = struct {
     /// Each colour attachment's format where it is one of those, and
     /// `.none` where the tile keeps it as 0xAARRGGBB. (Since 1.226.)
     texels: [most_colors]shader.TexelFormat = @splat(.none),
-    /// This part's room for a batch's four words a pixel, one colour
-    /// attachment's `batch_value_words` after another: what a fragment
-    /// function that writes floats or whole numbers writes
-    /// (`shader.Fragments.values`). (Since 1.226.)
+    /// This part's room for a batch's four words a pixel, one location's
+    /// `batch_value_words` after another, `most_colors` of them: what a
+    /// fragment function that writes floats or whole numbers writes
+    /// (`shader.Fragments.values`). (Since 1.226; one for each attachment
+    /// until 1.230.)
     batch_values: ?[*][4][4]u32 = null,
     /// The grid square's number, row by row.
     index: u32,
@@ -1049,18 +1050,20 @@ pub const Target = struct {
     /// to `samples` - 1 of each of those and the first's (since 1.103),
     /// of the depth and of the stencil, with a batch's depths at that
     /// many samples (since 1.105), and for the batch colours of the
-    /// attachments where there are several. The one colour a draw
-    /// usually writes has its batch's colours on the worker's stack.
-    /// Then, since 1.226, every attachment's room for a batch's four
-    /// words a pixel (`batch_value_words`), and where `texels` says so
-    /// a plane at each sample of every attachment for one the tiles keep
-    /// in its own bytes (`texel_plane_words`).
+    /// `most_colors` a fragment function may write at once, whatever the
+    /// frame's attachments (since 1.230; the attachments' where there
+    /// were several until then). The one colour a draw usually writes has
+    /// its batch's colours on the worker's stack. Then, since 1.226, the
+    /// room for a batch's four words a pixel (`batch_value_words`) of as
+    /// many, and where `texels` says so a plane at each sample of every
+    /// attachment for one the tiles keep in its own bytes
+    /// (`texel_plane_words`).
     fn wordsOf(planes: u32, samples: u32, texels: bool) usize {
         const room: usize = samples - 1;
         const held: usize = if (room == 0) 0 else batch_depth_words;
         const sample_words = (@as(usize, planes + 1) * tile_pixels + depth_plane_words + stencil_plane_words) * room + held;
-        const color_words: usize = if (planes == 0) 0 else @as(usize, planes) * tile_pixels + @as(usize, planes + 1) * batch_color_words;
-        const value_words = @as(usize, planes + 1) * batch_value_words;
+        const color_words: usize = @as(usize, planes) * tile_pixels + most_colors * batch_color_words;
+        const value_words: usize = most_colors * batch_value_words;
         const texel_words: usize = if (texels) @as(usize, planes + 1) * samples * texel_plane_words else 0;
         return sample_words + color_words + value_words + texel_words;
     }
@@ -1253,8 +1256,8 @@ pub const Target = struct {
         const stencils_at = depths_at + room * depth_plane_words;
         const held_at = stencils_at + room * stencil_plane_words;
         const colors_at = held_at + @as(usize, if (room == 0) 0 else batch_depth_words);
-        const values_at = colors_at + @as(usize, if (planes == 0) 0 else (planes + 1) * batch_color_words);
-        const texels_at = values_at + (planes + 1) * batch_value_words;
+        const values_at = colors_at + most_colors * batch_color_words;
+        const texels_at = values_at + most_colors * batch_value_words;
         var texels: [most_colors]shader.TexelFormat = @splat(.none);
         for (target.surfaces[0..target.surface_count], 0..) |surface, k| texels[k] = surface.texels;
         return .{
@@ -1266,7 +1269,7 @@ pub const Target = struct {
             .depth_planes = if (samples == 1) null else @ptrCast(block.? + depths_at),
             .stencil_planes = if (samples == 1) null else @ptrCast(block.? + stencils_at),
             .batch_depths = if (samples == 1) null else @ptrCast(block.? + held_at),
-            .extra_colors = if (planes == 0) null else @ptrCast(@alignCast(block.? + colors_at)),
+            .extra_colors = @ptrCast(@alignCast(block.? + colors_at)),
             .batch_values = @ptrCast(@alignCast(block.? + values_at)),
             .texel_planes = if (target.texel_room) block.? + texels_at else null,
             .texels = texels,
@@ -1638,7 +1641,10 @@ test "a part's block holds everything a tile is handed past its buffer, and noth
                 .{ Memory.addressOf(tile.depth_planes), room * tile_pixels * 4 },
                 .{ Memory.addressOf(tile.stencil_planes), room * tile_pixels },
                 .{ Memory.addressOf(tile.batch_depths), batch_depth_words * 4 },
-                .{ Memory.addressOf(tile.extra_colors), (planes + 1) * batch_color_words * 4 },
+                .{ Memory.addressOf(tile.extra_colors), most_colors * batch_color_words * 4 },
+                // Room for every location a function writes, whatever
+                // the frame's attachments (since 1.230).
+                .{ Memory.addressOf(tile.batch_values), most_colors * batch_value_words * 4 },
             };
             const block = if (target.extras) |extras| @intFromPtr(extras) + part * words * 4 else 0;
             for (handed, 0..) |one, k| {

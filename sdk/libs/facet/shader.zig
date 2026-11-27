@@ -197,12 +197,15 @@ pub fn fragment(name: [*:0]const u8, function: FragmentFn, varyings: u32) Entry 
 }
 
 /// An entry for a fragment function that writes `outputs` colours in the
-/// one call - all the colour attachments of a subpass marked
-/// SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER - rather than the one colour a
-/// `fragment` entry writes. 1 to 4, and the pipeline is refused where it
-/// is not the subpass's colour attachment count exactly.
-/// `Fragments.colorsOf` is where each one's colours go.
-/// (Since 1.51. `Capabilities.several_outputs`.)
+/// one call, at locations 0 to `outputs` - 1, as a Vulkan fragment
+/// shader's outputs are at theirs, rather than the one colour a
+/// `fragment` entry writes at location 0. 1 to 4. Each colour attachment
+/// of the subpass takes the colour at its location, one past them is
+/// left as it is, and a colour past the attachments goes nowhere (since
+/// 1.230, docs/facet-vulkan10.md item 80; from 1.51 the count had to be
+/// the subpass's, which had to carry facet.library's own
+/// SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER). `Fragments.colorsOf` is where
+/// each one's colours go. (Since 1.51. `Capabilities.several_outputs`.)
 pub fn fragmentOutputs(name: [*:0]const u8, function: FragmentFn, varyings: u32, outputs: u32) Entry {
     const held: u32 = @min(@max(outputs, 1), 4) - 1;
     return .{ .name = name, .stage = facet.SHADER_STAGE_FRAGMENT, .function = function, .varyings = varyings | held << 18 };
@@ -1336,9 +1339,6 @@ pub const Set = extern struct {
 pub const Resources = extern struct {
     sets: [MAX_SETS]?*const Set = @splat(null),
     push: [MAX_PUSH_CONSTANTS_SIZE]u8 align(4) = @splat(0),
-    /// A fragment function's colour attachment: which of the subpass's is being
-    /// drawn, each in turn (`CreateRenderPass`).
-    output: u32 = 0,
     /// What each set's dynamic buffer descriptors are shifted by, as
     /// CmdBindDescriptorSets gave them: `offsets[set][slot.dynamic - 1]`
     /// is a slot's own, and `buffer` adds it, or `SHIFTED_OUT` where the
@@ -1846,12 +1846,13 @@ pub const Fragments = extern struct {
     /// from an attachment an earlier subpass drew. Null where the part
     /// does not read what it draws. (Since 1.65.)
     drawn: ?[*]const u8 = null,
-    /// The colour attachments the function writes in this call: 1 for
-    /// every fragment function but one of a `shader.fragmentOutputs`
-    /// entry drawing a subpass whose attachments go together
-    /// (SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER, since 1.51). `colorsOf`
-    /// gives each one's colours; attachment 0's are `colors` itself, so a
-    /// function that writes the one colour needs no notice of this.
+    /// The colours the function writes in this call, at locations 0
+    /// upwards: what its entry says (`shader.fragmentOutputs`, since 1.51;
+    /// since 1.230 whatever the subpass has, which until then it had to
+    /// be, with facet.library's own SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER).
+    /// `colorsOf` gives each one's colours; location 0's are `colors`
+    /// itself, so a function that writes the one colour needs no notice
+    /// of this.
     output_count: u32 = 1,
     /// Where each quad's pixels' four words go, for a function whose entry
     /// writes floats or whole numbers rather than 0xAARRGGBB (`Written`,

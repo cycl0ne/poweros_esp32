@@ -412,17 +412,20 @@ pub const Capabilities = extern struct {
     /// and has never spread an 8888 texel, so the flag costs it nothing
     /// and changes nothing there. (Since 1.48.)
     small_texels: bool = false,
-    /// A fragment function may write all the colour attachments of its
-    /// subpass in the one call, the subpass drawn once rather than once
-    /// for each of them (`shader.fragmentOutputs`,
-    /// SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER): a G-buffer's three or four
-    /// planes cost one pass over the vertices, one binning and one call a
-    /// quad instead of as many as there are attachments. True on the
-    /// cores, where the tiles hold a colour plane for each attachment of
-    /// such a subpass. False on the V3D, whose fragment programs are the
-    /// fixed forms and each writes the one colour: there a subpass of
-    /// several is drawn once for each, as it was before, and the flag is
-    /// `error_feature_not_present` (CreateRenderPass). (Since 1.51.)
+    /// A fragment function may write several colours in the one call, at
+    /// locations 0 upwards (`shader.fragmentOutputs`), and a subpass of
+    /// several colour attachments is drawn once rather than once for each
+    /// of them: a G-buffer's three or four planes cost one pass over the
+    /// vertices, one binning and one call a quad instead of as many as
+    /// there are attachments. True on the cores, where the tiles hold a
+    /// colour plane for each attachment of such a subpass, which draw
+    /// every subpass of several so since 1.230 (one carrying facet's own
+    /// SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER until then). False on the
+    /// V3D, whose fragment programs each write the one colour, at
+    /// location 0: there a subpass of several is drawn once for each, and
+    /// a pipeline whose function writes several is
+    /// `error_feature_not_present` (CreateGraphicsPipelines;
+    /// docs/facet-vulkan10.md item 55). (Since 1.51.)
     several_outputs: bool = false,
     /// A texture may keep channels of its own rather than the 8888 colour
     /// a sample makes of them: an image of `r8g8_unorm`, two bytes a
@@ -653,20 +656,13 @@ pub const limits: facet.PhysicalDeviceLimits = .{
     // --- the fragment stage ---
     .max_fragment_input_components = max_vertex_output_components,
     // What one fragment function may write, which on this rasterizer is
-    // every colour a subpass may hold (`can.several_outputs`).
-    //
-    // **There is a catch, and it is a defect and not this number.** A
-    // subpass gives each colour attachment a part of its own unless it
-    // carries facet's own SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER, and
-    // CreateGraphicsPipelines refuses a fragment function whose output count
-    // is not the part's (pipeline/creategraphicspipelines.zig). So a program
-    // using Vulkan's own surface, which has no such flag, is held to one
-    // colour a function however many the subpass has - the same
-    // inconsistency `max_color_attachments` already carries by saying a
-    // subpass may hold four while the pass is drawn in four parts. Saying 1
-    // here would move that inconsistency rather than remove it, and would
-    // leave the two devices indistinguishable. docs/facet-vulkan10.md item
-    // 80 is the defect; item 55 is the V3D's side of it.
+    // every colour a subpass may hold (`can.several_outputs`): a subpass of
+    // several is drawn together, each attachment taking the function's
+    // colour at its location (since 1.230, docs/facet-vulkan10.md item 80;
+    // until then only where the subpass carried facet's own
+    // SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER, and a function was held to one
+    // colour otherwise). The V3D's side of it, whose programs write one,
+    // is item 55.
     .max_fragment_output_attachments = _render.most_colors,
     // No blend factor reads a second source colour, so Vulkan's value for a
     // device without `dual_src_blend` is 0.

@@ -206,6 +206,17 @@ const Flat = struct {
         shader.fill(fragments, fragments.resources.constants(u32).*);
     }
 
+    /// The same colour at locations 0 and 1, for a colour attachment at
+    /// the second: a function of one writes location 0 alone (since
+    /// 1.230).
+    fn both(fragments: *const shader.Fragments) callconv(.c) void {
+        const color = fragments.resources.constants(u32).*;
+        for (0..fragments.output_count) |output| {
+            const into = fragments.colorsOf(@intCast(output));
+            for (into[0..fragments.count]) |*quad_colors| quad_colors.* = @splat(color);
+        }
+    }
+
     /// The same, the point each vertex makes as wide as the vertex's own
     /// z says in pixels: Vulkan's `PointSize` (since 1.70). Every vertex
     /// is drawn at z = 0.5, so the size is read off the buffer and the
@@ -223,6 +234,8 @@ const Flat = struct {
         shader.fragment("main", &fragment, 0),
         shader.vertex("sized", &sized, 0),
         shader.fragment("sized", &fragment, 0),
+        shader.vertex("both", &vertex, 0),
+        shader.fragmentOutputs("both", &both, 0, 2),
     };
     const code = shader.Code{ .entry_count = entries.len, .entries = &entries };
 };
@@ -428,6 +441,21 @@ const Watched = struct {
 };
 
 // --- what the tests make -----------------------------------------------------
+
+/// A render pass made as a device that draws a subpass of several colour
+/// attachments apart makes it: a part for each, its commands played over
+/// (`Capabilities.several_outputs` false while it is made, as on the
+/// V3D). The cores draw such a subpass so only where it reads two of its
+/// own attachments, since 1.230, so this is what a test of the parts
+/// themselves makes its pass with; the pipelines are the cores' own.
+fn apartPass(bench: *Bench, info: *const facet.RenderPassCreateInfo) !*facet.RenderPass {
+    const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
+    physical.can.several_outputs = false;
+    defer physical.can.several_outputs = true;
+    var made: ?*facet.RenderPass = null;
+    try testing.expectEqual(facet.Result.success, bench.rig.fb.CreateRenderPass(bench.device, info, &made));
+    return made.?;
+}
 
 fn renderPass(bench: *Bench, color_load: facet.AttachmentLoadOp, with_depth: bool) !*facet.RenderPass {
     const attachments = [2]facet.AttachmentDescription{
@@ -673,10 +701,13 @@ test "a render pass: one subpass, a colour attachment and perhaps a depth one; w
     try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &fine, .subpass_count = 2, .subpasses = &two_alone }, &joined));
     try testing.expect(_objects.of(_render.RenderPass, joined.?).subpasses[1].joined);
     fb.DestroyRenderPass(device, joined);
-    // And a part of its own, as a subpass of one colour is: after two
-    // subpasses of four colours, drawn apart, which take the eight parts
-    // there is room for, a third of none is one too many; after one of
-    // four and one of three, it is the eighth.
+    // And a part of its own, as a subpass of one colour is: on a device
+    // that draws a subpass of several apart, as the V3D does (and the
+    // cores did until 1.230), after two subpasses of four colours, which
+    // take the eight parts there is room for, a third of none is one too
+    // many; after one of four and one of three, it is the eighth.
+    const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
+    physical.can.several_outputs = false;
     const eight: [8]facet.AttachmentDescription = @splat(.{ .format = .b8g8r8a8_unorm, .final_layout = .general });
     var references: [8]facet.AttachmentReference = undefined;
     for (&references, 0..) |*reference, k| reference.* = .{ .attachment = @intCast(k), .layout = .color_attachment_optimal };
@@ -698,7 +729,12 @@ test "a render pass: one subpass, a colour attachment and perhaps a depth one; w
     try testing.expectEqual(@as(u32, 8), eighth_plan.part_count);
     try testing.expectEqual(@as(u32, 1), eighth_plan.subpasses[2].part_count);
     fb.DestroyRenderPass(device, eighth);
-    const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
+    // The cores draw each of them in one part: three in all.
+    physical.can.several_outputs = true;
+    var three_parts: ?*facet.RenderPass = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(device, &.{ .attachment_count = 8, .attachments = &eight, .subpass_count = 3, .subpasses = &too_many }, &three_parts));
+    try testing.expectEqual(@as(u32, 3), _objects.of(_render.RenderPass, three_parts.?).part_count);
+    fb.DestroyRenderPass(device, three_parts);
     physical.can.colorless_subpasses = false;
     try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &fine, .subpass_count = 1, .subpasses = @ptrCast(&depth_alone) }, &none));
     try testing.expect(none == null);
@@ -6030,7 +6066,7 @@ test "four samples a pixel in colour attachments drawn together: each attachment
         .{ .attachment = 2, .layout = .color_attachment_optimal },
     };
     const tested = facet.AttachmentReference{ .attachment = 3, .layout = .depth_stencil_attachment_optimal };
-    const together = facet.SubpassDescription{ .flags = facet.SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER, .color_attachment_count = 3, .color_attachments = &references, .depth_stencil_attachment = &tested };
+    const together = facet.SubpassDescription{ .color_attachment_count = 3, .color_attachments = &references, .depth_stencil_attachment = &tested };
     var pass: ?*facet.RenderPass = null;
     defer fb.DestroyRenderPass(device, pass);
     try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(device, &.{ .attachment_count = 4, .attachments = &descriptions, .subpass_count = 1, .subpasses = @ptrCast(&together) }, &pass));
@@ -7265,7 +7301,7 @@ test "resolve attachments of colour attachments drawn together: each given the a
         .{ .attachment = 3, .layout = .color_attachment_optimal },
         .{ .attachment = 4, .layout = .color_attachment_optimal },
     };
-    const together = facet.SubpassDescription{ .flags = facet.SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER, .color_attachment_count = 3, .color_attachments = &references, .resolve_attachments = &into };
+    const together = facet.SubpassDescription{ .color_attachment_count = 3, .color_attachments = &references, .resolve_attachments = &into };
     var pass: ?*facet.RenderPass = null;
     defer fb.DestroyRenderPass(device, pass);
     try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(device, &.{ .attachment_count = 5, .attachments = &descriptions, .subpass_count = 1, .subpasses = @ptrCast(&together) }, &pass));
@@ -7479,7 +7515,7 @@ test "an image of four samples a pixel sampled where it lies: a colour one kept 
     const descriptions: [4]facet.AttachmentDescription = @splat(description);
     var references: [4]facet.AttachmentReference = undefined;
     for (&references, 0..) |*reference, k| reference.* = .{ .attachment = @intCast(k), .layout = .general };
-    const together = facet.SubpassDescription{ .flags = facet.SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER, .color_attachment_count = 4, .color_attachments = &references };
+    const together = facet.SubpassDescription{ .color_attachment_count = 4, .color_attachments = &references };
     var pass: ?*facet.RenderPass = null;
     defer fb.DestroyRenderPass(device, pass);
     try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(device, &.{ .attachment_count = 4, .attachments = &descriptions, .subpass_count = 1, .subpasses = @ptrCast(&together) }, &pass));
@@ -7759,7 +7795,7 @@ test "input attachments of four samples a pixel, read a sample at a time by the 
     const output = facet.AttachmentDescription{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .general };
     const to_outputs = [4]facet.AttachmentReference{ .{ .attachment = 1, .layout = .general }, .{ .attachment = 2, .layout = .general }, .{ .attachment = 3, .layout = .general }, .{ .attachment = 4, .layout = .general } };
     const of_samples = [1]facet.AttachmentReference{.{ .attachment = 0, .layout = .general }};
-    const split = facet.SubpassDescription{ .flags = facet.SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER, .input_attachment_count = 1, .input_attachments = &of_samples, .color_attachment_count = 4, .color_attachments = &to_outputs };
+    const split = facet.SubpassDescription{ .input_attachment_count = 1, .input_attachments = &of_samples, .color_attachment_count = 4, .color_attachments = &to_outputs };
 
     const binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .input_attachment, .stage_flags = facet.SHADER_STAGE_FRAGMENT };
     var set_layout: ?*facet.DescriptorSetLayout = null;
@@ -8212,14 +8248,15 @@ test "a subpass of the depth alone, the shadow map's pass: its depth drawn, clea
     const tested = facet.PipelineDepthStencilStateCreateInfo{ .depth_test_enable = true, .depth_write_enable = true, .depth_compare_op = .less };
 
     // The pipeline has no colour to blend into, and its function writes
-    // the one colour; a function of three is refused, as it is in a
-    // subpass of one.
+    // the one colour; a function of three is taken as well, its colours
+    // going nowhere as an output at a location of no attachment does
+    // (since 1.230: refused until then, as it was in a subpass of one).
     const made, const pipeline = makePipeline(&bench, .{ .module = shaders, .layout = layout, .pass = pass, .depth = tested, .blend_count = 0 });
     defer fb.DestroyPipeline(device, pipeline);
     try testing.expectEqual(facet.Result.success, made);
-    const three, const not_made = makePipeline(&bench, .{ .module = shaders, .name = "three", .layout = layout, .pass = pass, .depth = tested, .blend_count = 0 });
-    try testing.expectEqual(facet.Result.error_invalid_shader_nv, three);
-    try testing.expect(not_made == null);
+    const three, const three_made = makePipeline(&bench, .{ .module = shaders, .name = "three", .layout = layout, .pass = pass, .depth = tested, .blend_count = 0 });
+    defer fb.DestroyPipeline(device, three_made);
+    try testing.expectEqual(facet.Result.success, three);
 
     // The top left half at 0.25, the bottom right at 0.75, as for a depth
     // kept beside a colour; then the top left corner's depth cleared to a
@@ -8734,7 +8771,7 @@ test "a pipeline of no fragment stage over two colour attachments drawn together
     const description = facet.AttachmentDescription{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .general };
     const descriptions: [2]facet.AttachmentDescription = @splat(description);
     const references = [2]facet.AttachmentReference{ .{ .attachment = 0, .layout = .general }, .{ .attachment = 1, .layout = .general } };
-    const together = facet.SubpassDescription{ .flags = facet.SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER, .color_attachment_count = 2, .color_attachments = &references };
+    const together = facet.SubpassDescription{ .color_attachment_count = 2, .color_attachments = &references };
     var pass: ?*facet.RenderPass = null;
     defer fb.DestroyRenderPass(device, pass);
     try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &descriptions, .subpass_count = 1, .subpasses = @ptrCast(&together) }, &pass));
@@ -8745,8 +8782,9 @@ test "a pipeline of no fragment stage over two colour attachments drawn together
     const layout = try pipelineLayout(&bench, &.{}, 4);
     defer fb.DestroyPipelineLayout(device, layout);
 
-    // Of the vertex stage alone, it has the room of both colours, as an
-    // entry of `shader.fragmentOutputs` of two would.
+    // Of the vertex stage alone, it writes no colour: one, masked out, and
+    // nothing at the second's location (since 1.230; the room of both
+    // until then).
     const made, const pipeline = makePipeline(&bench, .{ .module = flat, .fragment = false, .layout = layout, .pass = pass.?, .blend_count = 2 });
     defer fb.DestroyPipeline(device, pipeline);
     try testing.expectEqual(facet.Result.success, made);
@@ -10603,14 +10641,25 @@ const SubpassScene = struct {
     fn fragmentGreen(fragments: *const shader.Fragments) callconv(.c) void {
         shader.fill(fragments, green);
     }
-    /// A colour of its own for each attachment.
+    /// A colour of its own at each location, as a Vulkan fragment shader
+    /// writes its outputs: blue at 0 and yellow at the three after it,
+    /// each attachment taking the one at its own (since 1.230; one colour
+    /// a call, chosen by `shader.Resources.output`, until then).
     fn fragmentOutputs(fragments: *const shader.Fragments) callconv(.c) void {
-        shader.fill(fragments, if (fragments.resources.output == 0) blue else yellow);
+        shader.fill(fragments, blue);
+        for (1..fragments.output_count) |output| {
+            const into = fragments.colorsOf(@intCast(output));
+            for (into[0..fragments.count]) |*quad_colors| quad_colors.* = @splat(yellow);
+        }
     }
-    /// The same colour into every attachment, so that what differs between
-    /// them is the mixing alone.
+    /// The same colour at every location, so that what differs between
+    /// the attachments is the mixing alone (one colour a call, which
+    /// every part took, until 1.230).
     fn fragmentWhite(fragments: *const shader.Fragments) callconv(.c) void {
-        shader.fill(fragments, 0xFFFF_FFFF);
+        for (0..fragments.output_count) |output| {
+            const into = fragments.colorsOf(@intCast(output));
+            for (into[0..fragments.count]) |*quad_colors| quad_colors.* = @splat(0xFFFF_FFFF);
+        }
     }
     const entries = [_]shader.Entry{
         shader.vertex("red", &vertex, 0),
@@ -10618,9 +10667,9 @@ const SubpassScene = struct {
         shader.vertex("green", &vertex, 0),
         shader.fragment("green", &fragmentGreen, 0),
         shader.vertex("outputs", &vertex, 0),
-        shader.fragment("outputs", &fragmentOutputs, 0),
+        shader.fragmentOutputs("outputs", &fragmentOutputs, 0, 4),
         shader.vertex("white", &vertex, 0),
-        shader.fragment("white", &fragmentWhite, 0),
+        shader.fragmentOutputs("white", &fragmentWhite, 0, 4),
     };
     const code = shader.Code{ .entry_count = entries.len, .entries = &entries };
 };
@@ -10659,9 +10708,10 @@ test "a subpass's colour attachments, each blended its own way" {
     const made = _objects.of(_pipeline.Pipeline, pipeline.?);
     try testing.expectEqual(@as(u32, facet.COLOR_COMPONENT_R), made.mixings[0].mask);
     try testing.expect(!made.mixings[0].enabled);
-    // Drawn once for each of its two colours: a program that writes
-    // memory is refused here by a device that compiles (since 1.170).
-    try testing.expect(made.replayed);
+    // Drawn once for both, together (since 1.230): until then once for
+    // each, where a program that writes memory is refused by a device
+    // that compiles (since 1.170).
+    try testing.expect(!made.replayed);
     try testing.expectEqual(@as(u32, facet.COLOR_COMPONENT_ALL), made.mixings[1].mask);
     try testing.expect(made.mixings[1].enabled);
     try testing.expectEqual(.zero, made.mixings[1].dst_color);
@@ -12576,7 +12626,8 @@ fn nearColor(wanted: u32, found: u32, apart: u32) !void {
 }
 
 /// Three colour attachments written in the one fragment call
-/// (`shader.fragmentOutputs`, SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER).
+/// (`shader.fragmentOutputs`; with facet's own
+/// SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER until 1.230).
 const TogetherScene = struct {
     const quad = [6][3]f32{ .{ -1, -1, 0 }, .{ 1, -1, 0 }, .{ -1, 1, 0 }, .{ -1, 1, 0 }, .{ 1, -1, 0 }, .{ 1, 1, 0 } };
     /// How often a fragment function was called, over the whole draw.
@@ -12613,13 +12664,13 @@ const TogetherScene = struct {
         }
     }
 
-    /// The one colour a replayed subpass's fragment function writes, the
-    /// attachment being drawn saying which.
+    /// The one colour of a `fragment` entry, red, at location 0 (the
+    /// attachment being drawn, by `shader.Resources.output`, saying which
+    /// until 1.230).
     fn one(fragments: *const shader.Fragments) callconv(.c) void {
         calls += 1;
         outputs = fragments.output_count;
-        const colors = [3]u32{ 0xFFFF_0000, 0xFF00_FF00, 0xFF00_00FF };
-        shader.fill(fragments, colors[@min(fragments.resources.output, 2)]);
+        shader.fill(fragments, 0xFFFF_0000);
     }
 
     const entries = [_]shader.Entry{
@@ -12653,12 +12704,16 @@ test "a subpass's colour attachments drawn together: one fragment call writes th
         .{ .attachment = 1, .layout = .general },
         .{ .attachment = 2, .layout = .general },
     };
-    const together = facet.SubpassDescription{
-        .flags = facet.SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER,
+    const together = facet.SubpassDescription{ .color_attachment_count = 3, .color_attachments = &colors };
+    // One that reads two of its own colours is a part for each, the tiles
+    // giving a fragment function the pixels of one plane alone (since
+    // 1.230; every subpass without facet's own flag until then).
+    const reads_two = facet.SubpassDescription{
+        .input_attachment_count = 2,
+        .input_attachments = colors[1..].ptr,
         .color_attachment_count = 3,
         .color_attachments = &colors,
     };
-    const apart = facet.SubpassDescription{ .color_attachment_count = 3, .color_attachments = &colors };
     const info = facet.RenderPassCreateInfo{ .attachment_count = 3, .attachments = &descriptions, .subpass_count = 1, .subpasses = @ptrCast(&together) };
     var pass_made: ?*facet.RenderPass = null;
     const asked = fb.CreateRenderPass(device, &info, &pass_made);
@@ -12667,14 +12722,16 @@ test "a subpass's colour attachments drawn together: one fragment call writes th
     const layout = try pipelineLayout(&bench, &.{}, 0);
     defer fb.DestroyPipelineLayout(device, layout);
 
+    // A plain Vulkan subpass, no flag of facet's own (since 1.230).
     try testing.expectEqual(facet.Result.success, asked);
     defer fb.DestroyRenderPass(device, pass_made);
     const pass = pass_made.?;
-    // The one part of the subpass draws all three.
+    // The one part of the subpass draws all three, each at its location.
     const plan = _objects.of(_render.RenderPass, pass);
     try testing.expectEqual(@as(u32, 1), plan.part_count);
     try testing.expectEqual(@as(u32, 3), plan.parts[0].color_count);
     try testing.expectEqual(@as(u32, 2), plan.parts[0].colors[2]);
+    try testing.expectEqual([3]u8{ 0, 1, 2 }, plan.parts[0].locations[0..3].*);
 
     const frame = try framebuffer(&bench, pass, &.{ red.view, green.view, blue.view }, 64, 64);
     defer fb.DestroyFramebuffer(device, frame);
@@ -12686,6 +12743,7 @@ test "a subpass's colour attachments drawn together: one fragment call writes th
         .{ .color = .{ .float32 = .{ 0, 0, 0, 1 } } },
         .{ .color = .{ .float32 = .{ 0, 0, 0, 1 } } },
     };
+    const black: u32 = 0xFF00_0000;
     const area = facet.Rect2D{ .extent = .{ .width = 64, .height = 64 } };
 
     const draw = struct {
@@ -12718,34 +12776,100 @@ test "a subpass's colour attachments drawn together: one fragment call writes th
     const together_calls = TogetherScene.calls;
     try testing.expect(together_calls > 0);
 
-    // The same three attachments drawn once for each, which is what there
-    // was before: three times the calls for the one picture each.
+    // The same three attachments drawn once for each, as a subpass that
+    // reads two of them is: three times the calls, and each part takes
+    // the function's colour at its own location (since 1.230: a function
+    // of several was refused there until then).
     var plain: ?*facet.RenderPass = null;
     var without = info;
-    without.subpasses = @ptrCast(&apart);
+    without.subpasses = @ptrCast(&reads_two);
     try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(device, &without, &plain));
     defer fb.DestroyRenderPass(device, plain);
+    const plain_plan = _objects.of(_render.RenderPass, plain.?);
+    try testing.expectEqual(@as(u32, 3), plain_plan.part_count);
+    for (plain_plan.parts[0..3], 0..) |part, k| try testing.expectEqual(@as(u8, @intCast(k)), part.locations[0]);
     const plain_frame = try framebuffer(&bench, plain.?, &.{ red.view, green.view, blue.view }, 64, 64);
     defer fb.DestroyFramebuffer(device, plain_frame);
-    result, const each = makePipeline(&bench, .{ .module = shaders, .name = "one", .layout = layout, .pass = plain.?, .blend_count = 3 });
+    result, const each = makePipeline(&bench, .{ .module = shaders, .name = "three", .layout = layout, .pass = plain.?, .blend_count = 3 });
     try testing.expectEqual(facet.Result.success, result);
     defer fb.DestroyPipeline(device, each);
     TogetherScene.calls = 0;
     try draw(&bench, plain.?, plain_frame, each.?, vertex_buffer, &offset, null);
-    try testing.expectEqual(@as(u32, 1), TogetherScene.outputs);
+    try testing.expectEqual(@as(u32, 3), TogetherScene.outputs);
     try testing.expectEqual(@as(u32, 0xFFFF_0000), red.at(32, 32));
+    try testing.expectEqual(@as(u32, 0xFF00_FF00), green.at(32, 32));
     try testing.expectEqual(@as(u32, 0xFF00_00FF), blue.at(32, 32));
     try testing.expectEqual(@as(u32, 3) * together_calls, TogetherScene.calls);
 
-    // Each attachment cleared to its own colour, both ways round: the
-    // clears belong to the subpass's attachments in order, whether one
-    // part draws them all or a part draws each.
+    // A `fragment` entry's one colour is location 0's: the first
+    // attachment takes it and the others keep their clear, either way,
+    // as llvmpipe blends only a colour buffer the shader has an output
+    // for (lp_state_fs.c:3618-3623). Until 1.230 each part took a colour
+    // of its own, by `shader.Resources.output`, and a subpass drawn
+    // together refused the entry.
+    result, const first_together = makePipeline(&bench, .{ .module = shaders, .name = "one", .layout = layout, .pass = pass, .blend_count = 3 });
+    try testing.expectEqual(facet.Result.success, result);
+    defer fb.DestroyPipeline(device, first_together);
+    result, const first_apart = makePipeline(&bench, .{ .module = shaders, .name = "one", .layout = layout, .pass = plain.?, .blend_count = 3 });
+    try testing.expectEqual(facet.Result.success, result);
+    defer fb.DestroyPipeline(device, first_apart);
+    for ([2]*facet.RenderPass{ pass, plain.? }, [2]*facet.Framebuffer{ frame, plain_frame }, [2]*facet.Pipeline{ first_together.?, first_apart.? }) |into, onto, pipeline| {
+        try draw(&bench, into, onto, pipeline, vertex_buffer, &offset, null);
+        try testing.expectEqual(@as(u32, 1), TogetherScene.outputs);
+        try testing.expectEqual(@as(u32, 0xFFFF_0000), red.at(32, 32));
+        try testing.expectEqual(black, green.at(32, 32));
+        try testing.expectEqual(black, blue.at(32, 32));
+    }
+    // And one that writes four: the last, at a location the subpass has
+    // no attachment at, goes nowhere (since 1.230: refused until then).
+    result, const past = makePipeline(&bench, .{ .module = shaders, .name = "four", .layout = layout, .pass = pass, .blend_count = 3 });
+    try testing.expectEqual(facet.Result.success, result);
+    defer fb.DestroyPipeline(device, past);
+    try draw(&bench, pass, frame, past.?, vertex_buffer, &offset, null);
+    try testing.expectEqual(@as(u32, 4), TogetherScene.outputs);
+    try testing.expectEqual(@as(u32, 0xFFFF_0000), red.at(32, 32));
+    try testing.expectEqual(@as(u32, 0xFF00_FF00), green.at(32, 32));
+    try testing.expectEqual(@as(u32, 0xFF00_00FF), blue.at(32, 32));
+
+    // One that reads another of its colours than the first: drawn
+    // together, the one it reads the first plane, whose pixels a fragment
+    // function is given, and each still at its own location (since 1.230;
+    // `error_feature_not_present` until then, `error_initialization_failed`
+    // until 1.134).
+    const reads_second = facet.SubpassDescription{
+        .input_attachment_count = 1,
+        .input_attachments = @ptrCast(&colors[1]),
+        .color_attachment_count = 3,
+        .color_attachments = &colors,
+    };
+    var second_made: ?*facet.RenderPass = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(device, &.{ .attachment_count = 3, .attachments = &descriptions, .subpass_count = 1, .subpasses = @ptrCast(&reads_second) }, &second_made));
+    defer fb.DestroyRenderPass(device, second_made);
+    const second_pass = second_made.?;
+    const second_plan = _objects.of(_render.RenderPass, second_pass);
+    try testing.expectEqual(@as(u32, 1), second_plan.part_count);
+    try testing.expect(second_plan.parts[0].reads_target);
+    try testing.expectEqual([3]u32{ 1, 0, 2 }, second_plan.parts[0].colors[0..3].*);
+    try testing.expectEqual([3]u8{ 1, 0, 2 }, second_plan.parts[0].locations[0..3].*);
+    const second_frame = try framebuffer(&bench, second_pass, &.{ red.view, green.view, blue.view }, 64, 64);
+    defer fb.DestroyFramebuffer(device, second_frame);
+    result, const reading = makePipeline(&bench, .{ .module = shaders, .name = "three", .layout = layout, .pass = second_pass, .blend_count = 3 });
+    try testing.expectEqual(facet.Result.success, result);
+    defer fb.DestroyPipeline(device, reading);
+    try draw(&bench, second_pass, second_frame, reading.?, vertex_buffer, &offset, null);
+    try testing.expectEqual(@as(u32, 0xFFFF_0000), red.at(32, 32));
+    try testing.expectEqual(@as(u32, 0xFF00_FF00), green.at(32, 32));
+    try testing.expectEqual(@as(u32, 0xFF00_00FF), blue.at(1, 62));
+
+    // Each attachment cleared to its own colour, every way round: the
+    // clears belong to the subpass's attachments, whether one part draws
+    // them all, a part draws each, or the one read comes first.
     const own_clears = [3]facet.ClearValue{
         .{ .color = .{ .float32 = .{ 1, 0, 0, 1 } } },
         .{ .color = .{ .float32 = .{ 0, 1, 0, 1 } } },
         .{ .color = .{ .float32 = .{ 0, 0, 1, 1 } } },
     };
-    for ([2]*facet.RenderPass{ pass, plain.? }, [2]*facet.Framebuffer{ frame, plain_frame }) |into, onto| {
+    for ([3]*facet.RenderPass{ pass, plain.?, second_pass }, [3]*facet.Framebuffer{ frame, plain_frame, second_frame }) |into, onto| {
         const cleared = try bench.record();
         fb.CmdBeginRenderPass(cleared, &.{ .render_pass = into, .framebuffer = onto, .render_area = area, .clear_value_count = 3, .clear_values = &own_clears }, .@"inline");
         fb.CmdEndRenderPass(cleared);
@@ -12756,7 +12880,8 @@ test "a subpass's colour attachments drawn together: one fragment call writes th
     }
 
     // Each attachment blended by constants of its own, which Vulkan
-    // shares between them: white drawn, mixed by the constant colour.
+    // shares between them: white drawn, mixed by the constant colour -
+    // by its location's, where the one read is drawn first.
     const by_constant = facet.PipelineColorBlendAttachmentState{
         .blend_enable = true,
         .src_color_blend_factor = .constant_color,
@@ -12766,76 +12891,171 @@ test "a subpass's colour attachments drawn together: one fragment call writes th
     };
     const sets = [3][4]f32{ .{ 1, 1, 1, 1 }, .{ 0.5, 0.5, 0.5, 1 }, .{ 0.25, 0.25, 0.25, 1 } };
     const blends: [3]facet.PipelineColorBlendAttachmentState = @splat(by_constant);
-    result, const mixed = makePipeline(&bench, .{
-        .module = shaders,
-        .name = "white",
-        .layout = layout,
-        .pass = pass,
-        .blend = blends[0],
-        .second_blend = blends[1],
-        .blend_count = 3,
-        .attachment_constants = &sets,
-    });
-    try testing.expectEqual(facet.Result.success, result);
-    defer fb.DestroyPipeline(device, mixed);
-    const made = _objects.of(_pipeline.Pipeline, mixed.?);
-    try testing.expectEqual(@as(?[4]f32, .{ 0.25, 0.25, 0.25, 1 }), made.mixings[2].constants);
-    try draw(&bench, pass, frame, mixed.?, vertex_buffer, &offset, null);
-    try testing.expectEqual(@as(u32, 0xFFFF_FFFF), red.at(32, 32));
-    try nearColor(0xFF80_8080, green.at(32, 32), 2);
-    try nearColor(0xFF40_4040, blue.at(32, 32), 2);
+    for ([2]*facet.RenderPass{ pass, second_pass }, [2]*facet.Framebuffer{ frame, second_frame }) |into, onto| {
+        result, const mixed = makePipeline(&bench, .{
+            .module = shaders,
+            .name = "white",
+            .layout = layout,
+            .pass = into,
+            .blend = blends[0],
+            .second_blend = blends[1],
+            .blend_count = 3,
+            .attachment_constants = &sets,
+        });
+        try testing.expectEqual(facet.Result.success, result);
+        defer fb.DestroyPipeline(device, mixed);
+        const made = _objects.of(_pipeline.Pipeline, mixed.?);
+        try testing.expectEqual(@as(?[4]f32, .{ 0.25, 0.25, 0.25, 1 }), made.mixings[2].constants);
+        try draw(&bench, into, onto, mixed.?, vertex_buffer, &offset, null);
+        try testing.expectEqual(@as(u32, 0xFFFF_FFFF), red.at(32, 32));
+        try nearColor(0xFF80_8080, green.at(32, 32), 2);
+        try nearColor(0xFF40_4040, blue.at(32, 32), 2);
+    }
 
     // And by what a command set: the one set over all of them, and one
-    // attachment's own over that.
-    result, const dynamic = makePipeline(&bench, .{
-        .module = shaders,
-        .name = "white",
-        .layout = layout,
-        .pass = pass,
-        .blend = by_constant,
-        .second_blend = by_constant,
-        .blend_count = 3,
-        .dynamic = &.{.blend_constants},
-    });
-    try testing.expectEqual(facet.Result.success, result);
-    defer fb.DestroyPipeline(device, dynamic);
-    try draw(&bench, pass, frame, dynamic.?, vertex_buffer, &offset, 1);
-    try testing.expectEqual(@as(u32, 0xFFFF_FFFF), red.at(32, 32));
-    try nearColor(0xFF40_4040, green.at(32, 32), 2);
-    try testing.expectEqual(@as(u32, 0xFFFF_FFFF), blue.at(32, 32));
+    // attachment's own over that, by its location.
+    for ([2]*facet.RenderPass{ pass, second_pass }, [2]*facet.Framebuffer{ frame, second_frame }) |into, onto| {
+        result, const dynamic = makePipeline(&bench, .{
+            .module = shaders,
+            .name = "white",
+            .layout = layout,
+            .pass = into,
+            .blend = by_constant,
+            .second_blend = by_constant,
+            .blend_count = 3,
+            .dynamic = &.{.blend_constants},
+        });
+        try testing.expectEqual(facet.Result.success, result);
+        defer fb.DestroyPipeline(device, dynamic);
+        try draw(&bench, into, onto, dynamic.?, vertex_buffer, &offset, 1);
+        try testing.expectEqual(@as(u32, 0xFFFF_FFFF), red.at(32, 32));
+        try nearColor(0xFF40_4040, green.at(32, 32), 2);
+        try testing.expectEqual(@as(u32, 0xFFFF_FFFF), blue.at(32, 32));
+    }
 
-    // Refused: a fragment function that writes other than the subpass's
-    // colour attachments, either way round.
-    result, _ = makePipeline(&bench, .{ .module = shaders, .name = "one", .layout = layout, .pass = pass, .blend_count = 3 });
-    try testing.expectEqual(facet.Result.error_invalid_shader_nv, result);
-    result, _ = makePipeline(&bench, .{ .module = shaders, .name = "four", .layout = layout, .pass = pass, .blend_count = 3 });
-    try testing.expectEqual(facet.Result.error_invalid_shader_nv, result);
-    result, _ = makePipeline(&bench, .{ .module = shaders, .name = "three", .layout = layout, .pass = plain.?, .blend_count = 3 });
-    try testing.expectEqual(facet.Result.error_invalid_shader_nv, result);
-    // And a subpass flag the library has not.
-    var odd = info;
-    var oddly = together;
-    oddly.flags = 1;
-    odd.subpasses = @ptrCast(&oddly);
-    var refused: ?*facet.RenderPass = null;
-    try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateRenderPass(device, &odd, &refused));
-    // And one that reads another of its colours than the first as an
-    // input attachment: the first is the one plane a fragment function
-    // is given, and only this library's own flag draws colours together,
-    // so the refusal goes with it (docs/facet-vulkan10.md item 80;
-    // `error_initialization_failed` until 1.134).
-    const reads_second = facet.SubpassDescription{
-        .flags = facet.SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER,
+    // Whether an attachment may be blended is asked of its own format,
+    // found by its location, whichever plane it is: bytes beside whole
+    // numbers, which are never blended (VUID-VkGraphicsPipelineCreateInfo-blendEnable-04717),
+    // plainly and with the whole numbers read, and so drawn first.
+    const mixed_descriptions = [2]facet.AttachmentDescription{
+        .{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .general },
+        .{ .format = .r8g8b8a8_uint, .load_op = .clear, .store_op = .store, .final_layout = .general },
+    };
+    const additive = facet.PipelineColorBlendAttachmentState{ .blend_enable = true, .dst_color_blend_factor = .one, .dst_alpha_blend_factor = .one };
+    const plain_mixed = facet.SubpassDescription{ .color_attachment_count = 2, .color_attachments = &colors };
+    const reading_mixed = facet.SubpassDescription{
         .input_attachment_count = 1,
         .input_attachments = @ptrCast(&colors[1]),
-        .color_attachment_count = 3,
+        .color_attachment_count = 2,
         .color_attachments = &colors,
     };
-    try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateRenderPass(device, &.{ .attachment_count = 3, .attachments = &descriptions, .subpass_count = 1, .subpasses = @ptrCast(&reads_second) }, &refused));
-    try testing.expect(refused == null);
+    for ([2]facet.SubpassDescription{ plain_mixed, reading_mixed }, [2]u8{ 0, 1 }) |subpass, first_location| {
+        var mixed_made: ?*facet.RenderPass = null;
+        try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &mixed_descriptions, .subpass_count = 1, .subpasses = @ptrCast(&subpass) }, &mixed_made));
+        defer fb.DestroyRenderPass(device, mixed_made);
+        const mixed_plan = _objects.of(_render.RenderPass, mixed_made.?);
+        try testing.expectEqual(@as(u32, 1), mixed_plan.part_count);
+        try testing.expectEqual(first_location, mixed_plan.parts[0].locations[0]);
+        // The bytes blended, the whole numbers not: made.
+        result, const bytes_blended = makePipeline(&bench, .{ .module = shaders, .name = "white", .layout = layout, .pass = mixed_made.?, .blend = additive, .second_blend = .{}, .blend_count = 2 });
+        defer fb.DestroyPipeline(device, bytes_blended);
+        try testing.expectEqual(facet.Result.success, result);
+        // The whole numbers blended: refused.
+        result, const numbers_blended = makePipeline(&bench, .{ .module = shaders, .name = "white", .layout = layout, .pass = mixed_made.?, .blend = .{}, .second_blend = additive, .blend_count = 2 });
+        defer fb.DestroyPipeline(device, numbers_blended);
+        try testing.expectEqual(facet.Result.error_validation_failed, result);
+        try testing.expect(numbers_blended == null);
+    }
+
+    // Refused: a subpass flag, of which Vulkan 1.0 has none
+    // (VUID-VkSubpassDescription-flags-parameter) - facet's own
+    // SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER, 1 << 31, among them since
+    // 1.230.
+    var odd = info;
+    var oddly = together;
+    for ([2]u32{ 1, 1 << 31 }) |flag| {
+        oddly.flags = flag;
+        odd.subpasses = @ptrCast(&oddly);
+        var refused: ?*facet.RenderPass = null;
+        try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateRenderPass(device, &odd, &refused));
+        try testing.expect(refused == null);
+    }
 }
 
-test "a device whose fragment programs write the one colour, as the V3D's do: the subpass that asks for several is refused" {
+test "a subpass drawn together: CmdClearAttachments clears the attachment it names, at its own plane, in its own format, on every layer it names (since 1.230)" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    const _image = @import("../image/_image.zig");
+    const usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_TRANSFER_SRC;
+    // Two layers of each: a colour of bytes, one of floats the tiles keep
+    // in its own bytes, and another of bytes.
+    const formats = [3]facet.Format{ .b8g8r8a8_unorm, .r32g32b32a32_sfloat, .b8g8r8a8_unorm };
+    var images: [3]*facet.Image = undefined;
+    var views: [3]*facet.ImageView = undefined;
+    for (formats, &images, &views) |format, *image, *view| {
+        image.* = try bench.bareImage(.{ .format = format, .extent = .{ .width = 64, .height = 64 }, .array_layers = 2, .usage = usage }, false);
+        view.* = try bench.viewOf(.{ .image = image.*, .format = format, .view_type = .@"2d_array", .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_COLOR, .layer_count = 2 } });
+    }
+    var descriptions: [3]facet.AttachmentDescription = undefined;
+    for (formats, &descriptions) |format, *description| description.* = .{ .format = format, .load_op = .clear, .store_op = .store, .final_layout = .general };
+    const colors = [3]facet.AttachmentReference{ .{ .attachment = 0, .layout = .general }, .{ .attachment = 1, .layout = .general }, .{ .attachment = 2, .layout = .general } };
+    const subpass = facet.SubpassDescription{ .color_attachment_count = 3, .color_attachments = &colors };
+    var pass_made: ?*facet.RenderPass = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(device, &.{ .attachment_count = 3, .attachments = &descriptions, .subpass_count = 1, .subpasses = @ptrCast(&subpass) }, &pass_made));
+    defer fb.DestroyRenderPass(device, pass_made);
+    try testing.expectEqual(@as(u32, 1), _objects.of(_render.RenderPass, pass_made.?).part_count);
+    var frame: ?*facet.Framebuffer = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateFramebuffer(device, &.{ .render_pass = pass_made.?, .attachment_count = 3, .attachments = &views, .width = 64, .height = 64, .layers = 2 }, &frame));
+    defer fb.DestroyFramebuffer(device, frame);
+
+    const black = [4]f32{ 0, 0, 0, 1 };
+    const clear_values: [3]facet.ClearValue = @splat(.{ .color = .{ .float32 = black } });
+    const floats = [4]f32{ 0.3, 0.6, 0.9, 1 };
+    const green = facet.ClearValue{ .color = .{ .float32 = .{ 0, 1, 0, 1 } } };
+    const commands = try bench.record();
+    fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass_made.?, .framebuffer = frame.?, .render_area = .{ .extent = .{ .width = 64, .height = 64 } }, .clear_value_count = 3, .clear_values = &clear_values }, .@"inline");
+    // The second's top left quarter on both layers, to its floats; the
+    // third's top right on the first layer and its bottom right on the
+    // second, green. Until 1.230 a clear in a part drawn together reached
+    // its first plane alone, by the colour's bytes.
+    const top_left = facet.ClearRect{ .rect = .{ .extent = .{ .width = 32, .height = 32 } }, .layer_count = 2 };
+    const top_right = facet.ClearRect{ .rect = .{ .offset = .{ .x = 32 }, .extent = .{ .width = 32, .height = 32 } }, .layer_count = 1 };
+    const bottom_right = facet.ClearRect{ .rect = .{ .offset = .{ .x = 32, .y = 32 }, .extent = .{ .width = 32, .height = 32 } }, .base_array_layer = 1, .layer_count = 1 };
+    const of_floats = facet.ClearAttachment{ .aspect_mask = facet.IMAGE_ASPECT_COLOR, .color_attachment = 1, .clear_value = .{ .color = .{ .float32 = floats } } };
+    const of_green = facet.ClearAttachment{ .aspect_mask = facet.IMAGE_ASPECT_COLOR, .color_attachment = 2, .clear_value = green };
+    fb.CmdClearAttachments(commands, 1, @ptrCast(&of_floats), 1, @ptrCast(&top_left));
+    fb.CmdClearAttachments(commands, 1, @ptrCast(&of_green), 1, @ptrCast(&top_right));
+    fb.CmdClearAttachments(commands, 1, @ptrCast(&of_green), 1, @ptrCast(&bottom_right));
+    fb.CmdEndRenderPass(commands);
+    try bench.submit();
+
+    const floatsAt = struct {
+        fn at(image: *const _image.Image, layer: usize, x: usize, y: usize) [4]f32 {
+            const place = layer * @as(usize, @intCast(image.layer_bytes)) + y * image.pitch + x * 16;
+            return @bitCast(image.data.?[place..][0..16].*);
+        }
+    }.at;
+    const first = _objects.of(_image.Image, images[0]);
+    const second = _objects.of(_image.Image, images[1]);
+    const third = _objects.of(_image.Image, images[2]);
+    // The first cleared by the pass alone, on both layers.
+    for (0..2) |layer| try testing.expectEqual(@as(u32, 64 * 64), colorsInLayer(first, @intCast(layer), 0xFF00_0000));
+    // The second holds the floats as they were given, on both layers.
+    for (0..2) |layer| {
+        try testing.expectEqual(floats, floatsAt(second, layer, 8, 8));
+        try testing.expectEqual(floats, floatsAt(second, layer, 31, 31));
+        try testing.expectEqual(black, floatsAt(second, layer, 48, 48));
+    }
+    // The third green where each clear named it, and black elsewhere.
+    try testing.expectEqual(@as(u32, 0xFF00_FF00), layerColor(third, 0, 48, 8));
+    try testing.expectEqual(@as(u32, 0xFF00_FF00), layerColor(third, 1, 48, 48));
+    try testing.expectEqual(@as(u32, 32 * 32), colorsInLayer(third, 0, 0xFF00_FF00));
+    try testing.expectEqual(@as(u32, 32 * 32), colorsInLayer(third, 1, 0xFF00_FF00));
+}
+
+test "a device whose fragment programs write the one colour, as the V3D's do: a subpass of several drawn once for each, an attachment past the program's colour left as it is" {
     var bench = try Bench.up();
     defer bench.down();
     const fb = bench.rig.fb;
@@ -12843,36 +13063,58 @@ test "a device whose fragment programs write the one colour, as the V3D's do: th
     const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
     physical.can.several_outputs = false;
     defer physical.can.several_outputs = true;
+    const first = try Picture.of(&bench, 64, 64);
+    const second = try Picture.of(&bench, 64, 64);
     const descriptions = [2]facet.AttachmentDescription{
         .{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .general },
         .{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .general },
     };
     const colors = [2]facet.AttachmentReference{ .{ .attachment = 0, .layout = .general }, .{ .attachment = 1, .layout = .general } };
-    const together = facet.SubpassDescription{
-        .flags = facet.SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER,
-        .color_attachment_count = 2,
-        .color_attachments = &colors,
-    };
-    var refused: ?*facet.RenderPass = null;
-    try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &descriptions, .subpass_count = 1, .subpasses = @ptrCast(&together) }, &refused));
-    try testing.expectEqual(@as(?*facet.RenderPass, null), refused);
-
-    // The same subpass without the flag is drawn as it always was, once
-    // for each attachment, and a function of several colours is refused
-    // the pipeline there.
     const apart = facet.SubpassDescription{ .color_attachment_count = 2, .color_attachments = &colors };
     var plain: ?*facet.RenderPass = null;
     try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &descriptions, .subpass_count = 1, .subpasses = @ptrCast(&apart) }, &plain));
     defer fb.DestroyRenderPass(device, plain);
+    try testing.expectEqual(@as(u32, 2), _objects.of(_render.RenderPass, plain.?).part_count);
+    // facet's own flag is gone: refused as any flag is (since 1.230;
+    // `error_feature_not_present` on such a device until then).
+    var flagged = apart;
+    flagged.flags = 1 << 31;
+    var refused: ?*facet.RenderPass = null;
+    try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &descriptions, .subpass_count = 1, .subpasses = @ptrCast(&flagged) }, &refused));
+    try testing.expectEqual(@as(?*facet.RenderPass, null), refused);
+
     const shaders = try module(&bench, &TogetherScene.code);
     defer fb.DestroyShaderModule(device, shaders);
     const layout = try pipelineLayout(&bench, &.{}, 0);
     defer fb.DestroyPipelineLayout(device, layout);
+    // A function of several colours is refused the pipeline: the device's
+    // write one (`error_invalid_shader_nv` until 1.230, its count not the
+    // part's).
     const result, _ = makePipeline(&bench, .{ .module = shaders, .name = "three", .layout = layout, .pass = plain.?, .blend_count = 2 });
-    try testing.expectEqual(facet.Result.error_invalid_shader_nv, result);
+    try testing.expectEqual(facet.Result.error_feature_not_present, result);
     const taken, const drawn = makePipeline(&bench, .{ .module = shaders, .name = "one", .layout = layout, .pass = plain.?, .blend_count = 2 });
     try testing.expectEqual(facet.Result.success, taken);
-    fb.DestroyPipeline(device, drawn);
+    defer fb.DestroyPipeline(device, drawn);
+
+    // The one colour, at location 0: the first attachment takes it, and
+    // the second, at location 1, keeps its clear, as v3d writes no render
+    // target its shader has no output for (`vir_emit_tlb_color_write`,
+    // nir_to_vir.c:1958). Until 1.230 both took it.
+    const frame = try framebuffer(&bench, plain.?, &.{ first.view, second.view }, 64, 64);
+    defer fb.DestroyFramebuffer(device, frame);
+    const vertex_buffer, const vertex_bytes = try bench.buffer(@sizeOf(@TypeOf(TogetherScene.quad)), facet.BUFFER_USAGE_VERTEX_BUFFER);
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(TogetherScene.quad))], std.mem.asBytes(&TogetherScene.quad));
+    const offset: u64 = 0;
+    const clear_values: [2]facet.ClearValue = @splat(.{ .color = .{ .float32 = .{ 0, 0, 0, 1 } } });
+    const commands = try bench.record();
+    fb.CmdBeginRenderPass(commands, &.{ .render_pass = plain.?, .framebuffer = frame, .render_area = .{ .extent = .{ .width = 64, .height = 64 } }, .clear_value_count = 2, .clear_values = &clear_values }, .@"inline");
+    fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+    fb.CmdBindPipeline(commands, .graphics, drawn.?);
+    fb.CmdDraw(commands, 6, 1, 0, 0);
+    fb.CmdEndRenderPass(commands);
+    try bench.submit();
+    try testing.expectEqual(@as(u32, 0xFFFF_0000), first.at(32, 32));
+    try testing.expectEqual(@as(u32, 0xFF00_0000), second.at(32, 32));
 }
 
 test "an input attachment: what one subpass drew read pixel by pixel by the next" {
@@ -13787,10 +14029,10 @@ test "a subpass of two colour attachments apart over a depth or a stencil it loa
             .{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .general },
             .{ .format = case.format, .load_op = .load, .store_op = .store, .stencil_load_op = .load, .stencil_store_op = .store, .initial_layout = .depth_stencil_attachment_optimal, .final_layout = .depth_stencil_attachment_optimal },
         };
-        var pass_made: ?*facet.RenderPass = null;
-        try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(device, &.{ .attachment_count = 3, .attachments = &attachments, .subpass_count = 1, .subpasses = @ptrCast(&subpass) }, &pass_made));
-        defer fb.DestroyRenderPass(device, pass_made);
-        const pass = pass_made.?;
+        // Made as the V3D makes it, the cores drawing it together (since
+        // 1.230).
+        const pass = try apartPass(&bench, &.{ .attachment_count = 3, .attachments = &attachments, .subpass_count = 1, .subpasses = @ptrCast(&subpass) });
+        defer fb.DestroyRenderPass(device, pass);
         // A part for each colour attachment, both reading the plane in
         // and the last alone writing it back.
         const plan = _objects.of(_render.RenderPass, pass);
@@ -13846,10 +14088,10 @@ test "a query counts a subpass of two colour attachments apart once: each sample
     };
     const colors = [2]facet.AttachmentReference{ .{ .attachment = 0, .layout = .general }, .{ .attachment = 1, .layout = .general } };
     const subpass = facet.SubpassDescription{ .color_attachment_count = 2, .color_attachments = &colors };
-    var pass_made: ?*facet.RenderPass = null;
-    try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &attachments, .subpass_count = 1, .subpasses = @ptrCast(&subpass) }, &pass_made));
-    defer fb.DestroyRenderPass(device, pass_made);
-    const pass = pass_made.?;
+    // Made as the V3D makes it, the cores drawing it together (since
+    // 1.230).
+    const pass = try apartPass(&bench, &.{ .attachment_count = 2, .attachments = &attachments, .subpass_count = 1, .subpasses = @ptrCast(&subpass) });
+    defer fb.DestroyRenderPass(device, pass);
     try testing.expectEqual(@as(u32, 2), _objects.of(_render.RenderPass, pass).part_count);
     const frame = try framebuffer(&bench, pass, &.{ first.view, second.view }, 64, 64);
     defer fb.DestroyFramebuffer(device, frame);
@@ -13990,7 +14232,7 @@ test "an occlusion query and a statistics query counted at once, each from its o
     }
 }
 
-test "a colour reference of ATTACHMENT_UNUSED: no part of its own, the locations after it keep their attachments, blend states and clears, and what is written at it goes nowhere" {
+test "a colour reference of ATTACHMENT_UNUSED: no plane or part of its own, the locations after it keep their attachments, blend states and clears, and what is written at it goes nowhere" {
     var bench = try Bench.up();
     defer bench.down();
     const fb = bench.rig.fb;
@@ -14012,14 +14254,15 @@ test "a colour reference of ATTACHMENT_UNUSED: no part of its own, the locations
     try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &attachments, .subpass_count = 1, .subpasses = @ptrCast(&subpass) }, &pass_made));
     defer fb.DestroyRenderPass(device, pass_made);
     const pass = pass_made.?;
-    // A part for each colour drawn, each at its own location; the
-    // subpass's colours counted as Vulkan counts them.
+    // The one part draws both colours, a plane each at its own location
+    // (since 1.230; a part for each until then); the subpass's colours
+    // counted as Vulkan counts them.
     const plan = _objects.of(_render.RenderPass, pass);
-    try testing.expectEqual(@as(u32, 2), plan.part_count);
+    try testing.expectEqual(@as(u32, 1), plan.part_count);
     try testing.expectEqual(@as(u32, 3), plan.subpasses[0].color_count);
-    try testing.expectEqual(@as(u32, 0), plan.parts[0].output);
-    try testing.expectEqual(@as(u32, 2), plan.parts[1].output);
-    try testing.expectEqual(@as(u32, 1), plan.parts[1].colors[0]);
+    try testing.expectEqual(@as(u32, 2), plan.parts[0].color_count);
+    try testing.expectEqual([2]u8{ 0, 2 }, plan.parts[0].locations[0..2].*);
+    try testing.expectEqual(@as(u32, 1), plan.parts[0].colors[1]);
     const frame = try framebuffer(&bench, pass, &.{ first.view, third.view }, 64, 64);
     defer fb.DestroyFramebuffer(device, frame);
     const shaders = try module(&bench, &SubpassScene.code);
@@ -14079,11 +14322,11 @@ test "a colour reference of ATTACHMENT_UNUSED: no part of its own, the locations
     try testing.expectEqual(white, third.at(16, 16));
     try testing.expectEqual(blue, third.at(48, 16));
     try testing.expectEqual(green, third.at(48, 48));
-    // And the draw counted once, though two parts drew it.
+    // And the draw counted once.
     try testing.expectEqual(@as(u64, 32 * 64), try queryValue(&bench, occlusion, 0));
 }
 
-test "a subpass whose every colour reference is ATTACHMENT_UNUSED is drawn as a subpass of none; one drawn together, or resolving an unused colour, is refused" {
+test "a subpass whose every colour reference is ATTACHMENT_UNUSED is drawn as a subpass of none; one of an unused colour and a used one is drawn together, each at its location; resolving an unused colour is refused" {
     var bench = try Bench.up();
     defer bench.down();
     const fb = bench.rig.fb;
@@ -14136,13 +14379,39 @@ test "a subpass whose every colour reference is ATTACHMENT_UNUSED is drawn as a 
         try testing.expectEqual(@as(u16, 0), std.mem.readInt(u16, image.data.?[byte..][0..2], .little));
     }
 
-    // Drawn together, an unused colour would be a plane of the tiles
-    // with no image behind it: refused.
+    // Drawn together, an unused colour is no plane of the tiles, and the
+    // used one keeps its location: blue, the function's colour at 0, where
+    // it is first, and yellow, its colour at 1, where it is second (since
+    // 1.230: refused until then, a plane with no image behind it).
     const one_unused = [2]facet.AttachmentReference{ .{ .attachment = 1, .layout = .general }, .{ .attachment = facet.ATTACHMENT_UNUSED, .layout = .general } };
-    const together = facet.SubpassDescription{ .flags = facet.SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER, .color_attachment_count = 2, .color_attachments = &one_unused };
+    const unused_first = [2]facet.AttachmentReference{ .{ .attachment = facet.ATTACHMENT_UNUSED, .layout = .general }, .{ .attachment = 1, .layout = .general } };
+    const picture = try Picture.of(&bench, 64, 64);
+    const black_and_far = [2]facet.ClearValue{ .{ .depth_stencil = .{ .depth = 1 } }, .{ .color = .{ .float32 = .{ 0, 0, 0, 1 } } } };
+    for ([2]*const [2]facet.AttachmentReference{ &one_unused, &unused_first }, [2]u8{ 0, 1 }, [2]u32{ SubpassScene.blue, SubpassScene.yellow }) |references, location, color| {
+        const together = facet.SubpassDescription{ .color_attachment_count = 2, .color_attachments = references };
+        var taken: ?*facet.RenderPass = null;
+        try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &attachments, .subpass_count = 1, .subpasses = @ptrCast(&together) }, &taken));
+        defer fb.DestroyRenderPass(device, taken);
+        const taken_plan = _objects.of(_render.RenderPass, taken.?);
+        try testing.expectEqual(@as(u32, 1), taken_plan.part_count);
+        try testing.expectEqual(@as(u32, 1), taken_plan.parts[0].color_count);
+        try testing.expectEqual(@as(u32, 1), taken_plan.parts[0].colors[0]);
+        try testing.expectEqual(location, taken_plan.parts[0].locations[0]);
+        const taken_frame = try framebuffer(&bench, taken.?, &.{ depth_view, picture.view }, 64, 64);
+        defer fb.DestroyFramebuffer(device, taken_frame);
+        const made, const by_location = makePipeline(&bench, .{ .module = shaders, .name = "outputs", .layout = layout, .pass = taken.?, .blend_count = 2 });
+        try testing.expectEqual(facet.Result.success, made);
+        defer fb.DestroyPipeline(device, by_location);
+        const drawn = try bench.record();
+        fb.CmdBeginRenderPass(drawn, &.{ .render_pass = taken.?, .framebuffer = taken_frame, .render_area = .{ .extent = .{ .width = 64, .height = 64 } }, .clear_value_count = 2, .clear_values = &black_and_far }, .@"inline");
+        fb.CmdBindVertexBuffers(drawn, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+        fb.CmdBindPipeline(drawn, .graphics, by_location.?);
+        fb.CmdDraw(drawn, 6, 1, 0, 0);
+        fb.CmdEndRenderPass(drawn);
+        try bench.submit();
+        try testing.expectEqual(@as(u32, 64 * 64), pixelsOf(&picture, color));
+    }
     var refused: ?*facet.RenderPass = null;
-    try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &attachments, .subpass_count = 1, .subpasses = @ptrCast(&together) }, &refused));
-    try testing.expectEqual(null, refused);
     // A resolve attachment for an unused colour
     // (VUID-VkSubpassDescription-pResolveAttachments-00847), and a
     // reference past the pass's attachments that is not ATTACHMENT_UNUSED.
@@ -14177,12 +14446,14 @@ test "a colour attachment past an unused one, its subpass's one part: blended ov
     // The first writes a green of alpha 0 into the tile; the second takes
     // as much of its own colour as the destination's alpha leaves, which
     // over a target with no alpha is none at all: Vulkan reads its alpha
-    // as 1.
-    var result, const plain = makePipeline(&bench, .{ .module = flat, .layout = layout, .pass = pass, .blend_count = 2 });
+    // as 1. Both write location 1 as well as 0, the attachment being at
+    // the second (since 1.230: a function of one colour was drawn into
+    // it until then).
+    var result, const plain = makePipeline(&bench, .{ .module = flat, .name = "both", .layout = layout, .pass = pass, .blend_count = 2 });
     try testing.expectEqual(facet.Result.success, result);
     defer fb.DestroyPipeline(device, plain);
     const by_alpha = facet.PipelineColorBlendAttachmentState{ .blend_enable = true, .src_color_blend_factor = .one_minus_dst_alpha, .dst_color_blend_factor = .zero, .src_alpha_blend_factor = .one, .dst_alpha_blend_factor = .zero };
-    result, const over = makePipeline(&bench, .{ .module = flat, .layout = layout, .pass = pass, .blend_count = 2, .second_blend = by_alpha });
+    result, const over = makePipeline(&bench, .{ .module = flat, .name = "both", .layout = layout, .pass = pass, .blend_count = 2, .second_blend = by_alpha });
     try testing.expectEqual(facet.Result.success, result);
     defer fb.DestroyPipeline(device, over);
 

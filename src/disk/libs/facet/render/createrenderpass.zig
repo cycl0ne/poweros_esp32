@@ -67,10 +67,8 @@ const _image = @import("../image/_image.zig");
 /// `error_initialization_failed` until 1.134);
 /// `error_feature_not_present` for a subpass that reads its own depth
 /// attachment, which Vulkan allows and this library does not draw
-/// (docs/facet-vulkan10.md item 92), and for one of colours drawn together
-/// that reads another than the first, which only this library's own
-/// SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER asks for (item 80; both
-/// `error_initialization_failed` until 1.134); `error_out_of_host_memory`.
+/// (docs/facet-vulkan10.md item 92; `error_initialization_failed` until
+/// 1.134); `error_out_of_host_memory`.
 ///
 /// BEHAVIOR:
 /// The pass has up to 4 subpasses and up to 8 attachments. A subpass draws
@@ -117,9 +115,8 @@ const _image = @import("../image/_image.zig");
 /// (vk_render_pass.c:1924-1930), and lavapipe gives it no colour buffer
 /// (lvp_execute.c:1984-1999). A subpass drawn a part for each colour
 /// attachment has no part for it, and one whose every colour is unused is
-/// drawn as a subpass of none. One whose colours go together
-/// (SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER) would have a plane in its tiles
-/// with no image behind it, and is `error_feature_not_present`. A resolve
+/// drawn as a subpass of none. Drawn together it has no plane in the
+/// tiles (since 1.230; `error_feature_not_present` until then). A resolve
 /// attachment for an unused colour is `error_validation_failed`
 /// (VUID-VkSubpassDescription-pResolveAttachments-00847;
 /// `error_initialization_failed` until 1.134).
@@ -232,11 +229,10 @@ const _image = @import("../image/_image.zig");
 /// in other tiles, drawn on other cores or not yet drawn, and reads as
 /// transparent black - which is all Vulkan's by-region dependency
 /// promises either. A subpass of several colour attachments drawn
-/// together reads the first of them this way, and another of them is
-/// `error_feature_not_present`: only the library's own flag draws them
-/// together, and that goes with the flag (docs/facet-vulkan10.md item 80).
-/// Reading the depth attachment it draws into is not among this either,
-/// and is `error_feature_not_present` as well (item 92; both
+/// together reads one of them this way, whichever it is (the first alone
+/// until 1.230, docs/facet-vulkan10.md item 80), and one that reads two
+/// is drawn once for each of them. Reading the depth attachment it draws
+/// into is not among this, and is `error_feature_not_present` (item 92;
 /// `error_initialization_failed` until 1.134).
 ///
 /// Without that dependency the subpass is drawn the same way since 1.134.
@@ -252,27 +248,29 @@ const _image = @import("../image/_image.zig");
 /// `input_attachment` descriptor does (UpdateDescriptorSets), and the
 /// image wants IMAGE_USAGE_INPUT_ATTACHMENT (CreateImage).
 ///
-/// A subpass of several colour attachments is drawn once for each, its commands
-/// played over, so it costs that much more: its fragment function is called for
-/// each, and `shader.Resources.output` says for which. A fixed fragment
-/// function has one colour, which every attachment gets.
-///
-/// Since 1.51 such a subpass may be drawn **together** instead, in one
-/// pass over the tiles: SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER in its
-/// `flags`, facet.library's own, and every pipeline of it has a fragment
-/// entry that writes exactly its colour attachments in the one call
-/// (`shader.fragmentOutputs`, `shader.Fragments.colorsOf`); one that does
-/// not is `error_invalid_shader_nv` (CreateGraphicsPipelines). The
-/// vertices are worked once, the triangles binned once and a quad's
-/// fragment function called once for all of them - a G-buffer's three or
-/// four planes for the price of one - and each attachment is still
-/// blended its own way, into a plane of each tile's own. The flag wants a
-/// device whose `several_outputs` is true: the cores, not the V3D, whose
-/// fragment programs are the fixed forms and each write the one colour;
-/// there it is `error_feature_not_present`, and a subpass without it is
-/// drawn as it always was. Any other bit in `flags` is none of Vulkan
-/// 1.0's (VUID-VkSubpassDescription-flags-parameter): `error_validation_failed`
-/// since 1.133, `error_feature_not_present` before.
+/// A subpass of several colour attachments is drawn **together**, in one
+/// pass over the tiles, on a device whose fragment functions write
+/// several (`several_outputs`, the cores), as lavapipe draws a subpass's
+/// colour buffers at once: the vertices are worked once, the triangles
+/// binned once and a quad's fragment function called once for all of
+/// them, and each attachment is blended its own way, into a plane of each
+/// tile's own. A function writes the colours of the locations it has
+/// outputs for (`shader.fragmentOutputs`, `shader.Fragments.colorsOf`),
+/// and an attachment at a location past them is left as it is, as
+/// llvmpipe blends only the colour buffers a shader has an output for
+/// (lp_state_fs.c:3618-3623): a `fragment` entry's one colour is the
+/// first's. A subpass that reads two of its own colour attachments, and
+/// every subpass of several on the V3D, whose programs write one colour,
+/// is drawn once for each instead, its commands played over: each time
+/// the function's output at that attachment's location is drawn, and an
+/// attachment past its outputs is left as it is there too (since 1.230;
+/// until then that was every subpass unless it carried facet.library's
+/// own SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER, from 1.51, and every
+/// attachment got a fixed function's one colour, `shader.Resources.output`
+/// telling it which was drawn). A flag in `flags` is none of Vulkan
+/// 1.0's (VUID-VkSubpassDescription-flags-parameter):
+/// `error_validation_failed` since 1.133, `error_feature_not_present`
+/// before.
 ///
 /// Attachments a subpass does not name are left as they are. The
 /// dependencies say nothing of what waits for what - a queue's commands
@@ -434,13 +432,24 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
         // 1.134; a panic before).
         if (subpass.color_attachment_count != 0 and subpass.color_attachments == null) return .error_validation_failed;
         const colors = colorsOf(subpass);
-        // facet.library's own flag: the subpass's colour attachments are
-        // drawn together, in one pass over the tiles, by a fragment
-        // function that writes all of them at once (since 1.51). Without
-        // it the subpass is a part for each of them, played over again.
-        const together = subpass.flags & facet.SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER != 0;
-        if (together and !owner.physical.can.several_outputs) return .error_feature_not_present;
-        if (subpass.flags & ~facet.SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER != 0) return .error_validation_failed;
+        // Vulkan 1.0 has no flag of a subpass
+        // (VUID-VkSubpassDescription-flags-parameter). facet.library's own
+        // SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER, which drew the colour
+        // attachments together from 1.51, is gone since 1.230: a subpass
+        // of several is what it meant (docs/facet-vulkan10.md item 80).
+        if (subpass.flags != 0) return .error_validation_failed;
+        // Its colour attachments drawn together, in one pass over the
+        // tiles, a plane for each, where the device's fragment functions
+        // write several (`several_outputs`, the cores), as lavapipe draws
+        // a subpass's colour buffers at once. Otherwise, the V3D, a part
+        // for each of them, played over again. And a part for each where
+        // the subpass reads two of them as input attachments: the function
+        // is given the tile's pixels of one plane alone.
+        var own_reads: u32 = 0;
+        for (colors) |reference| {
+            if (reference.attachment < reads_own.len and reads_own[reference.attachment]) own_reads += 1;
+        }
+        const together = owner.physical.can.several_outputs and own_reads <= 1;
         // A subpass that reads what it draws is a part of its own: what it
         // reads is the tile as this part starts, so it does not go on in
         // the part before it (since 1.64).
@@ -527,15 +536,12 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
         }
         // The colour attachments it draws: those not named
         // ATTACHMENT_UNUSED, writes to whose location are discarded (since
-        // 1.118). Drawn apart, an unused one is no part at all, and the
-        // parts after it keep their locations (`Part.output`). Drawn
-        // together, it would be a plane of the tiles with no image behind
-        // it, which a part cannot have yet.
+        // 1.118). Drawn apart, an unused one is no part at all; drawn
+        // together, no plane (since 1.230: refused until then). Either way
+        // those after it keep their locations (`Part.locations`).
         var used: u32 = 0;
         for (colors) |reference| {
-            if (reference.attachment != facet.ATTACHMENT_UNUSED) {
-                used += 1;
-            } else if (together) return .error_feature_not_present;
+            if (reference.attachment != facet.ATTACHMENT_UNUSED) used += 1;
         }
         // Every one unused is a subpass of no colour all the same, drawn
         // as one where the device draws one (since 1.150: before, it was
@@ -616,19 +622,29 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
             };
             if (together) {
                 // The one part draws them all: a plane of each tile for
-                // each of them. What it reads of its own is the first of
-                // them, that being the one plane a fragment function is
-                // given. Another of them read as well is one this library
-                // does not draw; only its own flag draws colours together,
-                // and this goes with it (docs/facet-vulkan10.md item 80).
+                // each of them, at its location. The one it reads of its
+                // own, where it reads one, is the first plane, that being
+                // the one whose pixels a fragment function is given
+                // (since 1.230: the first colour alone was read until
+                // then); the others in the subpass's order after it.
+                var plane = whole.color_count;
                 if (reads_own[color_index]) {
-                    if (k != 0) return .error_feature_not_present;
+                    var at = whole.color_count;
+                    while (at > 0) : (at -= 1) {
+                        whole.colors[at] = whole.colors[at - 1];
+                        whole.color_formats[at] = whole.color_formats[at - 1];
+                        whole.color_loads[at] = whole.color_loads[at - 1];
+                        whole.resolves[at] = whole.resolves[at - 1];
+                        whole.locations[at] = whole.locations[at - 1];
+                    }
+                    plane = 0;
                     whole.reads_target = true;
                 }
-                whole.colors[whole.color_count] = color_index;
-                whole.color_formats[whole.color_count] = color.format;
-                whole.color_loads[whole.color_count] = load;
-                whole.resolves[whole.color_count] = resolve;
+                whole.colors[plane] = color_index;
+                whole.color_formats[plane] = color.format;
+                whole.color_loads[plane] = load;
+                whole.resolves[plane] = resolve;
+                whole.locations[plane] = @intCast(k);
                 whole.color_count += 1;
             } else {
                 var part = whole;
@@ -638,7 +654,7 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
                 part.resolves[0] = resolve;
                 part.color_count = 1;
                 part.reads_target = reads_own[color_index];
-                part.output = @intCast(k);
+                part.locations[0] = @intCast(k);
                 plan.parts[plan.part_count] = part;
                 plan.part_count += 1;
             }
