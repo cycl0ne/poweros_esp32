@@ -17,7 +17,20 @@
 //! longer than the cores need - but never a shape or a tile in ink
 //! alone, which the kernels draw more slowly than in both colours, though
 //! they write fewer pixels, and no sooner, taken together, than the
-//! cores.
+//! cores. A job that reads the device's own memory - a picture or a
+//! colour laid over a buffer there, a scale laid over one, a picture
+//! there - is theirs from fewer pixels, as the cores read that memory
+//! uncached: from `blend_reading`, `colour_reading` and `scale_reading`,
+//! each with a size where the machine has that memory and one for its
+//! memory window. On the NucBox, where the machine has it, a picture laid
+//! over 64 x 64 pixels took the kernels 93 us and the cores 410, over 32
+//! x 32 the cores 5; a colour over 16 x 32 84 and 114, over 8 x 16 the
+//! cores 27 against the kernels' 61; a scale from 64 to 128 pixels a side
+//! 127 and 1099, from 32 to 64 the cores 71 against 99 to 122. Through
+//! the window the cores take longer still - a colour over 8 x 16 145 us
+//! against the kernels' 83, a scale from 32 to 64 189 against 109, from
+//! 16 to 32 24 against 114. Shapes and tiles, which do not read what they
+//! land on, keep the rule for any memory.
 //!
 //! On the NucBox, by `C:test/Gpu KERNELS` - every job handed to the
 //! kernels, then by this rule, the cores' timed on plain memory and on
@@ -142,6 +155,22 @@ const most_covered: u64 = 4096;
 /// however small is the cores' for the same pixels.
 const least_pixels: u64 = 1 << 16;
 
+/// The fewest pixels a job that reads the device's own memory - a buffer
+/// it lays over, or a picture it lays - lands on for the board's own rule
+/// to hand it to the kernels, where the machine has that memory and
+/// through the memory window: about where the kernels, some 50 to 120 us
+/// a job however small, are sooner than the cores, which read that memory
+/// uncached - a picture laid, a colour, a scale. A colour takes the cores
+/// a steady time a pixel, 0.22 us where the machine has the memory and 1
+/// through the window, so its sizes are where that passes the kernels'
+/// job; a picture's and a scale's time goes by how many of its pixels
+/// cover partly, as only those read what they land on, so theirs are the
+/// sizes tried where the kernels were sooner.
+const Reading = struct { machine: u64, window: u64 };
+const blend_reading: Reading = .{ .machine = 64 * 64, .window = 64 * 64 };
+const colour_reading: Reading = .{ .machine = 16 * 32, .window = 8 * 16 };
+const scale_reading: Reading = .{ .machine = 128 * 64, .window = 64 * 64 };
+
 // --- the kernels started --------------------------------------------------------------
 
 /// The compute engine's queue started, the board's code object loaded and
@@ -164,7 +193,7 @@ pub fn start(compute: *Kernels, sys: *ExecBase, gpu: *AMDGPUBase) void {
             return;
         }
     }
-    exec.kprintf(sys, "%s: the graphics block's compute engine runs the board's kernels: pictures and colours laid, scales, and shapes and tiles in both colours over %lu pixels and more are theirs\n", .{ dcn.owner, least_pixels });
+    exec.kprintf(sys, "%s: the graphics block's compute engine runs the board's kernels: pictures and colours laid, scales, and shapes and tiles in both colours over %lu pixels and more are theirs, and fewer where they read the device's own memory\n", .{ dcn.owner, least_pixels });
     @atomicStore(bool, &compute.ready, true, .release);
 }
 
@@ -184,7 +213,8 @@ pub fn stop(compute: *Kernels, gpu: *AMDGPUBase) void {
 pub fn blendPixels(compute: *Kernels, dma: *const Dma, sys: *ExecBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, picture: *const rtg.RtgPixels, alpha: u32) i32 {
     const width: u32 = @intCast(area.width);
     const height: u32 = @intCast(area.height);
-    if (!taken(compute, dma, @as(u64, width) * height >= least_pixels)) return err.RTGERR_NOT_SUPPORTED;
+    const least = @min(leastFor(dma, dest.pixels, blend_reading), leastFor(dma, picture.pixels, blend_reading));
+    if (!taken(compute, dma, @as(u64, width) * height >= least)) return err.RTGERR_NOT_SUPPORTED;
     const strength = @min(alpha, 255);
     if (strength == 0) return err.RTGERR_OK;
     if (dest.format != .bgra32) return err.RTGERR_NOT_SUPPORTED;
@@ -226,7 +256,7 @@ pub fn blendPixelsJob(dest: *const rtg.RtgBitMap, area: *const rtg.RtgRect, pict
 pub fn blendRect(compute: *Kernels, dma: *const Dma, sys: *ExecBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, pen: u32) i32 {
     const width: u32 = @intCast(area.width);
     const height: u32 = @intCast(area.height);
-    if (!taken(compute, dma, @as(u64, width) * height >= least_pixels)) return err.RTGERR_NOT_SUPPORTED;
+    if (!taken(compute, dma, @as(u64, width) * height >= leastFor(dma, dest.pixels, colour_reading))) return err.RTGERR_NOT_SUPPORTED;
     if (pen >> 24 == 0) return err.RTGERR_OK;
     if (dest.format != .bgra32) return err.RTGERR_NOT_SUPPORTED;
     const target = Target.of(dest, area, 4) orelse return err.RTGERR_NOT_SUPPORTED;
@@ -250,7 +280,11 @@ pub fn blendRectJob(dest: *const rtg.RtgBitMap, area: *const rtg.RtgRect, pen: u
 pub fn scalePixels(compute: *Kernels, dma: *const Dma, sys: *ExecBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, picture: *const rtg.RtgPixels, src_width: u32, src_height: u32) i32 {
     const width: u32 = @intCast(area.width);
     const height: u32 = @intCast(area.height);
-    if (!taken(compute, dma, @as(u64, width) * height >= least_pixels)) return err.RTGERR_NOT_SUPPORTED;
+    // A stored scale does not read the buffer it lands on.
+    const lays = picture.flags & rtg.RTGPIXF_STORE == 0;
+    const dest_least = if (lays) leastFor(dma, dest.pixels, scale_reading) else least_pixels;
+    const least = @min(dest_least, leastFor(dma, picture.pixels, scale_reading));
+    if (!taken(compute, dma, @as(u64, width) * height >= least)) return err.RTGERR_NOT_SUPPORTED;
     if (width > most_side or height > most_side or src_width > most_side or src_height > most_side) return err.RTGERR_NOT_SUPPORTED;
     const shrinks = src_width > width or src_height > height;
     if (shrinks and covered(width, src_width) * covered(height, src_height) > most_covered) return err.RTGERR_NOT_SUPPORTED;
@@ -379,6 +413,18 @@ pub fn blitPatternJob(dest: *const rtg.RtgBitMap, area: *const rtg.RtgRect, tile
     };
 }
 
+/// The fewest pixels a job that reads the memory at `memory` lands on for
+/// the board's own rule to hand it to the kernels: `least_pixels`, or
+/// fewer, as `reading` says, where that is the device's own memory.
+fn leastFor(dma: *const Dma, memory: ?[*]const u8, reading: Reading) u64 {
+    const first = memory orelse return least_pixels;
+    return switch (dma_file.deviceMemoryOf(dma, @intFromPtr(first))) {
+        .not => least_pixels,
+        .machine => @min(reading.machine, least_pixels),
+        .window => @min(reading.window, least_pixels),
+    };
+}
+
 /// Whether the kernels take a job, once they run: by the board's own
 /// rule, what `by_size` says of it; every one where RTGCTRL_AMD_ENGINE
 /// has them take every job, none where it has them take none.
@@ -491,8 +537,8 @@ const Part = struct {
 /// One dispatch of `kernel` over `width` x `height` pixels, handed
 /// `job`, sent and waited for: RTGERR_OK once it is done;
 /// RTGERR_NOT_SUPPORTED, nothing written, where it was not sent. One not
-/// done within `job_most_ms` has the queue reset, as often as a job
-/// before it is given up for it; given up itself, it is answered
+/// done within `job_most_ms` has the queue reset, and is waited for again
+/// where the reset writes it to the queue again; given up, it is answered
 /// RTGERR_TIMEOUT, said. Where the queue cannot be reset no job is the
 /// kernels' from then on, said once.
 fn run(compute: *Kernels, sys: *ExecBase, gpu: *AMDGPUBase, kernel: *const amdgpu.GPUKernel, job: anytype, width: u32, height: u32) i32 {
@@ -531,6 +577,16 @@ fn run(compute: *Kernels, sys: *ExecBase, gpu: *AMDGPUBase, kernel: *const amdgp
 // on the host over the library's own pixels, are in kernels/tests.zig.
 
 const testing = @import("std").testing;
+
+test "a job reading the device's memory is the kernels' from fewer pixels" {
+    var dma: Dma = .{};
+    dma.device_memory = .{ .{ .start = 0x8_4000_0000, .bytes = 512 << 20 }, .{ .start = 0x7c_0000_0000, .bytes = 256 << 20 } };
+    try testing.expectEqual(least_pixels, leastFor(&dma, @ptrFromInt(0x1000_0000), colour_reading));
+    try testing.expectEqual(least_pixels, leastFor(&dma, null, colour_reading));
+    try testing.expectEqual(colour_reading.machine, leastFor(&dma, @ptrFromInt(0x8_4000_0000 + 64), colour_reading));
+    try testing.expectEqual(colour_reading.window, leastFor(&dma, @ptrFromInt(0x7c_0000_0000), colour_reading));
+    try testing.expectEqual(blend_reading.machine, leastFor(&dma, @ptrFromInt(0x8_4000_0000), blend_reading));
+}
 
 test "every job fits the arguments a dispatch hands a kernel" {
     inline for (.{ jobs.BlendPixels, jobs.BlendRect, jobs.ScalePixels, jobs.BlitTemplate, jobs.BlitPattern }) |Job| {

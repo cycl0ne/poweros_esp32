@@ -186,6 +186,39 @@ test "a machine without the device has the resource, and it answers false" {
     try tearDown(ab);
 }
 
+test "the device's memory as the hub places it is said by GetGPUInfo, to the device and in the machine" {
+    const ab = try setUp();
+    defer kexec.deinit();
+
+    // The hub's registers as the machine's firmware leaves them on the
+    // NucBox: 512 MiB at 0x8000000000 to the device, at 0x840000000 in
+    // the machine, each counted in 16 MiB.
+    var device: sdk.pci.PCIDevice = .{};
+    ab.device = &device;
+    var registers = [_]u32{0} ** 0x900;
+    registers[0x8ec] = 0x8000;
+    registers[0x8ed] = 0x801f;
+    registers[0x8d7] = 0x840;
+    ab.info.registers = @intFromPtr(&registers);
+    var hub: amdgpu.GPUBlock = .{ .major = 3, .minor = 0, .revision = 1, .count = 2 };
+    hub.addresses[1] = 0;
+    @import("memory/_memory.zig").take(ab, hub);
+    var info: amdgpu.GPUInfo = .{};
+    try testing.expect(call(ab).GetGPUInfo(&info));
+    try testing.expectEqual(@as(u64, 0x80_0000_0000), info.memory_start);
+    try testing.expectEqual(@as(u64, 0x8_4000_0000), info.memory_machine);
+    try testing.expectEqual(@as(u64, 512 * 1024 * 1024), ab.memory_bytes);
+
+    // A hub of another version says nothing of it.
+    ab.info = .{};
+    hub.minor = 1;
+    @import("memory/_memory.zig").take(ab, hub);
+    try testing.expect(call(ab).GetGPUInfo(&info));
+    try testing.expectEqual(@as(u64, 0), info.memory_machine);
+    ab.device = null;
+    try tearDown(ab);
+}
+
 test "the device's memory is handed out in pieces each address of which says the same place" {
     const ab = try setUp();
     defer kexec.deinit();

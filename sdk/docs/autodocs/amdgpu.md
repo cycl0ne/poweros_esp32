@@ -829,9 +829,10 @@ fn GetGPUInfo(ab: *AMDGPUBase, info: *GPUInfo) bool
 
 True with `info` filled in: the device's PCI vendor and device ids,
 its register window and its memory window as the machine reaches them,
-each with its length, how much memory of its own it has, and where
-that starts to the device (`memory_start`, since 1.15). False on a
-machine without the device, with `info` left alone.
+each with its length, how much memory of its own it has, where that
+starts to the device (`memory_start`, since 1.15) and where it starts
+in the machine (`memory_machine`, since 1.18). False on a machine
+without the device, with `info` left alone.
 
 **BEHAVIOR**
 
@@ -841,7 +842,9 @@ own answer for its memory - the part of the machine's memory set aside
 for it - of which the memory window shows the first `window_bytes`;
 `memory_start` is where its memory hub places it to the device's
 engines, so that a byte `n` into the window is `memory_start + n` to
-them.
+them, and `memory_machine` where the machine has it, the same byte
+`memory_machine + n` to the CPU there - two places of one memory,
+which the CPU reads uncached at either.
 
 **CONTEXT**
 

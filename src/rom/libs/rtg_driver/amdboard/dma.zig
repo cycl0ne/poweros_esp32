@@ -9,16 +9,25 @@
 //! memory's own speed, and the engine is as quick and leaves them free.
 //! So a job is the engine's where the memory it reads and writes - a
 //! fill's rectangle, a copy's source and destination - is more than the
-//! CPU's caches below the memory hold together (`cachedBytes`). Every
-//! smaller job is answered RTGERR_NOT_SUPPORTED before anything is
-//! written, and graphics.library does it on the cores. The board's
+//! CPU's caches below the memory hold together (`cachedBytes`). A copy
+//! from the device's own memory, which the cores read uncached, is the
+//! engine's from fewer bytes: more than `reading_bytes` of its two
+//! rectangles where the machine has that memory, more than
+//! `window_reading_bytes` through its memory window. Every smaller job is
+//! answered RTGERR_NOT_SUPPORTED before anything is written, and
+//! graphics.library does it on the cores. The board's
 //! kernels (`kernels.zig`) have rules of their own, and
 //! RTGCTRL_AMD_ENGINE sets another for both - every job, or none - for a
 //! program that times the engines against the cores (`setRule`). On the NucBox,
 //! whose caches hold 24 MiB, with the rectangles just written by the CPU:
 //! a copy between two buffers of 10 MiB took the engine 534 us and the
 //! cores 69, of 14 MiB 891 and 1166; a fill of 20 MiB 888 and 603, of
-//! 28 MiB 1220 and 1257.
+//! 28 MiB 1220 and 1257. From a buffer of the device's own memory, where
+//! the machine has it, a copy of 64 x 64 pixels took the engine 100 us
+//! and the cores 241, of 32 x 32 83 and 78, of 16 x 16 92 and 30; through
+//! the window a copy of 16 x 16 83 and 213. A fill there, which the cores
+//! write gathered, stays by the caches: one of 256 x 256 pixels took the
+//! engine 143 us and the cores 39.
 //!
 //! **Until the queue runs** every job is refused. The board starts the
 //! graphics block and its queue itself, in a process of its own begun as
@@ -113,6 +122,9 @@ pub const Dma = struct {
     /// all ones for none. Both set and read atomically.
     least: u64 = 0,
     rule: isize = rtg.tags.RTG_AMD_ENGINE_SIZE,
+    /// The device's own memory as the CPU reaches it - where the machine
+    /// has it, and the memory window - which the cores read uncached.
+    device_memory: [2]Addresses = @splat(.{}),
     /// The board's kernels, which the process starting the queue starts
     /// once it runs.
     kernels: ?*kernels.Kernels = null,
@@ -131,6 +143,21 @@ pub const Dma = struct {
     ended: exec.Message = .{},
     end_port: exec.MsgPort = .{ .flags = exec.PA_IGNORE },
 };
+
+/// A run of the machine's addresses, `bytes` from `start`.
+pub const Addresses = struct { start: u64 = 0, bytes: u64 = 0 };
+
+/// Where an address is in the device's own memory: not in it, where the
+/// machine has it, or in the memory window.
+pub const DeviceMemory = enum { not, machine, window };
+
+/// The bytes a copy that reads the device's own memory has to be more
+/// than to be the engine's by the board's own rule, the source's and the
+/// destination's together, where the machine has that memory and through
+/// the memory window: about where the engine, some 85 us a job however
+/// small, copies sooner than the cores read it.
+const reading_bytes: u64 = 12 * 1024;
+const window_reading_bytes: u64 = 1024;
 
 /// How long a job is waited for before the queue is taken as no longer
 /// running: the engine fills the largest buffer, 16384 x 16384 pixels of
@@ -165,6 +192,10 @@ pub fn start(dma: *Dma, sys: *ExecBase, gpu: *AMDGPUBase, compute: *kernels.Kern
     dma.* = .{ .gpu = gpu, .cached = cached, .least = cached, .kernels = compute };
     var info: amdgpu.GPUInfo = .{};
     if (!gpu.GetGPUInfo(&info)) return;
+    dma.device_memory = .{
+        .{ .start = info.memory_machine, .bytes = if (info.memory_machine != 0) info.memory_bytes else 0 },
+        .{ .start = info.window, .bytes = info.window_bytes },
+    };
     if (dma.cached == 0) {
         exec.kprintf(sys, "%s: the CPU does not say what its caches hold: the graphics block's DMA engine is not used\n", .{dcn.owner});
         return;
@@ -218,6 +249,24 @@ pub fn cutOff(dma: *const Dma) u64 {
     return @atomicLoad(u64, &dma.least, .acquire);
 }
 
+/// The bytes a job that reads the device's own memory has to be more
+/// than to be an engine's, under the rule in force: by size the fewer of
+/// the caches' and `by_size`; under the others what any job has to be.
+pub fn cutOffReading(dma: *const Dma, by_size: u64) u64 {
+    return switch (ruleOf(dma)) {
+        rtg.tags.RTG_AMD_ENGINE_SIZE => @min(by_size, cutOff(dma)),
+        else => cutOff(dma),
+    };
+}
+
+/// Where `address` is in the device's own memory, as the CPU reaches it.
+pub fn deviceMemoryOf(dma: *const Dma, address: usize) DeviceMemory {
+    for (dma.device_memory, [2]DeviceMemory{ .machine, .window }) |run, place| {
+        if (address >= run.start and address - run.start < run.bytes) return place;
+    }
+    return .not;
+}
+
 /// The rule in force (RTG_AMD_ENGINE_*).
 pub fn ruleOf(dma: *const Dma) isize {
     return @atomicLoad(isize, &dma.rule, .acquire);
@@ -242,7 +291,7 @@ fn starter(sys: *ExecBase) callconv(.c) void {
     const me = sys.FindTask(null).?;
     const dma: *Dma = @ptrCast(@alignCast(me.user_data orelse return));
     if (!bringUp(sys, dma.gpu.?)) return;
-    exec.kprintf(sys, "%s: the graphics block's DMA engine runs: fills and copies of more than %lu bytes are its\n", .{ dcn.owner, dma.cached });
+    exec.kprintf(sys, "%s: the graphics block's DMA engine runs: fills and copies of more than %lu bytes are its, copies from the device's own memory of more than %lu\n", .{ dcn.owner, dma.cached, reading_bytes });
     @atomicStore(bool, &dma.ready, true, .release);
     if (dma.kernels) |compute| kernels.start(compute, sys, dma.gpu.?);
 }
@@ -393,15 +442,22 @@ pub fn fill(dma: *Dma, sys: *ExecBase, rb: *RtgBase, bitmap: *rtg.RtgBitMap, are
 /// engine, as one job - or RTGERR_NOT_SUPPORTED, nothing written, for
 /// copies the cores do sooner or the engine does not take.
 pub fn copy(dma: *Dma, sys: *ExecBase, rb: *RtgBase, src: *rtg.RtgBitMap, dest: *rtg.RtgBitMap, copies: []const rtg.RtgCopy) i32 {
+    // A copy whose source is the device's own memory, which the cores
+    // read uncached, is the engine's from fewer bytes.
+    const src_pixels = src.pixels orelse return err.RTGERR_NOT_SUPPORTED;
+    const least = switch (deviceMemoryOf(dma, @intFromPtr(src_pixels))) {
+        .not => cutOff(dma),
+        .machine => cutOffReading(dma, reading_bytes),
+        .window => cutOffReading(dma, window_reading_bytes),
+    };
     // Most copies end here, two rectangles of four bytes a pixel the most
     // each could be.
     var most: u64 = 0;
     for (copies) |one| most += 8 * @as(u64, @intCast(one.width)) * @as(u64, @intCast(one.height));
-    if (most <= cutOff(dma) or !@atomicLoad(bool, &dma.ready, .acquire)) return err.RTGERR_NOT_SUPPORTED;
+    if (most <= least or !@atomicLoad(bool, &dma.ready, .acquire)) return err.RTGERR_NOT_SUPPORTED;
     const gpu = dma.gpu.?;
     if (src.format != dest.format) return err.RTGERR_NOT_SUPPORTED;
     const bytes_each = pixelBytes(rb, dest.format) orelse return err.RTGERR_NOT_SUPPORTED;
-    const src_pixels = src.pixels orelse return err.RTGERR_NOT_SUPPORTED;
     const dest_pixels = dest.pixels orelse return err.RTGERR_NOT_SUPPORTED;
     if (!lined(src_pixels, src.pitch) or !lined(dest_pixels, dest.pitch)) return err.RTGERR_NOT_SUPPORTED;
     const src_pitch = src.pitch / bytes_each;
@@ -435,7 +491,7 @@ pub fn copy(dma: *Dma, sys: *ExecBase, rb: *RtgBase, src: *rtg.RtgBitMap, dest: 
     } else for (copies) |one| {
         touched += 2 * @as(u64, @intCast(one.width)) * @as(u64, @intCast(one.height)) * bytes_each;
     }
-    if (touched <= cutOff(dma)) return err.RTGERR_NOT_SUPPORTED;
+    if (touched <= least) return err.RTGERR_NOT_SUPPORTED;
 
     var source: amdgpu.GPUMemory = .{};
     if (!mapRows(gpu, src_pixels, src.pitch, from.first, from.rows, from.end_bytes, &source)) return err.RTGERR_NOT_SUPPORTED;
@@ -695,6 +751,30 @@ test "a move within one buffer is cut into bands of rows that are read before th
     try testing.expectEqual(@as(i32, 100), clear.band(0).height);
     try testing.expect(apart(.{ .src_x = 100, .src_y = 50, .width = 100, .height = 100, .dest_x = 0, .dest_y = 0 }));
     try testing.expect(!apart(.{ .src_x = 0, .src_y = 0, .width = 2544, .height = 2880, .dest_x = 16, .dest_y = 0 }));
+}
+
+test "a copy reading the device's memory is the engine's from fewer bytes, by size alone" {
+    var dma: Dma = .{ .cached = 24 << 20, .least = 24 << 20 };
+    dma.device_memory = .{ .{ .start = 0x8_4000_0000, .bytes = 512 << 20 }, .{ .start = 0x7c_0000_0000, .bytes = 256 << 20 } };
+    try testing.expectEqual(DeviceMemory.machine, deviceMemoryOf(&dma, 0x8_4000_0000));
+    try testing.expectEqual(DeviceMemory.machine, deviceMemoryOf(&dma, 0x8_4000_0000 + (512 << 20) - 1));
+    try testing.expectEqual(DeviceMemory.not, deviceMemoryOf(&dma, 0x8_4000_0000 + (512 << 20)));
+    try testing.expectEqual(DeviceMemory.not, deviceMemoryOf(&dma, 0x8_4000_0000 - 1));
+    try testing.expectEqual(DeviceMemory.window, deviceMemoryOf(&dma, 0x7c_0000_0000 + 4096));
+    try testing.expectEqual(DeviceMemory.not, deviceMemoryOf(&dma, 0x1000_0000));
+    try testing.expectEqual(reading_bytes, cutOffReading(&dma, reading_bytes));
+    try testing.expectEqual(@as(u64, 24 << 20), cutOff(&dma));
+    _ = setRule(&dma, rtg.tags.RTG_AMD_ENGINE_ALL);
+    try testing.expectEqual(@as(u64, 0), cutOffReading(&dma, reading_bytes));
+    _ = setRule(&dma, rtg.tags.RTG_AMD_ENGINE_NONE);
+    try testing.expectEqual(~@as(u64, 0), cutOffReading(&dma, reading_bytes));
+    try testing.expectEqual(~@as(u64, 0), cutOff(&dma));
+    _ = setRule(&dma, rtg.tags.RTG_AMD_ENGINE_SIZE);
+    try testing.expectEqual(window_reading_bytes, cutOffReading(&dma, window_reading_bytes));
+    // Caches smaller than the copy's own least leave it the caches'.
+    dma.cached = 8 * 1024;
+    _ = setRule(&dma, rtg.tags.RTG_AMD_ENGINE_SIZE);
+    try testing.expectEqual(@as(u64, 8 * 1024), cutOffReading(&dma, reading_bytes));
 }
 
 test "a cache leaf says the cache's level, size and sharing" {

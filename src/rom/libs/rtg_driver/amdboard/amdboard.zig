@@ -239,7 +239,7 @@ const engine_code = @embedFile("gpu_code");
 const MODULE_NAME = "rtg-amd";
 const DRIVER_NAME = "amd";
 const VERSION = 1;
-const REVISION = 29;
+const REVISION = 30;
 const BUILD_DATE = "27.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++

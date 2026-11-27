@@ -306,8 +306,9 @@
 //! and before each job the four are painted alike, each pixel its own.
 //! Each job is done by the board on its two and by graphics.library on
 //! the plain two - fills of whole rows, of part of the rows and a small
-//! one; copies between the two, a small one and four at once; moves
-//! within one buffer - clear of where it starts, scrolls by 16 rows up
+//! one; copies between the two, small ones of 256, 64, 32 and 16 pixels
+//! a side and four at once; moves within one buffer - clear of where it
+//! starts, of the buffer and of 64 x 64 pixels, scrolls by 16 rows up
 //! and down and by one row, more bands than the board cuts a move into,
 //! by 100 rows and 37 columns down and right and up and left, and by 16
 //! columns right and left, which the board leaves to the cores; and of
@@ -368,10 +369,11 @@
 //! every pixel of the two is compared: a picture of the same size, each
 //! pixel's coverage none, all or its own in patches, laid at full
 //! strength, at half, covering fully at 200, as `rgba32` over part of the
-//! buffer and over smaller rectangles down to 64 x 64; a colour laid over
-//! part of it and over smaller ones; parts of the picture scaled smoothly
-//! up by 2 and by 1.5, to the same size, down by 2, by 3 and by 64,
-//! narrower and taller, and from 128 to 256 pixels a side, laid by their
+//! buffer and over smaller rectangles down to 16 x 16; a colour laid over
+//! part of it and over smaller ones down to 8 x 16; parts of the picture
+//! scaled smoothly up by 2 and by 1.5, to the same size, down by 2, by 3
+//! and by 64, narrower and taller, and from 128, 64, 32 and 16 pixels a
+//! side to twice that, laid by their
 //! coverage (ScalePixelArray), and up by 2 and down by 3 stored, each
 //! pixel replaced (BitMapScale); shapes from bits of the machine's memory
 //! in both colours, over the buffer and over 256 x 256, in ink alone over
@@ -391,9 +393,13 @@
 //! the device's own memory (AllocGPUMemory), where the machine has it;
 //! with WINDOW the same pieces through the device's memory window, made
 //! write-combining to the CPU as the firmware's framebuffer there is
-//! (SetMemoryType), which they stay. Each job is then done once more with
+//! (SetMemoryType), which they stay. BLITS then begins, as KERNELS does,
+//! with every job the board's engine can do handed to it
+//! (RTG_AMD_ENGINE_ALL), and both do each job once more at the end with
 //! every one left to graphics.library on the same memory
-//! (RTG_AMD_ENGINE_NONE), and timed beside the board's.
+//! (RTG_AMD_ENGINE_NONE), timed beside the board's: the engines and the
+//! cores on the device's memory, for each job, which the board's own rule
+//! weighs.
 //!
 //! Without BIOS, CLOCKS, DMCUB, CRC, EVENTS, AUX, EDID, CYCLE, MODES,
 //! SLEEP, RANGE, POINTER, MIRROR, OVERLAY, DIRECT, BANDS, VIDEO, GFX,
@@ -455,7 +461,7 @@ const graphics_library = sdk.graphics;
 const GraphicsBase = sdk.interface.graphics.GraphicsBase;
 
 pub const COMMAND_NAME = "Gpu";
-const VERSION_STRING = "\x00$VER: Gpu 1.33 (27.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Gpu 1.34 (27.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,SLEEP/K/N,RANGE/S,POINTER/S,MIRROR/S,OVERLAY/S,DIRECT/S,BANDS/S,VIDEO/S,GFX/S,DMA/S,GART/S,ENGINE/S,BLITS/S,COMPUTE/S,KERNELS/S,DEVICE/S,WINDOW/S,BLOCK/K/N,WATCHDOG/K/N,RESET/S";
@@ -3050,7 +3056,7 @@ fn differing(board: [*]const u8, plain: [*]const u8, bytes: u32, bytes_each: u32
 /// What a pass of jobs by the board's rule `rule` is said to be.
 fn ruleName(rule: isize) [*:0]const u8 {
     return switch (rule) {
-        rtg.tags.RTG_AMD_ENGINE_ALL => "Every job the board's kernels can do handed to them:",
+        rtg.tags.RTG_AMD_ENGINE_ALL => "Every job the board's engine can do handed to it:",
         rtg.tags.RTG_AMD_ENGINE_NONE => "Every job left to graphics.library, on the same memory:",
         else => "By the board's own rule:",
     };
@@ -3096,8 +3102,12 @@ const blit_jobs = [_]Blit{
     .{ .name = "fill, small", .kind = .fill, .rect = .{ .x = 100, .y = 100, .width = 256, .height = 256 } },
     .{ .name = "copy between two", .kind = .between, .copies = &.{.{ .src_x = 3, .src_y = 5, .width = 2550, .height = 1430, .dest_x = 9, .dest_y = 1400 }} },
     .{ .name = "copy between two, small", .kind = .between, .copies = &.{.{ .src_x = 3, .src_y = 5, .width = 256, .height = 256, .dest_x = 9, .dest_y = 1400 }} },
+    .{ .name = "copy between two, 64 x 64", .kind = .between, .copies = &.{.{ .src_x = 3, .src_y = 5, .width = 64, .height = 64, .dest_x = 9, .dest_y = 1400 }} },
+    .{ .name = "copy between two, 32 x 32", .kind = .between, .copies = &.{.{ .src_x = 3, .src_y = 5, .width = 32, .height = 32, .dest_x = 9, .dest_y = 1400 }} },
+    .{ .name = "copy between two, 16 x 16", .kind = .between, .copies = &.{.{ .src_x = 3, .src_y = 5, .width = 16, .height = 16, .dest_x = 9, .dest_y = 1400 }} },
     .{ .name = "four copies between two", .kind = .between, .copies = &blit_quarters },
     .{ .name = "move clear of itself", .kind = .within, .copies = &.{.{ .src_x = 0, .src_y = 0, .width = 2560, .height = 1430, .dest_x = 0, .dest_y = 1440 }} },
+    .{ .name = "move 64 x 64 clear of itself", .kind = .within, .copies = &.{.{ .src_x = 40, .src_y = 30, .width = 64, .height = 64, .dest_x = 300, .dest_y = 500 }} },
     .{ .name = "scroll up 16 rows", .kind = .within, .copies = &.{.{ .src_x = 0, .src_y = 16, .width = 2560, .height = 2864, .dest_x = 0, .dest_y = 0 }} },
     .{ .name = "scroll down 16 rows", .kind = .within, .copies = &.{.{ .src_x = 0, .src_y = 0, .width = 2560, .height = 2864, .dest_x = 0, .dest_y = 16 }} },
     .{ .name = "scroll up 1 row", .kind = .within, .copies = &.{.{ .src_x = 0, .src_y = 1, .width = 2560, .height = 2879, .dest_x = 0, .dest_y = 0 }} },
@@ -3310,7 +3320,7 @@ fn blitsCheck(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUInf
         @as(u64, @intFromPtr(pixels[0])), @as(u64, @intFromPtr(pixels[1])), place.name(), @as(u64, @intFromPtr(pixels[2])), @as(u64, @intFromPtr(pixels[3])), blits_width, blits_height,
     });
 
-    const rules: []const isize = if (place == .machine) &.{rtg.tags.RTG_AMD_ENGINE_SIZE} else &.{ rtg.tags.RTG_AMD_ENGINE_SIZE, rtg.tags.RTG_AMD_ENGINE_NONE };
+    const rules: []const isize = if (place == .machine) &.{rtg.tags.RTG_AMD_ENGINE_SIZE} else &.{ rtg.tags.RTG_AMD_ENGINE_ALL, rtg.tags.RTG_AMD_ENGINE_SIZE, rtg.tags.RTG_AMD_ENGINE_NONE };
     var all_wrong: u32 = 0;
     var all_right = true;
     for (rules) |rule| {
@@ -3414,9 +3424,16 @@ const drawn_jobs = [_]Drawn{
     .{ .name = "blend 1024 x 1024", .kind = .blend, .area = .{ .x = 100, .y = 100, .width = 1024, .height = 1024 } },
     .{ .name = "blend 256 x 256", .kind = .blend, .area = small_square },
     .{ .name = "blend 64 x 64", .kind = .blend, .area = .{ .x = 100, .y = 100, .width = 64, .height = 64 } },
+    .{ .name = "blend 32 x 32", .kind = .blend, .area = .{ .x = 100, .y = 100, .width = 32, .height = 32 } },
+    .{ .name = "blend 16 x 16", .kind = .blend, .area = .{ .x = 100, .y = 100, .width = 16, .height = 16 } },
     .{ .name = "colour at 100, part", .kind = .tint, .pen = 0x64C0_4020, .area = .{ .x = 5, .y = 3, .width = 2550, .height = 2870 } },
     .{ .name = "colour 1024 x 1024", .kind = .tint, .pen = 0x8000_80FF, .area = .{ .x = 100, .y = 100, .width = 1024, .height = 1024 } },
     .{ .name = "colour 256 x 256", .kind = .tint, .pen = 0x8000_80FF, .area = small_square },
+    .{ .name = "colour 64 x 64", .kind = .tint, .pen = 0x8000_80FF, .area = .{ .x = 100, .y = 100, .width = 64, .height = 64 } },
+    .{ .name = "colour 32 x 32", .kind = .tint, .pen = 0x8000_80FF, .area = .{ .x = 100, .y = 100, .width = 32, .height = 32 } },
+    .{ .name = "colour 16 x 32", .kind = .tint, .pen = 0x8000_80FF, .area = .{ .x = 100, .y = 100, .width = 16, .height = 32 } },
+    .{ .name = "colour 16 x 16", .kind = .tint, .pen = 0x8000_80FF, .area = .{ .x = 100, .y = 100, .width = 16, .height = 16 } },
+    .{ .name = "colour 8 x 16", .kind = .tint, .pen = 0x8000_80FF, .area = .{ .x = 100, .y = 100, .width = 8, .height = 16 } },
     .{ .name = "scale up 2x", .kind = .scale, .from = .{ .x = 0, .y = 0, .width = 1280, .height = 1440 }, .area = whole_buffer },
     .{ .name = "scale rgba32 up 2x", .kind = .scale, .format = .rgba32, .from = .{ .x = 0, .y = 0, .width = 1280, .height = 1440 }, .area = whole_buffer },
     .{ .name = "scale up 1.5x, odd", .kind = .scale, .from = .{ .x = 31, .y = 17, .width = 1700, .height = 1900 }, .area = .{ .x = 5, .y = 3, .width = 2550, .height = 2850 } },
@@ -3425,6 +3442,9 @@ const drawn_jobs = [_]Drawn{
     .{ .name = "scale down 3x", .kind = .scale, .from = .{ .x = 0, .y = 0, .width = 2560, .height = 2880 }, .area = .{ .x = 7, .y = 9, .width = 853, .height = 960 } },
     .{ .name = "scale narrower, taller", .kind = .scale, .from = .{ .x = 0, .y = 0, .width = 2560, .height = 720 }, .area = .{ .x = 0, .y = 0, .width = 1000, .height = 2880 } },
     .{ .name = "scale 128 to 256", .kind = .scale, .from = .{ .x = 3, .y = 3, .width = 128, .height = 128 }, .area = small_square },
+    .{ .name = "scale 64 to 128", .kind = .scale, .from = .{ .x = 3, .y = 3, .width = 64, .height = 64 }, .area = .{ .x = 100, .y = 100, .width = 128, .height = 128 } },
+    .{ .name = "scale 32 to 64", .kind = .scale, .from = .{ .x = 3, .y = 3, .width = 32, .height = 32 }, .area = .{ .x = 100, .y = 100, .width = 64, .height = 64 } },
+    .{ .name = "scale 16 to 32", .kind = .scale, .from = .{ .x = 3, .y = 3, .width = 16, .height = 16 }, .area = .{ .x = 100, .y = 100, .width = 32, .height = 32 } },
     .{ .name = "scale down 64x", .kind = .scale, .from = .{ .x = 0, .y = 0, .width = 2560, .height = 2880 }, .area = .{ .x = 10, .y = 10, .width = 40, .height = 45 } },
     .{ .name = "stored scale up 2x", .kind = .stored, .from = .{ .x = 0, .y = 0, .width = 1280, .height = 1440 }, .area = whole_buffer },
     .{ .name = "stored scale down 3x", .kind = .stored, .from = .{ .x = 0, .y = 0, .width = 2560, .height = 2880 }, .area = .{ .x = 7, .y = 9, .width = 853, .height = 960 } },

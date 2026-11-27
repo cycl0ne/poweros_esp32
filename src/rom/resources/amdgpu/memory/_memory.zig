@@ -90,6 +90,7 @@ pub fn take(ab: *AMDGPUBase, hub: amdgpu.GPUBlock) void {
     ab.memory_device = base;
     ab.info.memory_start = base;
     ab.memory_machine = @as(u64, word(at, fb_offset) & field_24) << memory_shift;
+    ab.info.memory_machine = ab.memory_machine;
     ab.memory_bytes = top - base + (@as(u64, 1) << memory_shift);
     ab.arena = _arena.of(ab.memory_bytes);
     ab.memory_gathered = gather(ab);

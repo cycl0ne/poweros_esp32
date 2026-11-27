@@ -1965,7 +1965,18 @@ where they land on 65536 pixels or more, 256 x 256, below which a job of
 theirs, some 90 us however small, takes longer than the cores need; a
 shape or a tile in ink alone is never theirs, which the kernels draw no
 sooner than the cores. The rest the cores do sooner, often many times
-sooner, and it is refused. `RTGCTRL_AMD_ENGINE` hands the engines every
+sooner, and it is refused. A job that reads a buffer of the device's
+own memory - a copy from it, a picture, a colour or a scale laid over
+it - is the engines' from fewer pixels, as the cores read that memory
+uncached: where the machine has it a copy of more than 12 KiB of its
+two rectangles, a picture over 64 x 64 pixels, a colour over 512 and a
+scale onto 8192; through the memory window a copy of more
+than 1 KiB, a picture over 64 x 64, a colour over 128 pixels and a
+scale onto 4096. A fill there, which the cores write gathered, stays by
+the caches. On the
+NucBox a picture laid over 64 x 64 pixels of a frame takes the kernels
+93 us and the cores 410, a copy of 64 x 64 from one the engine 100 and
+the cores 241. `RTGCTRL_AMD_ENGINE` hands the engines every
 job they can do, or none, for a program that times them against the
 cores. The rows a job touches are mapped for it (`MapGPUMemory`), the
 hub snooping the CPU's caches, so nothing is written back first; a
@@ -1987,11 +1998,11 @@ and tiles are drawn on two bytes a pixel or four; a picture or a shape
 that shares memory with the rectangle, a scale in which one pixel would
 be the mean of more than 4096 of the picture's, and sides of more than
 65536 pixels are refused.
-`C:test/Gpu BLITS` does twenty jobs on two buffers of 28 MiB handed to
+`C:test/Gpu BLITS` does 22 jobs on two buffers of 28 MiB handed to
 the board, each against graphics.library's on plain memory: on the
 NucBox every pixel is the same, a copy of 14 MiB between two buffers
 takes the engine 890 us and the cores 1227, a fill of 28 MiB 1234 and
-1289, a scroll by 16 rows 1689 and 1643. `C:test/Gpu KERNELS` draws 34
+1289, a scroll by 16 rows 1689 and 1643. `C:test/Gpu KERNELS` draws 44
 blends, colours, scales - laid by their coverage as `ScalePixelArray`
 lays them, and stored as a smooth `BitMapScale` stores them
 (`RTGPIXF_STORE`) - shapes and tiles through graphics.library into a
@@ -2013,11 +2024,17 @@ as on the machine's memory - a picture laid over 2560 x 2880 2288 and
 2327 us, a copy of 14 MiB 860 - where the cores, which read the
 device's memory uncached, take 72862 and 203781 us for the picture and
 10551 and 41766 for the copy, and a fill, which they write gathered, 864
-and 3036 against the engine's 1243 and 2388. The board's rule weighs a
-job by the CPU's caches alone, so on the device's memory it leaves the
-cores small jobs that read it which the kernels do sooner: a picture
-over 64 x 64 takes the cores 391 us through the machine's place and 2177
-through the window, the kernels 76 and 94. The
+and 3036 against the engine's 1243 and 2388. There the board's rule
+hands the engines the small jobs that read that memory as well, each
+the quicker side's at every size tried - but a colour over 16 x 16
+through the machine's place, which takes either about 55 us: a picture
+over 64 x 64 the kernels', 93 us against the cores' 410 through the
+machine's place, over 32 x 32 the cores', 5; a colour over 16 x 32 the
+kernels' through the machine's place, 84 us against 114, over 8 x 16
+the cores', 27, and the kernels' through the window, 83 against 145; a
+copy of 32 x 32 the cores' through the machine's place, 78 us against
+the engine's 83, and the engine's through the window, 87 against 587.
+The
 block stays powered while the board runs, its clocks stopped while it is
 idle - it is never let switch off, as on the NucBox it does not come
 back - which costs the video decoder about a fifth of its speed after
