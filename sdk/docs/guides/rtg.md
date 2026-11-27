@@ -2034,6 +2034,24 @@ kernels' through the machine's place, 84 us against 114, over 8 x 16
 the cores', 27, and the kernels' through the window, 83 against 145; a
 copy of 32 x 32 the cores' through the machine's place, 78 us against
 the engine's 83, and the engine's through the window, 87 against 587.
+Two things a program does not see move these timings. The data
+fabric's clock (`GetGPUClock`), which the power manager moves between
+500 and 1960 MHz, carries the cores' reads and writes of memory and the
+engines' alike: through the memory window it stays at 500 MHz nearly
+throughout, and the cores' fills and copies of plain memory and the
+engines' of the device's memory then take two to three times as long
+as at 1960 - a fill of 28 MiB of plain memory 2244 us against 764, the
+engine's of the device's 2391 against 1234 - while the cores' own clock
+holds at about 4.9 GHz. And a job graphics.library shares between the
+cores is done by its asker alone while another shared job is under way
+(`ShareWork`): on the NucBox the desktop's, one of whose parts waited
+for a core that `C:test/Gpu`, at a higher priority, kept busy without
+waiting - meanwhile one core took 126 ms for a copy of 14 MiB from the
+device's memory that the cores do in 10, and 56 ms for a picture of
+plain memory scaled up twice that they do in 7. `C:test/Gpu` runs each
+job three times and says the least and the most, both clocks as each
+run started, and how many parts exec's workers took just before the
+board's side.
 The
 block stays powered while the board runs, its clocks stopped while it is
 idle - it is never let switch off, as on the NucBox it does not come

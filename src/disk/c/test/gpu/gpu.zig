@@ -327,7 +327,17 @@
 //! board's buffers, as the library does it, and said so. Last a fill
 //! and a copy are drawn through graphics.library into the board's buffer
 //! itself (RPTAG_BitMap), as a program draws, and held to the same. Each
-//! is timed beside graphics.library's. The watchdog is armed for it.
+//! job is done three times, the four painted afresh before each, and its
+//! line says the least and the most of the three on the board's side and
+//! on graphics.library's; the lowest and highest of the core's clock - a
+//! chain of dependent multiplies timed - and of the data fabric's
+//! (GetGPUClock) as the runs started; and the fewest and the most parts
+//! exec's workers took of a job of nothing just before the board's side
+//! (ShareWork), 1 where another shared job is under way, which leaves
+//! graphics.library's next to one core. Each pass ends with the widest
+//! swing between a job's runs of a millisecond or more on either side,
+//! the clocks' range and how many jobs found the workers taken. The
+//! watchdog is armed for it.
 //!
 //! COMPUTE does what GFX does, prints the compute engine's registers,
 //! then starts its queue through the block's scheduler (StartGPUCompute),
@@ -400,7 +410,10 @@
 //! compute engine's queue counts (GetGPUComputeState). Each is timed
 //! beside graphics.library's on plain memory, each drawing begun with 64
 //! MiB of other memory read through, so that nothing it reads or writes
-//! is in the CPU's caches, as for a job larger than they are. It all runs
+//! is in the CPU's caches, as for a job larger than they are; three times,
+//! painted afresh before each, its line saying the least and the most on
+//! either side, the clocks and the workers as BLITS says them, and each
+//! pass ending as BLITS' does. It all runs
 //! twice: with every job the kernels can do handed to them
 //! (RTGCTRL_AMD_ENGINE, RTG_AMD_ENGINE_ALL), then by the board's own
 //! rule, which it is left with. The watchdog is armed for it.
@@ -477,7 +490,7 @@ const graphics_library = sdk.graphics;
 const GraphicsBase = sdk.interface.graphics.GraphicsBase;
 
 pub const COMMAND_NAME = "Gpu";
-const VERSION_STRING = "\x00$VER: Gpu 1.37 (27.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Gpu 1.38 (27.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,SLEEP/K/N,RANGE/S,POINTER/S,MIRROR/S,OVERLAY/S,DIRECT/S,BANDS/S,VIDEO/S,GFX/S,DMA/S,GART/S,ENGINE/S,BLITS/S,COMPUTE/S,KERNELS/S,DEVICE/S,WINDOW/S,BLOCK/K/N,WATCHDOG/K/N,RESET/S,POWER/S";
@@ -3217,6 +3230,159 @@ fn ruleName(rule: isize) [*:0]const u8 {
     };
 }
 
+// --- the timed runs of BLITS and KERNELS ---------------------------------------------
+
+/// How many times BLITS and KERNELS run each job on either side: the
+/// least of them is what the job takes, the spread between them how much
+/// a run swings, and the clocks beside each say whether the swings follow
+/// the core's or the data fabric's.
+const timed_runs = 3;
+
+/// The steps of the chain the core's clock is timed by - each a multiply
+/// and an exclusive or of what the step before left, which the compiler
+/// cannot fold into fewer - and the cycles a step takes on the NucBox's
+/// cores: the multiply's three and the or's one, the shift beside them.
+const chain_steps: u32 = 1 << 18;
+const chain_cycles: u64 = 4;
+
+/// The core's clock as the chain takes it, in MHz: a core the machine's
+/// power management has slowed takes longer for the same steps.
+fn coreMHz(sys: *ExecBase) u32 {
+    const began = sys.UptimeUs();
+    var value: u64 = began | 1;
+    var step: u32 = 0;
+    while (step < chain_steps) : (step += 1) value = (value *% 0x5851_F42D_4C95_7F2D) ^ (value >> 29);
+    // Kept before the clock is read again, so that the chain is neither
+    // left out nor moved past it.
+    @as(*volatile u64, &value).* = value;
+    const us = @max(1, sys.UptimeUs() - began);
+    return @intCast(@min(chain_steps * chain_cycles / us, 0xffff_ffff));
+}
+
+/// The parts the probe of exec's workers asks for: as many as
+/// graphics.library cuts a job into at most.
+const probe_parts: u32 = 16;
+
+/// How many parts exec's workers take of a job of nothing cut into
+/// `probe_parts`: 1 where another job is under way or no other worker is
+/// idle, as graphics.library's next job would then be its asker's alone.
+fn workersFree(sys: *ExecBase) u32 {
+    const Probe = struct {
+        fn part(_: ?*anyopaque, _: u32, _: u32) callconv(.c) void {}
+    };
+    return sys.ShareWork(&Probe.part, null, probe_parts);
+}
+
+/// The core's clock and the data fabric's, in MHz, as a run starts.
+const Clocks = struct {
+    core: u32,
+    fabric: u32,
+
+    fn now(sys: *ExecBase, ab: *AMDGPUBase) Clocks {
+        return .{ .core = coreMHz(sys), .fabric = ab.GetGPUClock(amdgpu.GPUCLOCK_FABRIC) };
+    }
+};
+
+/// The least and the most of a job's runs, or of a clock as they started.
+fn Spread(comptime T: type) type {
+    return struct {
+        least: T = ~@as(T, 0),
+        most: T = 0,
+
+        fn take(spread: *@This(), value: T) void {
+            spread.least = @min(spread.least, value);
+            spread.most = @max(spread.most, value);
+        }
+    };
+}
+
+/// A job's timed runs: what each side took, in us, the clocks as they
+/// started, in MHz, and the parts exec's workers took just before the
+/// board's side (`workersFree`).
+const Runs = struct {
+    cpu: Spread(u64) = .{},
+    board: Spread(u64) = .{},
+    core: Spread(u32) = .{},
+    fabric: Spread(u32) = .{},
+    workers: Spread(u32) = .{},
+
+    fn add(runs: *Runs, run_clocks: Clocks, workers: u32, cpu_us: u64, board_us: u64) void {
+        runs.cpu.take(cpu_us);
+        runs.board.take(board_us);
+        runs.core.take(run_clocks.core);
+        runs.fabric.take(run_clocks.fabric);
+        runs.workers.take(workers);
+    }
+};
+
+/// The heading of BLITS' and KERNELS' lines.
+fn printRunsHeading(dl: *DosBase) void {
+    _ = Printf(dl, "  %-32s %-8s %9s %9s %9s %9s %11s %11s %7s %6s\n", .{ "job", "board", "board us", "most", "CPU us", "most", "core MHz", "fabric MHz", "workers", "wrong" });
+}
+
+/// A job's line: its name, whose the board's side was, the least and the
+/// most of its runs on the board's side and on the CPU's, the clocks'
+/// lowest and highest as they started, the fewest and the most parts the
+/// workers took before the board's side, and its pixels wrong.
+fn printRuns(dl: *DosBase, name: [*:0]const u8, said: [*:0]const u8, runs: Runs, wrong: u32) void {
+    _ = Printf(dl, "  %-32s %-8s %9lu %9lu %9lu %9lu %5u-%-5u %5u-%-5u %3u-%-3u %6u\n", .{
+        name,              said,             runs.board.least,   runs.board.most,
+        runs.cpu.least,    runs.cpu.most,    runs.core.least,    runs.core.most,
+        runs.fabric.least, runs.fabric.most, runs.workers.least, runs.workers.most,
+        wrong,
+    });
+}
+
+/// What a pass of BLITS or KERNELS saw over its jobs: the widest swing
+/// between a job's runs on either side, in tenths of its least, and the
+/// job it was, among those whose least is a millisecond or more - below
+/// it a tick or an interrupt is a swing of its own; the lowest and the
+/// highest clocks; and how many jobs found exec's workers taken before a
+/// run of the board's side.
+const Swings = struct {
+    cpu_tenths: u64 = 10,
+    cpu_job: [*:0]const u8 = "none",
+    board_tenths: u64 = 10,
+    board_job: [*:0]const u8 = "none",
+    core: Spread(u32) = .{},
+    fabric: Spread(u32) = .{},
+    alone: u32 = 0,
+
+    /// The least a run must take for its swing to be counted, in us.
+    const counted_us = 1000;
+
+    fn add(swings: *Swings, name: [*:0]const u8, runs: Runs) void {
+        if (runs.cpu.least >= counted_us) {
+            const tenths = runs.cpu.most * 10 / runs.cpu.least;
+            if (tenths > swings.cpu_tenths) {
+                swings.cpu_tenths = tenths;
+                swings.cpu_job = name;
+            }
+        }
+        if (runs.board.least >= counted_us) {
+            const tenths = runs.board.most * 10 / runs.board.least;
+            if (tenths > swings.board_tenths) {
+                swings.board_tenths = tenths;
+                swings.board_job = name;
+            }
+        }
+        swings.core.take(runs.core.least);
+        swings.core.take(runs.core.most);
+        swings.fabric.take(runs.fabric.least);
+        swings.fabric.take(runs.fabric.most);
+        swings.alone += @intFromBool(runs.workers.least < 2);
+    }
+
+    fn print(swings: Swings, dl: *DosBase) void {
+        _ = Printf(dl, "Runs of a millisecond or more swung %lu.%lu times at most on the CPU's side (%s) and %lu.%lu on the board's (%s); the core's clock %u to %u MHz, the data fabric's %u to %u MHz; %u jobs found exec's workers taken before a run of the board's side\n", .{
+            swings.cpu_tenths / 10,   swings.cpu_tenths % 10,   swings.cpu_job,
+            swings.board_tenths / 10, swings.board_tenths % 10, swings.board_job,
+            swings.core.least,        swings.core.most,         swings.fabric.least,
+            swings.fabric.most,       swings.alone,
+        });
+    }
+};
+
 // --- BLITS: the board's own fills and copies -----------------------------------------
 
 /// BLITS' buffers: 2560 x 2880 pixels of four bytes, more than the CPU's
@@ -3485,31 +3651,40 @@ fn blitsCheck(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUInf
             return dos.RETURN_WARN;
         }
         if (rules.len > 1) _ = Printf(dl, "%s\n", .{ruleName(rule)});
-        _ = Printf(dl, "  %-32s %-8s %9s %9s %8s\n", .{ "job", "board", "board us", "CPU us", "wrong" });
+        printRunsHeading(dl);
         var taken: u32 = 0;
         var refused: u32 = 0;
         var pass_wrong: u32 = 0;
+        var swings: Swings = .{};
         for (blit_jobs) |job| {
-            blits.paint(job.halves);
-            var began = sys.UptimeUs();
-            if (!blits.byLibrary(job, 2)) {
-                _ = Printf(dl, "No RastPort for %s\n", .{job.name});
-                return dos.RETURN_FAIL;
+            var runs: Runs = .{};
+            var answer: i32 = rtg.errors.RTGERR_OK;
+            for (0..timed_runs) |_| {
+                blits.paint(job.halves);
+                const run_clocks = Clocks.now(sys, ab);
+                var began = sys.UptimeUs();
+                if (!blits.byLibrary(job, 2)) {
+                    _ = Printf(dl, "No RastPort for %s\n", .{job.name});
+                    return dos.RETURN_FAIL;
+                }
+                const library_us = sys.UptimeUs() - began;
+                const workers = workersFree(sys);
+                began = sys.UptimeUs();
+                answer = blits.byBoard(job) orelse {
+                    _ = Printf(dl, "No RastPort for %s\n", .{job.name});
+                    return dos.RETURN_FAIL;
+                };
+                runs.add(run_clocks, workers, library_us, sys.UptimeUs() - began);
+                wb.FeedWatchdog();
             }
-            const library_us = sys.UptimeUs() - began;
-            began = sys.UptimeUs();
-            const answer = blits.byBoard(job) orelse {
-                _ = Printf(dl, "No RastPort for %s\n", .{job.name});
-                return dos.RETURN_FAIL;
-            };
-            const board_us = sys.UptimeUs() - began;
+            swings.add(job.name, runs);
             const wrong = blits.wrong(job.halves);
             const said: [*:0]const u8 = if (job.drawn) "drawn" else switch (answer) {
                 rtg.errors.RTGERR_OK => "engine",
                 rtg.errors.RTGERR_NOT_SUPPORTED => "refused",
                 else => "failed",
             };
-            _ = Printf(dl, "  %-32s %-8s %9lu %9lu %8u\n", .{ job.name, said, board_us, library_us, wrong });
+            printRuns(dl, job.name, said, runs, wrong);
             if (answer == rtg.errors.RTGERR_OK and !job.drawn) taken += 1;
             if (answer == rtg.errors.RTGERR_NOT_SUPPORTED) refused += 1;
             if (answer != rtg.errors.RTGERR_OK and answer != rtg.errors.RTGERR_NOT_SUPPORTED) {
@@ -3517,8 +3692,8 @@ fn blitsCheck(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUInf
                 all_right = false;
             }
             pass_wrong += wrong;
-            wb.FeedWatchdog();
         }
+        swings.print(dl);
         _ = Printf(dl, "%u jobs taken by the board's engine, %u refused and done by graphics.library, %u pixels wrong\n", .{ taken, refused, pass_wrong });
         all_wrong += pass_wrong;
     }
@@ -3848,37 +4023,47 @@ fn kernelsCheck(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUI
             return dos.RETURN_WARN;
         }
         _ = Printf(dl, "%s\n", .{ruleName(rule)});
-        _ = Printf(dl, "  %-32s %-8s %9s %9s %8s\n", .{ "job", "board", "board us", "CPU us", "wrong" });
+        printRunsHeading(dl);
         var taken: u32 = 0;
+        var swings: Swings = .{};
         for (drawn_jobs, 0..) |job, index| {
-            drawing.paint(job.halves, @intCast(index + 1));
-            drawing.evicted();
-            var began = sys.UptimeUs();
-            if (!drawing.draw(job, false)) {
-                _ = Printf(dl, "graphics.library did not draw %s\n", .{job.name});
-                return dos.RETURN_FAIL;
+            var runs: Runs = .{};
+            var by_kernels = false;
+            for (0..timed_runs) |_| {
+                drawing.paint(job.halves, @intCast(index + 1));
+                drawing.evicted();
+                const run_clocks = Clocks.now(sys, ab);
+                var began = sys.UptimeUs();
+                if (!drawing.draw(job, false)) {
+                    _ = Printf(dl, "graphics.library did not draw %s\n", .{job.name});
+                    return dos.RETURN_FAIL;
+                }
+                const library_us = sys.UptimeUs() - began;
+                // The kernels' jobs, as the compute engine's queue counts
+                // them, tell whose the board's drawing was.
+                var state: amdgpu.GPUComputeState = .{};
+                _ = ab.GetGPUComputeState(&state);
+                const sent = state.sent;
+                drawing.evicted();
+                const workers = workersFree(sys);
+                began = sys.UptimeUs();
+                if (!drawing.draw(job, true)) {
+                    _ = Printf(dl, "graphics.library did not draw %s into the board's buffer\n", .{job.name});
+                    return dos.RETURN_FAIL;
+                }
+                const board_us = sys.UptimeUs() - began;
+                _ = ab.GetGPUComputeState(&state);
+                by_kernels = state.sent != sent;
+                runs.add(run_clocks, workers, library_us, board_us);
+                wb.FeedWatchdog();
             }
-            const library_us = sys.UptimeUs() - began;
-            // The kernels' jobs, as the compute engine's queue counts
-            // them, tell whose the board's drawing was.
-            var state: amdgpu.GPUComputeState = .{};
-            _ = ab.GetGPUComputeState(&state);
-            const sent = state.sent;
-            drawing.evicted();
-            began = sys.UptimeUs();
-            if (!drawing.draw(job, true)) {
-                _ = Printf(dl, "graphics.library did not draw %s into the board's buffer\n", .{job.name});
-                return dos.RETURN_FAIL;
-            }
-            const board_us = sys.UptimeUs() - began;
-            _ = ab.GetGPUComputeState(&state);
-            const by_kernels = state.sent != sent;
+            swings.add(job.name, runs);
             const wrong = drawing.wrong(job.halves);
-            _ = Printf(dl, "  %-32s %-8s %9lu %9lu %8u\n", .{ job.name, @as([*:0]const u8, if (by_kernels) "kernels" else "cores"), board_us, library_us, wrong });
+            printRuns(dl, job.name, if (by_kernels) "kernels" else "cores", runs, wrong);
             taken += @intFromBool(by_kernels);
             all_wrong += wrong;
-            wb.FeedWatchdog();
         }
+        swings.print(dl);
         _ = Printf(dl, "%u of %u jobs taken by the board's kernels\n", .{ taken, @as(u32, drawn_jobs.len) });
         if (rule == rtg.tags.RTG_AMD_ENGINE_ALL and taken == 0) {
             _ = Printf(dl, "The board's kernels took no job: see C:Log\n", .{});
