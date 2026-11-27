@@ -104,6 +104,11 @@ pub fn addCheckSteps(b: *std.Build, with: CheckStepsWith) void {
     const gpu_test_code = b.createModule(.{
         .root_source_file = poweros_sdk.addGPUCode(b, disk_dep.path("c/test/gpu/kernels/fill.zig"), "gpu_test"),
     });
+    // And the amd board's kernels, as the build makes them for the board,
+    // for the tests of what the board hands them.
+    const amd_engine_code = b.createModule(.{
+        .root_source_file = poweros_sdk.addGPUCode(b, b.path("src/rom/libs/rtg_driver/amdboard/kernels/engine.zig"), "amd_engine_test"),
+    });
     for ([_][]const u8{ "src/tests.zig", "src/rom/devs/timer/timeval.zig" }) |path| {
         const test_mod = b.createModule(.{
             .root_source_file = b.path(path),
@@ -111,6 +116,7 @@ pub fn addCheckSteps(b: *std.Build, with: CheckStepsWith) void {
         });
         test_mod.addImport("sdk", sdk);
         test_mod.addImport("gpu_test_code", gpu_test_code);
+        test_mod.addImport("amd_engine_code", amd_engine_code);
         test_mod.addOptions("test_options", test_options);
         const unit_tests = b.addTest(.{ .root_module = test_mod });
         test_step.dependOn(&b.addRunArtifact(unit_tests).step);

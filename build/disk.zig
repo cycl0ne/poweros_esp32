@@ -85,8 +85,11 @@ const rom_on_disk = [_]RomOnDisk{
 };
 
 /// A display driver as a file of `DEVS:gfxdrv/`: its root, the name it
-/// is a driver by, and the chips it is built for.
-const GfxOnDisk = struct { root: []const u8, name: []const u8, chips: []const Chip };
+/// is a driver by, and the chips it is built for. A driver that runs
+/// kernels of its own on its device names their source in `gpu_code`,
+/// built into a code object it embeds as `gpu_code`
+/// (`poweros_sdk.addGPUCode`).
+const GfxOnDisk = struct { root: []const u8, name: []const u8, chips: []const Chip, gpu_code: ?[]const u8 = null };
 
 /// The display drivers a disk carries. rtg.library reads each file for
 /// what it takes and loads the ones for a device of the machine that no
@@ -96,7 +99,7 @@ const GfxOnDisk = struct { root: []const u8, name: []const u8, chips: []const Ch
 const gfx_on_disk = [_]GfxOnDisk{
     .{ .root = "src/rom/libs/rtg_driver/virtioboard/virtioboard.zig", .name = "virtio", .chips = &.{ .rv64sbi, .a64psci, .x64uefi } },
     .{ .root = "src/rom/libs/rtg_driver/fwboard/fwboard.zig", .name = "fw", .chips = &.{ .rv64sbi, .a64psci, .a64v80, .x64uefi } },
-    .{ .root = "src/rom/libs/rtg_driver/amdboard/amdboard.zig", .name = "amd", .chips = &.{.x64uefi} },
+    .{ .root = "src/rom/libs/rtg_driver/amdboard/amdboard.zig", .name = "amd", .chips = &.{.x64uefi}, .gpu_code = "src/rom/libs/rtg_driver/amdboard/kernels/engine.zig" },
     .{ .root = "src/rom/libs/rtg_driver/jh7110board/jh7110board.zig", .name = "jh7110", .chips = &.{.rv64sbi} },
     .{ .root = "src/rom/libs/rtg_driver/bcm2712board/bcm2712board.zig", .name = "bcm2712", .chips = &.{.a64psci} },
     .{ .root = "src/rom/libs/rtg_driver/bcm2711board/bcm2711board.zig", .name = "bcm2711", .chips = &.{.a64v80} },
@@ -1069,12 +1072,17 @@ pub fn addDiskImages(b: *std.Build, with: DiskImagesWith) MadeDiskImages {
     // The display drivers, each a file on the disks of the chips it is
     // built for.
     for (gfx_on_disk) |driver| {
+        const imports: []const std.Build.Module.Import = if (driver.gpu_code) |source| &.{.{
+            .name = "gpu_code",
+            .module = b.createModule(.{ .root_source_file = poweros_sdk.addGPUCode(b, b.path(source), b.fmt("gfxdrv_{s}", .{driver.name})) }),
+        }} else &.{};
         for (driver.chips) |chip| {
             const seg = poweros_sdk.addProgram(b, sdk_dep, .{
                 .name = b.fmt("gfxdrv-{s}", .{driver.name}),
                 .root = b.path(driver.root),
                 .optimize = optimize,
                 .chip = chip,
+                .imports = imports,
             });
             disks.addChipFile(chip, b.fmt("devs/gfxdrv/{s}", .{driver.name}), seg);
             if (chipOf(board) == chip) b.getInstallStep().dependOn(&b.addInstallBinFile(seg, b.fmt("gfxdrv-{s}.seg", .{driver.name})).step);

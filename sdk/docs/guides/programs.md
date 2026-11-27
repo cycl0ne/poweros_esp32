@@ -1158,3 +1158,12 @@ packets on the queue instead, `GetGPUComputeState` says how far it is.
 on the NucBox a job is 12 us from sent to done, and the kernel fills
 16 MiB of the device's memory in about 440 us and of the machine's,
 mapped, in 1 to 2 ms.
+
+A kernel may take its arguments as one `extern struct` by value, which
+the program fills in as the same type, so that the two cannot disagree
+on where each lies; every function a kernel calls is `inline`, as a
+call would want a stack. The `amd` board's own kernels are written that
+way (`src/rom/libs/rtg_driver/amdboard/kernels/`): what each thread does
+to its pixel is a function over an address space, which the kernel runs
+over the device's memory and a host test runs over the host's, held
+there to graphics.library's own result for the same pixels.

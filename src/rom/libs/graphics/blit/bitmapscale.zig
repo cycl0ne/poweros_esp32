@@ -66,7 +66,10 @@ const pixelBytes = _blit.pixelBytes;
 /// Nothing is allocated. The surface stays the caller's.
 ///
 /// BUGS:
-/// None known.
+/// A smooth scale the board's engine takes is laid over the destination
+/// by the source's coverage, as `rtg.ScalePixels` lays a picture, where
+/// the scale drawn here replaces each pixel with the source's: the two
+/// differ where the source's pixels do not cover fully.
 ///
 /// SEE ALSO:
 /// `BltBitMapRastPort`

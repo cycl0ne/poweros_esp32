@@ -625,16 +625,19 @@ do nothing.
 
 graphics.library hands the engine what it can: a plain fill, a blit
 without a mask (`BltBitMapRastPort` and every window move, refresh and
-backing store behind it), `BlendPixelArray`, a translucent pen filled
-under `DRMD_BLEND`, and a smooth scale (`RPTAG_Smooth`) whose destination
-is one whole piece of a board's buffer. What the board refuses it does
+backing store behind it), a shape or a tile in pens that cover fully,
+neither complemented nor blended (`BltTemplate`, `BltPattern`),
+`BlendPixelArray`, a translucent pen filled under `DRMD_BLEND`, and a
+smooth scale (`RPTAG_Smooth`) whose destination is one whole piece of a
+board's buffer. What the board refuses it does
 itself, with the same result. For a buffer with no drawing state it has
 three calls that go the same way, the engine's where it takes the job
 and the cores' otherwise - `BltBitMapRects`, `BlendBitMapPixels` and
 `BlendBitMapRect` - which is how layers.library copies a window's
 pieces on to the display, lays a window seen through, and darkens what
-a shadow falls on. Where no board has an engine - the ESP32-S3's, the
-64-bit machines' - graphics.library draws with the CPU, and on the
+a shadow falls on. Where no board has an engine - the ESP32-S3's, and
+the 64-bit machines' but an AMD display's - graphics.library draws with
+the CPU, and on the
 64-bit machines on every core: a fill, a shape, a pattern, a move, a
 picture laid over or scaled smooth that covers much of a buffer is cut
 into bands of rows, which exec's workers draw at once (`ShareWork`); a
@@ -1909,19 +1912,30 @@ while asleep and after. Without the display controller the board is
 blank instead of asleep.
 
 **The engine on `amd`.** `amd.0` fills and copies on the graphics
-block's DMA engine (`FillRect`, `CopyRect`, `CopyRects`). The board
-starts the block itself, beside the desktop, in a process of its own
-begun as it is made: the block's firmware read from
-`DEVS:firmware/amdgpu/`, the block started and its engine's queue
-running, in about 600 ms, more beside the desktop's own start at boot;
-`RTGCTRL_SETTLED` answers once that has ended, which `C:Rtg TRIED` waits
-for, and the log says how it went. Until then, and where it failed,
-every job is the cores'. A job is the engine's where what it reads and
-writes is more than the CPU's caches below the memory hold together, as
-the cores' cache leaves give them - 24 MiB on the NucBox, where on its
-2560x1440 desktop that is a copy of a whole picture between two buffers.
-Smaller jobs the cores do sooner, often many times sooner, and are
-refused. The rows a job touches are mapped for it (`MapGPUMemory`), the
+block's DMA engine (`FillRect`, `CopyRect`, `CopyRects`), and lays,
+scales and draws shapes and tiles with kernels of its own on the block's
+compute engine (`BlendPixels`, `BlendRect`, `ScalePixels`,
+`BlitTemplate`, `BlitPattern`), each pixel the one graphics.library
+makes - the board carries the kernels, built with it by the build's
+compiler. The board starts the block itself, beside the desktop, in a
+process of its own begun as it is made: the block's firmware read from
+`DEVS:firmware/amdgpu/`, the block started, its two engines' queues
+running and the kernels loaded, in about 600 ms, more beside the
+desktop's own start at boot; `RTGCTRL_SETTLED` answers once that has
+ended, which `C:Rtg TRIED` waits for, and the log says how it went.
+Until then, and where it failed, every job is the cores'. A fill or a
+copy is the engine's where what it reads and writes is more than the
+CPU's caches below the memory hold together, as the cores' cache leaves
+give them - 24 MiB on the NucBox, where on its 2560x1440 desktop that is
+a copy of a whole picture between two buffers; a picture or a colour
+laid, a scale, and a shape or a tile in both colours are the kernels'
+where they land on 65536 pixels or more, 256 x 256, below which a job of
+theirs, some 90 us however small, takes longer than the cores need; a
+shape or a tile in ink alone is never theirs, which the kernels draw no
+sooner than the cores. The rest the cores do sooner, often many times
+sooner, and it is refused. `RTGCTRL_AMD_ENGINE` hands the engines every
+job they can do, or none, for a program that times them against the
+cores. The rows a job touches are mapped for it (`MapGPUMemory`), the
 hub snooping the CPU's caches, so nothing is written back first. A fill
 of whole rows is one constant fill, any other a copy from a row of the
 colour; a copy is one sub-window copy each, and a scroll within one
@@ -1929,14 +1943,34 @@ buffer is cut into bands of rows, each clear of itself. A move along its
 rows alone, which the engine would cut into columns that take it nearly
 three times as long as rows, a move of more than 256 bands, and a buffer
 in the device's memory window are refused; pixels are of one, two or
-four bytes, a buffer's start and its rows' length whole four bytes.
+four bytes, a buffer's start and its rows' length whole four bytes. A
+kernel's job is one dispatch over the rectangle, a thread a pixel in
+groups of 64, each group on a span of 64 pixels of the buffer's memory,
+so that two groups of a row never write parts of one cache line.
+Pictures are `bgra32` or `rgba32`, laid and scaled over `bgra32`; shapes
+and tiles are drawn on two bytes a pixel or four; a picture or a shape
+that shares memory with the rectangle, a scale in which one pixel would
+be the mean of more than 4096 of the picture's, sides of more than 65536
+pixels and a buffer in the device's memory window are refused.
 `C:test/Gpu BLITS` does twenty jobs on two buffers of 28 MiB handed to
 the board, each against graphics.library's on plain memory: on the
 NucBox every pixel is the same, a copy of 14 MiB between two buffers
 takes the engine 890 us and the cores 1227, a fill of 28 MiB 1234 and
-1289, a scroll by 16 rows 1689 and 1643. The block stays powered while
-the board runs, which costs the video decoder about a fifth of its speed
-after its first run in a boot.
+1289, a scroll by 16 rows 1689 and 1643. `C:test/Gpu KERNELS` draws 32
+blends, colours, scales, shapes and tiles through graphics.library into
+a buffer of 28 MiB handed to the board and into one of plain memory,
+every job given to the kernels and then by the board's own rule, each
+drawing begun with nothing it touches in the CPU's caches: on the NucBox
+every pixel is the same, a picture laid over 2560 x 2880 pixels takes
+the kernels 2283 to 2331 us and the cores 2763 to 2906, over 1024 x 1024
+450 to 463 and 559 to 561, a colour over 1024 x 1024 333 and 553 to 558,
+a picture scaled up twice to the whole buffer 3408 to 3414 and 6951 to
+7056, from 128 to 256 pixels a side 145 and 198, a shape in both colours
+over the whole buffer 1480 to 1487 and 1793 to 2047, a tile 1150 to 1168
+and 1678 to 1915; over 64 x 64 a picture takes the kernels 88 us and the
+cores 14 to 19. The block stays powered while the board runs, which
+costs the video decoder about a fifth of its speed after its first run
+in a boot.
 
 **Video layers.** On the VisionFive 2 the layer is the DC8200's first
 overlay: NV12 and I420, BT.601 and BT.709, video's range and the whole

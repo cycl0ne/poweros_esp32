@@ -254,6 +254,18 @@ pub const RTGCTRL_AMD_PIPE: u32 = RTGCTRL_DRIVER + 40;
 /// fetcher or the output ran short of pixels three frames after. `stage`
 /// RTG_AMD_PIPE_NONE before the first. RTGERR_OK.
 pub const RTGCTRL_AMD_MODE: u32 = RTGCTRL_DRIVER + 41;
+/// `value` which jobs the board's engines take from now on - the graphics
+/// block's DMA engine's fills and copies, its compute engine's blends,
+/// scales, shapes and tiles: by the board's own rule, by their size and
+/// their kind, as it takes them as it starts (RTG_AMD_ENGINE_SIZE); every
+/// job they can do, however small
+/// (RTG_AMD_ENGINE_ALL); or none (RTG_AMD_ENGINE_NONE) - for a program
+/// that holds the engines to the cores and times them. The rule before,
+/// or RTGERR_BAD_ARG for another value.
+pub const RTGCTRL_AMD_ENGINE: u32 = RTGCTRL_DRIVER + 42;
+pub const RTG_AMD_ENGINE_SIZE: isize = 0;
+pub const RTG_AMD_ENGINE_ALL: isize = 1;
+pub const RTG_AMD_ENGINE_NONE: isize = 2;
 
 /// How many hot-plug lines RtgAmdEvents holds.
 pub const RTG_AMD_HOT_PLUG_LINES = 5;

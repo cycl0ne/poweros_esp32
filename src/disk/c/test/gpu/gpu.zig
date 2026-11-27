@@ -18,8 +18,8 @@
 //! display reads. Built against the SDK only.
 //!
 //!   Gpu TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,
-//!       SLEEP/K/N,RANGE/S,POINTER/S,MIRROR/S,OVERLAY/S,DIRECT/S,BANDS/S,VIDEO/S,GFX/S,DMA/S,GART/S,ENGINE/S,BLITS/S,COMPUTE/S,BLOCK/K/N,
-//!       WATCHDOG/K/N
+//!       SLEEP/K/N,RANGE/S,POINTER/S,MIRROR/S,OVERLAY/S,DIRECT/S,BANDS/S,VIDEO/S,GFX/S,DMA/S,GART/S,ENGINE/S,BLITS/S,COMPUTE/S,KERNELS/S,
+//!       BLOCK/K/N,WATCHDOG/K/N
 //!
 //! BIOS prints the device's video BIOS image (GetGPUBios): where it is
 //! and how long, its tables' header's version, the version of each of
@@ -333,6 +333,36 @@
 //! engine's registers are printed at the end. The watchdog is armed for
 //! it.
 //!
+//! KERNELS holds the board's own blends, scales, shapes and tiles (the
+//! kernels rtg-amd runs on the compute engine for BlendPixels, BlendRect,
+//! ScalePixels, BlitTemplate and BlitPattern) to graphics.library's: a
+//! buffer of the machine's memory, 2560 x 2880 pixels of four bytes or
+//! the same memory as twice as many of two, is handed to the board
+//! (AttachBitMap), one more of plain memory is not, and before each job
+//! the two are painted alike. Each job is drawn by graphics.library into
+//! both - into the board's buffer itself (RPTAG_BitMap), which it hands
+//! to the board, and into the plain one, which it draws itself - and
+//! every pixel of the two is compared: a picture of the same size, each
+//! pixel's coverage none, all or its own in patches, laid at full
+//! strength, at half, covering fully at 200, as `rgba32` over part of
+//! the buffer and over smaller rectangles down to 64 x 64; a colour laid
+//! over part of it and over smaller ones; parts of the picture scaled
+//! smoothly up by 2 and by 1.5, to the same size, down by 2, by 3 and by
+//! 64, narrower and taller, and from 128 to 256 pixels a side; shapes
+//! from bits of the machine's memory in both colours, over the buffer
+//! and over 256 x 256, in ink alone over part of it from a bit within a
+//! byte, and with their colours swapped, of four bytes a pixel and of
+//! two; and tiles of 16 x 16 bits and of 13 x 7, the same ways. Whose the board's drawing was - the kernels'
+//! or, where the board does not take it, the cores' - is told by the jobs
+//! the compute engine's queue counts (GetGPUComputeState). Each is timed
+//! beside graphics.library's on plain memory, each drawing begun with 64
+//! MiB of other memory read through, so that nothing it reads or writes
+//! is in the CPU's caches, as for a job larger than they are. It all
+//! runs twice: with
+//! every job the kernels can do handed to them (RTGCTRL_AMD_ENGINE,
+//! RTG_AMD_ENGINE_ALL), then by the board's own rule, which it is left
+//! with. The watchdog is armed for it.
+//!
 //! Without BIOS, CLOCKS, DMCUB, CRC, EVENTS, AUX, EDID, CYCLE, MODES,
 //! SLEEP, RANGE, POINTER, MIRROR, OVERLAY, DIRECT, BANDS, VIDEO, GFX,
 //! DMA, GART, ENGINE, BLITS, COMPUTE, DUMP, FRAMES or FLIP the two files
@@ -393,10 +423,10 @@ const graphics_library = sdk.graphics;
 const GraphicsBase = sdk.interface.graphics.GraphicsBase;
 
 pub const COMMAND_NAME = "Gpu";
-const VERSION_STRING = "\x00$VER: Gpu 1.26 (26.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Gpu 1.27 (27.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,SLEEP/K/N,RANGE/S,POINTER/S,MIRROR/S,OVERLAY/S,DIRECT/S,BANDS/S,VIDEO/S,GFX/S,DMA/S,GART/S,ENGINE/S,BLITS/S,COMPUTE/S,BLOCK/K/N,WATCHDOG/K/N";
+const template = "TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,SLEEP/K/N,RANGE/S,POINTER/S,MIRROR/S,OVERLAY/S,DIRECT/S,BANDS/S,VIDEO/S,GFX/S,DMA/S,GART/S,ENGINE/S,BLITS/S,COMPUTE/S,KERNELS/S,BLOCK/K/N,WATCHDOG/K/N";
 const arg_toc = 0;
 const arg_firmware = 1;
 const arg_frames = 2;
@@ -436,9 +466,10 @@ const arg_gart = 35;
 const arg_engine = 36;
 const arg_blits = 37;
 const arg_compute = 38;
-const arg_block = 39;
-const arg_watchdog = 40;
-const arg_count = 41;
+const arg_kernels = 39;
+const arg_block = 40;
+const arg_watchdog = 41;
+const arg_count = 42;
 
 /// Where the files are.
 const directory = "DEVS:firmware/amdgpu/";
@@ -2897,6 +2928,355 @@ fn blitsCheck(sys: *ExecBase, dl: *DosBase, millis: u32) i32 {
     return if (all_right and all_wrong == 0) dos.RETURN_OK else dos.RETURN_WARN;
 }
 
+// --- KERNELS: the board's own blends, scales, shapes and tiles -----------------------------
+
+/// The bits of KERNELS' shapes - a row for each of the buffer's, as long
+/// as a row of two bytes a pixel and a little more, and a few rows more -
+/// and of its tiles, up to 16 x 16 bits. The pens they are drawn in.
+const shape_pitch: u32 = (2 * blits_width + 64) / 8;
+const shape_rows: u32 = blits_height + 8;
+const tile_pitch: u32 = 2;
+const tile_rows: u32 = 16;
+/// The memory KERNELS reads through before it times a job, so that
+/// nothing the job reads or writes is in the CPU's caches: more than
+/// they hold, which is 24 MiB on the NucBox. Read, its lines are clean,
+/// so the job writes none of them back as it takes their place.
+const read_through_bytes: u32 = 64 << 20;
+const shape_fg = graphics_library.penRGB(0xE0, 0x30, 0x91);
+const shape_bg = graphics_library.penRGB(0x12, 0xC4, 0x5D);
+
+/// One of KERNELS' jobs, drawn by graphics.library into a buffer: the
+/// picture laid over `area` from its pixel at `from`'s corner, at
+/// `alpha`, every pixel covering fully where `covering`
+/// (BlendBitMapPixels); `pen` laid over it (BlendBitMapRect); the part
+/// `from` of the picture scaled smoothly to it (ScalePixelArray); a shape
+/// from its bit at `from`'s corner, or a `tile_width` x `tile_height`
+/// tile, in `mode` (BltTemplate, BltPattern) - on four bytes a pixel, or
+/// on two where `halves`. The picture is of `format`.
+const Drawn = struct {
+    name: [*:0]const u8,
+    kind: enum { blend, tint, scale, shape, tile },
+    area: rtg.RtgRect,
+    from: rtg.RtgRect = .{},
+    halves: bool = false,
+    format: rtg.PixelFormat = .bgra32,
+    covering: bool = false,
+    alpha: u32 = 255,
+    pen: u32 = 0,
+    mode: graphics_library.DrawMode = graphics_library.DRMD_JAM2,
+    tile_width: u32 = 0,
+    tile_height: u32 = 0,
+};
+
+const whole_buffer: rtg.RtgRect = .{ .x = 0, .y = 0, .width = blits_width, .height = blits_height };
+const whole_halves: rtg.RtgRect = .{ .x = 0, .y = 0, .width = 2 * blits_width, .height = blits_height };
+const small_square: rtg.RtgRect = .{ .x = 100, .y = 100, .width = 256, .height = 256 };
+
+const drawn_jobs = [_]Drawn{
+    .{ .name = "blend, whole buffer", .kind = .blend, .area = whole_buffer },
+    .{ .name = "blend at 128", .kind = .blend, .alpha = 128, .area = whole_buffer },
+    .{ .name = "blend covering fully, at 200", .kind = .blend, .alpha = 200, .covering = true, .area = whole_buffer },
+    .{ .name = "blend rgba32, part", .kind = .blend, .format = .rgba32, .from = .{ .x = 17, .y = 11 }, .area = .{ .x = 13, .y = 7, .width = 2500, .height = 2850 } },
+    .{ .name = "blend 2560 x 1440", .kind = .blend, .area = .{ .x = 0, .y = 0, .width = 2560, .height = 1440 } },
+    .{ .name = "blend 1024 x 1024", .kind = .blend, .area = .{ .x = 100, .y = 100, .width = 1024, .height = 1024 } },
+    .{ .name = "blend 256 x 256", .kind = .blend, .area = small_square },
+    .{ .name = "blend 64 x 64", .kind = .blend, .area = .{ .x = 100, .y = 100, .width = 64, .height = 64 } },
+    .{ .name = "colour at 100, part", .kind = .tint, .pen = 0x64C0_4020, .area = .{ .x = 5, .y = 3, .width = 2550, .height = 2870 } },
+    .{ .name = "colour 1024 x 1024", .kind = .tint, .pen = 0x8000_80FF, .area = .{ .x = 100, .y = 100, .width = 1024, .height = 1024 } },
+    .{ .name = "colour 256 x 256", .kind = .tint, .pen = 0x8000_80FF, .area = small_square },
+    .{ .name = "scale up 2x", .kind = .scale, .from = .{ .x = 0, .y = 0, .width = 1280, .height = 1440 }, .area = whole_buffer },
+    .{ .name = "scale rgba32 up 2x", .kind = .scale, .format = .rgba32, .from = .{ .x = 0, .y = 0, .width = 1280, .height = 1440 }, .area = whole_buffer },
+    .{ .name = "scale up 1.5x, odd", .kind = .scale, .from = .{ .x = 31, .y = 17, .width = 1700, .height = 1900 }, .area = .{ .x = 5, .y = 3, .width = 2550, .height = 2850 } },
+    .{ .name = "scale, the same size", .kind = .scale, .from = .{ .x = 3, .y = 5, .width = 2550, .height = 2870 }, .area = .{ .x = 7, .y = 2, .width = 2550, .height = 2870 } },
+    .{ .name = "scale down 2x", .kind = .scale, .from = .{ .x = 0, .y = 0, .width = 2560, .height = 2880 }, .area = .{ .x = 100, .y = 100, .width = 1280, .height = 1440 } },
+    .{ .name = "scale down 3x", .kind = .scale, .from = .{ .x = 0, .y = 0, .width = 2560, .height = 2880 }, .area = .{ .x = 7, .y = 9, .width = 853, .height = 960 } },
+    .{ .name = "scale narrower, taller", .kind = .scale, .from = .{ .x = 0, .y = 0, .width = 2560, .height = 720 }, .area = .{ .x = 0, .y = 0, .width = 1000, .height = 2880 } },
+    .{ .name = "scale 128 to 256", .kind = .scale, .from = .{ .x = 3, .y = 3, .width = 128, .height = 128 }, .area = small_square },
+    .{ .name = "scale down 64x", .kind = .scale, .from = .{ .x = 0, .y = 0, .width = 2560, .height = 2880 }, .area = .{ .x = 10, .y = 10, .width = 40, .height = 45 } },
+    .{ .name = "shape, both colours", .kind = .shape, .area = whole_buffer },
+    .{ .name = "shape, ink only, part", .kind = .shape, .mode = graphics_library.DRMD_JAM1, .from = .{ .x = 5, .y = 3 }, .area = .{ .x = 13, .y = 7, .width = 2500, .height = 2850 } },
+    .{ .name = "shape, colours swapped", .kind = .shape, .mode = graphics_library.DRMD_JAM2 | graphics_library.DRMD_INVERSVID, .area = whole_buffer },
+    .{ .name = "16-bit shape, both colours", .kind = .shape, .halves = true, .area = whole_halves },
+    .{ .name = "16-bit shape, ink only, part", .kind = .shape, .halves = true, .mode = graphics_library.DRMD_JAM1, .from = .{ .x = 3, .y = 1 }, .area = .{ .x = 7, .y = 3, .width = 5001, .height = 2870 } },
+    .{ .name = "shape 256 x 256", .kind = .shape, .area = small_square },
+    .{ .name = "16-bit shape 256 x 256", .kind = .shape, .halves = true, .area = small_square },
+    .{ .name = "tile 16 x 16", .kind = .tile, .tile_width = 16, .tile_height = 16, .area = whole_buffer },
+    .{ .name = "tile 13 x 7, ink only, part", .kind = .tile, .mode = graphics_library.DRMD_JAM1, .tile_width = 13, .tile_height = 7, .area = .{ .x = 13, .y = 7, .width = 2500, .height = 2850 } },
+    .{ .name = "16-bit tile 13 x 7, swapped", .kind = .tile, .halves = true, .mode = graphics_library.DRMD_JAM2 | graphics_library.DRMD_INVERSVID, .tile_width = 13, .tile_height = 7, .area = whole_halves },
+    .{ .name = "tile 256 x 256", .kind = .tile, .tile_width = 16, .tile_height = 16, .area = small_square },
+    .{ .name = "16-bit tile 256 x 256", .kind = .tile, .halves = true, .tile_width = 16, .tile_height = 16, .area = small_square },
+};
+
+/// One of KERNELS' buffers, as plain memory, of four bytes a pixel or of
+/// two.
+fn drawnSurface(pixels: [*]u8, halves: bool) rtg.Surface {
+    return .{
+        .pixels = pixels,
+        .width = if (halves) 2 * blits_width else blits_width,
+        .height = blits_height,
+        .pitch = blits_pitch,
+        .size_bytes = blits_bytes,
+        .format = if (halves) .rgb565 else .bgra32,
+    };
+}
+
+/// The same as a bitmap no board is behind.
+fn drawnBitMap(pixels: [*]u8, halves: bool) rtg.RtgBitMap {
+    return .{
+        .pixels = pixels,
+        .width = if (halves) 2 * blits_width else blits_width,
+        .height = blits_height,
+        .pitch = blits_pitch,
+        .size_bytes = blits_bytes,
+        .format = if (halves) .rgb565 else .bgra32,
+    };
+}
+
+/// KERNELS' memory: the board's buffer, as rtg.library has it of four
+/// bytes a pixel and of two; the plain buffer beside it; the picture; the
+/// shapes' and the tiles' bits.
+const Drawing = struct {
+    sys: *ExecBase,
+    gb: *GraphicsBase,
+    board_pixels: [*]u8,
+    plain_pixels: [*]u8,
+    bitmaps: [2]*rtg.RtgBitMap,
+    picture: [*]u8,
+    shape: [*]u8,
+    tile: [*]u8,
+    evict: [*]const u8,
+
+    /// The CPU's caches filled with other memory, a read of each line of
+    /// it: what a job draws on and from is then in none of them, as for
+    /// a job that covers more than they hold.
+    fn evicted(drawing: Drawing) void {
+        const lines: [*]const volatile u64 = @ptrCast(@alignCast(drawing.evict));
+        var index: usize = 0;
+        while (index < read_through_bytes / 8) : (index += 8) _ = lines[index];
+    }
+
+    /// The board's buffer and the plain one painted alike, each pixel its
+    /// own.
+    fn paint(drawing: Drawing, halves: bool, seed: u32) void {
+        for (0..blits_height) |row_index| {
+            const y: u32 = @intCast(row_index);
+            if (halves) {
+                const row: [*]u16 = @ptrCast(@alignCast(drawing.board_pixels + y * blits_pitch));
+                for (0..2 * blits_width) |x| row[x] = halfAt(@intCast(x), y, seed);
+            } else {
+                const row: [*]u32 = @ptrCast(@alignCast(drawing.board_pixels + y * blits_pitch));
+                for (0..blits_width) |x| row[x] = patternAt(@intCast(x), y, seed);
+            }
+        }
+        drawing.sys.CopyMem(drawing.board_pixels, drawing.plain_pixels, blits_bytes);
+    }
+
+    /// The pixels in which the two differ.
+    fn wrong(drawing: Drawing, halves: bool) u32 {
+        var count: u32 = 0;
+        if (halves) {
+            const board: [*]const u16 = @ptrCast(@alignCast(drawing.board_pixels));
+            const plain: [*]const u16 = @ptrCast(@alignCast(drawing.plain_pixels));
+            for (0..blits_bytes / 2) |index| count += @intFromBool(board[index] != plain[index]);
+        } else {
+            const board: [*]const u32 = @ptrCast(@alignCast(drawing.board_pixels));
+            const plain: [*]const u32 = @ptrCast(@alignCast(drawing.plain_pixels));
+            for (0..blits_bytes / 4) |index| count += @intFromBool(board[index] != plain[index]);
+        }
+        return count;
+    }
+
+    /// A RastPort for `job` drawing into the board's buffer itself, or
+    /// into `plain`: the shapes' pens and `job`'s mode, and smooth.
+    fn port(drawing: Drawing, job: Drawn, on_board: bool, plain: *rtg.Surface) ?*graphics_library.RastPort {
+        const tags = [_]TagItem{
+            if (on_board) .{ .tag = graphics_library.RPTAG_BitMap, .data = @intFromPtr(drawing.bitmaps[@intFromBool(job.halves)]) } else .{ .tag = graphics_library.RPTAG_Surface, .data = @intFromPtr(plain) },
+            .{ .tag = graphics_library.RPTAG_APen, .data = shape_fg },
+            .{ .tag = graphics_library.RPTAG_BPen, .data = shape_bg },
+            .{ .tag = graphics_library.RPTAG_DrMd, .data = job.mode },
+            .{ .tag = graphics_library.RPTAG_Smooth, .data = 1 },
+            .{},
+        };
+        return drawing.gb.CreateRastPortTagList(&tags);
+    }
+
+    /// `job` drawn by graphics.library into the board's buffer, which it
+    /// hands to the board, or into the plain one, which it draws itself.
+    /// False where it has no RastPort or did not draw.
+    fn draw(drawing: Drawing, job: Drawn, on_board: bool) bool {
+        const gb = drawing.gb;
+        var plain = drawnSurface(drawing.plain_pixels, job.halves);
+        var plain_bitmap = drawnBitMap(drawing.plain_pixels, job.halves);
+        const into: *rtg.RtgBitMap = if (on_board) drawing.bitmaps[@intFromBool(job.halves)] else &plain_bitmap;
+        const area = job.area;
+        const rect: graphics_library.Rect = .{ .min_x = area.x, .min_y = area.y, .max_x = area.x + area.width, .max_y = area.y + area.height };
+        switch (job.kind) {
+            .blend => {
+                const picture: rtg.RtgPixels = .{
+                    .pixels = drawing.picture,
+                    .pitch = blits_pitch,
+                    .format = job.format,
+                    .flags = if (job.covering) rtg.RTGPIXF_OPAQUE else 0,
+                    .x = job.from.x,
+                    .y = job.from.y,
+                };
+                return gb.BlendBitMapPixels(into, &area, &picture, job.alpha) == graphics_library.GERR_OK;
+            },
+            .tint => return gb.BlendBitMapRect(into, &area, job.pen) == graphics_library.GERR_OK,
+            .scale, .shape, .tile => {
+                const rp = drawing.port(job, on_board, &plain) orelse return false;
+                defer gb.FreeRastPort(rp);
+                const from = job.from;
+                switch (job.kind) {
+                    .scale => gb.ScalePixelArray(rp, drawing.picture, blits_pitch, @intFromEnum(job.format), &.{ .min_x = from.x, .min_y = from.y, .max_x = from.x + from.width, .max_y = from.y + from.height }, &rect),
+                    .shape => gb.BltTemplate(rp, drawing.shape, shape_pitch, from.x, from.y, &rect),
+                    else => gb.BltPattern(rp, drawing.tile, tile_pitch, job.tile_width, job.tile_height, &rect),
+                }
+                return true;
+            },
+        }
+    }
+};
+
+/// KERNELS' picture: each pixel's colour its own, and its coverage none,
+/// all or its own, in patches of 37 x 23 pixels, so that every way a
+/// pixel is laid is taken.
+fn paintPicture(pixels: [*]u8) void {
+    for (0..blits_height) |row_index| {
+        const y: u32 = @intCast(row_index);
+        const row: [*]u32 = @ptrCast(@alignCast(pixels + y * blits_pitch));
+        for (0..blits_width) |column| {
+            const x: u32 = @intCast(column);
+            const colour = patternAt(x, y, 0x5151_5151);
+            const coverage: u32 = switch ((x / 37 + y / 23) % 4) {
+                0 => 0,
+                1 => 0xFF,
+                else => colour >> 24,
+            };
+            row[column] = (colour & 0x00FF_FFFF) | (coverage << 24);
+        }
+    }
+}
+
+/// KERNELS: the board's own blends, scales, shapes and tiles, drawn
+/// through graphics.library into the board's buffer and held to
+/// graphics.library's on plain memory pixel for pixel, each timed beside
+/// it: first with every job the board's kernels can do handed to them
+/// (RTG_AMD_ENGINE_ALL), then by the board's own rule.
+fn kernelsCheck(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, millis: u32) i32 {
+    const rtg_lib = sys.OpenLibrary(rtg.RTGNAME, rtg.RTG_VERSION) orelse {
+        _ = Printf(dl, "No %s\n", .{rtg.RTGNAME});
+        return dos.RETURN_FAIL;
+    };
+    defer sys.CloseLibrary(rtg_lib);
+    const rb: *RtgBase = @ptrCast(rtg_lib);
+    const board = amdBoard(dl, rb) orelse return dos.RETURN_WARN;
+    const graphics_lib = sys.OpenLibrary("graphics.library", 0) orelse {
+        _ = Printf(dl, "No graphics.library\n", .{});
+        return dos.RETURN_FAIL;
+    };
+    defer sys.CloseLibrary(graphics_lib);
+
+    // The board's buffer, the plain one, the picture, the shapes' bits,
+    // the tiles' and the memory that fills the caches, each on 256 bytes.
+    const sizes = [_]u32{ blits_bytes, blits_bytes, blits_bytes, shape_pitch * shape_rows, tile_pitch * tile_rows, read_through_bytes };
+    var allocations: [sizes.len]?*anyopaque = @splat(null);
+    defer for (allocations) |allocation| if (allocation) |memory| sys.FreeVec(memory);
+    var starts: [sizes.len][*]u8 = undefined;
+    for (sizes, &allocations, &starts) |bytes, *allocation, *start| {
+        const memory = sys.AllocVec(bytes + 256, exec.MEMF_ANY) orelse {
+            _ = Printf(dl, "No memory for %u bytes\n", .{bytes});
+            return dos.RETURN_FAIL;
+        };
+        allocation.* = memory;
+        start.* = @ptrFromInt(@intFromPtr(memory) + 255 & ~@as(usize, 255));
+    }
+    var attached: [2]?*rtg.RtgBitMap = @splat(null);
+    defer for (attached) |bitmap| rb.FreeBitMap(bitmap);
+    var bitmaps: [2]*rtg.RtgBitMap = undefined;
+    for (0..2) |halves| {
+        const described = drawnBitMap(starts[0], halves == 1);
+        const bitmap = rb.AttachBitMap(board, &described) orelse {
+            _ = Printf(dl, "The board does not take a buffer at %lx\n", .{@as(u64, @intFromPtr(starts[0]))});
+            return dos.RETURN_FAIL;
+        };
+        attached[halves] = bitmap;
+        bitmaps[halves] = bitmap;
+    }
+    paintPicture(starts[2]);
+    for (0..sizes[3]) |index| starts[3][index] = @truncate(patternAt(@intCast(index), 0, 0x77) >> 11);
+    for (0..sizes[4]) |index| starts[4][index] = @truncate(patternAt(@intCast(index), 1, 0x99) >> 11);
+    const drawing: Drawing = .{
+        .sys = sys,
+        .gb = @ptrCast(graphics_lib),
+        .board_pixels = starts[0],
+        .plain_pixels = starts[1],
+        .bitmaps = bitmaps,
+        .picture = starts[2],
+        .shape = starts[3],
+        .tile = starts[4],
+        .evict = starts[5],
+    };
+    const wb = arm(sys, dl, millis) orelse return dos.RETURN_FAIL;
+    defer wb.DisarmWatchdog();
+    // The board's start of its engines ended, whatever it came to; its
+    // own rule again at the end, whatever happens.
+    _ = rb.BoardControl(board, rtg.boards.RTGCTRL_SETTLED, 0);
+    defer _ = rb.BoardControl(board, rtg.tags.RTGCTRL_AMD_ENGINE, rtg.tags.RTG_AMD_ENGINE_SIZE);
+    _ = Printf(dl, "The board's buffer at %lx, the plain one at %lx, the picture at %lx, %u x %u, four bytes a pixel, or twice as many of two\n", .{
+        @as(u64, @intFromPtr(starts[0])), @as(u64, @intFromPtr(starts[1])), @as(u64, @intFromPtr(starts[2])), blits_width, blits_height,
+    });
+
+    var all_right = true;
+    var all_wrong: u32 = 0;
+    for ([_]isize{ rtg.tags.RTG_AMD_ENGINE_ALL, rtg.tags.RTG_AMD_ENGINE_SIZE }) |rule| {
+        const before = rb.BoardControl(board, rtg.tags.RTGCTRL_AMD_ENGINE, rule);
+        if (before < 0) {
+            _ = Printf(dl, "The board does not take RTGCTRL_AMD_ENGINE (%ld)\n", .{@as(i64, before)});
+            return dos.RETURN_WARN;
+        }
+        _ = Printf(dl, "%s\n", .{@as([*:0]const u8, if (rule == rtg.tags.RTG_AMD_ENGINE_ALL) "Every job the board's kernels can do handed to them:" else "By the board's own rule:")});
+        _ = Printf(dl, "  %-32s %-8s %9s %9s %8s\n", .{ "job", "board", "board us", "CPU us", "wrong" });
+        var taken: u32 = 0;
+        for (drawn_jobs, 0..) |job, index| {
+            drawing.paint(job.halves, @intCast(index + 1));
+            drawing.evicted();
+            var began = sys.UptimeUs();
+            if (!drawing.draw(job, false)) {
+                _ = Printf(dl, "graphics.library did not draw %s\n", .{job.name});
+                return dos.RETURN_FAIL;
+            }
+            const library_us = sys.UptimeUs() - began;
+            // The kernels' jobs, as the compute engine's queue counts
+            // them, tell whose the board's drawing was.
+            var state: amdgpu.GPUComputeState = .{};
+            _ = ab.GetGPUComputeState(&state);
+            const sent = state.sent;
+            drawing.evicted();
+            began = sys.UptimeUs();
+            if (!drawing.draw(job, true)) {
+                _ = Printf(dl, "graphics.library did not draw %s into the board's buffer\n", .{job.name});
+                return dos.RETURN_FAIL;
+            }
+            const board_us = sys.UptimeUs() - began;
+            _ = ab.GetGPUComputeState(&state);
+            const by_kernels = state.sent != sent;
+            const wrong = drawing.wrong(job.halves);
+            _ = Printf(dl, "  %-32s %-8s %9lu %9lu %8u\n", .{ job.name, @as([*:0]const u8, if (by_kernels) "kernels" else "cores"), board_us, library_us, wrong });
+            taken += @intFromBool(by_kernels);
+            all_wrong += wrong;
+            wb.FeedWatchdog();
+        }
+        _ = Printf(dl, "%u of %u jobs taken by the board's kernels\n", .{ taken, @as(u32, drawn_jobs.len) });
+        if (rule == rtg.tags.RTG_AMD_ENGINE_ALL and taken == 0) {
+            _ = Printf(dl, "The board's kernels took no job: see C:Log\n", .{});
+            all_right = false;
+        }
+    }
+    _ = Printf(dl, "%u pixels wrong\n", .{all_wrong});
+    return if (all_right and all_wrong == 0) dos.RETURN_OK else dos.RETURN_WARN;
+}
+
 /// How long CYCLE waits for a picture to change by itself and then to
 /// hold, in ticks of 20 ms.
 const change_wait_ticks: u32 = 100;
@@ -2986,6 +3366,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     if (argv[arg_bands] != 0) return bandsCheck(sys, dl, ab, info, millis);
     if (argv[arg_video] != 0) return videoCheck(sys, dl, ab, info, millis);
     if (argv[arg_blits] != 0) return blitsCheck(sys, dl, millis);
+    if (argv[arg_kernels] != 0) return kernelsCheck(sys, dl, ab, millis);
     if (argv[arg_sleep] != 0) return asleepFor(sys, dl, ab, info, millis, number(argv[arg_sleep]), argv[arg_modes] != 0);
     if (argv[arg_gfx] != 0 or argv[arg_dma] != 0 or argv[arg_gart] != 0 or argv[arg_engine] != 0 or argv[arg_compute] != 0) {
         const then: GraphicsThen = if (argv[arg_compute] != 0) .compute else if (argv[arg_engine] != 0) .engine else if (argv[arg_gart] != 0) .gart else if (argv[arg_dma] != 0) .dma else .nothing;

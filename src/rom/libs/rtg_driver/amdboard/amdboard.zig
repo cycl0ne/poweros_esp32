@@ -179,12 +179,17 @@
 //! monitor's sleep - and is lit again after from the frame it shows; while
 //! it is open, bands are made in frames.
 //!
-//! The engine (`engine_ops`) is the graphics block's DMA engine
-//! (`dma.zig`): FillRect, CopyRect and CopyRects of more than the CPU's
-//! caches hold, on the machine's memory the buffers are in. The block
-//! and its queue are started in a process of its own begun at the end of
-//! `attach`, which neither the board nor its first picture waits for;
-//! `RTGCTRL_SETTLED` and `halt` wait until nothing of it runs.
+//! The engine (`engine_ops`) is the graphics block's: its DMA engine
+//! (`dma.zig`) does FillRect, CopyRect and CopyRects, and the board's own
+//! kernels on its compute engine (`kernels.zig`) BlendPixels, BlendRect,
+//! ScalePixels, BlitTemplate and BlitPattern - each job of more than the
+//! CPU's caches hold, on the machine's memory the buffers are in. The
+//! kernels are built with the board (`kernels/engine.zig`) and carried
+//! in it as a code object. The block, its two queues and the kernels are
+//! started in a process of its own begun at the end of `attach`, which
+//! neither the board nor its first picture waits for; `RTGCTRL_SETTLED`
+//! and `halt` wait until nothing of it runs. RTGCTRL_AMD_ENGINE has the
+//! engines take every job, or none, for a program that times them.
 //!
 //! The module keeps nothing of its own: a ROM image is read only, so what
 //! changes is the library's to allocate - a `Screen` beside the board -
@@ -225,12 +230,17 @@ const bandwidth = @import("bandwidth.zig");
 const clocks = @import("clocks.zig");
 const hub = @import("hub.zig");
 const dma = @import("dma.zig");
+const kernels = @import("kernels.zig");
+
+/// The board's kernels for the graphics block's compute engine, as the
+/// build made them from `kernels/engine.zig`: a code object.
+const engine_code = @embedFile("gpu_code");
 
 const MODULE_NAME = "rtg-amd";
 const DRIVER_NAME = "amd";
 const VERSION = 1;
-const REVISION = 25;
-const BUILD_DATE = "26.11.2026";
+const REVISION = 26;
+const BUILD_DATE = "27.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ VERSION, REVISION }) ++
@@ -430,6 +440,10 @@ const Screen = struct {
     /// The graphics block's DMA engine, as FillRect, CopyRect and
     /// CopyRects reach it (dma.zig).
     dma: dma.Dma = .{},
+    /// The board's kernels on its compute engine, as BlendPixels,
+    /// BlendRect, ScalePixels, BlitTemplate and BlitPattern reach them
+    /// (kernels.zig).
+    kernels: kernels.Kernels = .{},
 };
 
 /// A plane the cursor is laid over too (`Screen.cursor_plane`,
@@ -1173,9 +1187,10 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, device_tags: ?[*]const
     };
     board.info.buffers = screen.buffers;
     device.driver_data = screen;
-    // The graphics block and its DMA engine's queue started beside the
-    // board, which does not wait for them.
-    dma.start(&screen.dma, sys, screen.dcn.gpu);
+    // The graphics block, its DMA engine's queue and the board's kernels
+    // started beside the board, which does not wait for them.
+    screen.kernels = .{ .image = engine_code };
+    dma.start(&screen.dma, sys, screen.dcn.gpu, &screen.kernels);
     return err.RTGERR_OK;
 }
 
@@ -2755,6 +2770,7 @@ fn control(board: *rtg.RtgBoard, what: u32, value: isize) callconv(.c) isize {
             dma.settle(&screen.dma, screen.sys);
             return err.RTGERR_OK;
         },
+        rtg.tags.RTGCTRL_AMD_ENGINE => return dma.setRule(&screen.dma, value) orelse err.RTGERR_BAD_ARG,
         rtg.tags.RTGCTRL_AMD_FIRMWARE => {
             screen.sys.ObtainSemaphore(&screen.smu_lock);
             defer screen.sys.ReleaseSemaphore(&screen.smu_lock);
@@ -2917,9 +2933,45 @@ const ops = rtg.boards.RtgBoardOps{
     .engine = &engine_ops,
 };
 
-/// FillRect, CopyRect and CopyRects by the graphics block's DMA engine,
-/// for the jobs that are more than the CPU's caches hold (dma.zig).
-const engine_ops = rtg.boards.RtgEngineOps{ .fill_rect = &fillRectOp, .copy_rect = &copyRectOp, .copy_rects = &copyRectsOp };
+/// FillRect, CopyRect and CopyRects by the graphics block's DMA engine
+/// (dma.zig), and BlendPixels, BlendRect, ScalePixels, BlitTemplate and
+/// BlitPattern by the board's kernels on its compute engine
+/// (kernels.zig), for the jobs that are more than the CPU's caches hold.
+const engine_ops = rtg.boards.RtgEngineOps{
+    .fill_rect = &fillRectOp,
+    .copy_rect = &copyRectOp,
+    .copy_rects = &copyRectsOp,
+    .blit_template = &blitTemplateOp,
+    .blit_pattern = &blitPatternOp,
+    .blend_pixels = &blendPixelsOp,
+    .blend_rect = &blendRectOp,
+    .scale_pixels = &scalePixelsOp,
+};
+
+fn blitTemplateOp(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect, shape: *const rtg.RtgTemplate) callconv(.c) i32 {
+    const screen = screenOf(board);
+    return kernels.blitTemplate(&screen.kernels, &screen.dma, screen.sys, screen.rtg_base, bitmap, area, shape);
+}
+
+fn blitPatternOp(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect, tile: *const rtg.RtgPattern) callconv(.c) i32 {
+    const screen = screenOf(board);
+    return kernels.blitPattern(&screen.kernels, &screen.dma, screen.sys, screen.rtg_base, bitmap, area, tile);
+}
+
+fn blendPixelsOp(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect, picture: *const rtg.RtgPixels, alpha: u32) callconv(.c) i32 {
+    const screen = screenOf(board);
+    return kernels.blendPixels(&screen.kernels, &screen.dma, screen.sys, bitmap, area, picture, alpha);
+}
+
+fn blendRectOp(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect, pen: u32) callconv(.c) i32 {
+    const screen = screenOf(board);
+    return kernels.blendRect(&screen.kernels, &screen.dma, screen.sys, bitmap, area, pen);
+}
+
+fn scalePixelsOp(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect, picture: *const rtg.RtgPixels, width: u32, height: u32) callconv(.c) i32 {
+    const screen = screenOf(board);
+    return kernels.scalePixels(&screen.kernels, &screen.dma, screen.sys, bitmap, area, picture, width, height);
+}
 
 fn fillRectOp(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect, colour: u32) callconv(.c) i32 {
     const screen = screenOf(board);

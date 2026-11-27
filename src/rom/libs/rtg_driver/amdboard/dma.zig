@@ -11,7 +11,10 @@
 //! fill's rectangle, a copy's source and destination - is more than the
 //! CPU's caches below the memory hold together (`cachedBytes`). Every
 //! smaller job is answered RTGERR_NOT_SUPPORTED before anything is
-//! written, and graphics.library does it on the cores. On the NucBox,
+//! written, and graphics.library does it on the cores. The board's
+//! kernels (`kernels.zig`) have rules of their own, and
+//! RTGCTRL_AMD_ENGINE sets another for both - every job, or none - for a
+//! program that times the engines against the cores (`setRule`). On the NucBox,
 //! whose caches hold 24 MiB, with the rectangles just written by the CPU:
 //! a copy between two buffers of 10 MiB took the engine 534 us and the
 //! cores 69, of 14 MiB 891 and 1166; a fill of 20 MiB 888 and 603, of
@@ -27,9 +30,10 @@
 //! started and kept powered (StartGPUGraphics), and the queue started
 //! (StartGPUDMA), some 600 ms; each answers at once where it was done
 //! before. Where any of it fails the log says why, and the board's engine
-//! stays off. The board settles (RTGCTRL_SETTLED, which `C:Rtg TRIED`
-//! asks for before it says the driver came back) and goes (`stop`) once
-//! nothing of the process runs any more.
+//! stays off. Once the queue runs, the process goes on to the board's
+//! kernels (`kernels.start`). The board settles (RTGCTRL_SETTLED, which
+//! `C:Rtg TRIED` asks for before it says the driver came back) and goes
+//! (`stop`) once nothing of the process runs any more.
 //!
 //! **The memory** a job reads and writes is mapped for it (MapGPUMemory):
 //! each buffer's rows from the first the job touches to the last, taken
@@ -88,6 +92,7 @@ const TagItem = sdk.utility.TagItem;
 
 const dcn = @import("dcn.zig");
 const dmub = @import("dmub.zig");
+const kernels = @import("kernels.zig");
 
 /// The board's engine as the board keeps it, beside the board: it does
 /// not move while the board is there.
@@ -95,10 +100,17 @@ pub const Dma = struct {
     /// The device, as the jobs and the process starting the queue reach
     /// it.
     gpu: ?*AMDGPUBase = null,
-    /// The bytes a job may read and write that the cores do sooner: what
-    /// the CPU's caches hold (`cachedBytes`). A job of more is the
-    /// engine's.
+    /// What the CPU's caches hold (`cachedBytes`): the bytes a job may
+    /// read and write that the cores do sooner.
+    cached: u64 = 0,
+    /// The bytes a job has to be more than to be an engine's, under the
+    /// rule `rule` (RTG_AMD_ENGINE_*): `cached` by size, 0 for every job,
+    /// all ones for none. Both set and read atomically.
     least: u64 = 0,
+    rule: isize = rtg.tags.RTG_AMD_ENGINE_SIZE,
+    /// The board's kernels, which the process starting the queue starts
+    /// once it runs.
+    kernels: ?*kernels.Kernels = null,
     /// The device's memory window as the machine reaches it, which the
     /// engine is not sent to through the hub: a buffer in it is refused.
     window_start: u64 = 0,
@@ -144,15 +156,17 @@ const starter_stack: u32 = 65536;
 
 /// The board's engine set up as the board is made: what a job has to be
 /// more than, and the process that starts the graphics block and its
-/// queue begun. Nothing where the CPU does not say what its caches hold,
-/// or where the board is made in a task, which starts no process.
-pub fn start(dma: *Dma, sys: *ExecBase, gpu: *AMDGPUBase) void {
-    dma.* = .{ .gpu = gpu, .least = cachedBytes(sys) };
+/// queue begun, which starts `compute` after. Nothing where the CPU does
+/// not say what its caches hold, or where the board is made in a task,
+/// which starts no process.
+pub fn start(dma: *Dma, sys: *ExecBase, gpu: *AMDGPUBase, compute: *kernels.Kernels) void {
+    const cached = cachedBytes(sys);
+    dma.* = .{ .gpu = gpu, .cached = cached, .least = cached, .kernels = compute };
     var info: amdgpu.GPUInfo = .{};
     if (!gpu.GetGPUInfo(&info)) return;
     dma.window_start = info.window;
     dma.window_end = info.window + info.window_bytes;
-    if (dma.least == 0) {
+    if (dma.cached == 0) {
         exec.kprintf(sys, "%s: the CPU does not say what its caches hold: the graphics block's DMA engine is not used\n", .{dcn.owner});
         return;
     }
@@ -190,11 +204,37 @@ pub fn settle(dma: *Dma, sys: *ExecBase) void {
 }
 
 /// The board's engine let go of as the board goes: once nothing of the
-/// process starting the queue runs any more, no job is the engine's. The
-/// queue is amdgpu.resource's and runs on.
+/// process starting the queue runs any more, no job is the engine's, and
+/// the board's kernels are let go of too. The queues are
+/// amdgpu.resource's and run on.
 pub fn stop(dma: *Dma, sys: *ExecBase) void {
     settle(dma, sys);
     @atomicStore(bool, &dma.ready, false, .release);
+    if (dma.kernels) |compute| if (dma.gpu) |gpu| kernels.stop(compute, gpu);
+}
+
+/// The bytes a job has to be more than to be an engine's, under the rule
+/// in force.
+pub fn cutOff(dma: *const Dma) u64 {
+    return @atomicLoad(u64, &dma.least, .acquire);
+}
+
+/// The rule in force (RTG_AMD_ENGINE_*).
+pub fn ruleOf(dma: *const Dma) isize {
+    return @atomicLoad(isize, &dma.rule, .acquire);
+}
+
+/// RTGCTRL_AMD_ENGINE: which jobs the engines take from now on - by size,
+/// every one or none. The rule before, or null for another value.
+pub fn setRule(dma: *Dma, rule: isize) ?isize {
+    const least: u64 = switch (rule) {
+        rtg.tags.RTG_AMD_ENGINE_SIZE => dma.cached,
+        rtg.tags.RTG_AMD_ENGINE_ALL => 0,
+        rtg.tags.RTG_AMD_ENGINE_NONE => ~@as(u64, 0),
+        else => return null,
+    };
+    @atomicStore(u64, &dma.least, least, .release);
+    return @atomicRmw(isize, &dma.rule, .Xchg, rule, .acq_rel);
 }
 
 /// The process that starts the graphics block and its queue: the board's
@@ -203,8 +243,9 @@ fn starter(sys: *ExecBase) callconv(.c) void {
     const me = sys.FindTask(null).?;
     const dma: *Dma = @ptrCast(@alignCast(me.user_data orelse return));
     if (!bringUp(sys, dma.gpu.?)) return;
-    exec.kprintf(sys, "%s: the graphics block's DMA engine runs: fills and copies of more than %lu bytes are its\n", .{ dcn.owner, dma.least });
+    exec.kprintf(sys, "%s: the graphics block's DMA engine runs: fills and copies of more than %lu bytes are its\n", .{ dcn.owner, dma.cached });
     @atomicStore(bool, &dma.ready, true, .release);
+    if (dma.kernels) |compute| kernels.start(compute, sys, dma.gpu.?);
 }
 
 /// The graphics block's firmware read, the block started and its queue
@@ -315,10 +356,10 @@ pub fn fill(dma: *Dma, sys: *ExecBase, rb: *RtgBase, bitmap: *rtg.RtgBitMap, are
     const width: u32 = @intCast(area.width);
     const height: u32 = @intCast(area.height);
     // Most fills end here, four bytes a pixel the most they could be.
-    if (@as(u64, width) * height * 4 <= dma.least or !@atomicLoad(bool, &dma.ready, .acquire)) return err.RTGERR_NOT_SUPPORTED;
+    if (@as(u64, width) * height * 4 <= cutOff(dma) or !@atomicLoad(bool, &dma.ready, .acquire)) return err.RTGERR_NOT_SUPPORTED;
     const gpu = dma.gpu.?;
     const bytes_each = pixelBytes(rb, bitmap.format) orelse return err.RTGERR_NOT_SUPPORTED;
-    if (@as(u64, width) * height * bytes_each <= dma.least) return err.RTGERR_NOT_SUPPORTED;
+    if (@as(u64, width) * height * bytes_each <= cutOff(dma)) return err.RTGERR_NOT_SUPPORTED;
     const pixels = bitmap.pixels orelse return err.RTGERR_NOT_SUPPORTED;
     if (!lined(pixels, bitmap.pitch) or !inMemory(dma, bitmap)) return err.RTGERR_NOT_SUPPORTED;
     const x: u32 = @intCast(area.x);
@@ -357,7 +398,7 @@ pub fn copy(dma: *Dma, sys: *ExecBase, rb: *RtgBase, src: *rtg.RtgBitMap, dest: 
     // each could be.
     var most: u64 = 0;
     for (copies) |one| most += 8 * @as(u64, @intCast(one.width)) * @as(u64, @intCast(one.height));
-    if (most <= dma.least or !@atomicLoad(bool, &dma.ready, .acquire)) return err.RTGERR_NOT_SUPPORTED;
+    if (most <= cutOff(dma) or !@atomicLoad(bool, &dma.ready, .acquire)) return err.RTGERR_NOT_SUPPORTED;
     const gpu = dma.gpu.?;
     if (src.format != dest.format) return err.RTGERR_NOT_SUPPORTED;
     const bytes_each = pixelBytes(rb, dest.format) orelse return err.RTGERR_NOT_SUPPORTED;
@@ -396,7 +437,7 @@ pub fn copy(dma: *Dma, sys: *ExecBase, rb: *RtgBase, src: *rtg.RtgBitMap, dest: 
     } else for (copies) |one| {
         touched += 2 * @as(u64, @intCast(one.width)) * @as(u64, @intCast(one.height)) * bytes_each;
     }
-    if (touched <= dma.least) return err.RTGERR_NOT_SUPPORTED;
+    if (touched <= cutOff(dma)) return err.RTGERR_NOT_SUPPORTED;
 
     var source: amdgpu.GPUMemory = .{};
     if (!mapRows(gpu, src_pixels, src.pitch, from.first, from.rows, from.end_bytes, &source)) return err.RTGERR_NOT_SUPPORTED;
@@ -444,7 +485,7 @@ fn send(dma: *Dma, sys: *ExecBase, words: [*]const u32, count: u32) i32 {
 
 /// Bytes a pixel of `format` is, where the engine takes it: one, two or
 /// four.
-fn pixelBytes(rb: *RtgBase, format: rtg.PixelFormat) ?u32 {
+pub fn pixelBytes(rb: *RtgBase, format: rtg.PixelFormat) ?u32 {
     return switch (rb.RtgFormatBits(@intFromEnum(format))) {
         8 => 1,
         16 => 2,
@@ -465,14 +506,14 @@ fn shiftOf(bytes_each: u32) u32 {
 
 /// Whether a buffer's start and its rows' length are whole four bytes,
 /// as the engine takes them.
-fn lined(pixels: [*]u8, pitch: u32) bool {
+pub fn lined(pixels: [*]u8, pitch: u32) bool {
     return @intFromPtr(pixels) % 4 == 0 and pitch % 4 == 0 and pitch != 0;
 }
 
 /// Whether a buffer lies in the machine's memory, outside the device's
 /// memory window: the window is the device's own memory seen from the
 /// machine, which the hub would send the engine to as the machine's.
-fn inMemory(dma: *const Dma, bitmap: *const rtg.RtgBitMap) bool {
+pub fn inMemory(dma: *const Dma, bitmap: *const rtg.RtgBitMap) bool {
     const first: u64 = @intFromPtr(bitmap.pixels);
     const end = first + @as(u64, bitmap.pitch) * bitmap.height;
     return end <= dma.window_start or first >= dma.window_end;
@@ -481,7 +522,7 @@ fn inMemory(dma: *const Dma, bitmap: *const rtg.RtgBitMap) bool {
 /// `rows` rows of a buffer from row `first`, the last of them to its
 /// byte `end_bytes`, mapped for a job into `into`: false where they
 /// cannot be.
-fn mapRows(gpu: *AMDGPUBase, pixels: [*]u8, pitch: u32, first: u32, rows: u32, end_bytes: u32, into: *amdgpu.GPUMemory) bool {
+pub fn mapRows(gpu: *AMDGPUBase, pixels: [*]u8, pitch: u32, first: u32, rows: u32, end_bytes: u32, into: *amdgpu.GPUMemory) bool {
     const bytes = @as(u64, rows - 1) * pitch + end_bytes;
     if (bytes > 0xffff_ffff) return false;
     return gpu.MapGPUMemory(pixels + @as(usize, first) * pitch, @intCast(bytes), into);
