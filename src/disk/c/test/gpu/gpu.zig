@@ -250,12 +250,13 @@
 //! processor is made ready (StartGPUSecurity, at once where it is), the
 //! block kept powered (SetGPUPower) and its registers printed, then its
 //! firmware loaded, the block started and its memory hub turned on
-//! (StartGPUGraphics), which waits until the engines have their code.
-//! How long that took is printed, and the block's registers again with
-//! its hub's and its clock gating's, and the graphics block's and the
-//! data fabric's clocks as the power manager reads them (GetGPUClock),
-//! at once and again after the block has been idle for a second; the
-//! block is left powered and started. The watchdog is armed for it.
+//! (StartGPUGraphics), which waits until the engines have their code. How
+//! long that took is printed, and the block's registers again with its
+//! hub's, the vendor's settings it was given and its clock gating's, and
+//! the graphics block's and the data fabric's clocks as the power manager
+//! reads them (GetGPUClock), at once and again after the block has been
+//! idle for a second; the block is left powered and started. The watchdog
+//! is armed for it.
 //!
 //! DMA does what GFX does, then starts the block's DMA engine with its
 //! queue (StartGPUDMA) and tries it: a job of eight NOPs; a hundred
@@ -425,7 +426,7 @@ const graphics_library = sdk.graphics;
 const GraphicsBase = sdk.interface.graphics.GraphicsBase;
 
 pub const COMMAND_NAME = "Gpu";
-const VERSION_STRING = "\x00$VER: Gpu 1.28 (27.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Gpu 1.29 (27.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,SLEEP/K/N,RANGE/S,POINTER/S,MIRROR/S,OVERLAY/S,DIRECT/S,BANDS/S,VIDEO/S,GFX/S,DMA/S,GART/S,ENGINE/S,BLITS/S,COMPUTE/S,KERNELS/S,BLOCK/K/N,WATCHDOG/K/N";
@@ -1397,6 +1398,24 @@ fn graphicsFile(sys: *ExecBase, dl: *DosBase, prefix: []const u8, block: amdgpu.
     return true;
 }
 
+/// The registers the vendor's settings for the block go into, and two of
+/// its constants: the registers' read timeout and the occlusion counters'
+/// split.
+const settings_registers = [_]GraphicsRegister{
+    .{ .name = "CGTT_GS_NGG_CLK_CTRL", .segment = 1, .offset = 0x5087 },
+    .{ .name = "CGTT_WD_CLK_CTRL", .segment = 1, .offset = 0x5086 },
+    .{ .name = "CPF_GCR_CNTL", .segment = 0, .offset = 0x1f53 },
+    .{ .name = "GL2C_CTRL3", .segment = 1, .offset = 0x2e0c },
+    .{ .name = "PA_CL_ENHANCE", .segment = 0, .offset = 0x1025 },
+    .{ .name = "PA_SC_ENHANCE_3", .segment = 1, .offset = 0x0944 },
+    .{ .name = "PA_SC_VRS_SURFACE_CNTL_1", .segment = 1, .offset = 0x0960 },
+    .{ .name = "TA_CNTL_AUX", .segment = 0, .offset = 0x12e2 },
+    .{ .name = "TCP_CNTL2", .segment = 1, .offset = 0x19a3 },
+    .{ .name = "TCP_CNTL", .segment = 1, .offset = 0x19a2 },
+    .{ .name = "GRBM_CNTL", .segment = 0, .offset = 0x0da0 },
+    .{ .name = "DB_RING_CONTROL", .segment = 0, .offset = 0x13bb },
+};
+
 /// Its clock gating's: the overrides that keep each kind of it off, the
 /// coarse-grain gating's control, and the power gating's, which is left
 /// off.
@@ -1483,6 +1502,8 @@ fn graphicsStart(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPU
     printGraphics(dl, info, graphics, &graphics_registers);
     _ = Printf(dl, "Its memory hub's:\n", .{});
     printGraphics(dl, info, graphics, &hub_registers);
+    _ = Printf(dl, "The vendor's settings it was given:\n", .{});
+    printGraphics(dl, info, graphics, &settings_registers);
     _ = Printf(dl, "Its clock gating's, and the clocks:\n", .{});
     printGraphics(dl, info, graphics, &gating_registers);
     printClocks(dl, ab);

@@ -85,9 +85,7 @@ const _graphics = @import("../graphics/_graphics.zig");
 /// engine's does: its packets and its kernels name memory by its address
 /// to the device - the device's own memory through the hub's aperture,
 /// the machine's once it is mapped into the hub's page table
-/// (MapGPUMemory). The golden values the vendor's driver writes into
-/// nine of the block's registers at its start - its drawing pipeline's,
-/// its texture caches' and its second-level cache's - are not written.
+/// (MapGPUMemory).
 ///
 /// BUGS:
 /// The block is kept powered for as long as the queue runs, rather than

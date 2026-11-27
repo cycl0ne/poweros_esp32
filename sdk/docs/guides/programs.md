@@ -1156,7 +1156,7 @@ it, as the queue cannot be reset. `SendGPUCompute` puts the engine's own
 packets on the queue instead, `GetGPUComputeState` says how far it is.
 `C:test/Gpu COMPUTE` starts the queue and tries it with the kernel above;
 on the NucBox a job is 12 us from sent to done, and the kernel fills
-16 MiB of the device's memory in about 440 us and of the machine's,
+16 MiB of the device's memory in 1 to 1.2 ms and of the machine's,
 mapped, in 1 to 2 ms.
 
 A kernel may take its arguments as one `extern struct` by value, which

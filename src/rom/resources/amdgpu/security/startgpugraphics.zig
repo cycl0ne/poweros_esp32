@@ -57,23 +57,23 @@ const _graphics = @import("../graphics/_graphics.zig");
 ///
 /// RESULT:
 /// True once every part is loaded, the RLC told to start, the power
-/// controller started, every engine has its code, the hub is on and the
-/// RLC has the graphics pipe's clear state, and at once where an earlier
-/// call did all of it. False where a file is not given, or its header is
-/// not one the resource reads - the command processor's of another
-/// version than the first, the RLC's of another than 2.0 to 2.3, a part
-/// outside its file - which is said on the system's lines, and nothing is
-/// loaded; where the block is one whose registers the resource does not
-/// know (it knows 11.0.1); where StartGPUSecurity has not made the
-/// processor ready, the processor does not answer within five seconds, or
-/// the device's memory has no room for a part's copy, the hub's page
-/// table or the graphics pipe's clear state; where the power manager does
-/// not keep the block powered, refuses to start the power controller or
-/// does not answer within a second; where either is one whose commands
-/// the resource does not know; where the engines do not have their code
-/// within 100 ms or the hub does not take its new table - after which
-/// every later call answers false at once; and on a machine without the
-/// device.
+/// controller started, every engine has its code, the hub is on, the
+/// block has the vendor's settings and the RLC the graphics pipe's clear
+/// state, and at once where an earlier call did all of it. False where a
+/// file is not given, or its header is not one the resource reads - the
+/// command processor's of another version than the first, the RLC's of
+/// another than 2.0 to 2.3, a part outside its file - which is said on
+/// the system's lines, and nothing is loaded; where the block is one
+/// whose registers the resource does not know (it knows 11.0.1); where
+/// StartGPUSecurity has not made the processor ready, the processor does
+/// not answer within five seconds, or the device's memory has no room for
+/// a part's copy, the hub's page table or the graphics pipe's clear
+/// state; where the power manager does not keep the block powered,
+/// refuses to start the power controller or does not answer within a
+/// second; where either is one whose commands the resource does not know;
+/// where the engines do not have their code within 100 ms or the hub does
+/// not take its new table - after which every later call answers false at
+/// once; and on a machine without the device.
 ///
 /// BEHAVIOR:
 /// Every file's parts are worked out first. Then, under the security
@@ -85,25 +85,29 @@ const _graphics = @import("../graphics/_graphics.zig");
 /// processor's prefetch parser, micro engine and compute engine, the
 /// scheduler's code and data for each pipe, the power controller's code
 /// and data, the RLC's lists, memories and helpers where they are not
-/// empty, and the RLC's own code - after which the processor is told
-/// that every part is there, and - under the mailbox's lock - the power
+/// empty, and the RLC's own code - after which the processor is told that
+/// every part is there, and - under the mailbox's lock - the power
 /// manager to start the power controller, which powers the block up and
-/// lets the RLC load the engines. Every status the processor answers
-/// is put on the system's lines with the part's kind; one that is not 0
+/// lets the RLC load the engines. Every status the processor answers is
+/// put on the system's lines with the part's kind; one that is not 0
 /// stops nothing, as the processor answers some parts so that it takes.
 /// Then the call waits until the block's command processor is idle
 /// (CP_STAT 0) and its RLC says its loading is complete (the top bit of
 /// RLC_RLCS_BOOTLOAD_STATUS), and turns its memory hub on: its system
 /// aperture over the device's own memory, uncached, its TLB and L2 cache
-/// on, and its first context with an empty page table over 512 MiB of
-/// the device's addresses (0x7FFF00000000 on), in the device's memory.
-/// Then the RLC is given the graphics pipe's clear state - the packets
-/// that set its context's registers to their first values, in a page of
-/// the device's memory - and its machine that saves and restores the
-/// block's registers is switched on; last, in the RLC's safe mode, the
-/// block's coarse-, medium- and fine-grain clock gating is switched on,
-/// the RLC told when the command processor and the DMA engine go busy and
-/// idle.
+/// on, and its first context with an empty page table over 512 MiB of the
+/// device's addresses (0x7FFF00000000 on), in the device's memory. Then
+/// the block is given the vendor's settings for it - its geometry's and
+/// rasteriser's tuning, the command processor's cache flushes, its
+/// texture units' and caches' and its second-level cache's - and its
+/// constants: how each context's shaders address memory, the compute
+/// contexts' trap, no global data share but the first context's. Then the
+/// RLC is given the graphics pipe's clear state - the packets that set
+/// its context's registers to their first values, in a page of the
+/// device's memory - and its machine that saves and restores the block's
+/// registers is switched on; last, in the RLC's safe mode, the block's
+/// coarse-, medium- and fine-grain clock gating is switched on, the RLC
+/// told when the command processor and the DMA engine go busy and idle.
 ///
 /// CONTEXT:
 /// - Waits: yes, for the processor - a few milliseconds a part, of some
@@ -127,9 +131,9 @@ const _graphics = @import("../graphics/_graphics.zig");
 ///
 /// BUGS:
 /// A command processor of the later kind, whose files' header is of the
-/// second version and names its engines' stacks as parts of their own,
-/// is refused. The block is never let switch itself off while it is
-/// idle: its power gating is left off. With it on and the power manager
+/// second version and names its engines' stacks as parts of their own, is
+/// refused. The block is never let switch itself off while it is idle:
+/// its power gating is left off. With it on and the power manager
 /// allowing it (AllowGfxOff), the block switches off once it is idle, but
 /// it does not come back - the power controller that powers it up again
 /// stops before the RLC it restarts says it runs, whether the manager is
@@ -137,7 +141,13 @@ const _graphics = @import("../graphics/_graphics.zig");
 /// queues is rung - the manager answers no message from then on, and
 /// within minutes the machine stops. Kept powered, the block costs the
 /// video decoder about a fifth of its speed after the decoder's first run
-/// in a boot.
+/// in a boot. The vendor's settings for this block clear the second-level
+/// cache's WRITE_SET_SECTOR_FULLY_WRITTEN (GL2C_CTRL3), which the block
+/// has set: a kernel writing the device's memory through the hub's
+/// aperture takes some two and a half times as long as with it set - 16
+/// MiB in 1047 to 1205 us against 438 on the NucBox - where one writing
+/// the machine's memory, the DMA engine and the video decoder take as
+/// long as before.
 ///
 /// SEE ALSO:
 /// `StartGPUSecurity`, `LoadGPUFirmware`, `SetGPUPower`, `StartGPUDMA`,
@@ -195,7 +205,9 @@ pub fn StartGPUGraphics(ab: *AMDGPUBase, files: *const amdgpu.GPUGraphicsFiles) 
         return false;
     };
     if (!startController(ab)) return false;
-    if (!_graphics.waitForEngines(ab) or !_graphics.turnOnHub(ab) or !_graphics.resumeRlc(ab)) {
+    const up = _graphics.waitForEngines(ab) and _graphics.turnOnHub(ab);
+    if (up) _graphics.tune(ab);
+    if (!up or !_graphics.resumeRlc(ab)) {
         ab.graphics_failed = true;
         return false;
     }

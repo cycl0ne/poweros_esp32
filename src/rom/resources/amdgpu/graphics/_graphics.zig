@@ -11,6 +11,17 @@
 //! and drops every write, so they are read and written only while it is
 //! powered.
 //!
+//! **Its settings.** Once the hub is on, the block is given the values
+//! the vendor's driver writes into it then (gfx_v11_0_init_golden_registers,
+//! gfx_v11_0_constants_init): its own tuning of the geometry and the
+//! rasteriser, the command processor's cache flushes, the texture units'
+//! and their caches' and the second-level cache's - each register read,
+//! the bits its mask names set and the rest left - then how the shaders
+//! of each of the sixteen contexts address memory, the registers' read
+//! timeout, the occlusion counters split between the graphics pipes, the
+//! compute contexts' trap on and no global data share for any context but
+//! the first.
+//!
 //! **Its RLC** is given, once the hub is on and before any engine runs,
 //! what the vendor's driver gives it then where the security processor
 //! loaded it (gfx_v11_0_rlc_resume): the graphics pipe's clear state, in
@@ -141,6 +152,57 @@ const IDLE_INTERRUPTS: u32 = 1 << 18 | 1 << 19 | 1 << 20 | 1 << 21;
 const CGCG_INT_ENABLE: u32 = 1 << 1;
 pub const BOOTLOAD_COMPLETE: u32 = 0x8000_0000;
 const CP_DEBUG: Register = .{ .segment = 0, .offset = 0x1e1f };
+
+/// A value the vendor's driver writes into a register of the block: the
+/// bits of `mask` set as `value` has them, the rest left as they are -
+/// bits of `value` outside `mask` included.
+const Setting = struct { register: Register, mask: u32, value: u32 };
+
+/// The vendor's values for 11.0.1 (golden_settings_gc_11_0_1), then for
+/// every 11.0 (golden_settings_gc_11_0), in its order.
+const settings = [_]Setting{
+    .{ .register = .{ .segment = 1, .offset = 0x5087 }, .mask = 0x9fff_8fff, .value = 0x0000_0010 }, // CGTT_GS_NGG_CLK_CTRL
+    .{ .register = .{ .segment = 1, .offset = 0x5086 }, .mask = 0xffff_8fff, .value = 0x0000_0010 }, // CGTT_WD_CLK_CTRL
+    .{ .register = .{ .segment = 0, .offset = 0x1f53 }, .mask = 0x0007_ffff, .value = 0x0000_c200 }, // CPF_GCR_CNTL
+    .{ .register = .{ .segment = 1, .offset = 0x2e0c }, .mask = 0xffff_001b, .value = 0x00f0_1988 }, // GL2C_CTRL3
+    .{ .register = .{ .segment = 0, .offset = 0x1025 }, .mask = 0xf0ff_ffff, .value = 0x0088_0007 }, // PA_CL_ENHANCE
+    .{ .register = .{ .segment = 1, .offset = 0x0944 }, .mask = 0xffff_fffd, .value = 0x0000_0008 }, // PA_SC_ENHANCE_3
+    .{ .register = .{ .segment = 1, .offset = 0x0960 }, .mask = 0xfff8_91ff, .value = 0x5548_0100 }, // PA_SC_VRS_SURFACE_CNTL_1
+    .{ .register = .{ .segment = 0, .offset = 0x12e2 }, .mask = 0xf7f7_ffff, .value = 0x0103_0000 }, // TA_CNTL_AUX
+    .{ .register = .{ .segment = 1, .offset = 0x19a3 }, .mask = 0xfcff_ffff, .value = 0x0000_000a }, // TCP_CNTL2
+    .{ .register = .{ .segment = 1, .offset = 0x19a2 }, .mask = 0x2000_0000, .value = 0x2000_0000 }, // TCP_CNTL
+};
+
+// The registers of the vendor's constants (gfx_v11_0_constants_init,
+// _init_compute_vmid, _init_gds_vmid), and their fields.
+const GRBM_CNTL: Register = .{ .segment = 0, .offset = 0x0da0 };
+const DB_RING_CONTROL: Register = .{ .segment = 0, .offset = 0x13bb };
+const GRBM_GFX_CNTL: Register = .{ .segment = 1, .offset = 0x0900 };
+const SH_MEM_CONFIG: Register = .{ .segment = 1, .offset = 0x09e4 };
+const SH_MEM_BASES: Register = .{ .segment = 1, .offset = 0x09e3 };
+const SPI_GDBG_PER_VMID_CNTL: Register = .{ .segment = 0, .offset = 0x1f72 };
+const GDS_VMID0_BASE: u32 = 0x20a0;
+const GDS_VMID0_SIZE: u32 = 0x20a1;
+const GDS_GWS_VMID0: u32 = 0x20c0;
+const GDS_OA_VMID0: u32 = 0x20d0;
+const READ_TIMEOUT_MASK: u32 = 0xff;
+const COUNTER_CONTROL_MASK: u32 = 0x3;
+const VMID_SHIFT = 4;
+const TRAP_EN: u32 = 1 << 3;
+/// The contexts, and the first of those the vendor keeps for compute.
+const contexts: u32 = 16;
+const first_compute_context: u32 = 8;
+/// Addresses in 64 bits, unaligned accesses taken, and the shaders'
+/// instructions fetched three lines ahead (DEFAULT_SH_MEM_CONFIG).
+const sh_mem_config: u32 = 3 << 2 | 3 << 14;
+/// The private and the shared aperture of the graphics contexts, by the
+/// top 16 bits of their addresses (gmc_v11_0: 0x1000... and 0x2000...),
+/// and the compute contexts' (LDS_APP_BASE, SCRATCH_APP_BASE).
+const graphics_bases: u32 = 0x2000 << 16 | 0x1000;
+const compute_bases: u32 = 0x1 << 16 | 0x2;
+/// The occlusion counters split between the two graphics pipes the
+/// command processor of the first kind has (DB_RING_CONTROL 0).
+const counters_split: u32 = 0;
 const CPG_UTCL1_ERROR_HALT_DISABLE: u32 = 1 << 15;
 
 // The hub's registers, all counted from the first address.
@@ -351,6 +413,45 @@ pub fn gateClocks(ab: *AMDGPUBase) void {
     at(ab, RLC_CGTT_MGCG_OVERRIDE).* &= ~PERFMON_CLOCK_STATE;
     at(ab, CP_INT_CNTL_RING0).* |= IDLE_INTERRUPTS;
     leaveSafeMode(ab, running);
+}
+
+/// The block given the vendor's values once its hub is on, as the
+/// vendor's driver gives them before the RLC is resumed
+/// (gfx_v11_0_hw_init): its settings, each register read and written
+/// with the bits of its mask set (soc15_program_register_sequence), then
+/// its constants - the registers' read timeout at its most, the
+/// occlusion counters split between the graphics pipes, for each of the
+/// sixteen contexts its shaders' addresses in 64 bits, the private and
+/// shared apertures of the graphics contexts and the compute contexts'
+/// own with their trap on, and no global data share, wave slots or
+/// counters for any context but the first, which the scheduler's
+/// firmware saves and restores them through.
+pub fn tune(ab: *AMDGPUBase) void {
+    for (settings) |setting| {
+        const register = at(ab, setting.register);
+        register.* = register.* & ~setting.mask | setting.value & setting.mask;
+    }
+    at(ab, GRBM_CNTL).* = at(ab, GRBM_CNTL).* & ~READ_TIMEOUT_MASK | READ_TIMEOUT_MASK;
+    at(ab, DB_RING_CONTROL).* = at(ab, DB_RING_CONTROL).* & ~COUNTER_CONTROL_MASK | counters_split;
+    var context: u32 = 0;
+    while (context < contexts) : (context += 1) {
+        at(ab, GRBM_GFX_CNTL).* = context << VMID_SHIFT;
+        at(ab, SH_MEM_CONFIG).* = sh_mem_config;
+        if (context >= first_compute_context) {
+            at(ab, SH_MEM_BASES).* = compute_bases;
+            at(ab, SPI_GDBG_PER_VMID_CNTL).* |= TRAP_EN;
+        } else if (context != 0) {
+            at(ab, SH_MEM_BASES).* = graphics_bases;
+        }
+    }
+    at(ab, GRBM_GFX_CNTL).* = 0;
+    context = 1;
+    while (context < contexts) : (context += 1) {
+        at(ab, .{ .segment = 0, .offset = GDS_VMID0_BASE + 2 * context }).* = 0;
+        at(ab, .{ .segment = 0, .offset = GDS_VMID0_SIZE + 2 * context }).* = 0;
+        at(ab, .{ .segment = 0, .offset = GDS_GWS_VMID0 + context }).* = 0;
+        at(ab, .{ .segment = 0, .offset = GDS_OA_VMID0 + context }).* = 0;
+    }
 }
 
 /// The RLC given what it needs before the block's engines run, as the
@@ -595,6 +696,26 @@ test "the pages a range lies in" {
     try testing.expectEqual(Pages{ .first = 0x1000_0000, .count = 2 }, pagesOf(0x1000_0ffc, 8));
     try testing.expectEqual(Pages{ .first = 0x1000_0000, .count = 1 }, pagesOf(0x1000_0ffc, 4));
     try testing.expectEqual(Pages{ .first = 0x1000_0000, .count = 17 }, pagesOf(0x1000_0064, 65536));
+}
+
+test "the vendor's settings for the block: ten registers, none twice, the bits outside a mask left" {
+    try testing.expectEqual(@as(usize, 10), settings.len);
+    // The second-level cache's value names bits its mask does not: the
+    // vendor's sequence writes only those inside it.
+    try testing.expectEqual(@as(u32, 0x00f0_0008), settings[3].value & settings[3].mask);
+    for (settings, 0..) |setting, index| {
+        for (settings[index + 1 ..]) |later| {
+            try testing.expect(later.register.segment != setting.register.segment or later.register.offset != setting.register.offset);
+        }
+    }
+}
+
+test "the contexts' apertures as the vendor composes them" {
+    const private_start: u64 = 0x1000_0000_0000_0000;
+    const shared_start: u64 = 0x2000_0000_0000_0000;
+    try testing.expectEqual(@as(u32, @intCast(shared_start >> 48)) << 16 | @as(u32, @intCast(private_start >> 48)), graphics_bases);
+    try testing.expectEqual(@as(u32, 0x0001_0002), compute_bases);
+    try testing.expectEqual(@as(u32, 0xc00c), sh_mem_config);
 }
 
 test "the hub's control words as the vendor writes them" {
