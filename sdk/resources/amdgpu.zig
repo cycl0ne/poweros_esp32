@@ -262,8 +262,11 @@ pub const GPUWAIT_MEMORY: u32 = 1 << 4;
 /// registers read now; the graphics block's status and its compute
 /// processor's; the queue's scratch - where it is to the device, its
 /// bytes and the waves it holds - all 0 until a kernel with private
-/// memory has been sent; and how many times ResetGPUCompute has reset the
-/// queue, and the number of the last job it gave up.
+/// memory has been sent; how many times ResetGPUCompute has reset the
+/// queue, and the number of the last job it gave up; and the scratch
+/// SendGPUKernel made for one job alone, given back once that job is
+/// done - where it is to the device, its bytes, its waves and the job's
+/// number, all 0 where none is in use - and how many have been made.
 pub const GPUComputeState = extern struct {
     ring: u64 align(4) = 0,
     ring_bytes: u32 = 0,
@@ -284,6 +287,11 @@ pub const GPUComputeState = extern struct {
     scratch_waves: u32 = 0,
     resets: u32 = 0,
     given_up: u32 = 0,
+    scratch_once: u64 align(4) = 0,
+    scratch_once_bytes: u32 = 0,
+    scratch_once_waves: u32 = 0,
+    scratch_once_job: u32 = 0,
+    scratch_once_made: u32 = 0,
 };
 
 /// ResetGPUCompute's flags: the compute engine's pipe reset, every queue

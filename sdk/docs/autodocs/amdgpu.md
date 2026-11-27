@@ -628,7 +628,10 @@ the block's status (GRBM_STATUS) and its compute processor's
 device, its bytes and the waves it holds, 0 until a kernel with
 private memory has been sent (SendGPUKernel); and since 1.17, how many
 times the queue was reset and the last job a reset gave up
-(ResetGPUCompute), 0 until one has.
+(ResetGPUCompute), 0 until one has; and since 1.22 the scratch
+SendGPUKernel made for one job alone - where it is, its bytes, its
+waves and the job, all 0 where none is in use, one whose job is done
+given back first - and how many have been made.
 
 **CONTEXT**
 
@@ -640,7 +643,8 @@ times the queue was reset and the last job a reset gave up
 
 **OWNERSHIP**
 
-Nothing is allocated.
+Nothing is allocated; a scratch made for one job whose job is done is
+given back.
 
 **NOTES**
 
@@ -1570,11 +1574,24 @@ and the dispatch's `stack_bytes` for each lane - 1 KiB
 (GPUDISPATCH_STACK_BYTES) where it names none - and its scratch is
 made for that.
 
+Since 1.22 the queue's own scratch takes a 32nd of the device's
+memory at most. A kernel whose waves would need more, every wave the
+piece holds counted, is given a scratch of its own instead, made once
+every job sent before it is done: for the waves of the groups of its
+dispatch that can be on the shader engines at once - its groups shared
+out between them, at least the smaller of 16 groups and 256 lanes an
+engine - at most every wave the queue's holds. It is given back once
+its job is done: by the next SendGPUKernel, by a WaitGPUCompute that
+sees the job done, or by GetGPUComputeState. Until then a kernel
+without private memory is told of it, and one with private memory
+waits for that job.
+
 **CONTEXT**
 
 - Waits: for a slot and for room in the ring, a second at most each;
-  where the scratch is made again, for the queue to be idle, a second
-  at most.
+  where the scratch is made again or made for one job, for the queue
+  to be idle, and where a scratch made for one job is in use, for that
+  job, a second at most each.
 - Interrupts: no.
 - Locks: takes the queue's lock.
 - Process: a Task will do.
@@ -1583,17 +1600,20 @@ made for that.
 
 The arguments are copied: they are the caller's again on return. The
 memory they name and the code object must stay until the job is done.
-The scratch is the resource's, kept once made.
+The scratch is the resource's: the queue's own kept once made, one
+made for a job given back once that job is done.
 
 **NOTES**
 
 The kernel's addresses are the device's: its arguments name memory by
 its `device` address (AllocGPUMemory, MapGPUMemory). A kernel that
 reads more of its arguments than the dispatch hands it reads zeros
-past them, up to 256 bytes. The scratch grows and is never made
-smaller: a kernel with a large private array holds that much of the
-device's memory from then on - on the NucBox, 32 waves for each of its
-12 compute units, 384 times a wave's bytes.
+past them, up to 256 bytes. The queue's own scratch grows and is never
+made smaller, up to a 32nd of the device's memory - on the NucBox, 32
+waves for each of its 12 compute units, 384 times a wave's bytes, 16
+MiB at most. A kernel given a scratch of its own runs alone: it waits
+for the jobs before it, and the next kernel with private memory waits
+for it.
 
 **BUGS**
 
@@ -2215,19 +2235,23 @@ whatever wakes it. Numbers are compared modulo 2^32, so a job more
 than two thousand million jobs old is taken as one not sent yet. A job
 a reset gave up has its number written as done, as its record says;
 since 1.17 it is answered false, while fewer than 64 jobs have been
-sent after it - past that, as done.
+sent after it - past that, as done. Since 1.22, once the job is done,
+a scratch SendGPUKernel made for one job alone is given back where
+that job is done too and the queue's lock is free.
 
 **CONTEXT**
 
 - Waits: yes, until the job is done, `most_ms` at most.
 - Interrupts: no.
 - Locks: takes the queue's waiting lock: tasks wait one after another,
-  each for its own job.
+  each for its own job; once the job is done, the queue's lock where
+  it is free.
 - Process: a Task will do.
 
 **OWNERSHIP**
 
-Nothing is allocated.
+Nothing is allocated; a scratch made for one job whose job is done may
+be given back.
 
 **NOTES**
 

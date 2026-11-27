@@ -346,12 +346,16 @@
 //! over the 64 KiB of the device's memory - the queue's scratch made for
 //! it the first time and printed - every word checked against the table
 //! worked out here, and `fill` once more after it; then its kernel
-//! `walk`, whose stack grows as it runs, over the 64 KiB twice - 24 calls
-//! deep with the stack a dispatch is given where it names none (1 KiB a
-//! lane), and 48 deep, which needs more, with 2 KiB (stack_bytes) - the
-//! queue's scratch printed after each and every word checked against the
-//! chain worked out here. The queue and the engine's registers are
-//! printed at the end. The watchdog is armed for it.
+//! `walk`, whose stack grows as it runs, three times - over the 64 KiB 24
+//! calls deep with the stack a dispatch is given where it names none (1
+//! KiB a lane), and 48 deep, which needs more, with 2 KiB (stack_bytes),
+//! whose scratch for every wave would pass a 32nd of the device's memory,
+//! then the same over 2048 words - the queue's scratch printed after
+//! each, a scratch made for the job alone as the job was sent and once it
+//! was done, and every word checked against the chain worked out here;
+//! one still held once its job is done is a fault. The queue and the
+//! engine's registers are printed at the end. The watchdog is armed for
+//! it.
 //!
 //! COMPUTE RESET goes on to the queue's reset (ResetGPUCompute). Twice a
 //! job that holds the engine until a word nothing writes is 1
@@ -473,7 +477,7 @@ const graphics_library = sdk.graphics;
 const GraphicsBase = sdk.interface.graphics.GraphicsBase;
 
 pub const COMMAND_NAME = "Gpu";
-const VERSION_STRING = "\x00$VER: Gpu 1.36 (27.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Gpu 1.37 (27.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,SLEEP/K/N,RANGE/S,POINTER/S,MIRROR/S,OVERLAY/S,DIRECT/S,BANDS/S,VIDEO/S,GFX/S,DMA/S,GART/S,ENGINE/S,BLITS/S,COMPUTE/S,KERNELS/S,DEVICE/S,WINDOW/S,BLOCK/K/N,WATCHDOG/K/N,RESET/S,POWER/S";
@@ -2177,6 +2181,10 @@ const WalkArguments = extern struct { out: u64, depth: u32, count: u32 };
 const walk_depth: u32 = 24;
 const walk_deep_depth: u32 = 48;
 const walk_deep_stack: u32 = 2048;
+/// The words of COMPUTE's last run of `walk`: a dispatch of fewer waves
+/// than the queue's scratch holds, which a scratch made for its job alone
+/// is made for.
+const walk_few_words: u32 = 2048;
 
 /// The kernel `fill` dispatched over `count` words at the device's
 /// address `out`, in groups of `fill_group`, and waited for: the
@@ -2502,23 +2510,53 @@ fn computeCheck(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUI
         walk.code,       walk.rsrc1,                                                                                                             walk.rsrc2, walk.rsrc3, walk.private_bytes,
         walk.properties, if (walk.properties & amdgpu.GPUKERNEL_DYNAMIC_STACK != 0) "its stack grows as it runs" else "its stack does not grow",
     });
-    const WalkRun = struct { which: TestKernel, depth: u32, stack_bytes: u32 };
+    const WalkRun = struct { which: TestKernel, depth: u32, stack_bytes: u32, words: u32 };
     for ([_]WalkRun{
-        .{ .which = .walk, .depth = walk_depth, .stack_bytes = 0 },
-        .{ .which = .walk_deep, .depth = walk_deep_depth, .stack_bytes = walk_deep_stack },
+        .{ .which = .walk, .depth = walk_depth, .stack_bytes = 0, .words = count },
+        .{ .which = .walk_deep, .depth = walk_deep_depth, .stack_bytes = walk_deep_stack, .words = count },
+        .{ .which = .walk_deep, .depth = walk_deep_depth, .stack_bytes = walk_deep_stack, .words = walk_few_words },
     }) |run| {
         for (0..piece_bytes / 4) |index| words[index] = guard_value;
-        const arguments: WalkArguments = .{ .out = piece.device + guard_bytes, .depth = run.depth, .count = count };
-        const walk_us = dispatchKernel(sys, dl, ab, info, graphics, &walk, &arguments, @sizeOf(WalkArguments), count, run.stack_bytes) orelse return dos.RETURN_ERROR;
+        const arguments: WalkArguments = .{ .out = piece.device + guard_bytes, .depth = run.depth, .count = run.words };
+        const dispatch: amdgpu.GPUDispatch = .{
+            .groups = .{ (run.words + fill_group - 1) / fill_group, 1, 1 },
+            .threads = .{ fill_group, 1, 1 },
+            .arguments = &arguments,
+            .argument_bytes = @sizeOf(WalkArguments),
+            .stack_bytes = run.stack_bytes,
+        };
+        var before: amdgpu.GPUComputeState = .{};
+        _ = ab.GetGPUComputeState(&before);
+        const sent_at = sys.UptimeUs();
+        const job = ab.SendGPUKernel(&walk, &dispatch);
+        var sent: amdgpu.GPUComputeState = .{};
+        _ = ab.GetGPUComputeState(&sent);
+        if (job == 0 or !ab.WaitGPUCompute(job, compute_job_ms)) return computeFailed(dl, ab, info, graphics, "A dispatch of the kernel walk");
+        const walk_us = @max(1, sys.UptimeUs() - sent_at);
         _ = ab.GetGPUComputeState(&state);
-        seen = kernelSeen(words, count, guard_words, run.which);
+        seen = kernelSeen(words, run.words, guard_words, run.which);
         _ = Printf(dl, "The kernel walk, %u calls deep, over %u words of the device's memory with %u bytes of stack a lane: done in %lu us; %u of its %u words right, %u of the guards' %u kept; the queue's scratch %u bytes at %lx, %u waves\n", .{
-            run.depth,     count,               if (run.stack_bytes == 0) amdgpu.GPUDISPATCH_STACK_BYTES else run.stack_bytes,
-            walk_us,       seen.right,          count,
+            run.depth,     run.words,           if (run.stack_bytes == 0) amdgpu.GPUDISPATCH_STACK_BYTES else run.stack_bytes,
+            walk_us,       seen.right,          run.words,
             seen.kept,     2 * guard_words,     state.scratch_bytes,
             state.scratch, state.scratch_waves,
         });
-        if (!kernelRight(dl, seen, count, guard_words, run.which)) all_right = false;
+        if (state.scratch_once_made != before.scratch_once_made) {
+            if (sent.scratch_once_job == job) {
+                _ = Printf(dl, "  a scratch for its job alone, the %u made: %u bytes at %lx, %u waves, in use as the job was sent; once it was done %u bytes of it held\n", .{
+                    state.scratch_once_made, sent.scratch_once_bytes, sent.scratch_once, sent.scratch_once_waves, state.scratch_once_bytes,
+                });
+            } else {
+                _ = Printf(dl, "  a scratch for its job alone, the %u made, given back already as the job was sent; once it was done %u bytes of it held\n", .{
+                    state.scratch_once_made, state.scratch_once_bytes,
+                });
+            }
+        }
+        if (state.scratch_once_bytes != 0) {
+            _ = Printf(dl, "  a scratch made for one job is still held, for job %u, once the job is done\n", .{state.scratch_once_job});
+            all_right = false;
+        }
+        if (!kernelRight(dl, seen, run.words, guard_words, run.which)) all_right = false;
         wb.FeedWatchdog();
     }
     if (reset and !resetCheck(sys, dl, ab, info, graphics, wb, &code, &kernel, &spill, piece)) all_right = false;

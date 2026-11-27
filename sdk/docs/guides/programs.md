@@ -1157,9 +1157,13 @@ queue's scratch, a piece of the device's memory made the first time a
 kernel needs it - 32 waves for each of the graphics block's compute
 units, each with the private bytes the kernel's descriptor gives its
 lanes - and made again larger, once every job sent before is done, for
-a kernel that needs more; it is kept from then on. A kernel whose stack
-grows as it runs - recursion, a call it cannot see the end of, an array
-of a size it works out, which its properties say
+a kernel that needs more; it is kept from then on, up to a 32nd of the
+device's memory. A kernel that needs more than that is given a scratch
+of its own instead, for the waves of its dispatch that can run at once,
+made once every job before it is done and given back once its own is:
+it runs alone, and the next kernel with private memory waits for it. A
+kernel whose stack grows as it runs - recursion, a call it cannot see
+the end of, an array of a size it works out, which its properties say
 (`GPUKERNEL_DYNAMIC_STACK`) - is given the dispatch's `stack_bytes` a
 lane for it, 1 KiB (`GPUDISPATCH_STACK_BYTES`) where it names none, or
 its own private bytes where those are more; a stack that grows past
@@ -1168,16 +1172,21 @@ packet or its arguments in its registers is refused, as are more than
 256 bytes of arguments, more than 64 KiB of group memory and more than
 1024 threads in a group - the system's log says why. `SendGPUCompute`
 puts the engine's own packets on the queue instead,
-`GetGPUComputeState` says how far it is and where its scratch is.
-`C:test/Gpu COMPUTE` starts the queue and tries it with the kernel
-above, with one that keeps a table of 128 words a thread in private
-memory and with one that recurses, a frame of 32 bytes a call; on the
-NucBox a job is 12 us from sent to done, the kernel fills 16 MiB of the
-device's memory in 1 to 1.2 ms and of the machine's, mapped, in 1 to 2
-ms, the one with the table runs over 64 KiB in 1812 us, the scratch it
-is given 6389760 bytes - 384 waves of 16640 - and the one that recurses
-24 calls deep with 1 KiB of stack a lane in 2435 us and 48 deep with 2
-KiB in 2855 us, its scratch 384 waves of 33024 bytes and then of 65792.
+`GetGPUComputeState` says how far it is and where its scratch is, and a
+scratch made for one job while it is in use. `C:test/Gpu COMPUTE`
+starts the queue and tries it with the kernel above, with one that
+keeps a table of 128 words a thread in private memory and with one that
+recurses, a frame of 32 bytes a call; on the NucBox a job is 12 us from
+sent to done, the kernel fills 16 MiB of the device's memory in 1 to
+1.2 ms and of the machine's, mapped, in 1 to 2 ms, the one with the
+table runs over 64 KiB in 1812 us, the scratch it is given 6389760
+bytes - 384 waves of 16640 - and the one that recurses 24 calls deep
+with 1 KiB of stack a lane in 2.4 ms, the queue's scratch made 384 waves
+of 33024 bytes for it. 48 calls deep with 2 KiB, which would need 25
+MiB, past the 16 MiB the queue keeps at most, it runs over 64 KiB in
+2.7 ms with a scratch of its own of 384 waves of 65792 bytes, and over 8
+KiB in 2.0 ms with one of 64 waves; each is given back once its job is
+done, the queue's own kept as it was.
 
 A job that is not done in time - a kernel that runs on, a wait on memory
 nothing writes - holds every job after it until the program resets the

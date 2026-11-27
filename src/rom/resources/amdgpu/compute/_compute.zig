@@ -635,6 +635,74 @@ pub fn scratchWaves(engines: u32, units: u32) u32 {
     return each * shared;
 }
 
+/// The share of the device's memory the queue's own scratch takes at
+/// most, a 32nd. The queue keeps its scratch bound, for every wave, so
+/// that the kernels after the one it was made for need none made; one
+/// that needs more than that share is given a scratch of its own, made
+/// for its dispatch and given back once its job is done, so that a kernel
+/// with large private memory does not hold that much of the device's
+/// memory from then on.
+pub const scratch_kept_share = 32;
+
+/// Whether the queue's own scratch, of `wave_bytes` for each of the
+/// `waves` it holds, would take more than its share of the device's
+/// `memory_bytes`: a dispatch that needs it is given one of its own
+/// instead.
+pub fn scratchOnce(wave_bytes: u64, waves: u32, memory_bytes: u64) bool {
+    return wave_bytes * waves > memory_bytes / scratch_kept_share;
+}
+
+/// The groups of a dispatch of `groups` groups of `group_lanes` lanes
+/// each that can be on the `engines` shader engines of `units` compute
+/// units at once at most, as the vendor's runtime counts them for a
+/// scratch made for one dispatch (calc_dispatch_groups): the groups
+/// shared out between the engines, a unit past an even share of them
+/// each taking a group more a round of the units; at least the smaller of
+/// 16 groups and 256 lanes an engine; for every engine.
+pub fn dispatchGroups(groups: [3]u32, group_lanes: u64, engines: u32, units: u32) u64 {
+    const total = @as(u64, groups[0]) *| groups[1] *| groups[2];
+    const shared: u64 = @max(engines, 1);
+    const cu_count: u64 = @max(units, 1);
+    const uneven = cu_count - cu_count / shared * shared;
+    const rounds = total / cu_count;
+    const even_groups = total - rounds * uneven;
+    var most = (even_groups +| (shared - 1)) / shared +| (if (uneven != 0) rounds else 0);
+    if (most < 16 and group_lanes * most < 256) most = @min((256 + group_lanes - 1) / group_lanes, 16);
+    return most *| shared;
+}
+
+/// The waves a scratch made for one dispatch holds, as the vendor's
+/// runtime sizes one (HandleInsufficientScratch): the waves of the groups
+/// that can be on the engines at once (dispatchGroups), in waves of 32
+/// lanes where `wave32`, at most `all`, every wave the queue's own holds
+/// - a whole number for each engine, as both are.
+pub fn onceWaves(groups: [3]u32, threads: [3]u32, wave32: bool, engines: u32, units: u32, all: u32) u32 {
+    const lanes: u64 = if (wave32) 32 else 64;
+    const group_lanes = @as(u64, threads[0]) * threads[1] * threads[2];
+    const waves_a_group = (group_lanes + lanes - 1) / lanes;
+    return @intCast(@min(dispatchGroups(groups, group_lanes, engines, units) *| waves_a_group, @as(u64, all)));
+}
+
+/// The scratch made for one job given back, under the queue's lock, once
+/// that job is done or given up: the device's memory it took is free
+/// again.
+pub fn giveBackOnce(ab: *AMDGPUBase) void {
+    if (ab.scratch_once.bytes == 0 or ab.scratch_once_job == 0) return;
+    if (!passed(done(ab), ab.scratch_once_job)) return;
+    dropOnce(ab);
+}
+
+/// The scratch made for one job given back as it is, under the queue's
+/// lock: its job done, or never sent.
+pub fn dropOnce(ab: *AMDGPUBase) void {
+    const gpu: *sdk.interface.amdgpu.AMDGPUBase = @ptrCast(&ab.lib);
+    if (ab.scratch_once.bytes != 0) gpu.FreeGPUMemory(&ab.scratch_once);
+    ab.scratch_once = .{};
+    ab.scratch_once_wave_bytes = 0;
+    ab.scratch_once_waves = 0;
+    ab.scratch_once_job = 0;
+}
+
 /// The groups of 512 bytes the group memory a kernel takes is given in.
 pub fn groupBlocks(group_bytes: u32) u32 {
     return (group_bytes + 511) / 512;
@@ -1288,6 +1356,36 @@ test "a wave's scratch, and how many waves the queue's holds" {
     try testing.expectEqual(@as(u32, 64), scratchWaves(2, 1));
     try testing.expectEqual(@as(u32, 3072), scratchWaves(6, 96));
     try testing.expectEqual(@as(u32, 4095), scratchWaves(1, 200));
+}
+
+test "a scratch made for one dispatch" {
+    // The queue's own takes a 32nd of the device's memory at most: of
+    // the NucBox's 512 MiB, 384 waves of 33024 bytes are kept, of 65792
+    // made for one job.
+    try testing.expect(!scratchOnce(33024, 384, 512 << 20));
+    try testing.expect(scratchOnce(65792, 384, 512 << 20));
+    try testing.expect(!scratchOnce((16 << 20) / 384, 384, 512 << 20));
+    // The groups that can be on the engines at once: every group of a
+    // dispatch on one engine...
+    try testing.expectEqual(@as(u64, 32), dispatchGroups(.{ 32, 1, 1 }, 64, 1, 12));
+    try testing.expectEqual(@as(u64, 256), dispatchGroups(.{ 256, 1, 1 }, 64, 1, 12));
+    // ... at least the smaller of 16 groups and 256 lanes an engine...
+    try testing.expectEqual(@as(u64, 4), dispatchGroups(.{ 2, 1, 1 }, 64, 1, 12));
+    try testing.expectEqual(@as(u64, 16), dispatchGroups(.{ 1, 1, 1 }, 1, 1, 12));
+    try testing.expectEqual(@as(u64, 8), dispatchGroups(.{ 1, 1, 1 }, 64, 2, 12));
+    // ... shared out between them, the unit past an even share taking a
+    // group more each round of the 13: 93 groups shared, 7 rounds.
+    try testing.expectEqual(@as(u64, 108), dispatchGroups(.{ 100, 1, 1 }, 64, 2, 13));
+    try testing.expectEqual(@as(u64, 100), dispatchGroups(.{ 10, 10, 1 }, 64, 2, 12));
+    // Counts past what the device takes stop at the largest a word holds.
+    try testing.expect(dispatchGroups(.{ 0xffff_ffff, 0xffff_ffff, 0xffff_ffff }, 64, 2, 12) >= 1 << 63);
+    // Their waves, at most every wave the queue's holds.
+    try testing.expectEqual(@as(u32, 64), onceWaves(.{ 32, 1, 1 }, .{ 64, 1, 1 }, true, 1, 12, 384));
+    try testing.expectEqual(@as(u32, 384), onceWaves(.{ 256, 1, 1 }, .{ 64, 1, 1 }, true, 1, 12, 384));
+    try testing.expectEqual(@as(u32, 32), onceWaves(.{ 32, 1, 1 }, .{ 64, 1, 1 }, false, 1, 12, 384));
+    try testing.expectEqual(@as(u32, 8), onceWaves(.{ 2, 1, 1 }, .{ 64, 1, 1 }, true, 1, 12, 384));
+    try testing.expectEqual(@as(u32, 24), onceWaves(.{ 1, 1, 1 }, .{ 65, 1, 1 }, true, 2, 12, 768));
+    try testing.expectEqual(@as(u32, 384), onceWaves(.{ 0xffff_ffff, 0xffff_ffff, 1 }, .{ 1024, 1, 1 }, true, 1, 12, 384));
 }
 
 test "the scheduler's frames, at the places the vendor's header gives" {

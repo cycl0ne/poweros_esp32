@@ -188,6 +188,15 @@ pub const AMDGPUBase = extern struct {
     scratch: amdgpu.GPUMemory = .{},
     scratch_wave_bytes: u32 = 0,
     scratch_waves: u32 = 0,
+    /// The scratch made for one job alone, under the queue's lock: the
+    /// piece, the bytes each wave has of it, how many waves it holds and
+    /// the job's number - all 0 where none is in use, the job's until it
+    /// is sent - and how many have been made.
+    scratch_once: amdgpu.GPUMemory = .{},
+    scratch_once_wave_bytes: u32 = 0,
+    scratch_once_waves: u32 = 0,
+    scratch_once_job: u32 = 0,
+    scratch_once_made: u32 = 0,
     compute_lock: exec.SignalSemaphore,
     compute_wait_lock: exec.SignalSemaphore,
 };

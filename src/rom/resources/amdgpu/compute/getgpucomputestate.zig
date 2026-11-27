@@ -37,7 +37,10 @@ const _graphics = @import("../graphics/_graphics.zig");
 /// device, its bytes and the waves it holds, 0 until a kernel with
 /// private memory has been sent (SendGPUKernel); and since 1.17, how many
 /// times the queue was reset and the last job a reset gave up
-/// (ResetGPUCompute), 0 until one has.
+/// (ResetGPUCompute), 0 until one has; and since 1.22 the scratch
+/// SendGPUKernel made for one job alone - where it is, its bytes, its
+/// waves and the job, all 0 where none is in use, one whose job is done
+/// given back first - and how many have been made.
 ///
 /// CONTEXT:
 /// - Waits: only for the queue's lock.
@@ -47,7 +50,8 @@ const _graphics = @import("../graphics/_graphics.zig");
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
-/// Nothing is allocated.
+/// Nothing is allocated; a scratch made for one job whose job is done is
+/// given back.
 ///
 /// NOTES:
 /// The registers are read while jobs may be running: two calls a moment
@@ -73,6 +77,7 @@ pub fn GetGPUComputeState(ab: *AMDGPUBase, state: *amdgpu.GPUComputeState) bool 
     const at = _graphics.at;
     sys.ObtainSemaphore(&ab.compute_lock);
     defer sys.ReleaseSemaphore(&ab.compute_lock);
+    _compute.giveBackOnce(ab);
     _compute.select(ab, _compute.compute_queue, 0);
     const active = at(ab, _compute.CP_HQD_ACTIVE).*;
     const queue_read = at(ab, _compute.CP_HQD_PQ_RPTR).*;
@@ -98,6 +103,11 @@ pub fn GetGPUComputeState(ab: *AMDGPUBase, state: *amdgpu.GPUComputeState) bool 
         .scratch_waves = ab.scratch_waves,
         .resets = ab.compute_resets,
         .given_up = ab.compute_given_up,
+        .scratch_once = ab.scratch_once.device,
+        .scratch_once_bytes = ab.scratch_once.bytes,
+        .scratch_once_waves = ab.scratch_once_waves,
+        .scratch_once_job = ab.scratch_once_job,
+        .scratch_once_made = ab.scratch_once_made,
     };
     return true;
 }

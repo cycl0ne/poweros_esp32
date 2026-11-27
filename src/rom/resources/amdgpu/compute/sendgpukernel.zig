@@ -73,10 +73,23 @@ const _compute = @import("_compute.zig");
 /// (GPUDISPATCH_STACK_BYTES) where it names none - and its scratch is
 /// made for that.
 ///
+/// Since 1.22 the queue's own scratch takes a 32nd of the device's
+/// memory at most. A kernel whose waves would need more, every wave the
+/// piece holds counted, is given a scratch of its own instead, made once
+/// every job sent before it is done: for the waves of the groups of its
+/// dispatch that can be on the shader engines at once - its groups shared
+/// out between them, at least the smaller of 16 groups and 256 lanes an
+/// engine - at most every wave the queue's holds. It is given back once
+/// its job is done: by the next SendGPUKernel, by a WaitGPUCompute that
+/// sees the job done, or by GetGPUComputeState. Until then a kernel
+/// without private memory is told of it, and one with private memory
+/// waits for that job.
+///
 /// CONTEXT:
 /// - Waits: for a slot and for room in the ring, a second at most each;
-///   where the scratch is made again, for the queue to be idle, a second
-///   at most.
+///   where the scratch is made again or made for one job, for the queue
+///   to be idle, and where a scratch made for one job is in use, for that
+///   job, a second at most each.
 /// - Interrupts: no.
 /// - Locks: takes the queue's lock.
 /// - Process: a Task will do.
@@ -84,16 +97,19 @@ const _compute = @import("_compute.zig");
 /// OWNERSHIP:
 /// The arguments are copied: they are the caller's again on return. The
 /// memory they name and the code object must stay until the job is done.
-/// The scratch is the resource's, kept once made.
+/// The scratch is the resource's: the queue's own kept once made, one
+/// made for a job given back once that job is done.
 ///
 /// NOTES:
 /// The kernel's addresses are the device's: its arguments name memory by
 /// its `device` address (AllocGPUMemory, MapGPUMemory). A kernel that
 /// reads more of its arguments than the dispatch hands it reads zeros
-/// past them, up to 256 bytes. The scratch grows and is never made
-/// smaller: a kernel with a large private array holds that much of the
-/// device's memory from then on - on the NucBox, 32 waves for each of its
-/// 12 compute units, 384 times a wave's bytes.
+/// past them, up to 256 bytes. The queue's own scratch grows and is never
+/// made smaller, up to a 32nd of the device's memory - on the NucBox, 32
+/// waves for each of its 12 compute units, 384 times a wave's bytes, 16
+/// MiB at most. A kernel given a scratch of its own runs alone: it waits
+/// for the jobs before it, and the next kernel with private memory waits
+/// for it.
 ///
 /// BUGS:
 /// A kernel that needs the dispatch's own packet, its queue or a dispatch
@@ -130,16 +146,8 @@ pub fn SendGPUKernel(ab: *AMDGPUBase, kernel: *const amdgpu.GPUKernel, dispatch:
     defer sys.ReleaseSemaphore(&ab.compute_lock);
 
     const slot = ab.compute_slot;
-    const last = ab.compute_slot_jobs[slot];
-    const until = sys.UptimeUs() + _compute.room_most_us;
-    while (last != 0 and !_compute.passed(_compute.done(ab), last)) {
-        if (sys.UptimeUs() > until) {
-            exec.kprintf(sys, "%s: the compute engine has not done job %u, whose arguments' slot a kernel waits for\n", .{ owner, last });
-            return 0;
-        }
-        _compute.pause(ab, 100);
-    }
-    const scratch = scratchFor(ab, kernel, dispatch.stack_bytes) orelse return 0;
+    if (!waitFor(ab, ab.compute_slot_jobs[slot], "a kernel's arguments' slot")) return 0;
+    const chosen = scratchFor(ab, kernel, dispatch) orelse return 0;
     const slot_at = _compute.slots_at + slot * _compute.slot_bytes;
     const into: [*]volatile u8 = @ptrCast(_compute.words(ab, slot_at));
     for (0.._compute.slot_bytes) |index| {
@@ -147,55 +155,109 @@ pub fn SendGPUKernel(ab: *AMDGPUBase, kernel: *const amdgpu.GPUKernel, dispatch:
     }
 
     var packets: [_compute.dispatch_words]u32 = undefined;
-    _compute.dispatch(&packets, ab.graphics.addresses[0], kernel, dispatch.groups, dispatch.threads, ab.compute.device + slot_at, scratch);
+    _compute.dispatch(&packets, ab.graphics.addresses[0], kernel, dispatch.groups, dispatch.threads, ab.compute.device + slot_at, chosen.scratch);
     const job = _compute.send(ab, &packets);
-    if (job == 0) return 0;
+    if (job == 0) {
+        if (chosen.once) _compute.dropOnce(ab);
+        return 0;
+    }
+    if (chosen.once) ab.scratch_once_job = job;
     ab.compute_slot_jobs[slot] = job;
     ab.compute_slot = (slot + 1) % amdgpu_base.compute_slots;
     return job;
 }
 
-/// The scratch a dispatch of `kernel` is told of, under the queue's lock:
-/// the queue's own, made first where it holds less for a wave than the
-/// kernel needs, its stack's `stack_bytes` with it - once every job sent
-/// before it is done, as a piece in use keeps its waves' size; null where
-/// it cannot be, which is said in the system's log.
-fn scratchFor(ab: *AMDGPUBase, kernel: *const amdgpu.GPUKernel, stack_bytes: u32) ?_compute.Scratch {
+/// The scratch a dispatch is told of, and whether it was made for that
+/// dispatch alone.
+const Chosen = struct { scratch: _compute.Scratch, once: bool = false };
+
+/// The scratch a dispatch of `kernel` is told of, under the queue's lock.
+/// A scratch made for one job is given back first where that job is done;
+/// where it is not, a kernel without private memory is told of it, as
+/// that job's waves still use it, and one with private memory waits for
+/// the job. Then the queue's own, made first where it holds less for a
+/// wave than the kernel needs, its stack's `stack_bytes` with it - once
+/// every job sent before it is done, as a piece in use keeps its waves'
+/// size - where every wave it holds takes no more than its share of the
+/// device's memory; past that, one made for this dispatch alone, for the
+/// waves of it that can run at once, once every job sent before it is
+/// done. Null where none can be, which is said in the system's log.
+fn scratchFor(ab: *AMDGPUBase, kernel: *const amdgpu.GPUKernel, dispatch: *const amdgpu.GPUDispatch) ?Chosen {
     const sys = ab.sys_base;
     const owner = amdgpu.AMDGPUNAME;
-    const needed = _compute.waveBytes(kernel, stack_bytes);
-    if (needed > ab.scratch_wave_bytes) {
-        if (ab.compute_units == 0) {
-            exec.kprintf(sys, "%s: a kernel at 0x%lx is not run: the graphics block's compute units, which its scratch is made for, are not known\n", .{ owner, kernel.code });
-            return null;
-        }
-        const waves = _compute.scratchWaves(ab.shader_engines, ab.compute_units);
-        const bytes = needed * waves;
-        if (bytes > std.math.maxInt(u32)) {
-            exec.kprintf(sys, "%s: a kernel at 0x%lx is not run: its scratch would take %lu bytes\n", .{ owner, kernel.code, bytes });
-            return null;
-        }
-        const until = sys.UptimeUs() + _compute.room_most_us;
-        while (ab.compute_sent != 0 and !_compute.passed(_compute.done(ab), ab.compute_sent)) {
-            if (sys.UptimeUs() > until) {
-                exec.kprintf(sys, "%s: the compute engine has not done job %u, which a kernel's scratch waits for\n", .{ owner, ab.compute_sent });
-                return null;
-            }
-            _compute.pause(ab, 100);
-        }
-        const gpu: *sdk.interface.amdgpu.AMDGPUBase = @ptrCast(&ab.lib);
-        if (ab.scratch.bytes != 0) gpu.FreeGPUMemory(&ab.scratch);
-        ab.scratch = .{};
-        ab.scratch_wave_bytes = 0;
-        ab.scratch_waves = 0;
-        if (!gpu.AllocGPUMemory(@intCast(bytes), 4096, &ab.scratch)) {
-            exec.kprintf(sys, "%s: a kernel at 0x%lx is not run: no room in the device's memory for its scratch of %lu bytes\n", .{ owner, kernel.code, bytes });
-            return null;
-        }
-        ab.scratch_wave_bytes = @intCast(needed);
-        ab.scratch_waves = waves;
-        exec.kprintf(sys, "%s: the compute engine's scratch: %u waves of %u bytes at 0x%lx\n", .{ owner, waves, ab.scratch_wave_bytes, ab.scratch.device });
+    _compute.giveBackOnce(ab);
+    const needed = _compute.waveBytes(kernel, dispatch.stack_bytes);
+    if (needed == 0 and ab.scratch_once.bytes != 0) return .{ .scratch = onceScratch(ab) };
+    if (ab.scratch_once.bytes != 0) {
+        if (!waitFor(ab, ab.scratch_once_job, "a kernel's scratch")) return null;
+        _compute.dropOnce(ab);
     }
+    if (needed <= ab.scratch_wave_bytes) return .{ .scratch = keptScratch(ab) };
+    if (ab.compute_units == 0) {
+        exec.kprintf(sys, "%s: a kernel at 0x%lx is not run: the graphics block's compute units, which its scratch is made for, are not known\n", .{ owner, kernel.code });
+        return null;
+    }
+    const all = _compute.scratchWaves(ab.shader_engines, ab.compute_units);
+    const once = _compute.scratchOnce(needed, all, ab.memory_bytes);
+    const wave32 = kernel.properties & amdgpu.GPUKERNEL_WAVE32 != 0;
+    const waves = if (once) _compute.onceWaves(dispatch.groups, dispatch.threads, wave32, ab.shader_engines, ab.compute_units, all) else all;
+    const bytes = needed * waves;
+    if (bytes > std.math.maxInt(u32)) {
+        exec.kprintf(sys, "%s: a kernel at 0x%lx is not run: its scratch would take %lu bytes\n", .{ owner, kernel.code, bytes });
+        return null;
+    }
+    if (!waitFor(ab, ab.compute_sent, "a kernel's scratch")) return null;
+    const gpu: *sdk.interface.amdgpu.AMDGPUBase = @ptrCast(&ab.lib);
+    if (once) {
+        if (!gpu.AllocGPUMemory(@intCast(bytes), 4096, &ab.scratch_once)) {
+            ab.scratch_once = .{};
+            exec.kprintf(sys, "%s: a kernel at 0x%lx is not run: no room in the device's memory for a scratch of %lu bytes for its job\n", .{ owner, kernel.code, bytes });
+            return null;
+        }
+        ab.scratch_once_wave_bytes = @intCast(needed);
+        ab.scratch_once_waves = waves;
+        ab.scratch_once_made +%= 1;
+        exec.kprintf(sys, "%s: a scratch for one job: %u waves of %u bytes at 0x%lx\n", .{ owner, waves, ab.scratch_once_wave_bytes, ab.scratch_once.device });
+        return .{ .scratch = onceScratch(ab), .once = true };
+    }
+    if (ab.scratch.bytes != 0) gpu.FreeGPUMemory(&ab.scratch);
+    ab.scratch = .{};
+    ab.scratch_wave_bytes = 0;
+    ab.scratch_waves = 0;
+    if (!gpu.AllocGPUMemory(@intCast(bytes), 4096, &ab.scratch)) {
+        exec.kprintf(sys, "%s: a kernel at 0x%lx is not run: no room in the device's memory for its scratch of %lu bytes\n", .{ owner, kernel.code, bytes });
+        return null;
+    }
+    ab.scratch_wave_bytes = @intCast(needed);
+    ab.scratch_waves = waves;
+    exec.kprintf(sys, "%s: the compute engine's scratch: %u waves of %u bytes at 0x%lx\n", .{ owner, waves, ab.scratch_wave_bytes, ab.scratch.device });
+    return .{ .scratch = keptScratch(ab) };
+}
+
+/// The queue's own scratch, as a dispatch is told of it: none where it
+/// has none yet.
+fn keptScratch(ab: *AMDGPUBase) _compute.Scratch {
     if (ab.scratch.bytes == 0) return .{};
     return _compute.Scratch.of(ab.scratch.device, ab.scratch_waves, ab.scratch_wave_bytes, ab.shader_engines);
+}
+
+/// The scratch made for one job, as a dispatch is told of it.
+fn onceScratch(ab: *AMDGPUBase) _compute.Scratch {
+    return _compute.Scratch.of(ab.scratch_once.device, ab.scratch_once_waves, ab.scratch_once_wave_bytes, ab.shader_engines);
+}
+
+/// Waits, under the queue's lock, a second at most until the engine has
+/// done job `job` - none where it is 0 - which `what` waits for; false,
+/// said in the system's log, where it has not.
+fn waitFor(ab: *AMDGPUBase, job: u32, what: [*:0]const u8) bool {
+    const sys = ab.sys_base;
+    const until = sys.UptimeUs() + _compute.room_most_us;
+    while (job != 0 and !_compute.passed(_compute.done(ab), job)) {
+        if (sys.UptimeUs() > until) {
+            exec.kprintf(sys, "%s: the compute engine has not done job %u, which %s waits for\n", .{ amdgpu.AMDGPUNAME, job, what });
+            return false;
+        }
+        _compute.pause(ab, 100);
+    }
+    return true;
 }
