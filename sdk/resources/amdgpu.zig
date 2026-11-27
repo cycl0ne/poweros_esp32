@@ -238,6 +238,14 @@ pub const GPUPACKET_NOP: u32 = 0x10;
 pub const GPUPACKET_WRITE_DATA: u32 = 0x37;
 pub const GPUWRITE_MEMORY: u32 = 5 << 8;
 pub const GPUWRITE_CONFIRM: u32 = 1 << 20;
+/// The engine held until a word of memory, masked, holds a value: the
+/// header and six words - GPUWAIT_MEMORY with GPUWAIT_EQUAL, the address
+/// (low word, high word), on four bytes, the value, the mask, and the
+/// time between the engine's reads of the word, in 16 cycles of its
+/// clock. The job's next packets wait for it.
+pub const GPUPACKET_WAIT_REG_MEM: u32 = 0x3c;
+pub const GPUWAIT_EQUAL: u32 = 3;
+pub const GPUWAIT_MEMORY: u32 = 1 << 4;
 
 /// What GetGPUComputeState says of the compute engine's queue: where its
 /// ring is and how long, in bytes; how far the engine has read it, as it
@@ -248,9 +256,10 @@ pub const GPUWRITE_CONFIRM: u32 = 1 << 20;
 /// second pipe's, which maps the queue; whether the queue is mapped, and
 /// how far the engine has read and been told of it, in words, as its
 /// registers read now; the graphics block's status and its compute
-/// processor's; and the queue's scratch - where it is to the device, its
+/// processor's; the queue's scratch - where it is to the device, its
 /// bytes and the waves it holds - all 0 until a kernel with private
-/// memory has been sent.
+/// memory has been sent; and how many times ResetGPUCompute has reset the
+/// queue, and the number of the last job it gave up.
 pub const GPUComputeState = extern struct {
     ring: u64 align(4) = 0,
     ring_bytes: u32 = 0,
@@ -269,7 +278,14 @@ pub const GPUComputeState = extern struct {
     scratch: u64 align(4) = 0,
     scratch_bytes: u32 = 0,
     scratch_waves: u32 = 0,
+    resets: u32 = 0,
+    given_up: u32 = 0,
 };
+
+/// ResetGPUCompute's flags: the compute engine's pipe reset, every queue
+/// on it set inactive, rather than the queue alone - as where the queue's
+/// own reset does not take.
+pub const GPURESET_PIPE: u32 = 1 << 0;
 
 /// A code object loaded by LoadGPUCode: the piece of the device's memory
 /// its segments are in, the address the code object gives the start of

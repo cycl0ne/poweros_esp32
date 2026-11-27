@@ -120,4 +120,11 @@ void FreeGPUCode(*amdgpu.GPUCode code)
 /// it, in MHz; 0 where the manager does not answer or does not know the
 /// clock, or there is no device.
 u32 GetGPUClock(u32 clock)
+/// The compute engine's queue reset where job `job` is not done: the
+/// first job not done given up, the queue reset - its pipe with it where
+/// `flags` has GPURESET_PIPE - and mapped again, and the jobs not done
+/// written to it again. The number of the last job given up; 0 where none
+/// was: `job` done, the queue not running, or not reset - then it stays
+/// stopped.
+u32 ResetGPUCompute(u32 job, u32 flags)
 ##end

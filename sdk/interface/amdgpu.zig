@@ -49,6 +49,7 @@ pub const LVO = struct {
     pub const FindGPUKernel = libraries.lvo(24);
     pub const FreeGPUCode = libraries.lvo(25);
     pub const GetGPUClock = libraries.lvo(26);
+    pub const ResetGPUCompute = libraries.lvo(27);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -81,6 +82,7 @@ pub const Fn = struct {
     pub const FindGPUKernel = *const fn (*AMDGPUBase, *const amdgpu.GPUCode, [*:0]const u8, *amdgpu.GPUKernel) callconv(.c) bool;
     pub const FreeGPUCode = *const fn (*AMDGPUBase, *amdgpu.GPUCode) callconv(.c) void;
     pub const GetGPUClock = *const fn (*AMDGPUBase, u32) callconv(.c) u32;
+    pub const ResetGPUCompute = *const fn (*AMDGPUBase, u32, u32) callconv(.c) u32;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -275,5 +277,15 @@ pub const AMDGPUBase = opaque {
     /// clock, or there is no device.
     pub fn GetGPUClock(self: *AMDGPUBase, clock: u32) u32 {
         return libraries.call(self, LVO.GetGPUClock, Fn.GetGPUClock, .{clock});
+    }
+
+    /// The compute engine's queue reset where job `job` is not done: the
+    /// first job not done given up, the queue reset - its pipe with it where
+    /// `flags` has GPURESET_PIPE - and mapped again, and the jobs not done
+    /// written to it again. The number of the last job given up; 0 where none
+    /// was: `job` done, the queue not running, or not reset - then it stays
+    /// stopped.
+    pub fn ResetGPUCompute(self: *AMDGPUBase, job: u32, flags: u32) u32 {
+        return libraries.call(self, LVO.ResetGPUCompute, Fn.ResetGPUCompute, .{ job, flags });
     }
 };

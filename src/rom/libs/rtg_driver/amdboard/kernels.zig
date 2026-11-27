@@ -77,11 +77,16 @@
 //! would be the mean of more than `most_covered` of the picture's, which
 //! one thread works through alone.
 //!
-//! **Waiting.** As the DMA engine's: the job is sent and waited for
-//! (WaitGPUCompute), the task asleep meanwhile; one not done within a
-//! second is taken as a queue that no longer runs - its memory unmapped
-//! all the same, the job answered RTGERR_TIMEOUT, no kernel used from
-//! then on, and the log says so once.
+//! **Waiting.** The job is sent and waited for (WaitGPUCompute), the task
+//! asleep meanwhile. One not done within a second has the queue reset
+//! (ResetGPUCompute), which gives up the jobs it ends and writes the rest
+//! to the queue again: where this one is written again, it is waited for
+//! again; where it is given up, it is answered RTGERR_TIMEOUT - its memory
+//! unmapped all the same, and the library draws it - and the kernels go
+//! on, the log saying so. A job given up may have been drawn in part, or
+//! whole: the library lays a blend's pixels over what the kernel laid.
+//! Where the queue cannot be reset no kernel is used from then on, and
+//! the log says so once.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -486,8 +491,10 @@ const Part = struct {
 /// One dispatch of `kernel` over `width` x `height` pixels, handed
 /// `job`, sent and waited for: RTGERR_OK once it is done;
 /// RTGERR_NOT_SUPPORTED, nothing written, where it was not sent. One not
-/// done within `job_most_ms` is taken as a queue that no longer runs - no
-/// job is the kernels' from then on - and said once.
+/// done within `job_most_ms` has the queue reset, as often as a job
+/// before it is given up for it; given up itself, it is answered
+/// RTGERR_TIMEOUT, said. Where the queue cannot be reset no job is the
+/// kernels' from then on, said once.
 fn run(compute: *Kernels, sys: *ExecBase, gpu: *AMDGPUBase, kernel: *const amdgpu.GPUKernel, job: anytype, width: u32, height: u32) i32 {
     const dispatch: amdgpu.GPUDispatch = .{
         // A group more than the pixels fill, for the part of the first
@@ -499,10 +506,21 @@ fn run(compute: *Kernels, sys: *ExecBase, gpu: *AMDGPUBase, kernel: *const amdgp
     };
     const sent = gpu.SendGPUKernel(kernel, &dispatch);
     if (sent == 0) return err.RTGERR_NOT_SUPPORTED;
-    if (gpu.WaitGPUCompute(sent, job_most_ms)) return err.RTGERR_OK;
+    // A reset that gave up a job before this one leaves it on the queue;
+    // one that gave it up answers it false at once, and the next finds
+    // nothing to reset.
+    while (!gpu.WaitGPUCompute(sent, job_most_ms)) {
+        if (gpu.ResetGPUCompute(sent, 0) == 0) break;
+    }
+    if (gpu.WaitGPUCompute(sent, 0)) return err.RTGERR_OK;
+    var state: amdgpu.GPUComputeState = .{};
+    if (gpu.GetGPUComputeState(&state)) {
+        exec.kprintf(sys, "%s: a job of the board's kernels was not done within %u ms: given up, the queue reset\n", .{ dcn.owner, job_most_ms });
+        return err.RTGERR_TIMEOUT;
+    }
     @atomicStore(bool, &compute.ready, false, .release);
     if (!@atomicRmw(bool, &compute.failed, .Xchg, true, .acq_rel)) {
-        exec.kprintf(sys, "%s: a job of the board's kernels was not done within %u ms: they are not used from now on\n", .{ dcn.owner, job_most_ms });
+        exec.kprintf(sys, "%s: a job of the board's kernels was not done within %u ms, and the queue cannot be reset: they are not used from now on\n", .{ dcn.owner, job_most_ms });
     }
     return err.RTGERR_TIMEOUT;
 }

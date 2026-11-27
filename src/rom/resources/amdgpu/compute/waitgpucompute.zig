@@ -29,7 +29,8 @@ const look_us: u64 = 10_000;
 /// RESULT:
 /// True once the engine has done the job and every one before it, at once
 /// where it already has. False where it has not within `most_ms`, where
-/// `job` is 0 or the queue does not run.
+/// `job` is 0 or the queue does not run, and at once for a job a reset
+/// gave up (ResetGPUCompute).
 ///
 /// BEHAVIOR:
 /// The engine writes each job's number into the queue's page once its
@@ -38,7 +39,10 @@ const look_us: u64 = 10_000;
 /// wait looks at the number written, and sleeps on the waitable until the
 /// job is done or the time is up - looking again at least every 10 ms,
 /// whatever wakes it. Numbers are compared modulo 2^32, so a job more
-/// than two thousand million jobs old is taken as one not sent yet.
+/// than two thousand million jobs old is taken as one not sent yet. A job
+/// a reset gave up has its number written as done, as its record says;
+/// since 1.17 it is answered false, while fewer than 64 jobs have been
+/// sent after it - past that, as done.
 ///
 /// CONTEXT:
 /// - Waits: yes, until the job is done, `most_ms` at most.
@@ -53,14 +57,16 @@ const look_us: u64 = 10_000;
 /// NOTES:
 /// What a job's kernels wrote is in the memory once the job is done. A
 /// job the engine has not done after a long wait points at a packet or a
-/// kernel it cannot finish; GetGPUComputeState says how far it has read.
+/// kernel it cannot finish, which holds every job after it;
+/// GetGPUComputeState says how far it has read, and ResetGPUCompute gives
+/// the first job not done up and lets the others run.
 ///
 /// BUGS:
-/// A job the engine never ends - a kernel that runs on, a packet it hangs
-/// on - holds every job after it: there is no reset of the queue.
+/// None known.
 ///
 /// SEE ALSO:
-/// `SendGPUCompute`, `SendGPUKernel`, `GetGPUComputeState`, `WaitForAny`
+/// `SendGPUCompute`, `SendGPUKernel`, `ResetGPUCompute`,
+/// `GetGPUComputeState`, `WaitForAny`
 ///
 /// EXAMPLES:
 /// ```zig
@@ -69,7 +75,7 @@ const look_us: u64 = 10_000;
 /// ```
 pub fn WaitGPUCompute(ab: *AMDGPUBase, job: u32, most_ms: u32) bool {
     if (ab.device == null or !ab.compute_running or job == 0) return false;
-    if (_compute.passed(_compute.done(ab), job)) return true;
+    if (_compute.passed(_compute.done(ab), job)) return !_compute.givenUp(ab, job);
     const sys = ab.sys_base;
     const until = sys.UptimeUs() + @as(u64, most_ms) * 1000;
     sys.ObtainSemaphore(&ab.compute_wait_lock);
@@ -77,7 +83,7 @@ pub fn WaitGPUCompute(ab: *AMDGPUBase, job: u32, most_ms: u32) bool {
     const list = [_]*exec.Waitable{&ab.compute_end};
     while (true) {
         sys.ResetWaitable(&ab.compute_end);
-        if (_compute.passed(_compute.done(ab), job)) return true;
+        if (_compute.passed(_compute.done(ab), job)) return !_compute.givenUp(ab, job);
         const now = sys.UptimeUs();
         if (now >= until) return false;
         _ = sys.WaitForAny(&list, 1, @min(until - now, look_us));

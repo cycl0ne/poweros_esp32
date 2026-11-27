@@ -167,6 +167,12 @@ pub const AMDGPUBase = extern struct {
     compute_end_int: exec.Interrupt = .{},
     compute_slot: u32 = 0,
     compute_slot_jobs: [compute_slots]u32 = @splat(0),
+    /// What the queue keeps of its last jobs, each at its number's place
+    /// (`job % compute_records`); how many times it was reset
+    /// (ResetGPUCompute), and the last job a reset gave up.
+    compute_jobs: [compute_records]ComputeJob = @splat(.{}),
+    compute_resets: u32 = 0,
+    compute_given_up: u32 = 0,
     /// The graphics block's shader engines and compute units, as the
     /// device's table says; 0 where it does not.
     shader_engines: u32 = 0,
@@ -185,3 +191,19 @@ pub const AMDGPUBase = extern struct {
 /// The slots of arguments the compute queue's kernels are handed theirs
 /// in.
 pub const compute_slots = 64;
+
+/// What the compute queue keeps of a job: its number; the first of its
+/// words in the ring, counted as the words written to the ring are, and
+/// how many of them, after its start, are its own packets; and its number
+/// again where a reset gave it up, else 0 - one word, which a task waiting
+/// reads without the queue's lock.
+pub const ComputeJob = extern struct {
+    number: u32 = 0,
+    start: u64 = 0,
+    packets: u32 = 0,
+    given_up: u32 = 0,
+};
+
+/// The jobs the compute queue keeps: more than can be on it, not done, at
+/// once.
+pub const compute_records = 64;

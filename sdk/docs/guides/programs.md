@@ -1161,17 +1161,45 @@ a kernel that needs more; it is kept from then on. A kernel whose stack
 grows as it runs, that needs a trap handler, its dispatch's packet or
 its arguments in its registers is refused, as are more than 256 bytes
 of arguments, more than 64 KiB of group memory and more than 1024
-threads in a group - the system's log says why. A job the engine never
-finishes - a kernel that runs on - holds every job after it, as the
-queue cannot be reset. `SendGPUCompute` puts the engine's own packets on
-the queue instead, `GetGPUComputeState` says how far it is and where its
-scratch is. `C:test/Gpu COMPUTE` starts the queue and tries it with the
-kernel above and with one that keeps a table of 128 words a thread in
-private memory; on the NucBox a job is 12 us from sent to done, the
-kernel fills 16 MiB of the device's memory in 1 to 1.2 ms and of the
-machine's, mapped, in 1 to 2 ms, and the one with the table runs over
-64 KiB in 1812 us, the scratch it is given 6389760 bytes - 384 waves of
-16640.
+threads in a group - the system's log says why. `SendGPUCompute` puts
+the engine's own packets on the queue instead, `GetGPUComputeState`
+says how far it is and where its scratch is. `C:test/Gpu COMPUTE`
+starts the queue and tries it with the kernel above and with one that
+keeps a table of 128 words a thread in private memory; on the NucBox a
+job is 12 us from sent to done, the kernel fills 16 MiB of the device's
+memory in 1 to 1.2 ms and of the machine's, mapped, in 1 to 2 ms, and
+the one with the table runs over 64 KiB in 1812 us, the scratch it is
+given 6389760 bytes - 384 waves of 16640.
+
+A job that is not done in time - a kernel that runs on, a wait on memory
+nothing writes - holds every job after it until the program resets the
+queue (`ResetGPUCompute`), which answers the last job it gave up. The
+engine goes on to the next jobs while a job's kernels run, and a job's
+end waits for the kernels of every job before it: so where the reset
+ends waves still running, the end of every job the engine had got to
+comes as the queue stops, and all of those are given up, done or not;
+the jobs after them are written to the queue again and run. Where the
+engine itself is held in a job's packets, by a wait
+(`GPUPACKET_WAIT_REG_MEM`), that job alone is given up. `WaitGPUCompute`
+answers false at once for a job given up; what its kernels wrote stays
+written, and a job written again runs from its start. `GPURESET_PIPE`
+resets the engine's pipe as well, which the reset also does by itself
+where the queue does not stop. `C:test/Gpu COMPUTE RESET` holds the
+engine twice by a wait, resetting the queue alone and then with its
+pipe, and spins a kernel's waves on a word: on the NucBox the resets
+take 3.0, 5.1 and 3.1 ms; the held job is given up alone, the fill and
+the empty jobs after it are done right; the spin gives up all five jobs
+the engine had got to - the fill after it, which had run, with them -
+and the kernels after the resets are right.
+
+```zig
+const job = ab.SendGPUKernel(&kernel, &dispatch);
+if (job == 0) return error.NoCompute;
+while (!ab.WaitGPUCompute(job, 1000)) {
+    if (ab.ResetGPUCompute(job, 0) == 0) break;
+}
+if (!ab.WaitGPUCompute(job, 0)) return error.NotDone;
+```
 
 A kernel may take its arguments as one `extern struct` by value, which
 the program fills in as the same type, so that the two cannot disagree

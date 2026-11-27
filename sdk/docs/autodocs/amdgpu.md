@@ -31,6 +31,7 @@ Generated from the source by `./zig build autodoc`.
 - [LoadGPUFirmware](#loadgpufirmware) - A block's firmware loaded by the security processor into its protected region, or a list of a block's register writes applied by it.
 - [MapGPUMemory](#mapgpumemory) - A range of the machine's memory mapped for the graphics block's engines: its pages written into the block's memory hub's page table, and where the engines reach it answered - or, for the device's own memory, where they reach it through the hub's aperture.
 - [RemGPUIntServer](#remgpuintserver) - A server AddGPUIntServer added taken off again.
+- [ResetGPUCompute](#resetgpucompute) - The compute engine's queue reset where job `job` is not done: the jobs the reset ends given up, and the jobs after them written to the queue again.
 - [SendGPUCompute](#sendgpucompute) - A job of the compute engine's packets put on its queue: the engine's caches made to see memory as the CPU left it, the packets, and the job's end, which writes its number and raises the engine's interrupt.
 - [SendGPUDMA](#sendgpudma) - A job of the DMA engine's packets put on its queue: copied into the ring with a fence and a trap after them, and the engine told.
 - [SendGPUKernel](#sendgpukernel) - A kernel run on the compute engine: its arguments copied, and a job of its dispatch put on the engine's queue.
@@ -623,9 +624,11 @@ scheduler's firmware versions, of its first pipe and of the mapper;
 whether the queue is mapped (CP_HQD_ACTIVE) and its read and write
 pointers in words as its registers read now, with the queue selected;
 the block's status (GRBM_STATUS) and its compute processor's
-(CP_CPC_STATUS); and, since 1.16, the queue's scratch: where it is to
-the device, its bytes and the waves it holds, 0 until a kernel with
-private memory has been sent (SendGPUKernel).
+(CP_CPC_STATUS); since 1.16, the queue's scratch: where it is to the
+device, its bytes and the waves it holds, 0 until a kernel with
+private memory has been sent (SendGPUKernel); and since 1.17, how many
+times the queue was reset and the last job a reset gave up
+(ResetGPUCompute), 0 until one has.
 
 **CONTEXT**
 
@@ -650,7 +653,8 @@ None known.
 
 **SEE ALSO**
 
-`StartGPUCompute`, `SendGPUCompute`, `WaitGPUCompute`
+`StartGPUCompute`, `SendGPUCompute`, `WaitGPUCompute`,
+`ResetGPUCompute`
 
 **EXAMPLES**
 
@@ -1210,6 +1214,126 @@ None known.
 ab.RemGPUIntServer(&frame);
 ```
 
+## ResetGPUCompute
+
+The compute engine's queue reset where job `job` is not done: the jobs the reset ends given up, and the jobs after them written to the queue again.
+
+**SYNOPSIS**
+
+```zig
+fn ResetGPUCompute(ab: *AMDGPUBase, job: u32, flags: u32) u32
+```
+
+**SINCE**
+
+1.17. LVO -112.
+
+**INPUTS**
+
+- `job` - a job's number, as SendGPUCompute or SendGPUKernel answered
+  it, that WaitGPUCompute found not done in time.
+- `flags` - GPURESET_PIPE resets the compute engine's pipe, every
+  queue on it, rather than the queue alone; with 0 the pipe is reset
+  only where the queue's own reset does not take.
+
+**RESULT**
+
+The number of the last job the reset gave up, once the queue runs
+again: every job from the first not done to it is given up. 0 where
+nothing was: where `job` is 0, not sent or done - WaitGPUCompute says
+which - or where the queue does not run; and where the queue could not
+be reset: every job not done is given up then, the queue is stopped,
+and every call that sends a job answers 0 from then on.
+
+**BEHAVIOR**
+
+Under the queue's lock, as the vendor's driver resets a kernel compute
+queue on this block (amdgpu_gfx_mes_reset_queue_start, by its
+registers, as it does for compute): in the RLC's safe mode the queue
+is selected, every job not done marked given up, its dequeue asked
+with its waves reset (CP_HQD_DEQUEUE_REQUEST 2), the shader input's
+state of it reset (SPI_COMPUTE_QUEUE_RESET) and the queue waited for
+to be inactive, 100 ms at most (mes_v11_0_reset_queue_mmio). Where it
+is not - and at once with GPURESET_PIPE - the compute engine's pipe is
+held in reset while each of its eight queues is set inactive, then let
+go (mes_v11_0_reset_compute_pipe_mmio), and taken to have worked, as
+the vendor's driver takes it: the ring's test says.
+
+The engine goes on to a job's next packets while its kernels run, and
+a job's end waits for the kernels of every job before it. So where the
+reset ends waves still running, the end of every job the engine had
+got to comes as the queue stops: those jobs stay given up - the kernels
+of some ended, of others perhaps done, which nothing tells apart - and
+the jobs after them are written to the queue again as they were sent.
+Where no end comes - the engine itself held in a job's packets, by a
+wait on memory (GPUPACKET_WAIT_REG_MEM) - only the first job not done
+stays given up: it is written again with its own packets made NOPs, so
+that its end - its number written, its interrupt raised - comes in its
+place, and every job after it with it
+(amdgpu_ring_set_fence_errors_and_reemit). The words of the jobs to be
+written again are kept aside (amdgpu_ring_backup_unprocessed_commands);
+the scheduler is told the queue is removed after its reset
+(REMOVE_QUEUE); the queue's description is made again as its start
+made it, its ring filled with NOPs and its pointers set to 0
+(amdgpu_gfx_mqd_reset_restore); the scheduler maps it again
+(ADD_QUEUE) and it is tried with a register it sets
+(amdgpu_ring_reset_helper_end); last the jobs kept are written to it
+from its start, in order. Where the first job not done is one a reset
+gave up before, so that the NOPs in its place did not end either, or
+there is no memory to keep the jobs' words in, nothing is written
+again: every job not done stays given up and the last one's number is
+written as done (amdgpu_fence_driver_force_completion), as it is where
+the queue could not be reset. The tasks waiting for jobs are woken to
+look again.
+
+**CONTEXT**
+
+- Waits: for the queue to be inactive, 100 ms at most; for each of the
+  scheduler's two calls, 2.1 s at most; for the ring's test, 100 ms at
+  most - a few milliseconds where all goes well.
+- Interrupts: no.
+- Locks: takes the queue's lock.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The words kept aside are in memory taken for the reset, given back
+before it returns.
+
+**NOTES**
+
+A job given up is gone: what its kernels wrote before the reset stays
+written, the rest never is - and one given up with others may have
+been done whole. WaitGPUCompute answers false at once for a job a reset
+gave up, while fewer than 64 jobs have been sent after it. A job
+written again runs from its start. The queue's scratch, its slots of
+arguments and its interrupt are kept as they are.
+
+**BUGS**
+
+A job whose kernels the engine had begun but whose end it had not got
+to is written again whole: its kernels write again what they wrote. A
+queue that cannot be reset is not started again: nothing resets the
+whole graphics block.
+
+**SEE ALSO**
+
+`WaitGPUCompute`, `SendGPUKernel`, `SendGPUCompute`,
+`GetGPUComputeState`
+
+**EXAMPLES**
+
+```zig
+const job = ab.SendGPUKernel(&kernel, &dispatch);
+if (job == 0) return error.NoCompute;
+// A job written again is waited for again; one given up is answered
+// false at once.
+while (!ab.WaitGPUCompute(job, 1000)) {
+    if (ab.ResetGPUCompute(job, 0) == 0) break;
+}
+if (!ab.WaitGPUCompute(job, 0)) return error.NotDone;
+```
+
 ## SendGPUCompute
 
 A job of the compute engine's packets put on its queue: the engine's caches made to see memory as the CPU left it, the packets, and the job's end, which writes its number and raises the engine's interrupt.
@@ -1236,13 +1360,15 @@ fn SendGPUCompute(ab: *AMDGPUBase, packets: [*]const u32, words: u32) u32
 The job's number, which WaitGPUCompute waits for: never 0, one more
 than the last job's, past 0 to 1. 0 where the queue does not run
 (StartGPUCompute), where the job with its start and end would take the
-whole ring (some 16 thousand words), or where the engine has not read
-enough of the ring to make room for it within a second.
+whole ring (some 16 thousand words), or where the jobs before it leave
+no room for it within a second.
 
 **BEHAVIOR**
 
-Under the queue's lock the job waits for room in the ring - the engine
-writes back how far it has read - then the ring is given: a packet
+Under the queue's lock the job waits for room in the ring: since 1.17
+the words of a job stay until it is done - for a reset to write them
+again (ResetGPUCompute) - and, as before, until the engine has read
+them, as it writes back how far it has. Then the ring is given: a packet
 that drops the engine's caches below the memory and writes the second
 level's back (ACQUIRE_MEM), the caller's packets, and one that, once
 they are done, writes the caches back, writes the job's number into
@@ -1405,9 +1531,9 @@ than 64 KiB of group memory or 256 bytes of arguments, where a
 dimension of the dispatch is 0, a group has more than 1024 threads,
 where the scratch its private memory needs cannot be made - the
 graphics block's compute units not known, no room in the device's
-memory, or the queue not idle within a second - or the engine makes no
-room in its ring within a second. Why a kernel is refused is said in
-the system's log.
+memory, or the queue not idle within a second - or the jobs before it
+leave no room in its ring within a second. Why a kernel is refused is
+said in the system's log.
 
 **BEHAVIOR**
 
@@ -2058,7 +2184,8 @@ fn WaitGPUCompute(ab: *AMDGPUBase, job: u32, most_ms: u32) bool
 
 True once the engine has done the job and every one before it, at once
 where it already has. False where it has not within `most_ms`, where
-`job` is 0 or the queue does not run.
+`job` is 0 or the queue does not run, and at once for a job a reset
+gave up (ResetGPUCompute).
 
 **BEHAVIOR**
 
@@ -2068,7 +2195,10 @@ end-of-pipe interrupt, whose server signals the queue's waitable. The
 wait looks at the number written, and sleeps on the waitable until the
 job is done or the time is up - looking again at least every 10 ms,
 whatever wakes it. Numbers are compared modulo 2^32, so a job more
-than two thousand million jobs old is taken as one not sent yet.
+than two thousand million jobs old is taken as one not sent yet. A job
+a reset gave up has its number written as done, as its record says;
+since 1.17 it is answered false, while fewer than 64 jobs have been
+sent after it - past that, as done.
 
 **CONTEXT**
 
@@ -2086,16 +2216,18 @@ Nothing is allocated.
 
 What a job's kernels wrote is in the memory once the job is done. A
 job the engine has not done after a long wait points at a packet or a
-kernel it cannot finish; GetGPUComputeState says how far it has read.
+kernel it cannot finish, which holds every job after it;
+GetGPUComputeState says how far it has read, and ResetGPUCompute gives
+the first job not done up and lets the others run.
 
 **BUGS**
 
-A job the engine never ends - a kernel that runs on, a packet it hangs
-on - holds every job after it: there is no reset of the queue.
+None known.
 
 **SEE ALSO**
 
-`SendGPUCompute`, `SendGPUKernel`, `GetGPUComputeState`, `WaitForAny`
+`SendGPUCompute`, `SendGPUKernel`, `ResetGPUCompute`,
+`GetGPUComputeState`, `WaitForAny`
 
 **EXAMPLES**
 

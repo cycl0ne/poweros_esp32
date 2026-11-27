@@ -33,9 +33,11 @@ const _graphics = @import("../graphics/_graphics.zig");
 /// whether the queue is mapped (CP_HQD_ACTIVE) and its read and write
 /// pointers in words as its registers read now, with the queue selected;
 /// the block's status (GRBM_STATUS) and its compute processor's
-/// (CP_CPC_STATUS); and, since 1.16, the queue's scratch: where it is to
-/// the device, its bytes and the waves it holds, 0 until a kernel with
-/// private memory has been sent (SendGPUKernel).
+/// (CP_CPC_STATUS); since 1.16, the queue's scratch: where it is to the
+/// device, its bytes and the waves it holds, 0 until a kernel with
+/// private memory has been sent (SendGPUKernel); and since 1.17, how many
+/// times the queue was reset and the last job a reset gave up
+/// (ResetGPUCompute), 0 until one has.
 ///
 /// CONTEXT:
 /// - Waits: only for the queue's lock.
@@ -55,7 +57,8 @@ const _graphics = @import("../graphics/_graphics.zig");
 /// None known.
 ///
 /// SEE ALSO:
-/// `StartGPUCompute`, `SendGPUCompute`, `WaitGPUCompute`
+/// `StartGPUCompute`, `SendGPUCompute`, `WaitGPUCompute`,
+/// `ResetGPUCompute`
 ///
 /// EXAMPLES:
 /// ```zig
@@ -93,6 +96,8 @@ pub fn GetGPUComputeState(ab: *AMDGPUBase, state: *amdgpu.GPUComputeState) bool 
         .scratch = ab.scratch.device,
         .scratch_bytes = ab.scratch.bytes,
         .scratch_waves = ab.scratch_waves,
+        .resets = ab.compute_resets,
+        .given_up = ab.compute_given_up,
     };
     return true;
 }

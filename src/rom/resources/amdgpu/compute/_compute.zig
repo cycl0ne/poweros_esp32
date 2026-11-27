@@ -41,6 +41,19 @@
 //! queue's server counts and signals the queue's waitable with. Numbers
 //! start at 1, wrap past 0 and are compared modulo 2^32.
 //!
+//! **A reset.** Each job's start in the ring and how many of its words
+//! are its own packets are kept, at its number's place among 64; a job's
+//! words stay in the ring until it is done, so that a reset can write
+//! them again. The engine runs a job's kernels while it goes on to the
+//! next jobs, and a job's end waits for every job before it: a reset of
+//! the queue's waves ends every kernel still running, and the ends of the
+//! jobs they belong to come as the queue stops, done or not. So
+//! ResetGPUCompute gives up the first job not done and every job whose
+//! end comes as the queue stops, and writes the jobs after them again
+//! from the ring's start - where no end came, the first one's own packets
+//! made NOPs, so that its end, its number, comes in order
+//! (amdgpu_ring_set_fence_errors_and_reemit).
+//!
 //! **A kernel's dispatch** is a job of packets that set the compute
 //! engine's registers - where the code is, its resource words, the
 //! group's size, where its arguments are - and dispatch its groups
@@ -99,11 +112,14 @@ pub const CP_MEC_DOORBELL_RANGE_UPPER: Register = .{ .segment = 0, .offset = 0x1
 pub const CP_ME1_PIPE0_INT_CNTL: Register = .{ .segment = 0, .offset = 0x1e25 };
 pub const GRBM_STATUS: Register = .{ .segment = 0, .offset = 0x0da4 };
 pub const CP_CPC_STATUS: Register = .{ .segment = 0, .offset = 0x0e24 };
+pub const CP_MEC1_INSTR_PNTR: Register = .{ .segment = 0, .offset = 0x0f48 };
 pub const CP_STAT = _graphics.CP_STAT;
 // A queue's own registers: those of the queue GRBM_GFX_CNTL selects.
 pub const CP_MQD_BASE_ADDR: Register = .{ .segment = 0, .offset = 0x1fa9 };
 pub const CP_MQD_BASE_ADDR_HI: Register = .{ .segment = 0, .offset = 0x1faa };
 pub const CP_HQD_ACTIVE: Register = .{ .segment = 0, .offset = 0x1fab };
+pub const CP_HQD_DEQUEUE_REQUEST: Register = .{ .segment = 0, .offset = 0x1fc1 };
+pub const SPI_COMPUTE_QUEUE_RESET: Register = .{ .segment = 0, .offset = 0x1f73 };
 pub const CP_HQD_VMID: Register = .{ .segment = 0, .offset = 0x1fac };
 pub const CP_HQD_PERSISTENT_STATE: Register = .{ .segment = 0, .offset = 0x1fad };
 pub const CP_HQD_PQ_BASE: Register = .{ .segment = 0, .offset = 0x1fb1 };
@@ -142,6 +158,15 @@ pub const MES_HALT: u32 = 1 << 30;
 pub const TIME_STAMP_INT_ENABLE: u32 = 1 << 26;
 pub const GENERIC0_INT_ENABLE: u32 = 1 << 31;
 pub const HQD_VMID_MASK: u32 = 0xf;
+/// A queue's dequeue asked with its waves reset; the shader input's
+/// state of the queue reset; the queue active; the compute engine's first
+/// micro engine's pipe 0 held in reset - the next pipes' bits follow it.
+pub const DEQUEUE_RESET_WAVES: u32 = 2;
+pub const QUEUE_RESET: u32 = 1 << 0;
+pub const HQD_ACTIVE: u32 = 1 << 0;
+pub const MEC_ME1_PIPE0_RESET: u32 = 1 << 16;
+/// The queues on each of the compute engine's pipes.
+pub const queues_per_pipe = 8;
 pub const DOORBELL_EN: u32 = 1 << 30;
 pub const DOORBELL_OFFSET_SHIFT = 2;
 const QUEUE_SIZE_MASK: u32 = 0x3f;
@@ -288,6 +313,9 @@ comptime {
 /// - the vendor's 100 ms - and for a call of the scheduler - its 2.1 s -
 /// and how long a job waits for room in the ring at most.
 pub const test_most_us: u64 = 100_000;
+/// How long a reset waits for the queue to be inactive: the vendor's
+/// 100 ms.
+pub const dequeue_most_us: u64 = 100_000;
 pub const scheduler_most_us: u64 = 2_100_000;
 pub const room_most_us: u64 = 1_000_000;
 
@@ -295,6 +323,9 @@ pub const room_most_us: u64 = 1_000_000;
 /// the oldest that takes the second call of resources.
 pub const scheduler_maps_from: u32 = 0x47;
 pub const scheduler_resources_1_from: u32 = 0x52;
+/// The oldest scheduler firmware that is told a queue is removed after
+/// its reset.
+pub const scheduler_removes_after_reset_from: u32 = 0x60;
 pub const scheduler_version_mask: u32 = 0xfff;
 
 // --- the piece and the registers ----------------------------------------------------------
@@ -660,11 +691,13 @@ pub const Frame = [frame_words]u32;
 pub const resources_status_at: u32 = 200;
 pub const resources_1_status_at: u32 = 4;
 pub const add_queue_status_at: u32 = 148;
+pub const remove_queue_status_at: u32 = 20;
 pub const query_status_at: u32 = 8;
 
 const API_TYPE_SCHEDULER: u32 = 1;
 const OP_SET_HW_RESOURCES: u32 = 0;
 const OP_ADD_QUEUE: u32 = 2;
+const OP_REMOVE_QUEUE: u32 = 3;
 const OP_QUERY_SCHEDULER_STATUS: u32 = 11;
 const OP_SET_HW_RESOURCES_1: u32 = 19;
 const QUEUE_TYPE_COMPUTE: u32 = 1;
@@ -757,6 +790,22 @@ pub fn mapFrame(queue: Queue, doorbell: u32, mqd: u64, write_copy: u64) Frame {
     frame[36] = map_legacy_kq;
     frame[48] = queue.pipe;
     frame[49] = queue.queue;
+    return frame;
+}
+
+/// The queue removed by the scheduler as one of the system's, after its
+/// reset (mes_v11_0_unmap_legacy_queue with RESET_QUEUES): its doorbell,
+/// pipe and queue, and - where its firmware takes it - that the queue was
+/// reset.
+pub fn removeFrame(queue: Queue, doorbell: u32, after_reset: bool) Frame {
+    var frame = frameOf(OP_REMOVE_QUEUE);
+    frame[1] = doorbell;
+    const unmap_legacy_queue: u32 = 1 << 3;
+    const remove_queue_after_reset: u32 = 1 << 4;
+    frame[4] = unmap_legacy_queue | @as(u32, if (after_reset) remove_queue_after_reset else 0);
+    frame[9] = queue.pipe;
+    frame[10] = queue.queue;
+    frame[14] = QUEUE_TYPE_COMPUTE;
     return frame;
 }
 
@@ -889,6 +938,32 @@ pub fn done(ab: *AMDGPUBase) u32 {
     return word(ab, compute_fence_at).*;
 }
 
+/// The number of the job after `job`: numbers go round past 0, which no
+/// job has.
+pub fn nextJob(job: u32) u32 {
+    const next = job +% 1;
+    return if (next == 0) 1 else next;
+}
+
+/// What the queue keeps of job `job` while it does - until a job 64
+/// numbers later is sent; null for one it does not keep.
+pub fn record(ab: *AMDGPUBase, job: u32) ?*amdgpu_base.ComputeJob {
+    if (job == 0) return null;
+    const kept = &ab.compute_jobs[job % amdgpu_base.compute_records];
+    return if (kept.number == job) kept else null;
+}
+
+/// The words of the ring the jobs not done still have: from the start of
+/// the oldest of them to what is written. Where that one is not kept,
+/// which the room each job waits for rules out, the words the engine has
+/// yet to read.
+pub fn keptWords(ab: *AMDGPUBase) u64 {
+    const last = done(ab);
+    if (passed(last, ab.compute_sent)) return 0;
+    const oldest = record(ab, nextJob(last)) orelse return pending(ab.compute_written, readBack(ab));
+    return ab.compute_written -% oldest.start;
+}
+
 /// The words the engine has yet to read of what is written: its read
 /// pointer is a word within the ring.
 pub fn pending(count: u64, read: u32) u32 {
@@ -897,29 +972,123 @@ pub fn pending(count: u64, read: u32) u32 {
 
 /// `packets` put on the queue as one job - its start, the packets, its
 /// end - and the engine told: the job's number, or 0 where the engine
-/// does not make room for it within a second. Under the queue's lock.
+/// does not make room for it within a second. Room is what neither the
+/// jobs not done keep - their words stay for a reset to write again -
+/// nor the engine has yet to read; with 256 words a job at least, at most
+/// 63 jobs are not done at once, fewer than the records the queue keeps.
+/// Under the queue's lock.
 pub fn send(ab: *AMDGPUBase, packets: []const u32) u32 {
     const sys = ab.sys_base;
     const needed = jobWords(@intCast(packets.len));
     if (needed >= compute_ring_words) return 0;
     const until = sys.UptimeUs() + room_most_us;
-    while (pending(ab.compute_written, readBack(ab)) + needed >= compute_ring_words) {
+    while (@max(pending(ab.compute_written, readBack(ab)), keptWords(ab)) + needed >= compute_ring_words) {
         if (sys.UptimeUs() > until) {
-            exec.kprintf(sys, "%s: the compute engine makes no room in its ring: read to word %u, %lu written\n", .{
-                amdgpu.AMDGPUNAME, readBack(ab), ab.compute_written,
+            exec.kprintf(sys, "%s: the compute engine makes no room in its ring: job %u done, read to word %u, %lu written\n", .{
+                amdgpu.AMDGPUNAME, done(ab), readBack(ab), ab.compute_written,
             });
             return 0;
         }
         pause(ab, 100);
     }
-    var number = ab.compute_sent +% 1;
-    if (number == 0) number = 1;
+    return putJob(ab, packets);
+}
+
+/// `packets` put on the ring as the next job, its start and how many
+/// words its packets are kept at its number's place, and the engine told:
+/// the job's number.
+pub fn putJob(ab: *AMDGPUBase, packets: []const u32) u32 {
+    const number = nextJob(ab.compute_sent);
+    const start = ab.compute_written;
     put(ab, .compute, &acquire);
     put(ab, .compute, packets);
     put(ab, .compute, &release(ab.compute.device + compute_fence_at, number));
+    ab.compute_jobs[number % amdgpu_base.compute_records] = .{ .number = number, .start = start, .packets = @intCast(packets.len) };
     commit(ab, .compute);
     ab.compute_sent = number;
     return number;
+}
+
+/// Whether a reset gave job `job` up, as its record says: one word, read
+/// without the queue's lock.
+pub fn givenUp(ab: *AMDGPUBase, job: u32) bool {
+    return job != 0 and @atomicLoad(u32, &ab.compute_jobs[job % amdgpu_base.compute_records].given_up, .acquire) == job;
+}
+
+/// The ring's words from `from` on, counted as the words written to it
+/// are, copied into `into` - the words of the jobs not done, kept aside
+/// for a reset (amdgpu_ring_backup_unprocessed_commands).
+pub fn keepJobs(ab: *AMDGPUBase, from: u64, into: []u32) void {
+    const ring = words(ab, compute_ring_at);
+    for (into, 0..) |*value, index| value.* = ring[@intCast((from + index) % compute_ring_words)];
+}
+
+/// The queue's description made again as its start made it, its ring
+/// filled with NOPs and its read and write pointers' copies set to 0
+/// (amdgpu_gfx_mqd_reset_restore, which copies back the description it
+/// kept: this one is made from the same places).
+pub fn renewQueue(ab: *AMDGPUBase) void {
+    const device = ab.compute.device;
+    describe(words(ab, compute_mqd_at), .{
+        .kind = .compute,
+        .mqd = device + compute_mqd_at,
+        .ring = device + compute_ring_at,
+        .ring_bytes = compute_ring_bytes,
+        .eop = device + compute_eop_at,
+        .read_back = device + compute_read_at,
+        .write_copy = device + compute_write_at,
+        .doorbell = compute_doorbell,
+    });
+    const ring = words(ab, compute_ring_at);
+    for (0..compute_ring_words) |index| ring[index] = nop;
+    double(ab, compute_write_at).* = 0;
+    double(ab, compute_read_at).* = 0;
+    ab.compute_written = 0;
+    fence();
+}
+
+/// Jobs `from` to `to` marked given up, or no longer: each one's record's
+/// word, which a task waiting reads. How many jobs that is.
+pub fn markGivenUp(ab: *AMDGPUBase, from: u32, to: u32, given_up: bool) u32 {
+    var each = from;
+    var count: u32 = 0;
+    for (0..amdgpu_base.compute_records) |_| {
+        if (record(ab, each)) |job| @atomicStore(u32, &job.given_up, if (given_up) each else 0, .release);
+        count += 1;
+        if (each == to) break;
+        each = nextJob(each);
+    }
+    return count;
+}
+
+/// The jobs whose words `kept` holds - `first` and every one after it to
+/// the last sent - written to the ring again from where it is written to,
+/// in order, and the engine told (amdgpu_ring_set_fence_errors_and_reemit);
+/// where `blank`, `first`'s own packets made NOPs first, so that its end
+/// comes in its place. Each job's start is moved to where its words are
+/// now.
+pub fn writeAgain(ab: *AMDGPUBase, kept: []u32, first: u32, blank: bool) void {
+    const given = record(ab, first) orelse return;
+    if (blank) {
+        for (kept[acquire.len..][0..given.packets]) |*value| value.* = nop;
+    }
+    const from = given.start;
+    const to = ab.compute_written;
+    var each = first;
+    for (0..amdgpu_base.compute_records) |_| {
+        if (record(ab, each)) |job| job.start = job.start - from + to;
+        if (each == ab.compute_sent) break;
+        each = nextJob(each);
+    }
+    put(ab, .compute, kept);
+    commit(ab, .compute);
+}
+
+/// The last job sent written as done, every job before it with it
+/// (amdgpu_fence_driver_force_completion).
+pub fn forceDone(ab: *AMDGPUBase) void {
+    word(ab, compute_fence_at).* = ab.compute_sent;
+    fence();
 }
 
 /// The end-of-pipe interrupt's server: counted, and the queue's waitable
@@ -1130,6 +1299,99 @@ test "the scheduler's frames, at the places the vendor's header gives" {
     try testing.expectEqual(@as(u32, 0), map[48]);
     try testing.expectEqual(@as(u32, 0), map[49]);
     try testing.expectEqual(@as(u32, 0x0004_00b1), queryFrame()[0]);
+
+    var remove = removeFrame(compute_queue, compute_doorbell, true);
+    try testing.expectEqual(@as(u32, 0x0004_0031), remove[0]);
+    try testing.expectEqual(@as(u32, 6), remove[1]);
+    try testing.expectEqual(@as(u32, 1 << 3 | 1 << 4), remove[4]);
+    try testing.expectEqual(@as(u32, 0), remove[9]);
+    try testing.expectEqual(@as(u32, 0), remove[10]);
+    try testing.expectEqual(@as(u32, 1), remove[14]);
+    setStatus(&remove, remove_queue_status_at, 0x80_0001_c028, 1);
+    try testing.expectEqualSlices(u32, &.{ 0x0001_c028, 0x80, 1, 0 }, remove[5..9]);
+    try testing.expectEqual(@as(u32, 1 << 3), removeFrame(compute_queue, compute_doorbell, false)[4]);
+}
+
+test "a job's number, past 0" {
+    try testing.expectEqual(@as(u32, 2), nextJob(1));
+    try testing.expectEqual(@as(u32, 1), nextJob(0xffff_ffff));
+    try testing.expectEqual(@as(u32, 1), nextJob(0));
+}
+
+test "the jobs not done, kept aside and written again from the ring's start" {
+    // The piece up to its page, and the doorbell, in the host's memory;
+    // three jobs put on the ring after the 256 words of its test.
+    const piece = try testing.allocator.alloc(u32, (page_at + 0x100) / 4);
+    defer testing.allocator.free(piece);
+    @memset(piece, 0);
+    var bell: u64 = 0;
+    var ab: AMDGPUBase = undefined;
+    ab.compute = .{ .cpu = @intFromPtr(piece.ptr), .device = 0x80_0000_0000, .bytes = @intCast(piece.len * 4) };
+    ab.doorbells = @intFromPtr(&bell) - compute_doorbell * 4;
+    ab.compute_written = 256;
+    ab.compute_sent = 0xffff_fffe;
+    ab.compute_jobs = @splat(.{});
+    word(&ab, compute_fence_at).* = 0xffff_fffe;
+    try testing.expectEqual(@as(u64, 0), keptWords(&ab));
+    const packets = [_]u32{ 0x1111_1111, 0x2222_2222, 0x3333_3333 };
+    try testing.expectEqual(@as(u32, 0xffff_ffff), putJob(&ab, &packets));
+    try testing.expectEqual(@as(u32, 1), putJob(&ab, &packets));
+    try testing.expectEqual(@as(u32, 2), putJob(&ab, packets[0..1]));
+    try testing.expectEqual(@as(u64, 4 * 256), ab.compute_written);
+    try testing.expectEqual(@as(u64, 4 * 256), bell);
+    try testing.expectEqual(@as(u64, 3 * 256), keptWords(&ab));
+    try testing.expectEqual(@as(u64, 512), record(&ab, 1).?.start);
+
+    // The first job done; the second hangs. Its words and the third's
+    // kept, the queue made new, the ring's test put first; then the two
+    // written again, the second's packets NOPs and its end in place.
+    word(&ab, compute_fence_at).* = 0xffff_ffff;
+    try testing.expectEqual(@as(u64, 2 * 256), keptWords(&ab));
+    var kept: [2 * 256]u32 = undefined;
+    keepJobs(&ab, record(&ab, 1).?.start, &kept);
+    renewQueue(&ab);
+    try testing.expectEqual(@as(u64, 0), ab.compute_written);
+    const ring = piece[compute_ring_at / 4 ..][0..compute_ring_words];
+    try testing.expectEqual(nop, ring[600]);
+    try testing.expectEqual(@as(u32, 0xC031_0800), piece[compute_mqd_at / 4]);
+    put(&ab, .compute, &setConfig(uconfig_registers_first + 0x40, 0xDEAD_BEEF));
+    commit(&ab, .compute);
+    try testing.expectEqual(@as(u32, 2), markGivenUp(&ab, 1, 2, true));
+    try testing.expectEqual(@as(u32, 1), markGivenUp(&ab, 2, 2, false));
+    writeAgain(&ab, &kept, 1, true);
+    try testing.expectEqualSlices(u32, &acquire, ring[256..][0..acquire.len]);
+    try testing.expectEqualSlices(u32, &.{ nop, nop, nop }, ring[256 + acquire.len ..][0..3]);
+    try testing.expectEqualSlices(u32, &release(@as(u64, 0x80_0000_0000) + compute_fence_at, 1), ring[256 + acquire.len + 3 ..][0..8]);
+    try testing.expectEqual(@as(u32, 0x1111_1111), ring[512 + acquire.len]);
+    try testing.expectEqualSlices(u32, &release(@as(u64, 0x80_0000_0000) + compute_fence_at, 2), ring[512 + acquire.len + 1 ..][0..8]);
+    try testing.expectEqual(@as(u64, 3 * 256), ab.compute_written);
+    try testing.expectEqual(@as(u64, 3 * 256), bell);
+    try testing.expectEqual(@as(u64, 256), record(&ab, 1).?.start);
+    try testing.expectEqual(@as(u64, 512), record(&ab, 2).?.start);
+    try testing.expect(givenUp(&ab, 1));
+    try testing.expect(!givenUp(&ab, 2));
+    try testing.expect(!givenUp(&ab, 0xffff_ffff));
+    try testing.expectEqual(@as(u64, 2 * 256), keptWords(&ab));
+
+    // Written again whole, from the second on: its packets kept.
+    keepJobs(&ab, record(&ab, 2).?.start, kept[0..256]);
+    writeAgain(&ab, kept[0..256], 2, false);
+    try testing.expectEqual(@as(u32, 0x1111_1111), ring[768 + acquire.len]);
+    try testing.expectEqual(@as(u64, 768), record(&ab, 2).?.start);
+    try testing.expectEqual(@as(u64, 4 * 256), ab.compute_written);
+
+    // Given up again: every job not done is, and the last is done.
+    _ = markGivenUp(&ab, 1, 2, true);
+    forceDone(&ab);
+    try testing.expect(givenUp(&ab, 2));
+    try testing.expectEqual(@as(u32, 2), done(&ab));
+    try testing.expectEqual(@as(u64, 0), keptWords(&ab));
+
+    // A job 64 numbers later takes the record's place.
+    ab.compute_sent = 65;
+    _ = putJob(&ab, &packets);
+    try testing.expect(record(&ab, 2) == null);
+    try testing.expect(!givenUp(&ab, 2));
 }
 
 test "what the engine has yet to read of its ring" {

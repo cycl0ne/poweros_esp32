@@ -38,9 +38,9 @@ const _compute = @import("_compute.zig");
 /// dimension of the dispatch is 0, a group has more than 1024 threads,
 /// where the scratch its private memory needs cannot be made - the
 /// graphics block's compute units not known, no room in the device's
-/// memory, or the queue not idle within a second - or the engine makes no
-/// room in its ring within a second. Why a kernel is refused is said in
-/// the system's log.
+/// memory, or the queue not idle within a second - or the jobs before it
+/// leave no room in its ring within a second. Why a kernel is refused is
+/// said in the system's log.
 ///
 /// BEHAVIOR:
 /// Under the queue's lock the arguments are copied into the next of the

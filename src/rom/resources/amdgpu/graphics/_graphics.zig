@@ -482,7 +482,7 @@ pub fn resumeRlc(ab: *AMDGPUBase) bool {
 /// The RLC's safe mode entered where the RLC runs, and waited for: whether
 /// it runs, which says whether to leave it after. Where it does not take
 /// the mode in time, that is put on the system's lines.
-fn enterSafeMode(ab: *AMDGPUBase) bool {
+pub fn enterSafeMode(ab: *AMDGPUBase) bool {
     const sys = ab.sys_base;
     if (at(ab, RLC_CNTL).* & RLC_ENABLE_F32 == 0) return false;
     at(ab, RLC_SAFE_MODE).* = SAFE_MODE_CMD | SAFE_MODE_ENTER;
@@ -499,7 +499,7 @@ fn enterSafeMode(ab: *AMDGPUBase) bool {
 }
 
 /// The RLC's safe mode left, where `running` says it was entered.
-fn leaveSafeMode(ab: *AMDGPUBase, running: bool) void {
+pub fn leaveSafeMode(ab: *AMDGPUBase, running: bool) void {
     if (running) at(ab, RLC_SAFE_MODE).* = SAFE_MODE_CMD;
 }
 

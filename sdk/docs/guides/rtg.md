@@ -1951,7 +1951,11 @@ process of its own begun as it is made: the block's firmware read from
 running and the kernels loaded, in about 600 ms, more beside the
 desktop's own start at boot; `RTGCTRL_SETTLED` answers once that has
 ended, which `C:Rtg TRIED` waits for, and the log says how it went.
-Until then, and where it failed, every job is the cores'. A fill or a
+Until then, and where it failed, every job is the cores'. A job of the
+kernels not done within a second has the compute engine's queue reset
+(`ResetGPUCompute`) and, given up, is drawn by the library - over what
+the kernel drew of it, so a blend's pixels it had laid are laid twice;
+where the queue cannot be reset, the kernels are not used again. A fill or a
 copy is the engine's where what it reads and writes is more than the
 CPU's caches below the memory hold together, as the cores' cache leaves
 give them - 24 MiB on the NucBox, where on its 2560x1440 desktop that is

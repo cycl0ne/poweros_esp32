@@ -142,6 +142,7 @@ pub fn StartGPUCompute(ab: *AMDGPUBase) bool {
     ab.compute_sent = 0;
     ab.compute_slot = 0;
     ab.compute_slot_jobs = @splat(0);
+    ab.compute_jobs = @splat(.{});
 
     const at = _graphics.at;
     // The doorbell window, and the device's own way into it

@@ -15,6 +15,10 @@
 //! in the thread's private memory, the queue's scratch: entry
 //! `(k * 5 + value) & 127` is `i + k`, and the word the sum of entry
 //! `(k * 3 + i) & 127` times `k + 1` for each `k` below 128.
+//!
+//! `spin` reads the word at `flag` until it is not 0, which nothing
+//! writes while COMPUTE RESET waits for it: a kernel that does not end,
+//! for the queue's reset to give up.
 
 export fn fill(out: [*]addrspace(.global) u32, value: u32, count: u32) callconv(.kernel) void {
     const index = @workGroupId(0) *% 64 +% @workItemId(0);
@@ -35,4 +39,8 @@ export fn spill(out: [*]addrspace(.global) u32, value: u32, count: u32) callconv
         sum +%= table[(step *% 3 +% index) & 127] *% (step + 1);
     }
     out[index] = sum;
+}
+
+export fn spin(flag: *addrspace(.global) volatile u32) callconv(.kernel) void {
+    while (flag.* == 0) {}
 }

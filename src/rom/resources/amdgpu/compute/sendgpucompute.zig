@@ -26,12 +26,14 @@ const _compute = @import("_compute.zig");
 /// The job's number, which WaitGPUCompute waits for: never 0, one more
 /// than the last job's, past 0 to 1. 0 where the queue does not run
 /// (StartGPUCompute), where the job with its start and end would take the
-/// whole ring (some 16 thousand words), or where the engine has not read
-/// enough of the ring to make room for it within a second.
+/// whole ring (some 16 thousand words), or where the jobs before it leave
+/// no room for it within a second.
 ///
 /// BEHAVIOR:
-/// Under the queue's lock the job waits for room in the ring - the engine
-/// writes back how far it has read - then the ring is given: a packet
+/// Under the queue's lock the job waits for room in the ring: since 1.17
+/// the words of a job stay until it is done - for a reset to write them
+/// again (ResetGPUCompute) - and, as before, until the engine has read
+/// them, as it writes back how far it has. Then the ring is given: a packet
 /// that drops the engine's caches below the memory and writes the second
 /// level's back (ACQUIRE_MEM), the caller's packets, and one that, once
 /// they are done, writes the caches back, writes the job's number into

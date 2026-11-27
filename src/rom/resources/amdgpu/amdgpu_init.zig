@@ -37,7 +37,7 @@ const _graphics = @import("graphics/_graphics.zig");
 /// The name it is opened by. The SDK's.
 pub const RESOURCE_NAME = amdgpu.AMDGPUNAME;
 pub const RESOURCE_VERSION = 1;
-pub const RESOURCE_REVISION = 16;
+pub const RESOURCE_REVISION = 17;
 const BUILD_DATE = "27.11.2026";
 const RESOURCE_VERSION_STRING =
     "\x00$VER: " ++ RESOURCE_NAME ++ " " ++
@@ -139,6 +139,9 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     ab.compute_end_int = .{};
     ab.compute_slot = 0;
     ab.compute_slot_jobs = @splat(0);
+    ab.compute_jobs = @splat(.{});
+    ab.compute_resets = 0;
+    ab.compute_given_up = 0;
     ab.shader_engines = 0;
     ab.compute_units = 0;
     ab.scratch = .{};
