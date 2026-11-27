@@ -67,9 +67,9 @@ hid.library/OpenHID
 	None.
 
    BEHAVIOR
-	A report the keyboard's layout reads becomes the key-ups and then the
-	key-downs from the keys the last one held to the keys this one holds,
-	each a RAWKEY event; a report of too many keys at once changes
+	A report one of the keyboard's layouts reads becomes the key-ups and
+	then the key-downs from the keys its reports held to the keys they
+	hold with this one, each a RAWKEY event; a report of too many keys at once changes
 	nothing. When Caps Lock goes down, the keyboard's Caps Lock light
 	changes: its LEDs' output report goes to HIDA_OutputHook. A report the
 	consumer control's layout reads becomes the media keys that went up
@@ -128,7 +128,8 @@ hid.library/OpenHID
 	memory.
 
    BEHAVIOR
-	The descriptor's first keyboard collection, its first mouse
+	The descriptor's keyboard collections - up to four, each in a report
+	of its own, the keys held in any of them held - its first mouse
 	collection and its first consumer control are read: where each
 	report keeps its keys - as bits, as slots of usages - its buttons, its
 	move or its place, and its wheel, a keyboard's LEDs' output report,
@@ -164,8 +165,8 @@ hid.library/OpenHID
 	names a port of the second.
 
    BUGS
-	A collection past the first keyboard, the first mouse and the first
-	consumer control - a second mouse, a system control's power and sleep
+	A collection past the first four keyboards, the first mouse and the
+	first consumer control - a second mouse, a system control's power and sleep
 	keys - is not read.
 
    SEE ALSO
