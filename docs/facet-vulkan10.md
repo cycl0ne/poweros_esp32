@@ -1238,6 +1238,7 @@ and the V3D's dispatcher (`V3D_MAX_CSD_WG_COUNT`, v3d_limits.h:81) - with a
 test that the largest dispatch the limits admit can be counted. The V3D's
 1 for maxFragmentOutputAttachments and maxFragmentCombinedOutputResources,
 under Vulkan's 4, is item 55's: a QPU fragment program writes one colour.
+Since 1.233 they are 4 and v3dv's sum (item 55).
 
 ### 30. Fill the limits that may conformantly stay at their unsupported values, and decide the tessellation and geometry numbers
 
@@ -1759,7 +1760,8 @@ Still left out after step 4. Each is marked *facet-wide* or *V3D-only*:
 - **A subpass drawn in parts takes one compiled program**: parts of a
   target taken a word a channel beside one of half-floats are refused
   the program (`driver.compiled`), until a subpass draws its parts
-  together (item 55). *V3D-only*.
+  together (item 55). *V3D-only*. **Done in 1.233**: the V3D draws the
+  subpass together, each render target keyed by its own format.
 - **A format of the fourteen that a sampler does not read where it
   lies** (the sRGB words, A1R5G5B5, A2B10G10R10, R16_SFLOAT,
   R16G16_SFLOAT, R32G32_SFLOAT) may not be both sampled and drawn into:
@@ -2400,7 +2402,7 @@ Found independently by: features (3 items: samplers, unnormalized, anisotropy), 
 
 ### 55. V3D: a fragment program that writes several colour attachments in one call **[critical path]**
 
-*V3D compiler* &mdash; conformance-blocking, large &mdash; **steps 1 and 2 of 3 done in 1.231 and 1.232**
+*V3D compiler* &mdash; conformance-blocking, large &mdash; **done in 1.233 (steps 1 to 3 in 1.231 to 1.233)**
 
 After: The SPIR-V -> QPU compiler; qpu.zig tile-buffer writes
 
@@ -2411,6 +2413,21 @@ several_outputs is false on the V3D: each fragment program writes one colour, so
 **Step 1 of 3 done in 1.231: several colour outs in the V3D's fragment programs.** The compiler takes a colour out of four floats at each location 0 to 3 (`compile.most_colors`, facet's colour attachments a subpass; V3D_MAX_RENDER_TARGETS is 4 at 4.2 and 8 at 7.1, v3d_limits.h:44), each its render target's output_color_var (ntq_setup_outputs, nir_to_vir.c:2580-2602), and refuses one past them or two at one location (`Error.Location`). emit_frag_end writes each render target the key's cbufs has and the program has a colour out at, from 0 up (nir_to_vir.c:2142-2143), each by vir_emit_tlb_color_write's specifier, which names it by 7 - rt (:1965-1985): render target 0's of half-floats is the one the register is preloaded with, any other's a uniform of its own, and one of 32-bit channels (the key's f32_color_rb) is four words, the first to TLBU. Alpha to coverage reads location 0's alpha alone (:2056-2065), and early fragment tests are promoted where any render target is written (:2050-2054). An output nothing is stored into is not written, where Mesa writes the 0 its temporary holds (nir_lower_undef_to_zero, :2353): what is written there is undefined in Vulkan either way. The plan's compile (V3DTest's GENERATED) still takes one colour, at location 0. Nothing draws with it yet: the V3D keys its pipelines with render target 0 alone (`cbufs` 1), and a fragment shader of several outputs is still refused there (`several_outputs`) until step 3. Step 2 is the frame of several render targets: a TILE_RENDERING_MODE_CFG_RENDER_TARGET of each, at its base address in the tile buffer, and each loaded, stored and resolved (cmd_buffer_emit_render_pass_rcl, v3dvx_cmd_buffer.c:1077-1184; cmd_buffer_render_pass_emit_loads and _stores, :226-340 and :460-702). Step 3 is the draw: a subpass of several drawn as one frame, each render target's blend and write mask (cmd_buffer_emit_blend and _color_write_mask, :1622-1697), CmdClearAttachments of each, the key's cbufs and f32_color_rb for each, and `several_outputs`. Four host tests are new, of five modules glslc made (`glslc_reference.zig`): three colour outs stored out of their order, each render target packed from its own location's floats; one at location 1 alone; the refusals; and the optimizations seeing every colour, a sum another colour reads not contracted, two colours nir_opt_cse makes one both written, and a float a colour reads past a kept selection live to the end. Of 18 mutants of the new code 16 fail them; the other 2 were in code nothing reached, which is gone (a `usesOf` nothing called, and `armCost`'s look at the colours, which it makes before they are read). On the CM5 (package f243) FacetProbe is 1074 of 1074 and FacetBoth's 316 cases are each as at 1.230.
 
 **Step 2 of 3 done in 1.232: frames of several render targets.** `frame.Frame` has a render target of each colour attachment a subpass has, the unused among them (`Frame.colors`, `Frame.targets`), each with its own image, format, target, load, clear inside the area and resolve (`frame.Color`). The common packet counts them, MAX2(color_count, 1) (v3dvx_cmd_buffer.c:975); each target is configured by its number, in its number's order, its packets each naming it and the first carrying its base address in the tile buffer, the next one's past its tile's rows, tile_height * stride / 8 (`cl.renderTarget`, :1077-1185), and an unused one with a stride of 1 and no room (`cl.unusedRenderTarget`, :1080-1086). A tile loads each target that loads from its own buffer, RENDER_TARGET_0 + i, before the depth, and stores the depth first, then each target with its resolve before it, then clears them all (`cmd_buffer_render_pass_emit_loads` and `_stores`, :236-340 and :480-699); the list of the tiles a cleared area covers whole leaves out only the loads of the targets that clear inside it. The tile is chosen from every target's bytes, as v3dv sums total_color_bpp (v3dv_pass.c:353-371). Nothing draws several yet: the V3D still plays each colour attachment of a subpass as a part of its own, a frame of render target 0. Three host tests are new: a frame of four render targets with an unused one among them, each target's packets, base address, load and store worked by hand, and RGBA32F resolved at four samples; frames of unused attachments alone, of none, and of one at 1 behind an unused 0; and a target of four floats in a tile that is not square. Each of 20 mutants of the new code fails them. On the CM5 (package f244) FacetProbe is 1074 of 1074 and FacetBoth's 316 cases are each as at 1.231.
+
+**Step 3 of 3 done in 1.233: a subpass of several colour attachments drawn together on the V3D.** `several_outputs` is true there, so such a subpass is one part, and its frame draws each plane into the render target its location names, as v3dv's render target i is the subpass's colour attachment i, an unused one configured unused (v3dvx_cmd_buffer.c:1077-1086, 1189-1197; `_play.beginRenderPass`). maxFragmentOutputAttachments is 4, v3dv's max_rts (v3dv_device.c:1135), and maxFragmentCombinedOutputResources the sum of those, the storage buffers and the storage images a stage has, as v3dv sums them (:1137-1139): the item's two rows of the limits. The parts:
+- **The key.** A pipeline keeps its subpass's colour formats by location (`Pipeline.color_formats`, which replaces 1.228's `part_formats`), and the V3D compiles for them: cbufs a bit for each drawn location, f32_color_rb one for each the TLB takes a word a channel (`target.colorKey`; v3dv_pipeline.c:2137-2146, 1240-1257). The refusal of a subpass whose parts are of both widths is gone.
+- **Blending and write masks.** Each render target's: BLEND_ENABLES a bit for each blended, a BLEND_CFG of each naming it in its render target mask, one BLEND_CONSTANT_COLOR, the first blended one's (`cl.blend`; `cmd_buffer_emit_blend`, v3dvx_cmd_buffer.c:1621-1668; v3dvx_pipeline.c:85-160). COLOR_WRITE_MASKS has four bits a target, a set bit a channel left alone, a target without an image 0 (`frame.unwrittenOf`; `cmd_buffer_emit_color_write_mask`, :1672-1694). A target past the program's outputs writes no channel, as since 1.230.
+- **Clears.** CmdClearAttachments and the clear inside a render area that is not the framebuffer's whole draw a rectangle of each colour into its render target, every other target's channels left alone, as v3dv's meta clear draws each attachment by a pipeline that writes it alone (v3dv_meta_clear.c:623-628, 1259-1265). Into a target of half-floats but 0 by `qpu.targeted_color_fragment`, the colour of the vertices' program with its first VFPACK sent to TLBU, reading the target's specifier as a uniform (`qpu.f16Specifier`), as Mesa's back end aims a write at a render target but 0 (nir_to_vir.c:1966-1985, 2026-2037); into one taken a word a channel by `qpu.words_fragment` with that target's `qpu.f32Specifier`. A depth or a stencil cleared alone is drawn by the program of no colour; inside the area they go with the first colour's rectangle, as they went with the one colour before, where v3dv draws them by one of their own (:1266-1271): the same pixels.
+- **The player.** What it draws of each target is a `_play.Drawn`: the image's range for the caches either side of the job, its layer, its target and its resolve, which the tiles or the CPU do for each, and each image drawn is shown.
+- **The fixed forms** write location 0 alone, render target 0, and in a frame without it draw with the program of no colour.
+
+Four host tests are new: the targeted program, one VFPACK aimed at TLBU and a uniform more, and each target's specifier; a draw blending render targets 0 and 3 by a BLEND_CFG of each, the first one's constants, and the write masks of four targets, one without an image; the key of formats at their locations; and a pipeline keeping its subpass's formats by location, an unused one undefined, the subpass one part whose planes name locations 0 and 2. The test of a draw's packets fitting `roomOnList` has four blended targets. 4568 of the 4571 pass, 3 skipped. Each of 16 mutants of the new code the host tests reach fails them (one once the draw test gave its target without an image no channels, as `_play.mixingsOf` does); `_play.zig` the host tests do not compile through, and the board holds it. FacetBoth 1.81 draws glslc's two colour outs into the subpass of two attachments, laid over and then added (`shipped two colours`), and asks a program that stores in such a subpass made on both devices; FacetProbe 1.59 has the V3D make a plain subpass of three together, refuse one that reads two of its own, and refuse a function of the program's own of three colours. On the CM5 (package f245) FacetProbe 1.59 is 1075 of 1075. FacetBoth 1.81's 316 cases of 1.80 are each as at 1.232, and the program that stores in the subpass of two colours is made on the V3D where it was refused; its two new ones, "shipped two colours, first" and "second", are each 11 of 230400 pixels apart, at the quad's edge, where the two rasterizers' edges differ as in the other cases: inside it, and over the triangle added, both render targets match the cores'.
+
+Still left out. Each is marked *facet-wide* or *V3D-only*:
+- **Eight render targets.** V3D 7.1 has 8 (V3D_MAX_RENDER_TARGETS, v3d_limits.h:44), and v3dv's maxColorAttachments and maxFragmentOutputAttachments on the BCM2712 are 8 (v3dv_device.c:1029). facet has 4 colour attachments a subpass on every device (`_render.most_colors`), Vulkan's least. *Facet-wide*.
+- **The blend constants of one attachment.** The hardware has the one BLEND_CONSTANT_COLOR, and Vulkan the one blendConstants. facet's own CmdSetBlendConstantsAt sets them for one attachment: in a frame of several blended targets whose constants differ, every one takes the first's. The cores blend each with its own. The API is facet's, not Vulkan's, and is the thing to remove. *Facet-wide*.
+- **A colour out of fewer than four floats** is refused by the V3D's compile (`Error.Type`), where Mesa writes the components it has (`vir_emit_tlb_color_write`, nir_to_vir.c:2007-2037). Such a pipeline is drawn by the cores. *V3D-only*.
+- **The fixed forms write location 0 alone.** They are facet's own programs, not Vulkan's: a pipeline whose shader writes several is compiled and writes each. *V3D-only*.
 
 ### 56. V3D: input attachments, through SubpassData in the compiler's profile **[critical path]**
 
@@ -2771,7 +2788,7 @@ glslc_atomics is 43 instructions: ten atomics, ten TMUD writes, ten TMUAU, ten L
 **Then fragmentStoresAndAtomics on the V3D**, facet.library 1.170.
 
 - **Matrices stored.** A whole matrix stored into a storage buffer is its columns, each a store of its own at its MatrixStride, as _vtn_variable_load_store walks a matrix for a store as for a load (vtn_variables.c:763-780). A whole array or struct stays refused: the walk holds no value of many kinds.
-- **The replay guarded.** A subpass of several colour attachments is drawn a part for each, its commands played again (items 80 and 87), so a program that writes memory would write once for each part, and an atomic would count as many times. The V3D refuses such a pipeline with error_feature_not_present when its program writes. v3dv draws the subpass once, its program writing every render target (item 55), and that lifts the refusal.
+- **The replay guarded.** A subpass of several colour attachments is drawn a part for each, its commands played again (items 80 and 87), so a program that writes memory would write once for each part, and an atomic would count as many times. The V3D refuses such a pipeline with error_feature_not_present when its program writes. v3dv draws the subpass once, its program writing every render target (item 55), and that lifts the refusal. **Lifted in 1.233**: the V3D draws such a subpass once, a render target for each colour attachment (item 55), and FacetBoth 1.81 has the program that stores made there.
 - **The feature.** GetPhysicalDeviceFeatures says fragment_stores_and_atomics on the V3D. Its programs store and do atomics through the TMU, a pixel's lookup that a helper pixel and a discarded one take no part in: each discard flushes the TMU before its SETMSF (nir_to_vir.c:3815-3852), and SETMSF orders the TMU writes after it (qpu_schedule.c:407-410). Early Z is off for such programs (1.168), and the caches are cleaned after a job that wrote. The cores compile no SPIR-V, so the feature is false there. vertex_pipeline_stores_and_atomics stays false on both, and no shader writes a storage image (item 39).
 
 glslc_placed stores a mat4 and a std430 mat3x2, the latter's columns 8 bytes apart; a constant 16 in place of the stride fails its test. On the CM5, FacetBoth 1.38 asks each device for a writing program in a subpass of two colours: the V3D refuses it and makes a reading one, and the cores make both. The 232 cases are unchanged, and FacetProbe is 890 of 890.
@@ -4115,7 +4132,7 @@ multiple of 16, which was taken, is refused now, Vulkan forbidding it.
 
 ### 80. A Vulkan subpass with several colour attachments is drawn in several parts, so one fragment function may write one colour
 
-*render passes / fragment outputs* &mdash; conformance-blocking, large &mdash; **done in 1.230, on the cores; the V3D's half is item 55**
+*render passes / fragment outputs* &mdash; conformance-blocking, large &mdash; **done in 1.230, on the cores; the V3D's half is item 55, done in 1.233**
 
 Found while filling `maxFragmentOutputAttachments` for item 16, and it is
 the cores' half of item 55.
@@ -4236,7 +4253,8 @@ Still left out after 1.230:
   (`emit_frag_end`, nir_to_vir.c:2142-2143, `vir_emit_tlb_color_write`
   :1955) and v3dv configuring a render target for each colour attachment
   of the subpass (`cmd_buffer_emit_render_pass_rcl`,
-  v3dvx_cmd_buffer.c:1085-1095).
+  v3dvx_cmd_buffer.c:1085-1095). **Done in 1.233** (item 55): one frame,
+  a render target for each.
 - **A subpass that reads two of its own colour attachments is drawn in
   parts on the cores**: the tile gives a fragment function the pixels of
   one plane (`Fragments.target`). *Facet-wide*: a Radeon's subpass input
@@ -4702,7 +4720,9 @@ it once for all of them, so a draw is tested once and counted once
 (`vis_counter`, lp_rast.c:123 and 635-675). The replay is facet's own
 until item 80 has every subpass on the cores draw its colours together,
 and until item 55 gives the V3D a fragment program of several outputs.
-Until then it has to be faithful.
+Until then it has to be faithful. (Item 80 did in 1.230 and item 55 in
+1.233; what is left of it is a subpass on the cores that reads two of its
+own attachments, which the V3D does not make.)
 
 **Done in 1.116**, in 6 lines of code and 146 of tests:
 

@@ -225,12 +225,14 @@ pub const Pipeline = struct {
     /// subpass with no colour (since 1.150, docs/facet-vulkan10.md item
     /// 43).
     colorless: bool = false,
-    /// The format of the colour attachment each part of its subpass draws
-    /// first, undefined for a part of none or past the last: what a driver
-    /// that compiles keys its colour write on, as v3dv keys f32_color_rb
-    /// on the subpass's colour formats (v3dv_pipeline.c:1240-1257; since
-    /// 1.228).
-    part_formats: [_render.most_colors]facet.Format = @splat(.undefined),
+    /// The format of each colour attachment of its subpass by its
+    /// location, undefined for an unused one and past the last: what a
+    /// driver that compiles keys its colour writes on, as v3dv keys cbufs
+    /// and f32_color_rb on the subpass's colour formats
+    /// (v3dv_pipeline.c:2137-2146, 1240-1257). Since 1.233; until then
+    /// `part_formats`, the format each part of the subpass drew first
+    /// (since 1.228).
+    color_formats: [_render.most_colors]facet.Format = @splat(.undefined),
     /// Its subpass is drawn in more than one part, a part for each colour
     /// attachment, its commands played again from its begin for each
     /// (docs/facet-vulkan10.md items 80 and 87). A driver whose program

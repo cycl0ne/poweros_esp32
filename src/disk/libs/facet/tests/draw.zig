@@ -445,7 +445,7 @@ const Watched = struct {
 /// A render pass made as a device that draws a subpass of several colour
 /// attachments apart makes it: a part for each, its commands played over
 /// (`Capabilities.several_outputs` false while it is made, as on the
-/// V3D). The cores draw such a subpass so only where it reads two of its
+/// V3D until 1.233). The cores draw such a subpass so only where it reads two of its
 /// own attachments, since 1.230, so this is what a test of the parts
 /// themselves makes its pass with; the pipelines are the cores' own.
 fn apartPass(bench: *Bench, info: *const facet.RenderPassCreateInfo) !*facet.RenderPass {
@@ -702,8 +702,8 @@ test "a render pass: one subpass, a colour attachment and perhaps a depth one; w
     try testing.expect(_objects.of(_render.RenderPass, joined.?).subpasses[1].joined);
     fb.DestroyRenderPass(device, joined);
     // And a part of its own, as a subpass of one colour is: on a device
-    // that draws a subpass of several apart, as the V3D does (and the
-    // cores did until 1.230), after two subpasses of four colours, which
+    // that draws a subpass of several apart, as the V3D did until 1.233
+    // (and the cores until 1.230), after two subpasses of four colours, which
     // take the eight parts there is room for, a third of none is one too
     // many; after one of four and one of three, it is the eighth.
     const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
@@ -13055,7 +13055,7 @@ test "a subpass drawn together: CmdClearAttachments clears the attachment it nam
     try testing.expectEqual(@as(u32, 32 * 32), colorsInLayer(third, 1, 0xFF00_FF00));
 }
 
-test "a device whose fragment programs write the one colour, as the V3D's do: a subpass of several drawn once for each, an attachment past the program's colour left as it is" {
+test "a device whose fragment programs write the one colour, as the V3D's did until 1.233: a subpass of several drawn once for each, an attachment past the program's colour left as it is" {
     var bench = try Bench.up();
     defer bench.down();
     const fb = bench.rig.fb;
@@ -19736,6 +19736,41 @@ test "a device whose tiles keep no colour attachment in its own bytes, as the V3
     }
 }
 
+test "a pipeline keeps the format of each colour attachment of its subpass at its location, an unused one undefined, the subpass drawn in one part whose planes name their locations (since 1.233)" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    const shaders = try module(&bench, &SubpassScene.code);
+    defer fb.DestroyShaderModule(device, shaders);
+    const layout = try pipelineLayout(&bench, &.{}, 0);
+    defer fb.DestroyPipelineLayout(device, layout);
+    const descriptions = [2]facet.AttachmentDescription{
+        .{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .color_attachment_optimal },
+        .{ .format = .r16g16b16a16_sfloat, .load_op = .clear, .store_op = .store, .final_layout = .color_attachment_optimal },
+    };
+    const references = [3]facet.AttachmentReference{
+        .{ .attachment = 0, .layout = .color_attachment_optimal },
+        .{ .attachment = facet.ATTACHMENT_UNUSED, .layout = .color_attachment_optimal },
+        .{ .attachment = 1, .layout = .color_attachment_optimal },
+    };
+    const subpass = facet.SubpassDescription{ .color_attachment_count = 3, .color_attachments = &references };
+    var pass: ?*facet.RenderPass = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &descriptions, .subpass_count = 1, .subpasses = (&subpass)[0..1] }, &pass));
+    defer fb.DestroyRenderPass(device, pass);
+    // One part, its two planes at locations 0 and 2: the render targets
+    // the V3D draws them into.
+    const plan = _objects.of(_render.RenderPass, pass.?);
+    try testing.expectEqual(@as(u32, 1), plan.subpasses[0].part_count);
+    const part = plan.parts[plan.subpasses[0].first_part];
+    try testing.expectEqual(@as(u32, 2), part.color_count);
+    try testing.expectEqualSlices(u8, &.{ 0, 2 }, part.locations[0..2]);
+    const result, const pipeline = makePipeline(&bench, .{ .module = shaders, .name = "white", .layout = layout, .pass = pass.?, .blend_count = 3 });
+    try testing.expectEqual(facet.Result.success, result);
+    defer fb.DestroyPipeline(device, pipeline);
+    try testing.expectEqualSlices(facet.Format, &.{ .b8g8r8a8_unorm, .undefined, .r16g16b16a16_sfloat, .undefined }, &_objects.of(_pipeline.Pipeline, pipeline.?).color_formats);
+}
+
 test "a device whose tiles draw the fourteen as the V3D's do: each a colour attachment of its own format, blended but for the three of 32-bit floats, and never an image both drawn and read back (since 1.228)" {
     var bench = try Bench.up();
     defer bench.down();
@@ -19775,7 +19810,7 @@ test "a device whose tiles draw the fourteen as the V3D's do: each a colour atta
         const plain, const pipeline = makePipeline(&bench, .{ .module = shaders, .name = "white", .layout = layout, .pass = pass.? });
         try testing.expectEqual(facet.Result.success, plain);
         defer fb.DestroyPipeline(device, pipeline);
-        const kept = _objects.of(_pipeline.Pipeline, pipeline.?).part_formats;
+        const kept = _objects.of(_pipeline.Pipeline, pipeline.?).color_formats;
         try testing.expectEqual(format, kept[0]);
         try testing.expectEqual(facet.Format.undefined, kept[1]);
         // An image drawn into and copied out is made; one sampled as well,
@@ -19843,7 +19878,7 @@ test "a device whose tiles draw the twenty-one as the V3D's do: each a colour at
         const plain, const pipeline = makePipeline(&bench, .{ .module = shaders, .name = "white", .layout = layout, .pass = pass.? });
         try testing.expectEqual(facet.Result.success, plain);
         defer fb.DestroyPipeline(device, pipeline);
-        try testing.expectEqual(format, _objects.of(_pipeline.Pipeline, pipeline.?).part_formats[0]);
+        try testing.expectEqual(format, _objects.of(_pipeline.Pipeline, pipeline.?).color_formats[0]);
         // Drawn into and copied out, made; sampled as well, or read as an
         // input attachment, not: the TMU reads none of them where the
         // tiles stored it.

@@ -144,6 +144,35 @@ pub fn blends(format: facet.Format) bool {
 
 const std = @import("std");
 
+/// What a fragment program is compiled to write, by the formats of its
+/// subpass's colour attachments at their locations (undefined for an
+/// unused one): a render target of each (cbufs), and of those the ones
+/// the TLB takes a 32-bit float or word a channel (f32_color_rb), as v3dv
+/// keys its fragment shader (v3dv_pipeline.c:2137-2146, 1240-1257;
+/// `driver.compiled`). Since 1.233; render target 0 alone until then.
+pub const ColorKey = struct { cbufs: u8 = 0, f32_color_rb: u8 = 0 };
+
+pub fn colorKey(formats: []const facet.Format) ColorKey {
+    std.debug.assert(formats.len <= cl.most_render_targets);
+    var key = ColorKey{};
+    for (formats, 0..) |format, rt| {
+        if (format == .undefined) continue;
+        const bit = @as(u8, 1) << @intCast(rt);
+        key.cbufs |= bit;
+        if (of(format)) |target| if (target.wide()) {
+            key.f32_color_rb |= bit;
+        };
+    }
+    return key;
+}
+
+test "a program keyed by its subpass's formats at their locations: a render target for each drawn, an unused one left out, each of 32-bit floats or words written a channel at a time (since 1.233)" {
+    try std.testing.expectEqual(ColorKey{}, colorKey(&.{}));
+    try std.testing.expectEqual(ColorKey{ .cbufs = 0b1 }, colorKey(&.{.b8g8r8a8_unorm}));
+    try std.testing.expectEqual(ColorKey{ .cbufs = 0b1101, .f32_color_rb = 0b1000 }, colorKey(&.{ .r8g8b8a8_unorm, .undefined, .r16g16b16a16_sfloat, .r32g32b32a32_sfloat }));
+    try std.testing.expectEqual(ColorKey{ .cbufs = 0b0110, .f32_color_rb = 0b0110 }, colorKey(&.{ .undefined, .r32_uint, .r32_sfloat, .undefined }));
+}
+
 test "the V3D's targets: the three of 1.227 as they were, the fourteen as v3dv draws them" {
     // As 1.227 drew them: normalized bytes at 32 bits, red and blue
     // swapped for B8G8R8A8, its clear the same word.

@@ -228,7 +228,7 @@ pub const Scene = struct {
         v3d.frame.writeDrawState(&scene.bin, &scene.frame, &.{
             .clip = how.clip,
             .cfg = how.cfg,
-            .mixing = how.mixing,
+            .mixings = .{ how.mixing, .{}, .{}, .{} },
             .x = 0,
             .y = 0,
             .width = width,
@@ -781,7 +781,7 @@ pub fn blendTest(scene: *Scene) i32 {
     // Half the red over what is there, which is what `want` below works out:
     // without the factors said, the hardware takes all of the source and
     // none of the destination, and blending is switched on to no effect.
-    const over = cl.Mixing{ .src_color = src_alpha, .dst_color = one_minus_src_alpha, .src_alpha = src_alpha, .dst_alpha = one_minus_src_alpha };
+    const over = cl.Mixing{ .enabled = true, .src_color = src_alpha, .dst_color = one_minus_src_alpha, .src_alpha = src_alpha, .dst_alpha = one_minus_src_alpha };
     scene.draw(.{ .fragment = qpu.flat_fragment, .uniforms = &half_red, .vertices = &corners, .cfg = .{ .blend = true }, .mixing = over });
     if (!scene.finish()) return dos.RETURN_FAIL;
     var tally = Tally{};

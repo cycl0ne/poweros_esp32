@@ -113,7 +113,9 @@
 //! operation done unsigned moves the colour. Before the cases (since
 //! 1.38), each device is asked for a program that writes in a subpass of
 //! two colours, drawn a part for each: the one that compiles refuses it,
-//! as each part would write again. The shipped kept branches (since
+//! as each part would write again - until facet 1.233, since which both
+//! draw the subpass together and make it (since 1.81). The shipped kept
+//! branches (since
 //! 1.39) are selections the V3D compiles to branches as Mesa does, one
 //! on a condition that differs from pixel to pixel and one on a pushed
 //! float, drawn taken and not. The shipped loops (since 1.40) are
@@ -152,6 +154,11 @@
 //! derivatives. The shipped cube gradient (since 1.49) is glslc's
 //! textureGrad of the cube, which the V3D makes a level as
 //! lower_gradient_cube_map does, and the cores as its arithmetic reads.
+//! The shipped two colours (since 1.81) are glslc's colour outs at
+//! locations 0 and 1 in the subpass of two attachments, which the V3D
+//! writes into two render targets of the one frame (facet 1.233), laid
+//! over the clear and then added over themselves where the glass
+//! triangle lies, each target blended by its own state.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -166,7 +173,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.80 (26.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.81 (27.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -2915,6 +2922,9 @@ const shipped_entries = [_]shader.Entry{
     shader.computeGroup("shipped stored", &shippedStored, .{ stored_group, stored_group, 1 }, 0),
     // The same texels by a draw, each pixel its own (since 1.78).
     shader.fragment("shipped drawn stored", &drawnStoredFragment, 4),
+    // Two colour outs, one into each attachment of a subpass of two
+    // (since 1.81).
+    shader.fragmentOutputs("shipped two colours", &twoColoursFragment, 0, 2),
 };
 const shipped_words = [_]shader.Spirv{
     .{},                                            .{},                                        .{},                                           .{},
@@ -2945,7 +2955,7 @@ const shipped_words = [_]shader.Spirv{
     shader.Spirv.of(&shipped_determinant4),         shader.Spirv.of(&shipped_bits),             shader.Spirv.of(&shipped_vertex_branch),       shader.Spirv.of(&shipped_branches),
     shader.Spirv.of(&shipped_outputs),              shader.Spirv.of(&shipped_vertex_outputs),   Shipped.NestedKept.spirv,                      Shipped.SelectsKept.spirv,
     Shipped.CollapsedKept.spirv,                    shader.Spirv.of(&shipped_fetch_four),       shader.Spirv.of(&shipped_subpass),             shader.Spirv.of(&shipped_stored),
-    shader.Spirv.of(&shipped_drawn_stored),
+    shader.Spirv.of(&shipped_drawn_stored),         shader.Spirv.of(&shipped_two_colours),
 };
 
 /// glslc's own output, at -O, for a sample of an image of four at the
@@ -3217,6 +3227,49 @@ const shipped_drawn_stored = [_]u32{
     0x00050085, 0x0000000B, 0x00000044, 0x00000042, 0x00000051, 0x00040063,
     0x00000037, 0x0000003A, 0x00000044, 0x0004003D, 0x0000000B, 0x00000048,
     0x00000047, 0x0003003E, 0x00000046, 0x00000048, 0x000100FD, 0x00010038,
+};
+
+/// glslc's own output, at -O: `twoColoursFragment`, a colour out at each
+/// of locations 0 and 1, each a constant of its own, which the V3D writes
+/// into render targets 0 and 1 of the one frame, each by its own TLB
+/// write (vir_emit_tlb_color_write, nir_to_vir.c:1955-2043; facet 1.233).
+///
+/// ```glsl
+/// #version 450
+/// // FacetBoth's "shipped two colours" (facet 1.233): a colour out at each of
+/// // locations 0 and 1, each its own colour, which the V3D writes into two
+/// // render targets of the one frame.
+/// layout(location = 0) out vec4 first;
+/// layout(location = 1) out vec4 second;
+/// void main() {
+///     first = vec4(0.25, 0.5, 0.75, 1.0);
+///     second = vec4(1.0, 0.0, 0.5, 1.0);
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=frag shipped_two_colours.frag -o shipped_two_colours.spv   # 107 words
+/// spirv-val --target-env vulkan1.0 shipped_two_colours.spv   # no output, and 0
+/// ```
+const shipped_two_colours = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000012, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00000009, 0x0000000F, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x00000009, 0x0000001E, 0x00000000,
+    0x00040047, 0x0000000F, 0x0000001E, 0x00000001, 0x00020013, 0x00000002,
+    0x00030021, 0x00000003, 0x00000002, 0x00030016, 0x00000006, 0x00000020,
+    0x00040017, 0x00000007, 0x00000006, 0x00000004, 0x00040020, 0x00000008,
+    0x00000003, 0x00000007, 0x0004003B, 0x00000008, 0x00000009, 0x00000003,
+    0x0004002B, 0x00000006, 0x0000000A, 0x3E800000, 0x0004002B, 0x00000006,
+    0x0000000B, 0x3F000000, 0x0004002B, 0x00000006, 0x0000000C, 0x3F400000,
+    0x0004002B, 0x00000006, 0x0000000D, 0x3F800000, 0x0007002C, 0x00000007,
+    0x0000000E, 0x0000000A, 0x0000000B, 0x0000000C, 0x0000000D, 0x0004003B,
+    0x00000008, 0x0000000F, 0x00000003, 0x0004002B, 0x00000006, 0x00000010,
+    0x00000000, 0x0007002C, 0x00000007, 0x00000011, 0x0000000D, 0x00000010,
+    0x0000000B, 0x0000000D, 0x00050036, 0x00000002, 0x00000004, 0x00000000,
+    0x00000003, 0x000200F8, 0x00000005, 0x0003003E, 0x00000009, 0x0000000E,
+    0x0003003E, 0x0000000F, 0x00000011, 0x000100FD, 0x00010038,
 };
 
 /// glslc's own output, at -O, for a discard in an `if` of no `else` all
@@ -9440,6 +9493,18 @@ fn shippedStored(groups: *const shader.Groups) callconv(.c) void {
     };
 }
 
+/// What `shipped_two_colours` computes, for the cores: its first colour,
+/// (0.25, 0.5, 0.75, 1), at location 0, and its second, (1, 0, 0.5, 1),
+/// at location 1, each a channel's float times 255 to the nearest
+/// (since 1.81).
+fn twoColoursFragment(fragments: *const shader.Fragments) callconv(.c) void {
+    const colours = [2]u32{ 0xFF40_80BF, 0xFFFF_0080 };
+    for (colours, 0..) |colour, output| {
+        const into = fragments.colorsOf(@intCast(output));
+        for (into[0..fragments.count]) |*quad| quad.* = @splat(colour);
+    }
+}
+
 /// What `shipped_drawn_stored` computes, for the cores: by each pixel
 /// inside the triangle - a helper pixel writes nothing, as the V3D's TMU
 /// writes under its per-pixel mask - "stored"'s texel at its place modulo
@@ -12118,6 +12183,20 @@ const Cases = struct {
         side.draw(glass_at, 3);
         side.end();
     }
+    /// The shipped two colours in the subpass of two attachments, each
+    /// written into its own: laid over the clear by the clockwise quad,
+    /// then added over themselves by the glass triangle, each attachment
+    /// blended by its own state - on the V3D two render targets of the
+    /// one frame (facet 1.233; since 1.81).
+    fn twoShipped(side: *Side) Failure!void {
+        const pass = side.two_colors.?;
+        try side.use(.{ .pass = pass, .colors = 2, .vertex = "place", .fragment = "shipped two colours" });
+        side.beginOwn(pass, side.two_colors_frame.?);
+        side.draw(clockwise_at, 6);
+        try side.use(.{ .pass = pass, .colors = 2, .vertex = "place", .fragment = "shipped two colours", .blend = true, .add = true });
+        side.draw(glass_at, 3);
+        side.end();
+    }
     fn modulate(side: *Side) Failure!void {
         side.begin(.{});
         side.texture(0);
@@ -13064,6 +13143,8 @@ const cases = [_]Case{
     .{ .name = "subpasses, second picture", .target = .rgba, .run = &Cases.subpasses },
     .{ .name = "two attachments, first", .run = &Cases.twoColors },
     .{ .name = "two attachments, second", .target = .rgba, .run = &Cases.twoColors },
+    .{ .name = "shipped two colours, first", .run = &Cases.twoShipped },
+    .{ .name = "shipped two colours, second", .target = .rgba, .run = &Cases.twoShipped },
     .{ .name = "shadow map, less than a half", .run = Cases.shadowed(false, 0, "whole at a half", "shadow") },
     .{ .name = "shadow map, greater than 0.6", .run = Cases.shadowed(false, 1, "whole at 0.6", "shadow") },
     .{ .name = "shadow map, a slope less than a half", .run = Cases.shadowed(true, 0, "whole at a half", "shadow") },
@@ -13268,15 +13349,14 @@ fn runAll(dl: *DosBase, cores: *Side, gpu: *Side, only: ?[*:0]const u8) Failure!
 }
 
 /// A program that writes a storage buffer, in a subpass of two colours,
-/// which is drawn a part for each colour and would write once for each
-/// (docs/facet-vulkan10.md item 87): refused by a device whose compiled
-/// fragment programs store (`fragment_stores_and_atomics`), the V3D, and
-/// made by one that draws the program's own function, the cores. One that
-/// only reads is made by both (since 1.38).
+/// which a device that drew it a part for each colour would write once
+/// for each (docs/facet-vulkan10.md item 87): until facet 1.233 refused by
+/// a device whose compiled fragment programs store
+/// (`fragment_stores_and_atomics`), the V3D, and made by one that draws
+/// the program's own function, the cores. Since facet 1.233 the V3D draws
+/// the subpass together, as the cores have since 1.230, and makes it too
+/// (since 1.81). One that only reads is made by both (since 1.38).
 fn replayed(dl: *DosBase, side: *Side, name: [*:0]const u8) bool {
-    var features: facet.PhysicalDeviceFeatures = undefined;
-    side.fb.GetPhysicalDeviceFeatures(side.physical, &features);
-    const compiles = features.fragment_stores_and_atomics == facet.TRUE;
     const shape = Options{ .pass = side.two_colors.?, .colors = 2, .vertex = "as it is", .layout = side.indexed_layout.? };
     var writes = shape;
     writes.fragment = "shipped writes";
@@ -13288,7 +13368,7 @@ fn replayed(dl: *DosBase, side: *Side, name: [*:0]const u8) bool {
     pipeline = null;
     const read = side.make(reads, &pipeline);
     side.fb.DestroyPipeline(side.device.?, pipeline);
-    const fine = read == .success and wrote == (if (compiles) facet.Result.error_feature_not_present else facet.Result.success);
+    const fine = read == .success and wrote == .success;
     const answer: [*:0]const u8 = if (wrote == .success) "made" else if (wrote == .error_feature_not_present) "refused" else "failed";
     const reading: [*:0]const u8 = if (read == .success) "made" else "refused";
     _ = Printf(dl, "a subpass of two colours on %s: a program that writes %s, one that reads %s%s\n", .{ name, answer, reading, @as([*:0]const u8, if (fine) "" else ", which is wrong") });

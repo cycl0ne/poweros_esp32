@@ -365,7 +365,7 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
     // writes goes nowhere (since 1.113). The function of no fragment stage
     // writes none: one, which its mixing masks out below (the part's
     // count until 1.230). Several want a device whose functions write
-    // several: the V3D's programs write one (item 55).
+    // several: the V3D's since 1.233 (item 55).
     const outputs = if (fragment == null) 1 else fragment_entry.outputCount();
     if (outputs > 1 and !device.physical.can.several_outputs) return .error_feature_not_present;
 
@@ -411,7 +411,7 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
         // 0xAARRGGBB of, writing none (since 1.226).
         .written = if (fragment == null) .colors else fragment_entry.written(),
         .colorless = pass.parts[subpass.first_part].color_count == 0,
-        .part_formats = partFormats(pass, subpass),
+        .color_formats = colorFormats(pass, subpass),
         .replayed = subpass.part_count > 1,
         .fragment_stage = fragment != null,
         .viewport = null,
@@ -722,13 +722,13 @@ fn colorFormatOf(pass: *const _render.RenderPass, subpass: _render.Subpass, inde
     return null;
 }
 
-/// The format of the colour attachment each part of `subpass` draws first
-/// (`Pipeline.part_formats`).
-fn partFormats(pass: *const _render.RenderPass, subpass: _render.Subpass) [_render.most_colors]facet.Format {
+/// The format of each colour attachment of `subpass` by its location,
+/// undefined for an unused one and past the last
+/// (`Pipeline.color_formats`).
+fn colorFormats(pass: *const _render.RenderPass, subpass: _render.Subpass) [_render.most_colors]facet.Format {
     var formats: [_render.most_colors]facet.Format = @splat(.undefined);
-    const parts = pass.parts[subpass.first_part..][0..@min(subpass.part_count, _render.most_colors)];
-    for (parts, formats[0..parts.len]) |part, *format| {
-        if (part.color_count != 0) format.* = part.color_formats[0];
+    for (formats[0..@min(subpass.color_count, _render.most_colors)], 0..) |*format, index| {
+        if (colorFormatOf(pass, subpass, @intCast(index))) |found| format.* = found;
     }
     return formats;
 }
