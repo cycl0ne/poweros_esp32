@@ -6236,6 +6236,86 @@ test "BlendBitMapRect: a colour by its alpha - nothing, a shade, all of it" {
     rbi.FreeBitMap(display);
 }
 
+/// A word of 32 bits with its bytes 0 and 2 swapped: `bgra32` as
+/// `rgba32`, or back.
+fn redBlueSwapped(pen: u32) u32 {
+    return pen & 0xFF00_FF00 | (pen >> 16 & 0xFF) | (pen & 0xFF) << 16;
+}
+
+test "a smooth scale between bgra32 and rgba32: the sums of two bgra32 surfaces, red and blue where each format keeps them" {
+    const gb = try setUp();
+    defer kexec.deinit();
+
+    const pitch = 64 * 4;
+    var before: [pitch * 40]u8 align(64) = undefined;
+    var reference: [before.len]u8 align(64) = undefined;
+    var memory: [before.len]u8 align(64) = undefined;
+    var picture: [24 * 16]u32 = undefined;
+    var prng = std.Random.DefaultPrng.init(37);
+    prng.random().bytes(std.mem.sliceAsBytes(&picture));
+    // Some pixels that cover fully and some that cover nothing.
+    for (0..48) |i| {
+        picture[i * 7] |= 0xFF00_0000;
+        picture[i * 5 + 3] &= 0x00FF_FFFF;
+    }
+    var picture_rgba: [picture.len]u32 = undefined;
+    for (&picture_rgba, picture) |*to, from| to.* = redBlueSwapped(from);
+    const src = graphics.Rect{ .min_x = 2, .min_y = 1, .max_x = 22, .max_y = 15 };
+    const Source = struct { pixels: [*]const u8, format: rtg.bitmaps.PixelFormat };
+    const sources = [_]Source{ .{ .pixels = @ptrCast(&picture), .format = .bgra32 }, .{ .pixels = @ptrCast(&picture_rgba), .format = .rgba32 } };
+    // Made larger, made smaller, and smaller one way alone, each as a
+    // piece of the whole.
+    const Case = struct { dest: graphics.Rect, piece: graphics.Rect };
+    const cases = [_]Case{
+        .{ .dest = .{ .min_x = 3, .min_y = 2, .max_x = 60, .max_y = 37 }, .piece = .{ .min_x = 17, .min_y = 9, .max_x = 41, .max_y = 30 } },
+        .{ .dest = .{ .min_x = 5, .min_y = 4, .max_x = 14, .max_y = 9 }, .piece = .{ .min_x = 5, .min_y = 4, .max_x = 14, .max_y = 9 } },
+        .{ .dest = .{ .min_x = 5, .min_y = 4, .max_x = 50, .max_y = 9 }, .piece = .{ .min_x = 8, .min_y = 5, .max_x = 50, .max_y = 9 } },
+    };
+    for (cases) |case| {
+        for ([_]scaling.Land{ .store, .lay }) |land| {
+            prng.random().bytes(&before);
+            // Two bgra32 surfaces, which the test above holds to the
+            // sampling.
+            reference = before;
+            var surface = rtg.Surface{ .pixels = &reference, .width = 64, .height = 40, .pitch = pitch, .size_bytes = before.len, .format = .bgra32 };
+            const piece = drawing.Piece{ .rect = case.piece, .surface = &surface, .bitmap = null, .dx = 0, .dy = 0 };
+            try testing.expect(scaling.smooth(gb, piece, sources[0].pixels, 24 * 4, .bgra32, src, case.dest, land));
+            // The rgba32 picture on to bgra32: every byte the same.
+            memory = before;
+            surface.pixels = &memory;
+            try testing.expect(scaling.smooth(gb, piece, sources[1].pixels, 24 * 4, .rgba32, src, case.dest, land));
+            try testing.expectEqualSlices(u8, &reference, &memory);
+            // Either picture on to rgba32 - what was there in its order
+            // too: every word the reference's, red and blue swapped.
+            surface.format = .rgba32;
+            for (sources) |source| {
+                for (0..40) |row| for (0..64) |column| {
+                    std.mem.writeInt(u32, memory[row * pitch + column * 4 ..][0..4], redBlueSwapped(wordAt(&before, pitch, column, row)), .little);
+                };
+                try testing.expect(scaling.smooth(gb, piece, source.pixels, 24 * 4, source.format, src, case.dest, land));
+                for (0..40) |row| for (0..64) |column| {
+                    try testing.expectEqual(redBlueSwapped(wordAt(&reference, pitch, column, row)), wordAt(&memory, pitch, column, row));
+                };
+            }
+        }
+    }
+
+    // Through ScalePixelArray: the rgba32 picture laid into a smooth
+    // RastPort of bgra32 as the bgra32 one is.
+    var surface = rtg.Surface{ .pixels = &memory, .width = 64, .height = 40, .pitch = pitch, .size_bytes = memory.len, .format = .bgra32 };
+    const tags = [_]TagItem{ .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(&surface) }, .{ .tag = graphics.RPTAG_Smooth, .data = 1 }, .{} };
+    const rp = base(gb).CreateRastPortTagList(&tags) orelse return error.NoRastPort;
+    defer base(gb).FreeRastPort(rp);
+    const dest = cases[0].dest;
+    prng.random().bytes(&before);
+    memory = before;
+    base(gb).ScalePixelArray(rp, sources[0].pixels, 24 * 4, @intFromEnum(rtg.bitmaps.PixelFormat.bgra32), &src, &dest);
+    reference = memory;
+    memory = before;
+    base(gb).ScalePixelArray(rp, sources[1].pixels, 24 * 4, @intFromEnum(rtg.bitmaps.PixelFormat.rgba32), &src, &dest);
+    try testing.expectEqualSlices(u8, &reference, &memory);
+}
+
 test "a smooth scale of 32 bits a pixel: each pixel what the sampling answers, made larger and made smaller, a piece as the whole" {
     const gb = try setUp();
     defer kexec.deinit();

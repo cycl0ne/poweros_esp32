@@ -46,8 +46,9 @@ const pixelBytes = _blit.pixelBytes;
 /// it is covered - each way by itself. A smooth scale whose destination
 /// is one whole piece of a board's buffer goes to the board's engine
 /// (`rtg.ScalePixels`) where it takes the job. Between two surfaces of
-/// 32 bits a pixel (`bgra32`) a smooth scale is drawn by every core at
-/// once, on the machines whose displays read their picture out of RAM.
+/// 32 bits a pixel (`bgra32` or `rgba32`) a smooth scale is drawn by
+/// every core at once, on the machines whose displays read their picture
+/// out of RAM.
 ///
 /// Which source pixel a destination pixel comes from is worked out from the
 /// destination rectangle's own corner and not from the clipped one, so a

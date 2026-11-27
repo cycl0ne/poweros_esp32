@@ -56,9 +56,9 @@ const rastport = @import("../rastport/_rastport.zig");
 /// `BlendPixelArray` does, so a picture with soft edges scales without
 /// losing them.
 ///
-/// A smooth scale of a `bgra32` picture on to a surface of the same
-/// format is drawn by every core at once, on the machines whose displays
-/// read their picture out of RAM.
+/// A smooth scale of a `bgra32` or `rgba32` picture on to a surface of
+/// either format is drawn by every core at once, on the machines whose
+/// displays read their picture out of RAM.
 ///
 /// The clip cuts the destination, and each piece of it still takes the
 /// pixels that belong at that place, so a picture drawn in pieces is the

@@ -112,13 +112,15 @@ pub const LIBRARY_VERSION = 0;
 /// shows nothing - one whose driver came from the disk, after this
 /// library looked for a display - is given its first picture when the
 /// display is first asked for. 55: a font on the list keeps the texts
-/// last laid out in it, and a text it has is not shaped again. The
-/// version stays 0 until there is something to demand of it.
-pub const LIBRARY_REVISION = 55;
+/// last laid out in it, and a text it has is not shaped again. 56: a
+/// smooth scale of an `rgba32` picture, or on to an `rgba32` surface, is
+/// drawn by every core as one of `bgra32` is. The version stays 0 until
+/// there is something to demand of it.
+pub const LIBRARY_REVISION = 56;
 
 /// dd.mm.yyyy, the form every module's `$VER:` string uses so that
 /// `Version` reads them all the same way.
-const BUILD_DATE = "21.11.2026";
+const BUILD_DATE = "27.11.2026";
 
 /// The `$VER:` string, NUL first so that a scan of the image finds it and
 /// `id_string` can start one byte in as a plain C string.

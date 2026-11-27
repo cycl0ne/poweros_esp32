@@ -28,12 +28,12 @@
 //! 116 to 117 and 112 to 113, over 64 x 64 88 and 14 to 19; a colour over
 //! 1024 x 1024 333 to 334 and 553 to 558, over 256 x 256 105 to 107 and
 //! 108 to 109; a picture scaled up twice to the whole buffer 3408 to 3414
-//! and 6951 to 7056, as `rgba32` 3444 and 167042 to 169397, from 128 to
-//! 256 pixels a side 145 and 198 to 199; a shape in both colours over the
-//! buffer 1480 to 1487 and 1793 to 2047, over 256 x 256 100 to 106 and
-//! 143 to 145, in ink alone over most of it 1802 and 1647 to 1782; a tile
-//! over the buffer 1150 to 1168 and 1678 to 1915, over 256 x 256 122 and
-//! 97 to 98, in ink alone 1606 and 1771 to 1785. At 256 x 256 the two
+//! and 6951 to 7056, as `rgba32` 3444 to 3557 and 7622 to 7669, from 128
+//! to 256 pixels a side 145 and 198 to 199; a shape in both colours over
+//! the buffer 1480 to 1487 and 1793 to 2047, over 256 x 256 100 to 106
+//! and 143 to 145, in ink alone over most of it 1802 and 1647 to 1782; a
+//! tile over the buffer 1150 to 1168 and 1678 to 1915, over 256 x 256 122
+//! and 97 to 98, in ink alone 1606 and 1771 to 1785. At 256 x 256 the two
 //! meet: there a picture or a colour takes either about as long, a scale
 //! or a shape is the kernels' sooner and a tile the cores'. A job of the
 //! kernels takes some 90 us however small - its memory mapped, the kernel

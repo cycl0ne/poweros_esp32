@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
-//! A picture scaled smooth between two surfaces of 32 bits a pixel
-//! (`bgra32`), by every core where there is enough of it
+//! A picture scaled smooth between two surfaces of 32 bits a pixel, each
+//! `bgra32` or `rgba32`, by every core where there is enough of it
 //! (`rows/_bands.zig`).
 //!
 //! It is what `sampleBetween` and `sampleOver` answer for every pixel -
@@ -8,7 +8,10 @@
 //! out once for the job and not once a pixel: the two source columns
 //! either side of it and how far between them, or, where the picture is
 //! made smaller either way, the stretch of the source it is the mean of.
-//! A whole pixel is one load and one store.
+//! A whole pixel is one load and one store. Every channel is worked out
+//! by itself, so the sums are the same in either order of red and blue:
+//! a pixel of the picture's order is put down in the surface's, its red
+//! and blue swapped where the two differ.
 //!
 //! How a pixel lands is the caller's to say, as its own loop has it:
 //! stored as it is, or laid over what is there by its coverage.
@@ -78,6 +81,9 @@ const Smooth = struct {
     /// For each column of the piece.
     columns: union(enum) { between: [*]const Between, over: [*]const Over },
     land: Land,
+    /// The picture's red and blue lie the other way round from the
+    /// surface's.
+    swap: bool,
 
     pub fn band(job: *const Smooth, lo: u32, hi: u32) void {
         switch (job.columns) {
@@ -154,7 +160,8 @@ const Smooth = struct {
         return pen;
     }
 
-    inline fn put(job: *const Smooth, pixel: *u32, pen: u32) void {
+    inline fn put(job: *const Smooth, pixel: *u32, sampled: u32) void {
+        const pen = if (job.swap) swapped(sampled) else sampled;
         if (job.land == .store) {
             pixel.* = pen;
             return;
@@ -185,13 +192,21 @@ inline fn sample(corners: [4]u32, weights: [4]u32) u32 {
     return alpha << 24 | red << 16 | green << 8 | blue;
 }
 
-/// Whether a picture or a surface is one this draws: 32 bits a pixel as
-/// `bgra32`, every row aligned for a word.
-fn words(pixels: [*]const u8, pitch: u32, format: rtg.bitmaps.PixelFormat) bool {
-    return format == .bgra32 and @intFromPtr(pixels) % 4 == 0 and pitch % 4 == 0;
+/// A pixel of 32 bits with its red and blue swapped: `bgra32` made
+/// `rgba32`, or back.
+inline fn swapped(pen: u32) u32 {
+    return pen & 0xFF00_FF00 | (pen >> 16 & 0xFF) | (pen & 0xFF) << 16;
 }
 
-/// One piece of a smooth scale between two `bgra32` surfaces.
+/// Whether a picture or a surface is one this draws: 32 bits a pixel
+/// with the alpha in the top byte, `bgra32` or `rgba32`, every row
+/// aligned for a word.
+fn words(pixels: [*]const u8, pitch: u32, format: rtg.bitmaps.PixelFormat) bool {
+    return (format == .bgra32 or format == .rgba32) and @intFromPtr(pixels) % 4 == 0 and pitch % 4 == 0;
+}
+
+/// One piece of a smooth scale between two surfaces of 32 bits a pixel,
+/// each `bgra32` or `rgba32`.
 ///
 /// INPUTS:
 /// - `gb` - the library, for exec's memory and workers.
@@ -244,6 +259,7 @@ pub fn smooth(gb: *GraphicsBase, piece: drawing.Piece, pixels: [*]const u8, pitc
         .dest = dest_area,
         .columns = columns,
         .land = land,
+        .swap = format != surface.format,
     };
     // Made smaller, the work is the picture's pixels, not the piece's.
     const drawn = _blit.pixelsOf(on) * 4;
