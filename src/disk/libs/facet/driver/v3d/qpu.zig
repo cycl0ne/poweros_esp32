@@ -354,6 +354,82 @@ const texture_code = varying(4) ++ varying(5) ++ sampled(4, 5) ++ [_]u64{
 
 pub const texture_fragment = Fragment{ .code = &texture_code, .varyings = 2, .uniforms = 2 };
 
+/// `texture_cutout`'s program: a texture at the varyings s and t, a
+/// pixel dropped where the texel's alpha is under a half, and the rest
+/// drawn as `texture_fragment` draws them (since 1.236). These are the
+/// words Mesa's back end makes of facet's own cut-out shader
+/// (`compile.zig`'s `Cutout`, whose test holds them to it), as
+/// `no_color_code` is the noop shader's:
+///
+/// - The comparison into the flags: FCMP of the second word's high half,
+///   the alpha, with 0.5, pushing N (ntq_emit_comparison's flt,
+///   nir_to_vir.c:1727), and SETMSF of 0 where it holds, which clears
+///   the pixel's mask (terminate_if, nir_to_vir.c:3833-3850). Under half
+///   is the cores' alpha byte under `shader.cutout_alpha`, 128.
+/// - Z written through before the colour, as a program that discards
+///   writes it (emit_frag_end, nir_to_vir.c:2073-2134): `mov tlbu, rf5`,
+///   which reads `no_color_specifier`, the uniform after P0 and P1. Early
+///   Z is off, and the shader record says it writes Z.
+/// - The last thread switch on that write, the two colour words in its
+///   delay slots, as qpu_schedule.c puts them.
+///
+/// Mesa reads W beside the varyings here (vir_check_payload_w), so the
+/// record says `center_w` as for any program it compiled.
+const cutout_code = [_]u64{
+    0x3A81_3186_BB03_F000, // nop ; nop ; ldvary.rf4; wrtmuc
+    0x5681_D146_BB10_3000, // nop ; fmul rf5, rf4, rf3 ; ldvary.rf7; wrtmuc
+    0x5400_0206_051C_3005, // fadd rf6, rf0, rf5 ; fmul rf8, rf7, rf3
+    0x3820_2189_0503_F008, // fadd rf9, rf0, rf8 ; nop ; thrsw
+    0x3820_3886_BB24_3000, // nop ; mov tmut, rf9 ; thrsw
+    0x3800_3846_BB18_3000, // nop ; mov tmus, rf6
+    0x3882_B186_BB03_F000, // nop ; nop ; ldtmu.rf10
+    0x3882_F186_BB03_F000, // nop ; nop ; ldtmu.rf11
+    0x39E0_B186_CD03_F2E7, // fcmp.pushn -, rf11.h, 0x3f000000 ; nop
+    0x39C8_3186_BA03_F006, // setmsf.ifa -, 0 ; nop
+    0x3820_3206_BB14_3000, // nop ; mov tlbu, rf5 ; thrsw
+    0x3800_3187_3B03_F28A, // vfpack tlb, rf10.l, rf10.h ; nop
+    0x3800_3187_3B03_F2CB, // vfpack tlb, rf11.l, rf11.h ; nop
+};
+
+pub const cutout_fragment = Fragment{ .code = &cutout_code, .varyings = 2, .uniforms = 3, .center_w = true, .writes_z = true, .disable_ez = true };
+
+/// The same into a render target of 32-bit floats: Mesa's back end
+/// keyed with `f32_color_rb` (vir_emit_tlb_color_write, nir_to_vir.c:
+/// 2007-2022), its four floats the halves made floats by FMOV, the first
+/// to TLBU with `tlb_f32_specifier`, the uniform after the depth's. It is
+/// Mesa's own and not `wide(cutout_fragment)`: the last thread switch
+/// lies among the four writes, two of which `wide` would put past the
+/// program's end (since 1.236).
+const wide_cutout_code = [_]u64{
+    0x3A81_3186_BB03_F000, // nop ; nop ; ldvary.rf4; wrtmuc
+    0x5681_D146_BB10_3000, // nop ; fmul rf5, rf4, rf3 ; ldvary.rf7; wrtmuc
+    0x5400_0206_051C_3005, // fadd rf6, rf0, rf5 ; fmul rf8, rf7, rf3
+    0x3820_2189_0503_F008, // fadd rf9, rf0, rf8 ; nop ; thrsw
+    0x3820_3886_BB24_3000, // nop ; mov tmut, rf9 ; thrsw
+    0x3800_3846_BB18_3000, // nop ; mov tmus, rf6
+    0x3882_B186_BB03_F000, // nop ; nop ; ldtmu.rf10
+    0x3882_C30D_F928_828C, // fmov rf13, rf10.h ; fmov rf12, rf10.l ; ldtmu.rf11
+    0x39E0_9386_CD2C_82E7, // fcmp.pushn -, rf11.h, 0x3f000000 ; fmov rf14, rf11.l
+    0x39C8_13C6_BA2C_C006, // setmsf.ifa -, 0 ; fmov rf15, rf11.h
+    0x3800_3206_BB14_3000, // nop ; mov tlbu, rf5
+    0x3800_3206_BB30_3000, // nop ; mov tlbu, rf12
+    0x3820_31C6_BB34_3000, // nop ; mov tlb, rf13 ; thrsw
+    0x3800_31C6_BB38_3000, // nop ; mov tlb, rf14
+    0x3800_31C6_BB3C_3000, // nop ; mov tlb, rf15
+};
+
+pub const wide_cutout_fragment = Fragment{ .code = &wide_cutout_code, .varyings = 2, .uniforms = 4, .center_w = true, .writes_z = true, .disable_ez = true };
+
+/// The same where the frame has no render target 0, the one a fixed form
+/// writes: Mesa's back end keyed with no render target (`cbufs` 0). The
+/// sample and the comparison stay, and the depth is the one TLB write,
+/// the colour's delay slots empty. Where every other fixed form draws
+/// with `no_color_fragment` there, this one drops pixels, which that
+/// program would not (since 1.236).
+const colorless_cutout_code = cutout_code[0..11].* ++ [_]u64{ nop, nop };
+
+pub const colorless_cutout_fragment = Fragment{ .code = &colorless_cutout_code, .varyings = 2, .uniforms = 3, .center_w = true, .writes_z = true, .disable_ez = true };
+
 /// What is left of a sample once it is started by S: the last section, and the
 /// two words read and passed on as they are.
 const sample_end = last_section ++ [_]u64{
@@ -745,6 +821,51 @@ test "a fixed form's program for floats of 32 bits: each write of two half-float
         try std.testing.expectEqual(@as(u32, 1), tlbu);
     }
     try std.testing.expectEqual(@as(u32, 0xFFFF_FF3F), tlb_f32_specifier);
+}
+
+test "the cut-out's programs keep to the registers a thread has, write the tile buffer as their targets take it, and the one of no colour is the half-floats' with its colour writes made nops (since 1.236)" {
+    // Mesa's words (`compile.zig` holds them to its back end): the thread
+    // switches on the instructions that do the work, not on nops of their
+    // own, so `last_section` and `end_of_program` are not looked for.
+    for ([_]Fragment{ cutout_fragment, wide_cutout_fragment, colorless_cutout_fragment }) |fragment| {
+        var switches: u32 = 0;
+        var setmsf: u32 = 0;
+        for (fragment.code) |instruction| {
+            for (destinations(instruction)) |side| if (side) |to| try std.testing.expect(to < registers);
+            if (signalled(instruction)) |to| try std.testing.expect(to < registers);
+            const inst = pack.unpack(instruction) orelse return error.TestUnexpectedResult;
+            switches += @intFromBool(inst.sig.thrsw);
+            setmsf += @intFromBool(inst.kind == .alu and inst.alu.add.op == .setmsf);
+        }
+        // The wait on the scoreboard, two in a row, and the last.
+        try std.testing.expectEqual(@as(u32, 3), switches);
+        try std.testing.expectEqual(@as(u32, 1), setmsf);
+        try std.testing.expectEqual(@as(u32, 2), fragment.varyings);
+    }
+    const counts = struct {
+        fn of(fragment: Fragment) [2]u32 {
+            var tlb: u32 = 0;
+            var tlbu: u32 = 0;
+            for (fragment.code) |word| {
+                const inst = pack.unpack(word) orelse continue;
+                if (inst.kind != .alu) continue;
+                for ([_]bool{ inst.alu.add.magic_write, inst.alu.mul.magic_write }, [_]u6{ inst.alu.add.waddr, inst.alu.mul.waddr }, [_]bool{ inst.alu.add.op != .nop, inst.alu.mul.op != .nop }) |magic, waddr, working| {
+                    if (!magic or !working) continue;
+                    if (waddr == instr.magic(.tlb)) tlb += 1;
+                    if (waddr == instr.magic(.tlbu)) tlbu += 1;
+                }
+            }
+            return .{ tlb, tlbu };
+        }
+    }.of;
+    // Z to TLBU in each, then two words of half-floats, or four floats
+    // the first of them to TLBU, or none.
+    try std.testing.expectEqual([2]u32{ 2, 1 }, counts(cutout_fragment));
+    try std.testing.expectEqual([2]u32{ 3, 2 }, counts(wide_cutout_fragment));
+    try std.testing.expectEqual([2]u32{ 0, 1 }, counts(colorless_cutout_fragment));
+    try std.testing.expectEqualSlices(u64, cutout_fragment.code[0 .. cutout_fragment.code.len - 2], colorless_cutout_fragment.code[0 .. colorless_cutout_fragment.code.len - 2]);
+    try std.testing.expectEqual(cutout_fragment.uniforms + 1, wide_cutout_fragment.uniforms);
+    try std.testing.expectEqual(cutout_fragment.uniforms, colorless_cutout_fragment.uniforms);
 }
 
 test "a cube of an array is the cube's program and a fourth varying, which cube, written to TMUI after TMUR as handle_tex_src writes an array's index, the lookup at TMUSCM (since 1.234)" {

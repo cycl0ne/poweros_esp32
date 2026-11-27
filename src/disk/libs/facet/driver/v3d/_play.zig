@@ -1791,6 +1791,11 @@ fn tmuConfiguration(queue: *Queue, set: u32, binding: u32, how: tiling.Sampled, 
 /// The shadow form's program writes the reference (`qpu.shadow_code`), so
 /// its sampler's comparison is carried and its depth read as compared
 /// (since 1.142).
+///
+/// The cut-out's programs (`qpu.cutout_fragment`) write Z after the two,
+/// which reads the depth's specifier, `qpu.no_color_specifier`, and set
+/// the per-pixel mask in P1, as the stream Mesa's back end makes for them
+/// has it (`compile.per_pixel_mask`, v3d_tex.c:313-321; since 1.236).
 fn textureUniforms(queue: *Queue, fixed: shader.Fixed) ?u32 {
     const dref = fixed.kind == .texture_shadow;
     const how: tiling.Sampled = if (fixed.needsSampler()) bound: {
@@ -1809,13 +1814,17 @@ fn textureUniforms(queue: *Queue, fixed: shader.Fixed) ?u32 {
     };
     const made = tmuConfiguration(queue, 0, 0, how, dref, false) orelse return null;
     // And after the two, where the program writes 32-bit floats, the
-    // specifier its TLBU write reads (`qpu.wide`, since 1.228).
+    // specifier its TLBU write reads (`qpu.wide`, since 1.228), after the
+    // depth's where the program writes Z (since 1.236).
     const wide = fixedWide(playerOf(queue));
-    const place = carve(queue, if (wide) 12 else 8, 4) orelse return null;
+    const drops = fixed.discards();
+    const count: u32 = 2 + @as(u32, @intFromBool(drops)) + @intFromBool(wide);
+    const place = carve(queue, count * 4, 4) orelse return null;
     const words: [*]u32 = @ptrCast(@alignCast(place.cpu));
     words[0] = made.texture;
-    words[1] = made.sampler;
-    if (wide) words[2] = qpu.tlb_f32_specifier;
+    words[1] = if (drops) made.sampler | compile.per_pixel_mask else made.sampler;
+    if (drops) words[2] = qpu.no_color_specifier;
+    if (wide) words[count - 1] = qpu.tlb_f32_specifier;
     return place.address;
 }
 
@@ -2198,8 +2207,10 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
     // the program of no colour leaves the same - and since 1.233 in a frame
     // without render target 0, the one a fixed form writes, the others'
     // locations being past its one output. A compiled program was
-    // compiled for its subpass (`Pipeline.colorless`) and draws itself.
-    var no_color = player.drawn[0] == null and fixed.kind != .none;
+    // compiled for its subpass (`Pipeline.colorless`) and draws itself, and
+    // so does the cut-out, which drops pixels (`qpu.colorless_cutout_fragment`,
+    // since 1.236).
+    var no_color = player.drawn[0] == null and fixed.kind != .none and !fixed.discards();
     if (!no_color) switch (fixed.kind) {
         .color => {
             carried = .{ .colors_from = 0 };
@@ -2276,9 +2287,26 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
                 uniforms = streamOf(queue, made.stream(), tmus[0..found], null, 0, made.spillWords()) orelse return noRoom(queue, "a draw with no memory for its uniforms");
             }
         },
-        // Refused when the pipeline was made (driver.zig): no fixed form's
-        // program drops pixels, so this never reaches a frame here.
-        .texture_cutout => return,
+        // The cut-out (since 1.236): Mesa's back end's program of facet's
+        // own cut-out shader, for the frame's render target 0 or for none
+        // (`qpu.cutout_fragment`), kept as a compiled program is so that
+        // the shader record says it writes Z and early Z is off (`own`).
+        // Where its texture is missing it is drawn as the texture form's
+        // is, `shader.missing` being opaque: no pixel dropped, and in a
+        // frame of no colour the depth alone.
+        .texture_cutout => if (textureUniforms(queue, fixed)) |made_uniforms| {
+            const made = if (player.drawn[0] == null) &player.hardware.colorless_cutout else if (fixedWide(player)) &player.hardware.wide_cutout else &player.hardware.cutout;
+            fragment = made.address;
+            own = made;
+            uniforms = made_uniforms;
+        } else if (player.drawn[0] == null) {
+            no_color = true;
+        } else {
+            varyings = 4;
+            carried = .{ .constant = missing_color };
+            fragment = programs.color;
+            uniforms = colorUniforms(queue) orelse return noRoom(queue, "a draw with no memory for its uniforms");
+        },
     };
     if (no_color) {
         const made = &player.hardware.no_color;

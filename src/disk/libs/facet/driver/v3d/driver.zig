@@ -125,6 +125,16 @@ pub const Hardware = struct {
     /// (`_play.zig`'s `draw` and `clearRectangle`, since 1.150). Its block
     /// is `programs_block`, given back with the rest.
     no_color: Shader,
+    /// `texture_cutout`'s programs, the same way, so that the shader record
+    /// says what Mesa's back end says of them: Z written and early Z off,
+    /// as for any program that drops pixels. Into a render target of
+    /// half-floats, of 32-bit floats, and where the frame has no render
+    /// target 0 (`qpu.cutout_fragment`, `qpu.wide_cutout_fragment`,
+    /// `qpu.colorless_cutout_fragment`; since 1.236). Their uniforms are
+    /// the draw's (`_play.zig`'s `textureUniforms`), not these.
+    cutout: Shader,
+    wide_cutout: Shader,
+    colorless_cutout: Shader,
     /// The table has changed since the MMU last read it.
     stale: bool = false,
     /// A job faulted or never ended. Nothing more is sent: what comes after
@@ -303,8 +313,10 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // Tessellation runs on the cores.
         .compute_on_device = false,
         .tessellation_on_device = false,
-        // No QPU program discards yet, so texture_cutout is refused above.
-        .discarding_fragment_forms = false,
+        // texture_cutout, whose programs drop a pixel by SETMSF where the
+        // texel's alpha is under a half, as Mesa's back end drops one
+        // (`qpu.cutout_fragment`, since 1.236); refused until then.
+        .discarding_fragment_forms = true,
         // Every fixed form that wants a sampler, since 1.234: the 2D,
         // array, cube and 3D ones since 1.141, their programs the ones of
         // the forms without a sampler and the TMU told the bound sampler
@@ -577,7 +589,7 @@ const wide_fragments = [_]*const qpu.Fragment{ &qpu.wide_color_fragment, &qpu.wi
 
 /// Every program in one block of the V3D's.
 fn loadPrograms(hardware: *Hardware) bool {
-    const fragments = [_]*const qpu.Fragment{ &qpu.color_fragment, &qpu.texture_fragment, &qpu.texture_color_fragment, &qpu.array_fragment, &qpu.cube_fragment, &qpu.cube_array_fragment, &qpu.volume_fragment, &qpu.shadow_fragment, &qpu.no_color_fragment, &qpu.words_fragment, &qpu.targeted_color_fragment } ++ wide_fragments;
+    const fragments = [_]*const qpu.Fragment{ &qpu.color_fragment, &qpu.texture_fragment, &qpu.texture_color_fragment, &qpu.array_fragment, &qpu.cube_fragment, &qpu.cube_array_fragment, &qpu.volume_fragment, &qpu.shadow_fragment, &qpu.no_color_fragment, &qpu.words_fragment, &qpu.targeted_color_fragment, &qpu.cutout_fragment, &qpu.wide_cutout_fragment, &qpu.colorless_cutout_fragment } ++ wide_fragments;
     var words: usize = qpu.coordinate_program.len;
     for (0..qpu.most_varyings + 1) |varyings| words += qpu.vertexProgram(@intCast(varyings)).len;
     for (fragments) |fragment| words += fragment.code.len;
@@ -614,6 +626,9 @@ fn loadPrograms(hardware: *Hardware) bool {
     for (&wide, wide_fragments) |*address, fragment| address.* = put(block, &used, fragment.code);
     hardware.programs.wide = .{ .color = wide[0], .texture = wide[1], .texture_color = wide[2], .array = wide[3], .cube = wide[4], .cube_array = wide[5], .volume = wide[6], .shadow = wide[7] };
     hardware.no_color = noColorShader(block, hardware.programs.no_color);
+    hardware.cutout = fixedShader(block, put(block, &used, qpu.cutout_fragment.code), &qpu.cutout_fragment);
+    hardware.wide_cutout = fixedShader(block, put(block, &used, qpu.wide_cutout_fragment.code), &qpu.wide_cutout_fragment);
+    hardware.colorless_cutout = fixedShader(block, put(block, &used, qpu.colorless_cutout_fragment.code), &qpu.colorless_cutout_fragment);
     hardware.space.toGpu(&block);
     hardware.programs_block = block;
     return true;
@@ -623,14 +638,20 @@ fn loadPrograms(hardware: *Hardware) bool {
 /// program is kept: its one uniform the depth's write specifier, and what
 /// the shader record says of it.
 fn noColorShader(block: Block, address: u32) Shader {
-    const fragment = &qpu.no_color_fragment;
-    var uniforms: [compile.most_uniforms]compile.Word = undefined;
-    uniforms[0] = .{ .float = @bitCast(qpu.no_color_specifier) };
+    var made = fixedShader(block, address, &qpu.no_color_fragment);
+    made.uniforms[0] = .{ .float = @bitCast(qpu.no_color_specifier) };
+    return made;
+}
+
+/// A program written here at `address` in `block`, as a compiled program
+/// is kept: what the shader record says of it, and no uniform stream of
+/// its own, which the draw writes (since 1.236; `noColorShader`'s before).
+fn fixedShader(block: Block, address: u32, fragment: *const qpu.Fragment) Shader {
     return .{
         .block = block,
         .address = address,
         .varyings = fragment.varyings,
-        .uniforms = uniforms,
+        .uniforms = undefined,
         .uniform_count = fragment.uniforms,
         .threads = fragment.threads,
         .center_w = fragment.center_w,
@@ -884,9 +905,10 @@ fn madePipeline(pipeline: *Pipeline) facet.Result {
         if (pipeline.fragment_words.len == 0) return .error_feature_not_present;
         return compiled(pipeline);
     }
-    // A form that drops pixels needs a QPU program that discards, which no
-    // fixed form's has yet, so such a pipeline is refused here and drawn
-    // on the cores.
+    // The form that drops pixels, texture_cutout, is drawn here since
+    // 1.236: its programs are Mesa's back end's of facet's own cut-out
+    // shader (`qpu.cutout_fragment`), refused and drawn on the cores
+    // until then.
     //
     // Every form that samples through the sampler bound beside its
     // texture is drawn here: it runs the program of the form it is
@@ -901,7 +923,7 @@ fn madePipeline(pipeline: *Pipeline) facet.Result {
     // spec's "Wrapping Operation") and as the cores read it since 1.60
     // (`texture.sampleCubeBy`); v3dv packs the wraps as they are whatever
     // the view (v3dvx_device.c:255-257), and so does this.
-    if (fixed.discards() or pipeline.varyings != fixed.varyings()) return .error_feature_not_present;
+    if (pipeline.varyings != fixed.varyings()) return .error_feature_not_present;
     return .success;
 }
 

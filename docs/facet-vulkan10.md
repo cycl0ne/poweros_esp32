@@ -2329,7 +2329,7 @@ Found independently by: semantics, features.
 
 ### 53. V3D: discard, lowered onto the flag registers **[critical path]**
 
-*V3D compiler* &mdash; conformance-blocking, medium
+*V3D compiler* &mdash; conformance-blocking, medium &mdash; **done in 1.236 (a module's own discard in 1.139, the fixed form in 1.236)**
 
 After: qpu.zig growing condition codes and flag pushes
 
@@ -2340,6 +2340,30 @@ discarding_fragment_forms is false on the V3D, so the texture_cutout form is ref
 Found independently by: features, semantics, doc-staleness (3 strands).
 
 **A module's own discard is done in 1.139** (item 59, "Then discards"): the flags, SETMSF and the Z write are Mesa's, ported. The fixed form `texture_cutout` is what remains here.
+
+**Then the fixed form, in 1.236: `texture_cutout` on the V3D, and with it the item.** It was the last fixed form the V3D refused. Its programs are the ones Mesa's back end makes of facet's own cut-out shader (`compile.zig`'s `Cutout`), held to it word for word by a host test, as the program of no colour is held to the noop shader's.
+
+- **The programs.** The texel is sampled as `texture_fragment` samples it. FCMP of its alpha, the second word's high half, with 0.5 pushes N (ntq_emit_comparison's flt, nir_to_vir.c:1727). SETMSF of 0 where that holds clears the pixel's mask (terminate_if, nir_to_vir.c:3833-3850). Z is written through before the colour, and early Z is off (emit_frag_end, nir_to_vir.c:2073-2134). The last thread switch lies on that write, with the colour in its delay slots.
+- **Three of them**, keyed as v3dv keys a subpass:
+  - `qpu.cutout_fragment` for half-floats.
+  - `qpu.wide_cutout_fragment` for 32-bit floats (f32_color_rb). Its four writes are scheduled around the last switch, which `qpu.wide` cannot do.
+  - `qpu.colorless_cutout_fragment` for a frame of no render target 0 (cbufs 0). Every other fixed form draws there with the program of no colour, which would drop nothing.
+- **The draw.** Each program is kept as a compiled program is (`Hardware.cutout`, `driver.fixedShader`), so the shader record says it writes Z and that early Z is off, as Mesa says. The uniforms are P0, then P1 with the per-pixel mask Mesa's stream sets (v3d_tex.c:313-321), then the depth's specifier, and for floats the colour's. `discarding_fragment_forms` is true on the V3D.
+
+The tests:
+
+- Two host tests are new. One holds the three programs to Mesa's words, flags and uniform streams for the three keys. The other is qpu's own check of their registers, their one SETMSF and their tile-buffer writes.
+- 4575 of the 4578 pass, 3 skipped, and each of 8 mutants of the programs and their flags fails them.
+- FacetProbe 1.61 draws the fixed cut-out of four texels on both devices, into 8888 and into R32G32B32A32_SFLOAT. They are red opaque, blue clear, green at an alpha of 128 and white at 127: the first byte kept and the last dropped.
+- FacetBoth 1.84 draws it over the quad, in front of the far triangle, and into a shadow map in a pass of the depth alone.
+
+On the board (package f248):
+
+- FacetProbe 1.61 passes 1088 of 1088 (1084 at 1.235).
+- FacetBoth 1.84's 328 cases of 1.83 are each as at 1.235.
+- Its three new ones are each 0 of 230400 pixels apart. "In front" is 1 at worst, so no dropped pixel kept its depth. The shadow map was drawn by the program of no colour.
+
+Nothing of this item is left out. Every fixed form is drawn on the V3D, but in a pipeline of four samples with alpha to coverage, which a fixed form's hand-written program does not cover by: `makePipeline` refuses that, and the cores draw it (item 61). *V3D-only*: the cores have drawn the cut-out since it was a form.
 
 ### 54. V3D: a QPU program that reads the bound sampler for every form, with unnormalized coordinates and anisotropy **[critical path]**
 

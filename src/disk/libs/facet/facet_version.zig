@@ -7870,4 +7870,50 @@ pub const LIBRARY_VERSION = 1;
 /// 320,86 as the fixed form's. The cores alone would be 0 apart there:
 /// the 12 are the seam pixels the V3D's TMU reads. The firmware's
 /// mailbox answered before and after each run.
-pub const LIBRARY_REVISION = 235;
+///
+/// 236: **The fixed cut-out on the V3D (docs/facet-vulkan10.md item 53,
+/// now done).** `texture_cutout` was the last fixed form the V3D refused:
+/// no program written here dropped a pixel. Its programs are now the ones
+/// Mesa's back end makes of facet's own cut-out shader (`compile.zig`'s
+/// `Cutout`), held to it word for word by a host test, as the program of
+/// no colour is held to the noop shader's. The texel is sampled as
+/// `texture_fragment` samples it. Then FCMP of its alpha, the second
+/// word's high half, with 0.5 pushes N (ntq_emit_comparison's flt,
+/// nir_to_vir.c:1727), and SETMSF of 0 where that holds clears the
+/// pixel's mask (terminate_if, nir_to_vir.c:3833-3850). Z is written
+/// through before the colour and early Z is off (emit_frag_end,
+/// nir_to_vir.c:2073-2134), and the last thread switch lies on that
+/// write, the colour in its delay slots. There are three of them, keyed
+/// as v3dv keys a subpass: `qpu.cutout_fragment` into half-floats,
+/// `qpu.wide_cutout_fragment` into 32-bit floats (f32_color_rb, its four
+/// writes scheduled around the last switch, which `qpu.wide` could not
+/// do) and `qpu.colorless_cutout_fragment` where the frame has no render
+/// target 0 (cbufs 0), where every other fixed form draws with the
+/// program of no colour, which would drop nothing. Each is kept as a
+/// compiled program is (`Hardware.cutout`, `driver.fixedShader`), so
+/// the shader record says it writes Z and early Z is off, as Mesa says.
+/// The draw writes P0, P1 with the per-pixel mask Mesa's stream sets
+/// (v3d_tex.c:313-321), the depth's specifier, and the colour's for
+/// floats. `discarding_fragment_forms` is true on the V3D.
+///
+/// Two host tests are new: the three programs are Mesa's words, flags
+/// and uniform streams for the three keys, and qpu's own check of them,
+/// their registers, their one SETMSF and their tile-buffer writes.
+/// 4575 of the 4578 pass, 3 skipped. FacetProbe 1.61 draws the fixed
+/// cut-out of four texels, red opaque, blue clear, green at an alpha of
+/// 128 and white at 127, into 8888 and into R32G32B32A32_SFLOAT, on both
+/// devices. FacetBoth 1.84 draws it over the quad, in front of the far
+/// triangle, and into a shadow map in a pass of the depth alone. Each of 8
+/// mutants of the programs and their flags fails the host tests;
+/// `_play.zig` and `driver.zig` the host tests do not reach, and the
+/// board holds them.
+///
+/// On the CM5 (package f248) FacetProbe 1.61 is 1088 of 1088, 1084 at
+/// 1.235: the cut-out into 8888 and into R32G32B32A32_SFLOAT on both
+/// devices, the texels of 255 and 128 kept and those of 0 and 127
+/// dropped. FacetBoth 1.84's 328 cases of 1.83 are each as at 1.235. Its
+/// three new ones are each 0 of 230400 pixels apart: the cut-out over
+/// the quad, in front of the far triangle, 1 at worst, so that no
+/// dropped pixel kept its depth, and the shadow map of it drawn in a
+/// pass of the depth alone, by the program of no colour.
+pub const LIBRARY_REVISION = 236;
