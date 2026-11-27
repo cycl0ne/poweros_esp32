@@ -29,9 +29,10 @@ const _command = @import("_command.zig");
 /// what CmdSetBlendConstants set over all of them, or their own set before.
 /// facet.library's own, where Vulkan has the one set a pipeline shares
 /// between its attachments - which matters where a subpass draws several
-/// together and one fragment call writes them all
-/// (SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER), there being no replay left to
-/// set them between.
+/// together and one fragment call writes them all (every subpass of
+/// several on the cores since 1.230; one carrying facet's own
+/// SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER from 1.51), there being no replay
+/// left to set them between.
 ///
 /// A later CmdSetBlendConstants sets the one set again over every
 /// attachment, and forgets what this set for any of them. An `attachment`

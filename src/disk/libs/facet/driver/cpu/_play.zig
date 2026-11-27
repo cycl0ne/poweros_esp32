@@ -86,6 +86,10 @@ pub const Player = struct {
     /// for each, the first's alone until a subpass draws several
     /// together (since 1.51), each at its location (since 1.118).
     target_opaques: [_render.most_colors]bool = @splat(false),
+    /// Each plane's location: the place of its colour attachment among
+    /// the subpass's, which its blend state and the fragment function's
+    /// output for it are at (`_render.Part.locations`, since 1.230).
+    locations: [_render.most_colors]u8 = .{ 0, 1, 2, 3 },
     /// Which of its subpass's parts is being drawn: a query counts the
     /// first alone (since 1.116).
     part: u32 = 0,
@@ -506,6 +510,18 @@ fn resolveLayers(layered: Layered) void {
     }
 }
 
+/// The plane of the part that holds the colour attachment `command`
+/// clears, null where it clears no colour or the part does not draw that
+/// one (since 1.230: the part's first plane, where it was the one, until
+/// then).
+pub fn clearedPlane(player: *const Player, command: *const _command.ClearAttachment) ?u32 {
+    if (command.aspect_mask & facet.IMAGE_ASPECT_COLOR == 0) return null;
+    for (player.locations, 0..) |location, plane| {
+        if (location == command.output) return @intCast(plane);
+    }
+    return null;
+}
+
 /// CmdClearAttachments' rectangle, over the layers it names past the
 /// framebuffer's first (since 1.91): the first is in the tiles and cleared by
 /// drawing (`_draw.clearAttachment`), and these are in the image's rows and
@@ -530,15 +546,16 @@ pub fn clearRectangle(player: *const Player, command: *const _command.ClearAttac
     if (left == right or top == bottom) return;
     const cut = raster.Rect{ .x = left, .y = top, .width = right - left, .height = bottom - top };
     const aspect = command.aspect_mask;
-    // The colour of this part's own attachment, as the tiles' clear masks
-    // every other one out.
-    const color = aspect & facet.IMAGE_ASPECT_COLOR != 0 and command.output == player.resources.output and layered.colors != 0;
+    // The plane of the colour attachment cleared, where the part draws
+    // it, as the tiles' clear draws that one alone (since 1.230).
+    const cleared = clearedPlane(player, command);
+    const color = cleared != null and cleared.? < layered.colors;
     const depth = aspect & facet.IMAGE_ASPECT_DEPTH != 0 and layered.depth;
     const stencil = aspect & facet.IMAGE_ASPECT_STENCIL != 0 and layered.stencil;
     for (first..end) |layer| {
         const at: u32 = @intCast(layer);
         if (color) {
-            const held = framebuffer.colors[0];
+            const held = framebuffer.colors[cleared.?];
             for (0..held.image.samples) |sample| {
                 if (surfaceAt(held, at, @intCast(sample))) |surface| raster.fillSurface(surface, cut, command.color, command.words);
             }
@@ -561,15 +578,19 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, part
     player.part = part;
     const framebuffer = &command.targets[part];
     const render_pass = &command.parts[part];
-    // The location its first colour is written at: its part's number,
-    // unless a colour before it is unused and has none (since 1.118).
-    player.resources.output = render_pass.output;
-    // A surface for each colour attachment the part draws: the one it
-    // usually has, and all of a subpass's where they go together
-    // (SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER, since 1.51).
+    // A surface for each colour attachment the part draws: all of a
+    // subpass's, which go together (since 1.51; every subpass's since
+    // 1.230), or the one it has where the subpass reads two of them.
     var surfaces: [_render.most_colors]raster.Surface = undefined;
     const colors = @min(render_pass.color_count, framebuffer.color_count);
     for (0..colors) |k| surfaces[k] = surfaceOf(framebuffer, @intCast(k)) orelse return;
+    // Each plane's location, which its blend state and the fragment
+    // function's colour for it are at: the part's one where it is played
+    // over for each of its subpass's colour attachments, and all of them
+    // where it draws them together; none past its planes (since 1.230;
+    // the first's alone, as `shader.Resources.output`, until then).
+    player.locations = @splat(_render.most_colors);
+    for (0..colors) |k| player.locations[k] = render_pass.locations[k];
     // The clears are the subpass's, in the order its parts draw them, so
     // this part's begin after the colours of the parts before it: that is
     // `part` where the subpass is played again for each of them, and 0
@@ -579,7 +600,7 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, part
     // Each attachment says for itself whether it has an alpha to read, at
     // the location a blend asks for it by.
     player.target_opaques = @splat(false);
-    for (surfaces[0..colors], 0..) |each, k| player.target_opaques[@min(render_pass.output + k, _render.most_colors - 1)] = each.format == .rgb565;
+    for (surfaces[0..colors], 0..) |each, k| player.target_opaques[@min(render_pass.locations[k], _render.most_colors - 1)] = each.format == .rgb565;
     // What the subpass reads of what it draws (since 1.64).
     player.reads_target = render_pass.reads_target;
     // The render area, cut to the framebuffer.

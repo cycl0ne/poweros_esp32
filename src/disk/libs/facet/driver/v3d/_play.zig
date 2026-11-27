@@ -116,6 +116,11 @@ pub const Player = struct {
     line_width: f32 = 1,
     stencil: _vertices.StencilSet = .{},
     resources: shader.Resources = .{},
+    /// The location of the colour attachment the part draws: its place
+    /// among its subpass's, which its blend state is at and which a
+    /// fragment program has to write for it to be drawn (since 1.230;
+    /// `shader.Resources.output` until then).
+    output: u32 = 0,
     /// Which of its subpass's parts is being drawn: a query counts the
     /// first alone (since 1.116).
     part: u32 = 0,
@@ -605,7 +610,7 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, part
     player.part = part;
     // The location its colour is written at: its part's number, unless a
     // colour before it is unused and has none (since 1.118).
-    player.resources.output = command.parts[part].output;
+    player.output = command.parts[part].locations[0];
     const framebuffer = &command.targets[part];
     // A part of no colour - a subpass of no colour attachment, or of
     // unused ones alone - has no image of colour, and `colors[0]` is not
@@ -935,7 +940,7 @@ fn clearAttachment(queue: *Queue, command: *const _command.ClearAttachment) void
         // No colour in a frame of none, where a colour attachment the
         // clear names is an unused one, whose clear has no effect (since
         // 1.150).
-        if (aspect & facet.IMAGE_ASPECT_COLOR != 0 and command.output == player.resources.output and player.frame.color) 0xF else 0,
+        if (aspect & facet.IMAGE_ASPECT_COLOR != 0 and command.output == player.output and player.frame.color) 0xF else 0,
         if (aspect & facet.IMAGE_ASPECT_DEPTH != 0 and player.frame.depth) command.depth else null,
         if (aspect & facet.IMAGE_ASPECT_STENCIL != 0 and player.frame.stencil) @truncate(command.stencil) else null,
     );
@@ -1838,9 +1843,15 @@ fn stencilFaceOf(face: _pipeline.StencilFace) cl.StencilFace {
 }
 
 /// A pipeline's mixing in the hardware's terms: the one for the colour
-/// attachment this part draws.
+/// attachment this part draws. None of its channels written where the
+/// fragment program writes no colour at the part's location - every part
+/// past the first, the V3D's programs writing location 0 alone - as v3d
+/// writes no render target its shader has no output for
+/// (`vir_emit_tlb_color_write`, nir_to_vir.c:1958) and llvmpipe blends no
+/// colour buffer it has none for (lp_state_fs.c:3618-3623). (Since 1.230;
+/// every part took the one colour until then.)
 fn mixingOf(player: *const Player, pipeline: *const Pipeline) cl.Mixing {
-    const asked = _pipeline.mixingAt(pipeline, player.resources.output);
+    const asked = _pipeline.mixingAt(pipeline, player.output);
     // What is there has no alpha: it reads as wholly opaque, as v3dv
     // blends a format whose swizzle reads alpha as 1 (`dst_alpha_one`,
     // v3dvx_pipeline.c:121): R5G6B5, and since 1.228 R8, R8G8 and the
@@ -1854,9 +1865,9 @@ fn mixingOf(player: *const Player, pipeline: *const Pipeline) cl.Mixing {
         .dst_alpha = @intFromEnum(mixing.dst_alpha),
         .alpha_mode = @intFromEnum(mixing.alpha_op),
         .constants = mixing.constants orelse
-            player.attachment_constants[@min(player.resources.output, _render.most_colors - 1)] orelse
+            player.attachment_constants[@min(player.output, _render.most_colors - 1)] orelse
             player.blend_constants,
-        .channels = mixing.mask,
+        .channels = if (player.output < pipeline.outputs) mixing.mask else 0,
     };
 }
 
@@ -1902,7 +1913,7 @@ fn drawStateOf(player: *const Player, pipeline: *const Pipeline, viewport: *cons
             .compare = if (has_depth) (if (pipeline.depth_test) |compare| @intFromEnum(compare) else cl.COMPARE_ALWAYS) else cl.COMPARE_ALWAYS,
             .depth_write = has_depth and pipeline.depth_test != null and pipeline.depth_write,
             .stencil = stencil != null,
-            .blend = _pipeline.mixingAt(pipeline, player.resources.output).enabled,
+            .blend = _pipeline.mixingAt(pipeline, player.output).enabled,
             .biased = bias != null,
             .bounded = bounds != null,
             .clamped = pipeline.clamped,

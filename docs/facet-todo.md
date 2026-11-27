@@ -263,7 +263,7 @@ counterpart, and a program that uses one is a facet program.
 | What | Since (facet's own revisions) |
 |---|---|
 | A shader is a Zig function in an `FCTZ` module, called through a pointer - no compiler anywhere | 1.0 |
-| `SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER` with `shader.fragmentOutputs`: a subpass's colour attachments written in one call | 1.51 |
+| `SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER` with `shader.fragmentOutputs`: a subpass's colour attachments written in one call. The flag is gone since 1.230: every subpass of several is drawn so on the cores, `shader.fragmentOutputs` writing at locations 0 upwards as Vulkan's outputs are (docs/facet-vulkan10.md item 80) | 1.51 |
 | `PipelineColorBlendStateCreateInfo.attachment_constants` and `CmdSetBlendConstantsAt`: blend constants for each attachment | 1.51 |
 | `IMAGE_CREATE_PACKED_TEXELS`: an 8888 texel kept in its word rather than spread over 64 bits | 1.48 |
 | `PIPELINE_CREATE_DEPTH_PREPASS`: the depth settled before any fragment function runs | 1.1 |

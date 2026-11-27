@@ -4111,7 +4111,7 @@ multiple of 16, which was taken, is refused now, Vulkan forbidding it.
 
 ### 80. A Vulkan subpass with several colour attachments is drawn in several parts, so one fragment function may write one colour
 
-*render passes / fragment outputs* &mdash; conformance-blocking, large
+*render passes / fragment outputs* &mdash; conformance-blocking, large &mdash; **done in 1.230, on the cores; the V3D's half is item 55**
 
 Found while filling `maxFragmentOutputAttachments` for item 16, and it is
 the cores' half of item 55.
@@ -4148,6 +4148,102 @@ right. lavapipe clears whichever attachment `colorAttachment` names
 > `outputs > 1` on `can.several_outputs`.
 > `sdk/libs/facet/facet.zig`'s `SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER` is bit
 > 31, where Vulkan reserves the high flag bits.
+
+**Done in 1.230**, in about 340 lines of the library (most of them its
+documentation) and 440 of host tests and FacetProbe. A Vulkan subpass of
+several colour attachments is now what the flag meant, on the cores, and
+a fragment function's outputs are at their locations, as a SPIR-V
+shader's are:
+
+- **The flag and `shader.Resources.output` are gone from the SDK.** A
+  subpass flag of any kind is `error_validation_failed`
+  (VUID-VkSubpassDescription-flags-parameter), bit 31 among them.
+- **The cores draw every subpass of several together**, one part with a
+  plane of the tiles for each colour attachment, as lavapipe hands
+  llvmpipe a subpass's colour buffers at once. Each plane has a location,
+  its attachment's place among the subpass's (`_render.Part.locations`),
+  which its blend state is at and which it takes the function's colour
+  from.
+- **A fragment entry writes any count of colours, at locations 0
+  upwards** (`shader.fragmentOutputs`), whatever the subpass has: the
+  count no longer has to be the part's (CreateGraphicsPipelines). A plane
+  at a location past the function's colours is left as it is, as llvmpipe
+  blends colour buffer i only where it blends, has a logic op, or the
+  shader has an output there (`generate_fragment`,
+  lp_state_fs.c:3618-3623), facet blending no colour it was not given;
+  v3d likewise writes no render target its shader has no output for
+  (`vir_emit_tlb_color_write`, nir_to_vir.c:1958). A colour past the
+  attachments goes nowhere. So a `fragment` entry's one colour, and a
+  fixed form's, is the first attachment's alone, where until now every
+  attachment took it.
+- **`ATTACHMENT_UNUSED` among colours drawn together** has no plane, and
+  those after it keep their locations, as 1.118 had them where it was
+  drawn apart: refused with `error_feature_not_present` until now.
+- **An input attachment of its own:** the one a subpass reads is put first
+  among the part's planes, that being the plane whose pixels a fragment
+  function is given (`Fragments.input`); the first alone could be read
+  until now. A subpass that reads two of its own is drawn once for each,
+  and there a function of several colours draws each part from its own
+  location.
+- **The tiles keep a batch's room for four colours a part**, whatever the
+  frame's planes (`Tile.extra_colors`, `Tile.batch_values`): 20 KiB a part
+  more at most, against the 4 of one plane before.
+- **CmdClearAttachments clears the attachment it names** inside a part
+  that draws several: its plane alone takes the clear's colour
+  (`_draw.clearedLocations`), in that plane's format, the words as given
+  for one the tiles keep in its own bytes, and on the framebuffer's other
+  layers its own image (`_play.clearRectangle`) - the fault 1.91 found,
+  and lavapipe's `handle_clear_attachments` clearing whichever
+  `colorAttachment` names.
+- **The V3D draws a subpass of several once for each, as before**, its
+  programs writing location 0 alone (item 55). A part past location 0
+  now writes no colour channel (`mixingOf`'s channels), as v3d writes no
+  render target its shader has none for, where until now every part took
+  the one colour. FacetBoth's subpasses of two colours change so on both
+  devices alike.
+
+One host test is new (CmdClearAttachments in a subpass drawn together,
+of bytes and of floats, on both layers), and 4557 of the 4560 pass, 3
+skipped. Of 23 mutants of the new code, 22 failed the host tests; the
+one that lived found a blend state's format by its plane, not its
+location, and the together test now blends a subpass of bytes beside
+whole numbers each way round, plain and reading the whole numbers, which
+fails it. FacetProbe 1.58 draws a plain subpass of three together on the
+cores, by location, with a function of one colour and one of three, and
+the same subpass reading two of its own once for each; on the V3D it
+checks the subpass is made in parts and a function of three refused. Its
+blend check's second attachment, at a location the fixed function writes
+nothing at, keeps its clear. FacetProbe 1.58 as first built (package
+f241) still wanted the second of two attachments to take a function's
+one colour, and two refusals that are gone; mended (f242), it is 1074 of
+1074 on the CM5. FacetBoth's 316 cases are each as at 1.227 but for the
+two whose second picture a subpass of two colours draws with a function
+of one: that picture keeps what was there on both devices, "two
+attachments, second" 0 of 230400 pixels apart where it was 11,
+"subpasses, second picture" 5 where it was 8.
+
+Still left out after 1.230:
+
+- **The V3D draws a subpass of several in parts**, each part played over
+  from the subpass's begin, its programs writing one colour at location
+  0: a Vulkan fragment shader of several outputs is refused there, and an
+  attachment past location 0 keeps what it held. *V3D-only*: item 55,
+  Mesa's v3d writing the TLB for each render target it has an output for
+  (`emit_frag_end`, nir_to_vir.c:2142-2143, `vir_emit_tlb_color_write`
+  :1955) and v3dv configuring a render target for each colour attachment
+  of the subpass (`cmd_buffer_emit_render_pass_rcl`,
+  v3dvx_cmd_buffer.c:1085-1095).
+- **A subpass that reads two of its own colour attachments is drawn in
+  parts on the cores**: the tile gives a fragment function the pixels of
+  one plane (`Fragments.target`). *Facet-wide*: a Radeon's subpass input
+  is read from memory, so it would want none of this either way, but
+  facet's own tile reads would need a `target` for each attachment.
+- **A part at a location past its function's colours is still played**,
+  on either device: the vertices worked and the depth and the stencil
+  tested again for no colour. *Facet-wide*, the parts path.
+- **`attachment_constants` and `CmdSetBlendConstantsAt` stay facet's
+  own** (item 51's list): blend constants for each attachment where
+  Vulkan has one set. *Facet-wide*.
 
 ### 81. error_feature_not_present is returned from calls Vulkan does not list it for
 
@@ -4562,7 +4658,7 @@ facet's own.
   image behind it, and the tile target has no colour that loads and
   stores nothing; llvmpipe's tile maps no memory for it
   (lp_rast.c:126-131). That is item 80's to bring, once every subpass on
-  the cores draws its colours together.
+  the cores draws its colours together (done in 1.230).
 - **The V3D draws every subpass apart**, and reads a part's location the
   same way (driver/v3d/_play.zig). This is unchecked on the board. A
   subpass whose every reference is unused is one of none, which the V3D
@@ -5146,7 +5242,8 @@ first half found, and the review of this half beside it:
 - A fragment function that writes as many colours as its subpass has, in a
   subpass without `SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER`, is refused with
   `error_invalid_shader_nv`. Vulkan allows it: `error_feature_not_present`
-  under item 80, which draws such a subpass in parts. On the V3D, whose
+  under item 80, which draws such a subpass in parts (taken since 1.230,
+  on the cores: item 80 is done). On the V3D, whose
   `max_fragment_output_attachments` is 1, a function of more colours
   breaks VUID-RuntimeSpirv-Location-06272: `error_validation_failed` there.
 - AllocateDescriptorSets past the pool's sets answers

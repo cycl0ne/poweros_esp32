@@ -223,14 +223,23 @@ pub const State = struct {
     blend: pipeline.Blend = .off,
     /// How it mixes, with `.general`.
     mixing: pipeline.Mixing = .{},
-    /// The blend and the mixing of the colour attachments past the first,
-    /// where the draw writes several together (`color_count`, since
-    /// 1.51): `blend` and `mixing` are the first's.
+    /// The blend and the mixing of the frame's planes past the first,
+    /// where it has several (`color_count`, since 1.51): `blend` and
+    /// `mixing` are the first's. Each plane's are those of its location.
     more_blends: [target_zig.most_colors - 1]pipeline.Blend = @splat(.off),
     more_mixings: [target_zig.most_colors - 1]pipeline.Mixing = @splat(.{}),
-    /// The colour attachments the fragment function writes in the one
-    /// call: 1, and `blend` and `mixing` alone are used. (Since 1.51.)
+    /// The frame's planes the draw is drawn into: 1, and `blend` and
+    /// `mixing` alone are used. (Since 1.51; what the fragment function
+    /// wrote too, until 1.230.)
     color_count: u32 = 1,
+    /// The colours the fragment function writes in the one call, at
+    /// locations 0 upwards (`shader.Fragments.output_count`, since 1.230).
+    output_count: u32 = 1,
+    /// Each plane's location: the colour of the function's it takes. A
+    /// plane whose location is `output_count` or past it is left as it
+    /// is, as llvmpipe blends only a colour buffer the shader has an
+    /// output for (lp_state_fs.c:3618-3623). (Since 1.230.)
+    locations: [target_zig.most_colors]u8 = .{ 0, 1, 2, 3 },
     /// The stencil test on a target with stencil: the front's, the back's.
     stencil: ?[2]StencilFace = null,
     /// The depth pre-pass, where the depth test is less or less or equal,
@@ -300,13 +309,15 @@ const Shading = struct {
     depth_write: bool,
     blend: pipeline.Blend,
     mixing: pipeline.Mixing,
-    /// Those of the colour attachments past the first, where several go
-    /// together (`color_count`, since 1.51).
+    /// Those of the planes past the first, where the frame has several
+    /// (`color_count`, since 1.51).
     more_blends: [target_zig.most_colors - 1]pipeline.Blend,
     more_mixings: [target_zig.most_colors - 1]pipeline.Mixing,
-    /// The colour attachments the fragment function writes at once: 1 for
-    /// every draw but one into a subpass whose attachments go together.
+    /// The planes drawn into: the frame's, none for a subpass of none.
     color_count: u32,
+    /// `State.output_count` and `State.locations`. (Since 1.230.)
+    output_count: u32,
+    locations: [target_zig.most_colors]u8,
     /// The depth is tested, with a stencil test.
     has_depth: bool,
     stencil: [2]StencilFace,
@@ -506,6 +517,8 @@ fn setUpAll(target: *Target, state: *const State, vertices: []const f32, stride:
         // Never more than the frame has planes and surfaces for: none in a
         // subpass of no colour attachment (since 1.113).
         .color_count = @min(@max(state.color_count, 1), target.colorCount()),
+        .output_count = @min(@max(state.output_count, 1), target_zig.most_colors),
+        .locations = state.locations,
         .has_depth = depth,
         // A draw that goes by pixel without a stencil test of its own has
         // a test that passes and writes nothing.
@@ -1148,16 +1161,18 @@ const Batch = struct {
             .y = tile.y,
             .exact = !(least > 0 and change <= least * newton_change),
             .resources = shading.resources,
-            // One at least: what a function writes as its one colour has
-            // its batch's room still where a frame has no colour
-            // attachment, and goes no further (since 1.113).
-            .output_count = @max(shading.color_count, 1),
+            // What the function writes, whatever the planes: what it
+            // writes as its one colour has its batch's room still where a
+            // frame has no colour attachment, and goes no further (since
+            // 1.113); and so does one past the frame's planes (since
+            // 1.230).
+            .output_count = shading.output_count,
         };
-        // A function that writes several colour attachments at once
-        // writes them one after another, so they go in the one run the
-        // tile keeps for its part; the one colour a draw usually writes
-        // stays on the stack, where it always was. (Since 1.51.)
-        if (shading.color_count > 1) batch.fragments.colors = tile.extra_colors.?;
+        // A function that writes several colours at once writes them one
+        // after another, so they go in the one run the tile keeps for its
+        // part; the one colour a draw usually writes stays on the stack,
+        // where it always was. (Since 1.51.)
+        if (shading.output_count > 1) batch.fragments.colors = tile.extra_colors.?;
         // Where a function that writes floats or whole numbers writes
         // them: the part's room for them, every attachment's after the one
         // before (since 1.226).
@@ -1221,32 +1236,41 @@ const Batch = struct {
             batch.testLate(samples, Kept);
         } else if (batch.deferred_depth) batch.putDepths(samples, Kept);
         if (batch.shading.fragments != null or batch.shading.samples != null) batch.countPixels(samples);
-        // The colours the function wrote: each attachment's `count` of
-        // them after the one before (`shader.Fragments.colorsOf`), and
-        // each blended its own way into its own plane of the tile
-        // (since 1.51).
-        const written = batch.fragments.colors;
+        // The colours the function wrote: each location's `count` of them
+        // after the one before (`shader.Fragments.colorsOf`), and each
+        // plane given its location's, blended its own way (since 1.51).
         // None where the frame has no colour attachment: llvmpipe's
         // blending is a loop over its colour buffers, of which there are
-        // none (lp_state_fs.c:3618-3622, since 1.113).
-        if (batch.shading.color_count > 0) batch.putOutput(samples, 0, batch.shading.blend, &batch.shading.mixing, written);
-        var output: u32 = 1;
-        while (output < batch.shading.color_count) : (output += 1) {
-            batch.putOutput(samples, output, batch.shading.more_blends[output - 1], &batch.shading.more_mixings[output - 1], written + output * batch.count);
+        // none (lp_state_fs.c:3618-3622, since 1.113). And none into a
+        // plane whose location the function writes nothing at: llvmpipe
+        // blends colour buffer i only where it blends, has a logic op, or
+        // the shader has an output there (lp_state_fs.c:3618-3623), facet
+        // having it blend no colour it was not given (since 1.230; every
+        // plane past the function's took its last until then).
+        var plane: u32 = 0;
+        while (plane < batch.shading.color_count) : (plane += 1) {
+            const location = batch.shading.locations[plane];
+            if (location >= batch.shading.output_count) continue;
+            const blend = if (plane == 0) batch.shading.blend else batch.shading.more_blends[plane - 1];
+            const mixing = if (plane == 0) &batch.shading.mixing else &batch.shading.more_mixings[plane - 1];
+            batch.putOutput(samples, plane, location, blend, mixing);
         }
         batch.count = 0;
     }
 
-    /// Colour attachment `output`'s colours, `colors` where the function
-    /// wrote 0xAARRGGBB, put into its plane of the tile: one the tile
+    /// The colours the function wrote at `location`, 0xAARRGGBB or four
+    /// words a pixel, put into plane `output` of the tile (the location
+    /// being the plane's own until 1.230): one the tile
     /// keeps in its own bytes blended in floats (`putTexels`), and one it
     /// keeps as 0xAARRGGBB given the function's floats as that where it
     /// wrote floats. (Since 1.226; `putAt` alone until then.)
-    inline fn putOutput(batch: *Batch, comptime samples: u32, output: u32, blend: pipeline.Blend, mixing: *const pipeline.Mixing, colors: [*][4]u32) void {
+    inline fn putOutput(batch: *Batch, comptime samples: u32, output: u32, location: u32, blend: pipeline.Blend, mixing: *const pipeline.Mixing) void {
         // Floats, or whole numbers (since 1.227): four words a pixel
         // either way, which the attachment's format says how to read.
+        // What the function wrote at the plane's location (since 1.230).
         const floats = batch.shading.written != .colors;
-        const values = batch.fragments.values + output * batch.count;
+        const colors = batch.fragments.colors + location * batch.count;
+        const values = batch.fragments.values + location * batch.count;
         if (batch.tile.texels[output] != .none) return batch.putTexels(samples, output, blend, mixing, colors, values, floats);
         if (floats) colorsOfValues(values, colors, batch.count);
         batch.putAt(samples, output, blend, mixing, colors);

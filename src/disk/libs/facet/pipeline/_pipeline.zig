@@ -274,11 +274,12 @@ pub const Pipeline = struct {
     /// (`Capabilities.independent_blend`, since 1.33). All hold
     /// the default where the create info gave no attachment state.
     mixings: [_render.most_colors]Mixing,
-    /// The colour attachments the fragment function writes in the one
-    /// call (`shader.fragmentOutputs`, since 1.51): 1 for a function that
-    /// writes the one colour, and the subpass's colour attachment count
-    /// for one drawing a subpass whose attachments go together
-    /// (SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER).
+    /// The colours the fragment function writes in the one call, at
+    /// locations 0 upwards (`shader.fragmentOutputs`, since 1.51): 1 for
+    /// a function that writes the one colour, and for a pipeline of no
+    /// fragment stage. Whatever the subpass has since 1.230; until then
+    /// its colour attachment count where they went together, with facet's
+    /// own SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER.
     outputs: u32 = 1,
     /// What the fragment function writes for each of them
     /// (`shader.Written`, since 1.226): 0xAARRGGBB, or four words a pixel.

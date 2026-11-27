@@ -2837,9 +2837,10 @@ that one colour attachment by these, and the others by whatever they had:
 what CmdSetBlendConstants set over all of them, or their own set before.
 facet.library's own, where Vulkan has the one set a pipeline shares
 between its attachments - which matters where a subpass draws several
-together and one fragment call writes them all
-(SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER), there being no replay left to
-set them between.
+together and one fragment call writes them all (every subpass of
+several on the cores since 1.230; one carrying facet's own
+SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER from 1.51), there being no replay
+left to set them between.
 
 A later CmdSetBlendConstants sets the one set again over every
 attachment, and forgets what this set for any of them. An `attachment`
@@ -4527,10 +4528,9 @@ fn CreateGraphicsPipelines(base: *FacetBase, device: *facet.Device, cache: ?*fac
 and one fragment function of the same varyings or none (since 1.115),
 with or without a tessellation control and evaluation function, whose
 varyings then the fragment function's have to be, or for a fragment
-function that writes other
-than the subpass's colour attachments (`shader.fragmentOutputs`, since
-1.51), or for a fragment entry whose `varyings` word names no fixed
-form (since 1.75); `error_feature_not_present`
+entry whose `varyings` word names no fixed form (since 1.75; and from
+1.51 to 1.229 for a fragment function that wrote other than the
+subpass's part's colour attachments); `error_feature_not_present`
 for state Vulkan allows and facet.library does not draw (see BEHAVIOR),
 among it a stage whose `specialization_info` names a constant (since
 1.80); `error_validation_failed` for state Vulkan does not allow on the
@@ -4713,11 +4713,12 @@ the alpha's factors the same or ZERO and ONE and the mask whole, cost
 less than any other mixing.
 
 The fragment entry says how many colours its function writes in the
-one call: one, or the subpass's colour attachments where the subpass
-draws them together (SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER,
-`shader.fragmentOutputs`, since 1.51). It has to come to exactly what
-the subpass has either way, and a function of several wants a device
-whose `several_outputs` is true.
+one call, at locations 0 upwards (`shader.fragmentOutputs`, since
+1.51): any count since 1.230, an attachment past them left as it is
+and an output past the attachments going nowhere; until then exactly
+what the subpass's part had, one where it was played over for each
+attachment. A function of several wants a device whose
+`several_outputs` is true.
 
 **BUGS**
 
@@ -5605,10 +5606,8 @@ must not be used multiple times in a single subpass";
 `error_initialization_failed` until 1.134);
 `error_feature_not_present` for a subpass that reads its own depth
 attachment, which Vulkan allows and this library does not draw
-(docs/facet-vulkan10.md item 92), and for one of colours drawn together
-that reads another than the first, which only this library's own
-SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER asks for (item 80; both
-`error_initialization_failed` until 1.134); `error_out_of_host_memory`.
+(docs/facet-vulkan10.md item 92; `error_initialization_failed` until
+1.134); `error_out_of_host_memory`.
 
 **BEHAVIOR**
 
@@ -5656,9 +5655,8 @@ locations after it keep their attachments, as Vulkan has it (since
 (vk_render_pass.c:1924-1930), and lavapipe gives it no colour buffer
 (lvp_execute.c:1984-1999). A subpass drawn a part for each colour
 attachment has no part for it, and one whose every colour is unused is
-drawn as a subpass of none. One whose colours go together
-(SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER) would have a plane in its tiles
-with no image behind it, and is `error_feature_not_present`. A resolve
+drawn as a subpass of none. Drawn together it has no plane in the
+tiles (since 1.230; `error_feature_not_present` until then). A resolve
 attachment for an unused colour is `error_validation_failed`
 (VUID-VkSubpassDescription-pResolveAttachments-00847;
 `error_initialization_failed` until 1.134).
@@ -5771,11 +5769,10 @@ Only the fragment's own pixel is read: the rest of the attachment is
 in other tiles, drawn on other cores or not yet drawn, and reads as
 transparent black - which is all Vulkan's by-region dependency
 promises either. A subpass of several colour attachments drawn
-together reads the first of them this way, and another of them is
-`error_feature_not_present`: only the library's own flag draws them
-together, and that goes with the flag (docs/facet-vulkan10.md item 80).
-Reading the depth attachment it draws into is not among this either,
-and is `error_feature_not_present` as well (item 92; both
+together reads one of them this way, whichever it is (the first alone
+until 1.230, docs/facet-vulkan10.md item 80), and one that reads two
+is drawn once for each of them. Reading the depth attachment it draws
+into is not among this, and is `error_feature_not_present` (item 92;
 `error_initialization_failed` until 1.134).
 
 Without that dependency the subpass is drawn the same way since 1.134.
@@ -5791,27 +5788,29 @@ which descriptor a subpass reads one through: the set written with the
 `input_attachment` descriptor does (UpdateDescriptorSets), and the
 image wants IMAGE_USAGE_INPUT_ATTACHMENT (CreateImage).
 
-A subpass of several colour attachments is drawn once for each, its commands
-played over, so it costs that much more: its fragment function is called for
-each, and `shader.Resources.output` says for which. A fixed fragment
-function has one colour, which every attachment gets.
-
-Since 1.51 such a subpass may be drawn **together** instead, in one
-pass over the tiles: SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER in its
-`flags`, facet.library's own, and every pipeline of it has a fragment
-entry that writes exactly its colour attachments in the one call
-(`shader.fragmentOutputs`, `shader.Fragments.colorsOf`); one that does
-not is `error_invalid_shader_nv` (CreateGraphicsPipelines). The
-vertices are worked once, the triangles binned once and a quad's
-fragment function called once for all of them - a G-buffer's three or
-four planes for the price of one - and each attachment is still
-blended its own way, into a plane of each tile's own. The flag wants a
-device whose `several_outputs` is true: the cores, not the V3D, whose
-fragment programs are the fixed forms and each write the one colour;
-there it is `error_feature_not_present`, and a subpass without it is
-drawn as it always was. Any other bit in `flags` is none of Vulkan
-1.0's (VUID-VkSubpassDescription-flags-parameter): `error_validation_failed`
-since 1.133, `error_feature_not_present` before.
+A subpass of several colour attachments is drawn **together**, in one
+pass over the tiles, on a device whose fragment functions write
+several (`several_outputs`, the cores), as lavapipe draws a subpass's
+colour buffers at once: the vertices are worked once, the triangles
+binned once and a quad's fragment function called once for all of
+them, and each attachment is blended its own way, into a plane of each
+tile's own. A function writes the colours of the locations it has
+outputs for (`shader.fragmentOutputs`, `shader.Fragments.colorsOf`),
+and an attachment at a location past them is left as it is, as
+llvmpipe blends only the colour buffers a shader has an output for
+(lp_state_fs.c:3618-3623): a `fragment` entry's one colour is the
+first's. A subpass that reads two of its own colour attachments, and
+every subpass of several on the V3D, whose programs write one colour,
+is drawn once for each instead, its commands played over: each time
+the function's output at that attachment's location is drawn, and an
+attachment past its outputs is left as it is there too (since 1.230;
+until then that was every subpass unless it carried facet.library's
+own SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER, from 1.51, and every
+attachment got a fixed function's one colour, `shader.Resources.output`
+telling it which was drawn). A flag in `flags` is none of Vulkan
+1.0's (VUID-VkSubpassDescription-flags-parameter):
+`error_validation_failed` since 1.133, `error_feature_not_present`
+before.
 
 Attachments a subpass does not name are left as they are. The
 dependencies say nothing of what waits for what - a queue's commands

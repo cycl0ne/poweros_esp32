@@ -9,10 +9,14 @@
 //! very attachments of the one before it goes on in the same tiles, its depth
 //! and all: the only way two subpasses share a depth.
 //!
-//! The tiles have one colour. A subpass of several colour attachments is drawn
-//! once for each, up to 4, a `Part` each, its draws played over for each after
-//! the first; `shader.Resources.output` says which is being drawn. All drawn
-//! the same way: the blend states of a pipeline have to be alike.
+//! A subpass of several colour attachments, up to 4, is drawn together, one
+//! `Part` with a plane of the tiles for each, on a device whose fragment
+//! functions write several (`Capabilities.several_outputs`, the cores;
+//! since 1.230, docs/facet-vulkan10.md item 80). On one that writes one,
+//! the V3D, it is drawn once for each, a `Part` each, its draws played
+//! over for each after the first, as on the cores until 1.230 unless the
+//! subpass carried facet's own SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER. Each
+//! plane takes the output at its location (`Part.locations`).
 //!
 //! How each starts and ends is settled as the pass is made:
 //! - a colour: CLEAR clears every tile of the render area the first time
@@ -42,8 +46,10 @@ pub const most_parts = 8;
 pub const Part = struct {
     /// The colour attachments it draws into, by their place among the
     /// pass's: `color_count` of them, which is 1 unless the subpass
-    /// draws several together (SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER,
-    /// since 1.51).
+    /// draws several together (since 1.51; every subpass of several on
+    /// a device of `several_outputs` since 1.230, one carrying facet's
+    /// own SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER until then). The one it
+    /// reads of its own, where it reads one, is first.
     colors: [most_colors]u32 = @splat(0),
     color_count: u32 = 1,
     /// The depth attachment's place, if there is one.
@@ -83,13 +89,17 @@ pub const Part = struct {
     /// pass's, or null for none: what that colour's samples are averaged
     /// into as the subpass ends (since 1.100).
     resolves: [most_colors]?u32 = @splat(null),
-    /// The place of its first colour among the subpass's colour
-    /// attachments: the location a fragment function writes it at, and
-    /// the blend state it is mixed by. A part's number in its subpass
-    /// where it is drawn once for each, unless one before it is
-    /// ATTACHMENT_UNUSED and has no part (since 1.118); 0 where they go
-    /// together.
-    output: u32 = 0,
+    /// Each colour's place among the subpass's colour attachments: the
+    /// location a fragment function writes it at, and the blend state it
+    /// is mixed by. A plane whose location is past what the function
+    /// writes is left as it is, as llvmpipe blends only a colour buffer
+    /// the shader has an output for (lp_state_fs.c:3618-3623) and v3d
+    /// writes no render target it has none for (`vir_emit_tlb_color_write`,
+    /// nir_to_vir.c:1958). Drawn together, the planes in the order the part
+    /// keeps them, an ATTACHMENT_UNUSED one having none; drawn once for
+    /// each, the part's one colour at its own (`output` until 1.230, which
+    /// was the first alone).
+    locations: [most_colors]u8 = .{ 0, 1, 2, 3 },
 };
 
 pub const Subpass = struct {
