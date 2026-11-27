@@ -23,11 +23,16 @@
 //! a copy between two buffers of 10 MiB took the engine 534 us and the
 //! cores 69, of 14 MiB 891 and 1166; a fill of 20 MiB 888 and 603, of
 //! 28 MiB 1220 and 1257. From a buffer of the device's own memory, where
-//! the machine has it, a copy of 64 x 64 pixels took the engine 100 us
-//! and the cores 241, of 32 x 32 83 and 78, of 16 x 16 92 and 30; through
-//! the window a copy of 16 x 16 83 and 213. A fill there, which the cores
-//! write gathered, stays by the caches: one of 256 x 256 pixels took the
-//! engine 143 us and the cores 39.
+//! the machine has it, the engine took 77 to 94 us for a copy of any size
+//! up to 64 x 64 pixels, the cores 89 for one of 32 x 32 - 8 KiB of its
+//! two rectangles - 97 to 98 for 40 x 32 and 255 for 64 x 64; through the
+//! window, where the data fabric's clock is at its lowest most of the
+//! time, the engine 84 to 110 us, the cores 85 for 8 x 8 - 512 bytes -
+//! 134 to 141 for 8 x 12 and 190 to 192 for 8 x 16: the least of three
+//! runs of `C:test/Gpu BLITS DEVICE` and `WINDOW`, each run twice, whose
+//! copies are on either side of these leasts. A fill there, which the cores write gathered, stays
+//! by the caches: one of 256 x 256 pixels took the engine 143 us and the
+//! cores 39.
 //!
 //! **Until the queue runs** every job is refused. The board starts the
 //! graphics block and its queue itself, in a process of its own begun as
@@ -154,10 +159,11 @@ pub const DeviceMemory = enum { not, machine, window };
 /// The bytes a copy that reads the device's own memory has to be more
 /// than to be the engine's by the board's own rule, the source's and the
 /// destination's together, where the machine has that memory and through
-/// the memory window: about where the engine, some 85 us a job however
-/// small, copies sooner than the cores read it.
-const reading_bytes: u64 = 12 * 1024;
-const window_reading_bytes: u64 = 1024;
+/// the memory window: where the engine, some 90 us a job however small,
+/// and the cores, which read that memory uncached, take as long - 32 x 32
+/// pixels of four bytes, and 8 x 8 through the window.
+const reading_bytes: u64 = 8 * 1024;
+const window_reading_bytes: u64 = 512;
 
 /// How long a job is waited for before the queue is taken as no longer
 /// running: the engine fills the largest buffer, 16384 x 16384 pixels of
@@ -772,9 +778,9 @@ test "a copy reading the device's memory is the engine's from fewer bytes, by si
     _ = setRule(&dma, rtg.tags.RTG_AMD_ENGINE_SIZE);
     try testing.expectEqual(window_reading_bytes, cutOffReading(&dma, window_reading_bytes));
     // Caches smaller than the copy's own least leave it the caches'.
-    dma.cached = 8 * 1024;
+    dma.cached = 4 * 1024;
     _ = setRule(&dma, rtg.tags.RTG_AMD_ENGINE_SIZE);
-    try testing.expectEqual(@as(u64, 8 * 1024), cutOffReading(&dma, reading_bytes));
+    try testing.expectEqual(@as(u64, 4 * 1024), cutOffReading(&dma, reading_bytes));
 }
 
 test "a cache leaf says the cache's level, size and sharing" {

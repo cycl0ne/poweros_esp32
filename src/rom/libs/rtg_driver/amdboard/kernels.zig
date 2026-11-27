@@ -22,15 +22,23 @@
 //! there - is theirs from fewer pixels, as the cores read that memory
 //! uncached: from `blend_reading`, `colour_reading` and `scale_reading`,
 //! each with a size where the machine has that memory and one for its
-//! memory window. On the NucBox, where the machine has it, a picture laid
+//! memory window. A colour takes the cores a steady time a pixel, so its
+//! sizes are where that passes the kernels' job, bracketed by `C:test/Gpu
+//! KERNELS DEVICE` and `WINDOW`, the least of three runs: where the
+//! machine has the memory the cores take 0.25 us a pixel, 95 us over 16 x
+//! 24 pixels against the kernels' 70 to 91 and 63 to 65 over 16 x 16
+//! against 77 to 91; through the window 1.0 to 1.3 us, 82 to 104 over 8 x
+//! 8 against the kernels' 64 to 91 - quicker in four of five rounds of
+//! three runs - and 41 to 60 over 8 x 4 against 66 to 90. A picture's and
+//! a scale's time goes by the share of its pixels that cover partly, as
+//! only those read what they land on, so theirs stay the sizes tried with
+//! the test's pictures: where the machine has the memory, a picture laid
 //! over 64 x 64 pixels took the kernels 93 us and the cores 410, over 32
-//! x 32 the cores 5; a colour over 16 x 32 84 and 114, over 8 x 16 the
-//! cores 27 against the kernels' 61; a scale from 64 to 128 pixels a side
-//! 127 and 1099, from 32 to 64 the cores 71 against 99 to 122. Through
-//! the window the cores take longer still - a colour over 8 x 16 145 us
-//! against the kernels' 83, a scale from 32 to 64 189 against 109, from
-//! 16 to 32 24 against 114. Shapes and tiles, which do not read what they
-//! land on, keep the rule for any memory.
+//! x 32 the cores 5; a scale from 64 to 128 pixels a side 127 and 1099,
+//! from 32 to 64 the cores 71 against 99 to 122; through the window a
+//! scale from 32 to 64 189 against 109, from 16 to 32 24 against 114.
+//! Shapes and tiles, which do not read what they land on, keep the rule
+//! for any memory.
 //!
 //! On the NucBox, by `C:test/Gpu KERNELS` - every job handed to the
 //! kernels, then by this rule, the cores' timed on plain memory and on
@@ -158,17 +166,17 @@ const least_pixels: u64 = 1 << 16;
 /// The fewest pixels a job that reads the device's own memory - a buffer
 /// it lays over, or a picture it lays - lands on for the board's own rule
 /// to hand it to the kernels, where the machine has that memory and
-/// through the memory window: about where the kernels, some 50 to 120 us
+/// through the memory window: about where the kernels, some 60 to 120 us
 /// a job however small, are sooner than the cores, which read that memory
 /// uncached - a picture laid, a colour, a scale. A colour takes the cores
-/// a steady time a pixel, 0.22 us where the machine has the memory and 1
-/// through the window, so its sizes are where that passes the kernels'
-/// job; a picture's and a scale's time goes by how many of its pixels
-/// cover partly, as only those read what they land on, so theirs are the
-/// sizes tried where the kernels were sooner.
+/// a steady time a pixel, 0.25 us where the machine has the memory and
+/// 1.0 to 1.3 through the window, so its sizes are where that passes the
+/// kernels' job; a picture's and a scale's time goes by how many of its
+/// pixels cover partly, as only those read what they land on, so theirs
+/// are the sizes tried where the kernels were sooner.
 const Reading = struct { machine: u64, window: u64 };
 const blend_reading: Reading = .{ .machine = 64 * 64, .window = 64 * 64 };
-const colour_reading: Reading = .{ .machine = 16 * 32, .window = 8 * 16 };
+const colour_reading: Reading = .{ .machine = 16 * 24, .window = 8 * 8 };
 const scale_reading: Reading = .{ .machine = 128 * 64, .window = 64 * 64 };
 
 // --- the kernels started --------------------------------------------------------------

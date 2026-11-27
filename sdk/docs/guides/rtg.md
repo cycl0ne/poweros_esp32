@@ -1968,12 +1968,12 @@ sooner than the cores. The rest the cores do sooner, often many times
 sooner, and it is refused. A job that reads a buffer of the device's
 own memory - a copy from it, a picture, a colour or a scale laid over
 it - is the engines' from fewer pixels, as the cores read that memory
-uncached: where the machine has it a copy of more than 12 KiB of its
-two rectangles, a picture over 64 x 64 pixels, a colour over 512 and a
-scale onto 8192; through the memory window a copy of more
-than 1 KiB, a picture over 64 x 64, a colour over 128 pixels and a
-scale onto 4096. A fill there, which the cores write gathered, stays by
-the caches. On the
+uncached: where the machine has it a copy of more than 8 KiB of its
+two rectangles, a picture over 64 x 64 pixels, a colour over 384 and a
+scale onto 8192; through the memory window a copy of more than 512
+bytes, a picture over 64 x 64, a colour over 64 pixels and a scale onto
+4096. A fill there, which the cores write gathered, stays by the caches.
+On the
 NucBox a picture laid over 64 x 64 pixels of a frame takes the kernels
 93 us and the cores 410, a copy of 64 x 64 from one the engine 100 and
 the cores 241. `RTGCTRL_AMD_ENGINE` hands the engines every
@@ -1998,11 +1998,11 @@ and tiles are drawn on two bytes a pixel or four; a picture or a shape
 that shares memory with the rectangle, a scale in which one pixel would
 be the mean of more than 4096 of the picture's, and sides of more than
 65536 pixels are refused.
-`C:test/Gpu BLITS` does 22 jobs on two buffers of 28 MiB handed to
+`C:test/Gpu BLITS` does 30 jobs on two buffers of 28 MiB handed to
 the board, each against graphics.library's on plain memory: on the
 NucBox every pixel is the same, a copy of 14 MiB between two buffers
 takes the engine 890 us and the cores 1227, a fill of 28 MiB 1234 and
-1289, a scroll by 16 rows 1689 and 1643. `C:test/Gpu KERNELS` draws 44
+1289, a scroll by 16 rows 1689 and 1643. `C:test/Gpu KERNELS` draws 49
 blends, colours, scales - laid by their coverage as `ScalePixelArray`
 lays them, and stored as a smooth `BitMapScale` stores them
 (`RTGPIXF_STORE`) - shapes and tiles through graphics.library into a
@@ -2026,14 +2026,18 @@ device's memory uncached, take 72862 and 203781 us for the picture and
 10551 and 41766 for the copy, and a fill, which they write gathered, 864
 and 3036 against the engine's 1243 and 2388. There the board's rule
 hands the engines the small jobs that read that memory as well, each
-the quicker side's at every size tried - but a colour over 16 x 16
-through the machine's place, which takes either about 55 us: a picture
-over 64 x 64 the kernels', 93 us against the cores' 410 through the
-machine's place, over 32 x 32 the cores', 5; a colour over 16 x 32 the
-kernels' through the machine's place, 84 us against 114, over 8 x 16
-the cores', 27, and the kernels' through the window, 83 against 145; a
-copy of 32 x 32 the cores' through the machine's place, 78 us against
-the engine's 83, and the engine's through the window, 87 against 587.
+the quicker side's at every size tried and the cores' where the two take
+as long, the colours and the copies tried on either side of where they
+cross: a picture over 64 x 64
+the kernels', 93 us against the cores' 410 through the machine's place,
+over 32 x 32 the cores', 5; a colour over 16 x 24 the kernels' through
+the machine's place, 70 to 91 us against 95, over 16 x 16 the cores', 63
+to 65 against 77 to 91, and through the window over 8 x 8 the kernels',
+64 to 91 against 82 to 104, over 8 x 4 the cores', 41 to 60 against 66
+to 90; a copy of 40 x 32 the engine's through the machine's place, 84
+to 91 us against the cores' 97 to 98, of 32 x 32 the cores', 89 against
+88 to 89, and through the window of 8 x 12 the engine's, 93 to 102
+against 134 to 141, of 8 x 8 the cores', 85 against 84 to 101.
 Two things a program does not see move these timings. The data
 fabric's clock (`GetGPUClock`), which the power manager moves between
 500 and 1960 MHz, carries the cores' reads and writes of memory and the

@@ -315,7 +315,10 @@
 //! Each job is done by the board on its two and by graphics.library on
 //! the plain two - fills of whole rows, of part of the rows and a small
 //! one; copies between the two, small ones of 256, 64, 32 and 16 pixels
-//! a side and four at once; moves within one buffer - clear of where it
+//! a side, of 32 rows of 64, 56, 48 and 40 pixels and of 16 rows of 12
+//! and of 8, and of 8 x 12 and 8 x 8 - on either side of the bytes from
+//! which the board takes a copy from the device's own memory - and four
+//! at once; moves within one buffer - clear of where it
 //! starts, of the buffer and of 64 x 64 pixels, scrolls by 16 rows up
 //! and down and by one row, more bands than the board cuts a move into,
 //! by 100 rows and 37 columns down and right and up and left, and by 16
@@ -396,7 +399,9 @@
 //! pixel's coverage none, all or its own in patches, laid at full
 //! strength, at half, covering fully at 200, as `rgba32` over part of the
 //! buffer and over smaller rectangles down to 16 x 16; a colour laid over
-//! part of it and over smaller ones down to 8 x 16; parts of the picture
+//! part of it and over smaller ones down to 8 x 4, on either side of the
+//! pixels from which the board takes one over the device's own memory;
+//! parts of the picture
 //! scaled smoothly up by 2 and by 1.5, to the same size, down by 2, by 3
 //! and by 64, narrower and taller, and from 128, 64, 32 and 16 pixels a
 //! side to twice that, laid by their
@@ -490,7 +495,7 @@ const graphics_library = sdk.graphics;
 const GraphicsBase = sdk.interface.graphics.GraphicsBase;
 
 pub const COMMAND_NAME = "Gpu";
-const VERSION_STRING = "\x00$VER: Gpu 1.38 (27.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Gpu 1.39 (27.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,SLEEP/K/N,RANGE/S,POINTER/S,MIRROR/S,OVERLAY/S,DIRECT/S,BANDS/S,VIDEO/S,GFX/S,DMA/S,GART/S,ENGINE/S,BLITS/S,COMPUTE/S,KERNELS/S,DEVICE/S,WINDOW/S,BLOCK/K/N,WATCHDOG/K/N,RESET/S,POWER/S";
@@ -3424,8 +3429,16 @@ const blit_jobs = [_]Blit{
     .{ .name = "copy between two", .kind = .between, .copies = &.{.{ .src_x = 3, .src_y = 5, .width = 2550, .height = 1430, .dest_x = 9, .dest_y = 1400 }} },
     .{ .name = "copy between two, small", .kind = .between, .copies = &.{.{ .src_x = 3, .src_y = 5, .width = 256, .height = 256, .dest_x = 9, .dest_y = 1400 }} },
     .{ .name = "copy between two, 64 x 64", .kind = .between, .copies = &.{.{ .src_x = 3, .src_y = 5, .width = 64, .height = 64, .dest_x = 9, .dest_y = 1400 }} },
+    .{ .name = "copy between two, 64 x 32", .kind = .between, .copies = &.{.{ .src_x = 3, .src_y = 5, .width = 64, .height = 32, .dest_x = 9, .dest_y = 1400 }} },
+    .{ .name = "copy between two, 56 x 32", .kind = .between, .copies = &.{.{ .src_x = 3, .src_y = 5, .width = 56, .height = 32, .dest_x = 9, .dest_y = 1400 }} },
+    .{ .name = "copy between two, 48 x 32", .kind = .between, .copies = &.{.{ .src_x = 3, .src_y = 5, .width = 48, .height = 32, .dest_x = 9, .dest_y = 1400 }} },
+    .{ .name = "copy between two, 40 x 32", .kind = .between, .copies = &.{.{ .src_x = 3, .src_y = 5, .width = 40, .height = 32, .dest_x = 9, .dest_y = 1400 }} },
     .{ .name = "copy between two, 32 x 32", .kind = .between, .copies = &.{.{ .src_x = 3, .src_y = 5, .width = 32, .height = 32, .dest_x = 9, .dest_y = 1400 }} },
     .{ .name = "copy between two, 16 x 16", .kind = .between, .copies = &.{.{ .src_x = 3, .src_y = 5, .width = 16, .height = 16, .dest_x = 9, .dest_y = 1400 }} },
+    .{ .name = "copy between two, 12 x 16", .kind = .between, .copies = &.{.{ .src_x = 3, .src_y = 5, .width = 12, .height = 16, .dest_x = 9, .dest_y = 1400 }} },
+    .{ .name = "copy between two, 8 x 16", .kind = .between, .copies = &.{.{ .src_x = 3, .src_y = 5, .width = 8, .height = 16, .dest_x = 9, .dest_y = 1400 }} },
+    .{ .name = "copy between two, 8 x 12", .kind = .between, .copies = &.{.{ .src_x = 3, .src_y = 5, .width = 8, .height = 12, .dest_x = 9, .dest_y = 1400 }} },
+    .{ .name = "copy between two, 8 x 8", .kind = .between, .copies = &.{.{ .src_x = 3, .src_y = 5, .width = 8, .height = 8, .dest_x = 9, .dest_y = 1400 }} },
     .{ .name = "four copies between two", .kind = .between, .copies = &blit_quarters },
     .{ .name = "move clear of itself", .kind = .within, .copies = &.{.{ .src_x = 0, .src_y = 0, .width = 2560, .height = 1430, .dest_x = 0, .dest_y = 1440 }} },
     .{ .name = "move 64 x 64 clear of itself", .kind = .within, .copies = &.{.{ .src_x = 40, .src_y = 30, .width = 64, .height = 64, .dest_x = 300, .dest_y = 500 }} },
@@ -3762,8 +3775,13 @@ const drawn_jobs = [_]Drawn{
     .{ .name = "colour 64 x 64", .kind = .tint, .pen = 0x8000_80FF, .area = .{ .x = 100, .y = 100, .width = 64, .height = 64 } },
     .{ .name = "colour 32 x 32", .kind = .tint, .pen = 0x8000_80FF, .area = .{ .x = 100, .y = 100, .width = 32, .height = 32 } },
     .{ .name = "colour 16 x 32", .kind = .tint, .pen = 0x8000_80FF, .area = .{ .x = 100, .y = 100, .width = 16, .height = 32 } },
+    .{ .name = "colour 16 x 24", .kind = .tint, .pen = 0x8000_80FF, .area = .{ .x = 100, .y = 100, .width = 16, .height = 24 } },
     .{ .name = "colour 16 x 16", .kind = .tint, .pen = 0x8000_80FF, .area = .{ .x = 100, .y = 100, .width = 16, .height = 16 } },
+    .{ .name = "colour 12 x 16", .kind = .tint, .pen = 0x8000_80FF, .area = .{ .x = 100, .y = 100, .width = 12, .height = 16 } },
     .{ .name = "colour 8 x 16", .kind = .tint, .pen = 0x8000_80FF, .area = .{ .x = 100, .y = 100, .width = 8, .height = 16 } },
+    .{ .name = "colour 8 x 12", .kind = .tint, .pen = 0x8000_80FF, .area = .{ .x = 100, .y = 100, .width = 8, .height = 12 } },
+    .{ .name = "colour 8 x 8", .kind = .tint, .pen = 0x8000_80FF, .area = .{ .x = 100, .y = 100, .width = 8, .height = 8 } },
+    .{ .name = "colour 8 x 4", .kind = .tint, .pen = 0x8000_80FF, .area = .{ .x = 100, .y = 100, .width = 8, .height = 4 } },
     .{ .name = "scale up 2x", .kind = .scale, .from = .{ .x = 0, .y = 0, .width = 1280, .height = 1440 }, .area = whole_buffer },
     .{ .name = "scale rgba32 up 2x", .kind = .scale, .format = .rgba32, .from = .{ .x = 0, .y = 0, .width = 1280, .height = 1440 }, .area = whole_buffer },
     .{ .name = "scale up 1.5x, odd", .kind = .scale, .from = .{ .x = 31, .y = 17, .width = 1700, .height = 1900 }, .area = .{ .x = 5, .y = 3, .width = 2550, .height = 2850 } },
