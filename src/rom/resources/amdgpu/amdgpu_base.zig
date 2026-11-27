@@ -49,6 +49,10 @@ pub const AMDGPUBase = extern struct {
     power: amdgpu.GPUBlock = .{},
     power_known: bool = false,
     mailbox_lock: exec.SignalSemaphore,
+    /// The decoders SetGPUPower has powered up since the machine
+    /// started, a bit each: a video decoder's at its instance, the JPEG
+    /// decoder's the top one.
+    powered_decoders: u32 = 0,
     /// The device's own memory as the memory hub places it: where it
     /// starts to the device and in the machine, and how long it is - all
     /// 0 where the hub is one whose registers are not known. What of it

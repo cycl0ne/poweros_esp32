@@ -295,6 +295,36 @@ test "the device's memory is handed out in pieces each address of which says the
     try tearDown(ab);
 }
 
+test "a decoder powered down before SetGPUPower has powered it up is left as it is" {
+    const ab = try setUp();
+    defer kexec.deinit();
+
+    // As the resource holds a device whose power manager's messages are
+    // known, the manager's last message answered.
+    var device: sdk.pci.PCIDevice = .{};
+    ab.device = &device;
+    var registers = [_]u32{0} ** 0x300;
+    registers[0x282] = 0xffff;
+    registers[0x29a] = 1;
+    ab.info.registers = @intFromPtr(&registers);
+    var manager: amdgpu.GPUBlock = .{ .major = 13, .minor = 0, .revision = 4, .count = 2 };
+    manager.addresses[1] = 0;
+    @import("power/_power.zig").take(ab, manager);
+    try testing.expect(ab.power_known);
+
+    // Nothing is sent, and the call says done.
+    try testing.expect(call(ab).SetGPUPower(amdgpu.GPUPOWER_JPEG, 0, false));
+    try testing.expectEqual(@as(u32, 0xffff), registers[0x282]);
+    try testing.expectEqual(@as(u32, 1), registers[0x29a]);
+    try testing.expectEqual(@as(u32, 0), ab.powered_decoders);
+    // A video decoder the device does not have is no decoder at all.
+    try testing.expect(!call(ab).SetGPUPower(amdgpu.GPUPOWER_VIDEO, 31, false));
+
+    ab.power_known = false;
+    ab.device = null;
+    try tearDown(ab);
+}
+
 test "a device's blocks are answered out of its table" {
     const ab = try setUp();
     defer kexec.deinit();

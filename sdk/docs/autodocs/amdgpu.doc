@@ -1331,6 +1331,9 @@ amdgpu.resource/WaitGPUDMA
    BEHAVIOR
 	One message through the manager's mailbox, under the mailbox's lock.
 	Powering up what is up, or down what is down, is done again and says
+	done - but a decoder is powered down only once this call has powered
+	it up since the machine started (since 1.19): before that it is left
+	as the machine's firmware left it, nothing is sent, and the call says
 	done. The block's clocks are the manager's to run once it is up. For
 	the graphics block the manager is told whether it may switch the
 	block off (its graphics-off state): up forbids it, and brings the
@@ -1353,6 +1356,12 @@ amdgpu.resource/WaitGPUDMA
 	runs nothing before StartGPUGraphics has started it; a driver that
 	reads its registers keeps it up meanwhile, since the registers of a
 	block switched off do not answer.
+
+	The manager of the NucBox (13.0.4), told to power its video decoder
+	down before anything had powered it up since the machine started,
+	answered nothing after - neither the JPEG decoder's message nor the
+	graphics block's - until the machine was reset. Once a decoder has
+	been powered up, powering it down again and again is answered.
 
    BUGS
 	None known.

@@ -19,7 +19,7 @@
 //!
 //!   Gpu TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,
 //!       SLEEP/K/N,RANGE/S,POINTER/S,MIRROR/S,OVERLAY/S,DIRECT/S,BANDS/S,VIDEO/S,GFX/S,DMA/S,GART/S,ENGINE/S,BLITS/S,COMPUTE/S,KERNELS/S,
-//!       DEVICE/S,WINDOW/S,BLOCK/K/N,WATCHDOG/K/N,RESET/S
+//!       DEVICE/S,WINDOW/S,BLOCK/K/N,WATCHDOG/K/N,RESET/S,POWER/S
 //!
 //! BIOS prints the device's video BIOS image (GetGPUBios): where it is
 //! and how long, its tables' header's version, the version of each of
@@ -241,6 +241,14 @@
 //! register of a block switched off can stop the machine: the watchdog
 //! is armed for it.
 //!
+//! POWER has the power manager power the video decoder and the JPEG
+//! decoder down before anything has powered them up since the machine
+//! started (SetGPUPower) - which sends nothing - then each up and down
+//! again, every step timed and the data fabric's clock asked for after
+//! it (GetGPUClock), which reads 0 only where the manager does not
+//! answer. Run it on a machine that has played no film since it
+//! started.
+//!
 //! GFX starts the graphics block: its firmware files are read from
 //! DEVS:firmware/amdgpu/, named for the blocks' versions as the device's
 //! table gives them - gc_11_0_1_pfp.bin, _me.bin, _mec.bin, _rlc.bin,
@@ -402,7 +410,7 @@
 //! weighs.
 //!
 //! Without BIOS, CLOCKS, DMCUB, CRC, EVENTS, AUX, EDID, CYCLE, MODES,
-//! SLEEP, RANGE, POINTER, MIRROR, OVERLAY, DIRECT, BANDS, VIDEO, GFX,
+//! SLEEP, RANGE, POINTER, MIRROR, OVERLAY, DIRECT, BANDS, VIDEO, POWER, GFX,
 //! DMA, GART, ENGINE, BLITS, COMPUTE, DUMP, FRAMES or FLIP the two files
 //! are read from
 //! DEVS:firmware/amdgpu/, named for the blocks that use them as the
@@ -461,10 +469,10 @@ const graphics_library = sdk.graphics;
 const GraphicsBase = sdk.interface.graphics.GraphicsBase;
 
 pub const COMMAND_NAME = "Gpu";
-const VERSION_STRING = "\x00$VER: Gpu 1.34 (27.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Gpu 1.35 (27.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,SLEEP/K/N,RANGE/S,POINTER/S,MIRROR/S,OVERLAY/S,DIRECT/S,BANDS/S,VIDEO/S,GFX/S,DMA/S,GART/S,ENGINE/S,BLITS/S,COMPUTE/S,KERNELS/S,DEVICE/S,WINDOW/S,BLOCK/K/N,WATCHDOG/K/N,RESET/S";
+const template = "TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,SLEEP/K/N,RANGE/S,POINTER/S,MIRROR/S,OVERLAY/S,DIRECT/S,BANDS/S,VIDEO/S,GFX/S,DMA/S,GART/S,ENGINE/S,BLITS/S,COMPUTE/S,KERNELS/S,DEVICE/S,WINDOW/S,BLOCK/K/N,WATCHDOG/K/N,RESET/S,POWER/S";
 const arg_toc = 0;
 const arg_firmware = 1;
 const arg_frames = 2;
@@ -510,7 +518,8 @@ const arg_window = 41;
 const arg_block = 42;
 const arg_watchdog = 43;
 const arg_reset = 44;
-const arg_count = 45;
+const arg_power = 45;
+const arg_count = 46;
 
 /// Where the files are.
 const directory = "DEVS:firmware/amdgpu/";
@@ -1469,6 +1478,35 @@ fn printClocks(dl: *DosBase, ab: *AMDGPUBase) void {
     _ = Printf(dl, "  the graphics block's clock %u MHz, the data fabric's %u MHz\n", .{
         ab.GetGPUClock(amdgpu.GPUCLOCK_GRAPHICS), ab.GetGPUClock(amdgpu.GPUCLOCK_FABRIC),
     });
+}
+
+/// The decoders powered down before anything powered them up, then each
+/// up and down again: each step timed, the manager asked for the data
+/// fabric's clock after it.
+fn powerCheck(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, millis: u32) i32 {
+    const wb = arm(sys, dl, millis) orelse return dos.RETURN_FAIL;
+    defer wb.DisarmWatchdog();
+    const Step = struct { part: u32, on: bool, what: [*:0]const u8 };
+    const steps = [_]Step{
+        .{ .part = amdgpu.GPUPOWER_VIDEO, .on = false, .what = "The video decoder, never powered up, powered down" },
+        .{ .part = amdgpu.GPUPOWER_JPEG, .on = false, .what = "The JPEG decoder, never powered up, powered down" },
+        .{ .part = amdgpu.GPUPOWER_VIDEO, .on = true, .what = "The video decoder powered up" },
+        .{ .part = amdgpu.GPUPOWER_VIDEO, .on = false, .what = "The video decoder powered down" },
+        .{ .part = amdgpu.GPUPOWER_VIDEO, .on = false, .what = "The video decoder powered down again" },
+        .{ .part = amdgpu.GPUPOWER_JPEG, .on = true, .what = "The JPEG decoder powered up" },
+        .{ .part = amdgpu.GPUPOWER_JPEG, .on = false, .what = "The JPEG decoder powered down" },
+    };
+    for (steps) |step| {
+        const began = sys.UptimeUs();
+        const done = ab.SetGPUPower(step.part, 0, step.on);
+        const took = sys.UptimeUs() - began;
+        wb.FeedWatchdog();
+        _ = Printf(dl, "%s: %s in %lu us; the data fabric's clock then %u MHz\n", .{
+            step.what, @as([*:0]const u8, if (done) "done" else "NOT done"), took, ab.GetGPUClock(amdgpu.GPUCLOCK_FABRIC),
+        });
+        if (!done) return dos.RETURN_ERROR;
+    }
+    return dos.RETURN_OK;
 }
 
 /// What GFX, DMA, GART, ENGINE, COMPUTE and COMPUTE RESET go on to once
@@ -3822,6 +3860,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     if (argv[arg_direct] != 0) return directCheck(sys, dl, ab, info, millis);
     if (argv[arg_bands] != 0) return bandsCheck(sys, dl, ab, info, millis);
     if (argv[arg_video] != 0) return videoCheck(sys, dl, ab, info, millis);
+    if (argv[arg_power] != 0) return powerCheck(sys, dl, ab, millis);
     const place: Place = if (argv[arg_window] != 0) .window else if (argv[arg_device] != 0) .device else .machine;
     if (argv[arg_blits] != 0) return blitsCheck(sys, dl, ab, info, millis, place);
     if (argv[arg_kernels] != 0) return kernelsCheck(sys, dl, ab, info, millis, place);
