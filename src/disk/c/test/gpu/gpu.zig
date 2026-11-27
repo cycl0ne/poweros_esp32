@@ -347,24 +347,25 @@
 //! to the board, and into the plain one, which it draws itself - and
 //! every pixel of the two is compared: a picture of the same size, each
 //! pixel's coverage none, all or its own in patches, laid at full
-//! strength, at half, covering fully at 200, as `rgba32` over part of
-//! the buffer and over smaller rectangles down to 64 x 64; a colour laid
-//! over part of it and over smaller ones; parts of the picture scaled
-//! smoothly up by 2 and by 1.5, to the same size, down by 2, by 3 and by
-//! 64, narrower and taller, and from 128 to 256 pixels a side; shapes
-//! from bits of the machine's memory in both colours, over the buffer
-//! and over 256 x 256, in ink alone over part of it from a bit within a
-//! byte, and with their colours swapped, of four bytes a pixel and of
-//! two; and tiles of 16 x 16 bits and of 13 x 7, the same ways. Whose the board's drawing was - the kernels'
-//! or, where the board does not take it, the cores' - is told by the jobs
-//! the compute engine's queue counts (GetGPUComputeState). Each is timed
+//! strength, at half, covering fully at 200, as `rgba32` over part of the
+//! buffer and over smaller rectangles down to 64 x 64; a colour laid over
+//! part of it and over smaller ones; parts of the picture scaled smoothly
+//! up by 2 and by 1.5, to the same size, down by 2, by 3 and by 64,
+//! narrower and taller, and from 128 to 256 pixels a side, laid by their
+//! coverage (ScalePixelArray), and up by 2 and down by 3 stored, each
+//! pixel replaced (BitMapScale); shapes from bits of the machine's memory
+//! in both colours, over the buffer and over 256 x 256, in ink alone over
+//! part of it from a bit within a byte, and with their colours swapped,
+//! of four bytes a pixel and of two; and tiles of 16 x 16 bits and of 13
+//! x 7, the same ways. Whose the board's drawing was - the kernels' or,
+//! where the board does not take it, the cores' - is told by the jobs the
+//! compute engine's queue counts (GetGPUComputeState). Each is timed
 //! beside graphics.library's on plain memory, each drawing begun with 64
 //! MiB of other memory read through, so that nothing it reads or writes
-//! is in the CPU's caches, as for a job larger than they are. It all
-//! runs twice: with
-//! every job the kernels can do handed to them (RTGCTRL_AMD_ENGINE,
-//! RTG_AMD_ENGINE_ALL), then by the board's own rule, which it is left
-//! with. The watchdog is armed for it.
+//! is in the CPU's caches, as for a job larger than they are. It all runs
+//! twice: with every job the kernels can do handed to them
+//! (RTGCTRL_AMD_ENGINE, RTG_AMD_ENGINE_ALL), then by the board's own
+//! rule, which it is left with. The watchdog is armed for it.
 //!
 //! Without BIOS, CLOCKS, DMCUB, CRC, EVENTS, AUX, EDID, CYCLE, MODES,
 //! SLEEP, RANGE, POINTER, MIRROR, OVERLAY, DIRECT, BANDS, VIDEO, GFX,
@@ -426,7 +427,7 @@ const graphics_library = sdk.graphics;
 const GraphicsBase = sdk.interface.graphics.GraphicsBase;
 
 pub const COMMAND_NAME = "Gpu";
-const VERSION_STRING = "\x00$VER: Gpu 1.29 (27.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Gpu 1.30 (27.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,SLEEP/K/N,RANGE/S,POINTER/S,MIRROR/S,OVERLAY/S,DIRECT/S,BANDS/S,VIDEO/S,GFX/S,DMA/S,GART/S,ENGINE/S,BLITS/S,COMPUTE/S,KERNELS/S,BLOCK/K/N,WATCHDOG/K/N";
@@ -2996,13 +2997,14 @@ const shape_bg = graphics_library.penRGB(0x12, 0xC4, 0x5D);
 /// picture laid over `area` from its pixel at `from`'s corner, at
 /// `alpha`, every pixel covering fully where `covering`
 /// (BlendBitMapPixels); `pen` laid over it (BlendBitMapRect); the part
-/// `from` of the picture scaled smoothly to it (ScalePixelArray); a shape
-/// from its bit at `from`'s corner, or a `tile_width` x `tile_height`
-/// tile, in `mode` (BltTemplate, BltPattern) - on four bytes a pixel, or
-/// on two where `halves`. The picture is of `format`.
+/// `from` of the picture scaled smoothly to it and laid
+/// (ScalePixelArray), or stored there (BitMapScale); a shape from its bit
+/// at `from`'s corner, or a `tile_width` x `tile_height` tile, in `mode`
+/// (BltTemplate, BltPattern) - on four bytes a pixel, or on two where
+/// `halves`. The picture is of `format`.
 const Drawn = struct {
     name: [*:0]const u8,
-    kind: enum { blend, tint, scale, shape, tile },
+    kind: enum { blend, tint, scale, stored, shape, tile },
     area: rtg.RtgRect,
     from: rtg.RtgRect = .{},
     halves: bool = false,
@@ -3040,6 +3042,8 @@ const drawn_jobs = [_]Drawn{
     .{ .name = "scale narrower, taller", .kind = .scale, .from = .{ .x = 0, .y = 0, .width = 2560, .height = 720 }, .area = .{ .x = 0, .y = 0, .width = 1000, .height = 2880 } },
     .{ .name = "scale 128 to 256", .kind = .scale, .from = .{ .x = 3, .y = 3, .width = 128, .height = 128 }, .area = small_square },
     .{ .name = "scale down 64x", .kind = .scale, .from = .{ .x = 0, .y = 0, .width = 2560, .height = 2880 }, .area = .{ .x = 10, .y = 10, .width = 40, .height = 45 } },
+    .{ .name = "stored scale up 2x", .kind = .stored, .from = .{ .x = 0, .y = 0, .width = 1280, .height = 1440 }, .area = whole_buffer },
+    .{ .name = "stored scale down 3x", .kind = .stored, .from = .{ .x = 0, .y = 0, .width = 2560, .height = 2880 }, .area = .{ .x = 7, .y = 9, .width = 853, .height = 960 } },
     .{ .name = "shape, both colours", .kind = .shape, .area = whole_buffer },
     .{ .name = "shape, ink only, part", .kind = .shape, .mode = graphics_library.DRMD_JAM1, .from = .{ .x = 5, .y = 3 }, .area = .{ .x = 13, .y = 7, .width = 2500, .height = 2850 } },
     .{ .name = "shape, colours swapped", .kind = .shape, .mode = graphics_library.DRMD_JAM2 | graphics_library.DRMD_INVERSVID, .area = whole_buffer },
@@ -3170,12 +3174,17 @@ const Drawing = struct {
                 return gb.BlendBitMapPixels(into, &area, &picture, job.alpha) == graphics_library.GERR_OK;
             },
             .tint => return gb.BlendBitMapRect(into, &area, job.pen) == graphics_library.GERR_OK,
-            .scale, .shape, .tile => {
+            .scale, .stored, .shape, .tile => {
                 const rp = drawing.port(job, on_board, &plain) orelse return false;
                 defer gb.FreeRastPort(rp);
                 const from = job.from;
+                const part: graphics_library.Rect = .{ .min_x = from.x, .min_y = from.y, .max_x = from.x + from.width, .max_y = from.y + from.height };
                 switch (job.kind) {
-                    .scale => gb.ScalePixelArray(rp, drawing.picture, blits_pitch, @intFromEnum(job.format), &.{ .min_x = from.x, .min_y = from.y, .max_x = from.x + from.width, .max_y = from.y + from.height }, &rect),
+                    .scale => gb.ScalePixelArray(rp, drawing.picture, blits_pitch, @intFromEnum(job.format), &part, &rect),
+                    .stored => {
+                        const source: rtg.Surface = .{ .pixels = drawing.picture, .width = blits_width, .height = blits_height, .pitch = blits_pitch, .size_bytes = blits_pitch * blits_height, .format = .bgra32 };
+                        gb.BitMapScale(&source, &part, rp, &rect);
+                    },
                     .shape => gb.BltTemplate(rp, drawing.shape, shape_pitch, from.x, from.y, &rect),
                     else => gb.BltPattern(rp, drawing.tile, tile_pitch, job.tile_width, job.tile_height, &rect),
                 }

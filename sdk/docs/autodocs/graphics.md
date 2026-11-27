@@ -1050,7 +1050,8 @@ instead where the picture is made larger, and the mean of all the
 source it covers where it is made smaller, every pixel by how much of
 it is covered - each way by itself. A smooth scale whose destination
 is one whole piece of a board's buffer goes to the board's engine
-(`rtg.ScalePixels`) where it takes the job. Between two surfaces of
+(`rtg.ScalePixels`, each pixel stored - `RTGPIXF_STORE`) where it
+takes the job. Between two surfaces of
 32 bits a pixel (`bgra32` or `rgba32`) a smooth scale is drawn by
 every core at once, on the machines whose displays read their picture
 out of RAM.
@@ -1075,10 +1076,7 @@ Nothing is allocated. The surface stays the caller's.
 
 **BUGS**
 
-A smooth scale the board's engine takes is laid over the destination
-by the source's coverage, as `rtg.ScalePixels` lays a picture, where
-the scale drawn here replaces each pixel with the source's: the two
-differ where the source's pixels do not cover fully.
+None known.
 
 **SEE ALSO**
 

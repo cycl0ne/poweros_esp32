@@ -56,7 +56,7 @@ Generated from the source by `./zig build autodoc`.
 - [RtgFormatBits](#rtgformatbits) - Says how many bits a pixel of a format takes.
 - [RtgRowBytes](#rtgrowbytes) - Says how many bytes a row of pixels of a format needs.
 - [SaveBoardSettings](#saveboardsettings) - Writes the settings file.
-- [ScalePixels](#scalepixels) - Scales a part of a picture of the caller's own to a rectangle's size with the board's engine, and lays it over the rectangle by its coverage.
+- [ScalePixels](#scalepixels) - Scales a part of a picture of the caller's own to a rectangle's size with the board's engine, and lays it over the rectangle by its coverage, or stores it there.
 - [SetBoardAudio](#setboardaudio) - Has a board's link carry a sound from now on, or none.
 - [SetBoardBrightness](#setboardbrightness) - Sets the brightness of a board's backlight.
 - [SetBoardOverlay](#setboardoverlay) - Gives a board a second image to lay over its picture, under the pointer, which from then on follows the pointer.
@@ -431,9 +431,10 @@ fn BlendPixels(_: *RtgBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, pixe
 **RESULT**
 
 `RTGERR_OK` - also when none of the rectangle is inside the buffer -
-`RTGERR_BAD_ARG` for a buffer with no pixels or no board, or a
-picture with none, `RTGERR_NOT_SUPPORTED` unless the engine takes the
-job, or what the driver answered.
+`RTGERR_BAD_ARG` for a buffer with no pixels or no board, a picture
+with none, or one with `RTGPIXF_STORE` in its flags, which ScalePixels
+alone reads, `RTGERR_NOT_SUPPORTED` unless the engine takes the job,
+or what the driver answered.
 
 **BEHAVIOR**
 
@@ -2902,7 +2903,7 @@ _ = rb.SaveBoardSettings(rtg.RTG_SETTINGS_ENVARC);
 
 ## ScalePixels
 
-Scales a part of a picture of the caller's own to a rectangle's size with the board's engine, and lays it over the rectangle by its coverage.
+Scales a part of a picture of the caller's own to a rectangle's size with the board's engine, and lays it over the rectangle by its coverage, or stores it there.
 
 **SYNOPSIS**
 
@@ -2918,8 +2919,9 @@ fn ScalePixels(_: *RtgBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, pixe
 
 - `dest` - the buffer, of a board.
 - `area` - where the picture lands and how big it becomes.
-- `pixels` - the picture: its first byte, pitch and format, and the
-  top left corner of the part taken.
+- `pixels` - the picture: its first byte, pitch and format, the top
+  left corner of the part taken, and in its flags `RTGPIXF_STORE` to
+  have it stored.
 - `width` - the part's width, in the picture's pixels.
 - `height` - its height.
 
@@ -2936,8 +2938,12 @@ Every pixel of the rectangle is the picture's colour at that place, as
 graphics.library's smooth scale takes it - where the picture is made
 larger, mixed from the pixels round it; where it is made smaller, the
 mean of all the pixels it covers, each by how much of it it covers -
-and is laid over the buffer by its coverage as `BlendPixels` lays it. The rectangle is not cut to the
-buffer: a cut would move the picture under it. Which formats and
+and is laid over the buffer by its coverage as `BlendPixels` lays it;
+with `RTGPIXF_STORE` (since 1.46) it replaces the buffer's pixel
+instead, its alpha with it, as a smooth `BitMapScale` draws, and a
+driver whose engine does not store answers `RTGERR_NOT_SUPPORTED`.
+The rectangle is not cut to the buffer: a cut would move the picture
+under it. Which formats and
 which ratios the engine takes is the driver's to say - an engine that
 scales in fixed steps takes only the sizes those steps reach exactly -
 and the library draws nothing itself.

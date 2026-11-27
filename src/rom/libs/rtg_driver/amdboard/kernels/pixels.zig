@@ -29,11 +29,13 @@
 /// The flags the kernels take beside a shape's (`transparent`, `invert`):
 /// an `rgba32` picture (else `bgra32`); every pixel of a picture covering
 /// fully, laid at the strength alone; a picture made smaller either way;
-/// pixels of two bytes (else four).
+/// pixels of two bytes (else four); a scaled pixel stored as it is, its
+/// alpha with it (else laid by its coverage).
 pub const rgba: u32 = 1 << 8;
 pub const whole: u32 = 1 << 9;
 pub const shrinks: u32 = 1 << 10;
 pub const halves: u32 = 1 << 11;
+pub const store: u32 = 1 << 12;
 
 /// x / 255 rounded down, for x up to 255 * 255 + 255.
 pub inline fn div255(x: u32) u32 {

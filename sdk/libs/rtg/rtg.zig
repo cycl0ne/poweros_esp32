@@ -59,6 +59,7 @@ pub const RtgRect = bitmaps.RtgRect;
 pub const RtgCopy = bitmaps.RtgCopy;
 pub const RtgPixels = bitmaps.RtgPixels;
 pub const RTGPIXF_OPAQUE = bitmaps.RTGPIXF_OPAQUE;
+pub const RTGPIXF_STORE = bitmaps.RTGPIXF_STORE;
 pub const RtgYuv = bitmaps.RtgYuv;
 pub const RTGYUV_NV12 = bitmaps.RTGYUV_NV12;
 pub const RTGYUV_I420 = bitmaps.RTGYUV_I420;

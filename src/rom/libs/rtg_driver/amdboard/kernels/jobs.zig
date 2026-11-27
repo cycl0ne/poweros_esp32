@@ -36,7 +36,8 @@ pub const BlendRect = extern struct { dest: u64, dest_pitch: u32, width: u32, he
 
 /// ScalePixels: a part of a picture, `src_width` x `src_height` pixels
 /// from `picture`, its top left, scaled to the rectangle's size and laid
-/// over it by its coverage. `flags`: `rgba`, `shrinks`.
+/// over it by its coverage, or stored. `flags`: `rgba`, `shrinks`,
+/// `store`.
 pub const ScalePixels = extern struct { dest: u64, picture: u64, dest_pitch: u32, picture_pitch: u32, width: u32, height: u32, src_width: u32, src_height: u32, flags: u32 };
 
 /// BlitTemplate: a shape in two colours, its bit `first_bit` of the row
@@ -113,7 +114,11 @@ pub inline fn scalePixels(comptime space: AddressSpace, job: ScalePixels, column
     const x = rowPixel(line, 2, column);
     if (x >= job.width) return;
     const pen = if (job.flags & pixels.shrinks != 0) meanAt(space, job, x, y) else mixedAt(space, job, x, y);
-    layAt(space, line + @as(u64, x) * 4, pen);
+    if (job.flags & pixels.store != 0) {
+        word(space, line + @as(u64, x) * 4).* = pen;
+    } else {
+        layAt(space, line + @as(u64, x) * 4, pen);
+    }
 }
 
 /// The four pixels round where pixel (x, y)'s middle falls, mixed.

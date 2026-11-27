@@ -568,9 +568,15 @@ test "pixels and a colour laid over a buffer: cut down, the picture moved with t
     // An alpha above the top is the top.
     _ = base(rb).BlendPixels(bitmap, &area, &pixels, 1000);
     try testing.expectEqual(@as(u32, 255), fk.log.last_alpha);
-    // No picture is a bad argument; nothing inside is no work.
+    // No picture is a bad argument, and so is one to store, which only
+    // a scale reads; nothing inside is no work.
     const none = rtg.RtgPixels{};
     try testing.expectEqual(rtg.errors.RTGERR_BAD_ARG, base(rb).BlendPixels(bitmap, &area, &none, 255));
+    var stored = pixels;
+    stored.flags = rtg.RTGPIXF_STORE;
+    const blended = fk.log.blends;
+    try testing.expectEqual(rtg.errors.RTGERR_BAD_ARG, base(rb).BlendPixels(bitmap, &area, &stored, 255));
+    try testing.expectEqual(blended, fk.log.blends);
     const blends = fk.log.blends;
     const outside = rtg.RtgRect{ .x = 100, .y = 0, .width = 4, .height = 1 };
     try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).BlendPixels(bitmap, &outside, &pixels, 255));
@@ -593,6 +599,11 @@ test "pixels and a colour laid over a buffer: cut down, the picture moved with t
     try testing.expectEqual(scales + 1, fk.log.scales);
     try testing.expectEqual(@as(u32, 4), fk.log.last_scale_width);
     try testing.expectEqual(@as(u32, 1), fk.log.last_scale_height);
+    try testing.expectEqual(@as(u8, 0), fk.log.last_pixels.flags);
+    // A picture to store goes to the driver as it is.
+    _ = base(rb).ScalePixels(bitmap, &inside, &stored, 4, 1);
+    try testing.expectEqual(scales + 2, fk.log.scales);
+    try testing.expectEqual(rtg.RTGPIXF_STORE, fk.log.last_pixels.flags);
 
     base(rb).FreeBitMap(bitmap);
     driverBase(rb).DeleteBoard(board);

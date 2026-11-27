@@ -256,7 +256,7 @@ fn smoothOn(gb: *kgraphics.GraphicsBase, surface: *rtg.Surface) !*graphics.RastP
     return library(gb).CreateRastPortTagList(&tags) orelse error.NoRastPort;
 }
 
-test "scale_pixels scales and lays a picture's part as a smooth ScalePixelArray does: larger, smaller, the same, and smaller one way only" {
+test "scale_pixels scales and lays a picture's part as a smooth ScalePixelArray does, and stores it as a smooth BitMapScale does: larger, smaller, the same, and smaller one way only" {
     const gb = try setUp();
     defer kexec.deinit();
     var scene: Scene = .{};
@@ -295,6 +295,26 @@ test "scale_pixels scales and lays a picture's part as a smooth ScalePixelArray 
                 return failed;
             };
         }
+    }
+    // Stored: BitMapScale between two surfaces of one format hands the
+    // engine its picture with RTGPIXF_STORE.
+    var source = rtg.Surface{ .pixels = @ptrCast(&picture.words), .width = Picture.width, .height = Picture.height, .pitch = Picture.pitch, .size_bytes = @sizeOf(@TypeOf(picture.words)), .format = .bgra32 };
+    for (cases) |case| {
+        seed += 1;
+        scene.paint(seed);
+        const area: rtg.RtgRect = .{ .x = Scene.area.x, .y = Scene.area.y, .width = case.to_width, .height = case.to_height };
+        const src_area: graphics.Rect = .{ .min_x = case.x, .min_y = case.y, .max_x = case.x + @as(i32, @intCast(case.width)), .max_y = case.y + @as(i32, @intCast(case.height)) };
+        const dest_area: graphics.Rect = .{ .min_x = area.x, .min_y = area.y, .max_x = area.x + area.width, .max_y = area.y + area.height };
+        library(gb).BitMapScale(&source, &src_area, rp, &dest_area);
+        const described = picture.pixels(.bgra32, rtg.RTGPIXF_STORE, case.x, case.y);
+        const ours = Scene.bitmap(&scene.kernel, .bgra32);
+        const job = kernels.scalePixelsJob(&ours, &area, &described, case.width, case.height, scene.first(4), picture.at(case.x, case.y));
+        try testing.expect(job.flags & @import("pixels.zig").store != 0);
+        scene.run(jobs.scalePixels, job);
+        scene.expectSame(4) catch |failed| {
+            std.debug.print("stored, {d}x{d} at {d},{d} to {d}x{d}\n", .{ case.width, case.height, case.x, case.y, case.to_width, case.to_height });
+            return failed;
+        };
     }
     library(gb).FreeRastPort(rp);
     try tearDown(gb);

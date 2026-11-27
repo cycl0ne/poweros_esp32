@@ -6236,6 +6236,38 @@ test "BlendBitMapRect: a colour by its alpha - nothing, a shade, all of it" {
     rbi.FreeBitMap(display);
 }
 
+test "a smooth scale on a board's buffer: BitMapScale hands the engine its picture to store, ScalePixelArray its picture to lay" {
+    const gb = try setUp();
+    defer kexec.deinit();
+
+    const rb = kernelRtg(gb);
+    const rbi: *sdk.interface.rtg.RtgBase = @ptrCast(rb);
+    const state = fake.add(rb.sys_base, rbi) orelse return error.NoDriver;
+    const board = fake.makeBoard(state) orelse return error.NoBoard;
+    const display = rbi.AllocBitMap(board, 32, 16, @intFromEnum(rtg.bitmaps.PixelFormat.bgra32), 0) orelse return error.NoBitMap;
+    const tags = [_]TagItem{ .{ .tag = graphics.RPTAG_BitMap, .data = @intFromPtr(display) }, .{ .tag = graphics.RPTAG_Smooth, .data = 1 }, .{} };
+    const rp = base(gb).CreateRastPortTagList(&tags) orelse return error.NoRastPort;
+    var picture: [8 * 4]u32 = @splat(0x8040_C020);
+    var source = rtg.Surface{ .pixels = @ptrCast(&picture), .width = 8, .height = 4, .pitch = 8 * 4, .size_bytes = @sizeOf(@TypeOf(picture)), .format = .bgra32 };
+    const src = graphics.Rect{ .max_x = 8, .max_y = 4 };
+    const dest = graphics.Rect{ .max_x = 32, .max_y = 16 };
+
+    // The fake board refuses every scale, and the library draws it: the
+    // stored pixel, alpha and all, or the pixel laid by its coverage.
+    const scales = state.log.scales;
+    base(gb).BitMapScale(&source, &src, rp, &dest);
+    try testing.expectEqual(scales + 1, state.log.scales);
+    try testing.expectEqual(rtg.RTGPIXF_STORE, state.log.last_pixels.flags);
+    try testing.expectEqual(@as(u32, 0x8040_C020), @as([*]const u32, @ptrCast(@alignCast(display.pixels.?)))[0]);
+    base(gb).ScalePixelArray(rp, @ptrCast(&picture), 8 * 4, @intFromEnum(rtg.bitmaps.PixelFormat.bgra32), &src, &dest);
+    try testing.expectEqual(scales + 2, state.log.scales);
+    try testing.expectEqual(@as(u8, 0), state.log.last_pixels.flags);
+    try testing.expectEqual(drawing.over(0x8040_C020, 0x8040_C020), @as([*]const u32, @ptrCast(@alignCast(display.pixels.?)))[0]);
+
+    base(gb).FreeRastPort(rp);
+    rbi.FreeBitMap(display);
+}
+
 /// A word of 32 bits with its bytes 0 and 2 swapped: `bgra32` as
 /// `rgba32`, or back.
 fn redBlueSwapped(pen: u32) u32 {

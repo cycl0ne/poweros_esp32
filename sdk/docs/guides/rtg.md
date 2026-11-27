@@ -1984,23 +1984,26 @@ pixels and a buffer in the device's memory window are refused.
 the board, each against graphics.library's on plain memory: on the
 NucBox every pixel is the same, a copy of 14 MiB between two buffers
 takes the engine 890 us and the cores 1227, a fill of 28 MiB 1234 and
-1289, a scroll by 16 rows 1689 and 1643. `C:test/Gpu KERNELS` draws 32
-blends, colours, scales, shapes and tiles through graphics.library into
-a buffer of 28 MiB handed to the board and into one of plain memory,
-every job given to the kernels and then by the board's own rule, each
-drawing begun with nothing it touches in the CPU's caches: on the NucBox
-every pixel is the same, a picture laid over 2560 x 2880 pixels takes
-the kernels 2283 to 2331 us and the cores 2763 to 2906, over 1024 x 1024
-450 to 463 and 559 to 561, a colour over 1024 x 1024 333 and 553 to 558,
-a picture scaled up twice to the whole buffer 3408 to 3414 and 6951 to
-7056, from 128 to 256 pixels a side 145 and 198, a shape in both colours
-over the whole buffer 1480 to 1487 and 1793 to 2047, a tile 1150 to 1168
-and 1678 to 1915; over 64 x 64 a picture takes the kernels 88 to 100 us
-and the cores 14 to 19. The block stays powered while the board runs,
-its clocks stopped while it is idle - it is never let switch off, as on
-the NucBox it does not come back - which costs the video decoder about a
-fifth of its speed after its first run in a boot: a film of 502 frames
-the first run decodes in 248 ms takes every later one 300 to 303.
+1289, a scroll by 16 rows 1689 and 1643. `C:test/Gpu KERNELS` draws 34
+blends, colours, scales - laid by their coverage as `ScalePixelArray`
+lays them, and stored as a smooth `BitMapScale` stores them
+(`RTGPIXF_STORE`) - shapes and tiles through graphics.library into a
+buffer of 28 MiB handed to the board and into one of plain memory, every
+job given to the kernels and then by the board's own rule, each drawing
+begun with nothing it touches in the CPU's caches: on the NucBox every
+pixel is the same, a picture laid over 2560 x 2880 pixels takes the
+kernels 2283 to 2331 us and the cores 2763 to 2906, over 1024 x 1024 450
+to 463 and 559 to 561, a colour over 1024 x 1024 333 and 553 to 558, a
+picture scaled up twice to the whole buffer 3408 to 3414 and 6951 to
+7056, stored 3144 to 3145 and 6087 to 6119, from 128 to 256 pixels a
+side 145 and 198, a shape in both colours over the whole buffer 1480 to
+1487 and 1793 to 2047, a tile 1150 to 1168 and 1678 to 1915; over 64 x
+64 a picture takes the kernels 88 to 100 us and the cores 14 to 19. The
+block stays powered while the board runs, its clocks stopped while it is
+idle - it is never let switch off, as on the NucBox it does not come
+back - which costs the video decoder about a fifth of its speed after
+its first run in a boot: a film of 502 frames the first run decodes in
+248 ms takes every later one 300 to 303.
 
 **Video layers.** On the VisionFive 2 the layer is the DC8200's first
 overlay: NV12 and I420, BT.601 and BT.709, video's range and the whole

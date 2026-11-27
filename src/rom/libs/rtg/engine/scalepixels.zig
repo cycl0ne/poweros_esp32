@@ -11,7 +11,7 @@ const err = rtg.errors;
 
 /// Scales a part of a picture of the caller's own to a rectangle's size
 /// with the board's engine, and lays it over the rectangle by its
-/// coverage.
+/// coverage, or stores it there.
 ///
 /// SYNOPSIS:
 /// ```zig
@@ -23,8 +23,9 @@ const err = rtg.errors;
 /// INPUTS:
 /// - `dest` - the buffer, of a board.
 /// - `area` - where the picture lands and how big it becomes.
-/// - `pixels` - the picture: its first byte, pitch and format, and the
-///   top left corner of the part taken.
+/// - `pixels` - the picture: its first byte, pitch and format, the top
+///   left corner of the part taken, and in its flags `RTGPIXF_STORE` to
+///   have it stored.
 /// - `width` - the part's width, in the picture's pixels.
 /// - `height` - its height.
 ///
@@ -39,8 +40,12 @@ const err = rtg.errors;
 /// graphics.library's smooth scale takes it - where the picture is made
 /// larger, mixed from the pixels round it; where it is made smaller, the
 /// mean of all the pixels it covers, each by how much of it it covers -
-/// and is laid over the buffer by its coverage as `BlendPixels` lays it. The rectangle is not cut to the
-/// buffer: a cut would move the picture under it. Which formats and
+/// and is laid over the buffer by its coverage as `BlendPixels` lays it;
+/// with `RTGPIXF_STORE` (since 1.46) it replaces the buffer's pixel
+/// instead, its alpha with it, as a smooth `BitMapScale` draws, and a
+/// driver whose engine does not store answers `RTGERR_NOT_SUPPORTED`.
+/// The rectangle is not cut to the buffer: a cut would move the picture
+/// under it. Which formats and
 /// which ratios the engine takes is the driver's to say - an engine that
 /// scales in fixed steps takes only the sizes those steps reach exactly -
 /// and the library draws nothing itself.

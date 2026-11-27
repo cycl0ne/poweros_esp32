@@ -154,8 +154,11 @@ pub const LIBRARY_VERSION = 1;
 /// 44: GetMonitorControl and SetMonitorControl: a monitor's own controls
 /// - its brightness - asked for and set over its DDC by DDC/CI, the bus
 /// reached through the driver's hook, for every driver.
-pub const LIBRARY_REVISION = 45;
-const BUILD_DATE = "26.11.2026";
+/// 46: ScalePixels hands the driver a picture to store (RTGPIXF_STORE),
+/// each pixel replacing the buffer's, its alpha with it; BlendPixels
+/// refuses one.
+pub const LIBRARY_REVISION = 46;
+const BUILD_DATE = "27.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++

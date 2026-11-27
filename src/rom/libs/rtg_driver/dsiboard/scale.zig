@@ -45,6 +45,8 @@ const largest_sixteenths = 256 * 16 - 1;
 /// `engine.fill`.
 pub fn scalePixels(engine: *Engine, sys: *ExecBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, pixels: *const rtg.RtgPixels, width: u32, height: u32, watched: bool) i32 {
     if (!engine.ready or !engine_file.lined(dest)) return err.RTGERR_NOT_SUPPORTED;
+    // The blend unit lays what the scaler made; it stores nothing.
+    if (pixels.flags & rtg.RTGPIXF_STORE != 0) return err.RTGERR_NOT_SUPPORTED;
     const out_width: u32 = @intCast(area.width);
     const out_height: u32 = @intCast(area.height);
     if (out_width * 16 % width != 0 or out_height * 16 % height != 0) return err.RTGERR_NOT_SUPPORTED;

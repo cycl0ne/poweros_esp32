@@ -45,7 +45,8 @@ const pixelBytes = _blit.pixelBytes;
 /// source it covers where it is made smaller, every pixel by how much of
 /// it is covered - each way by itself. A smooth scale whose destination
 /// is one whole piece of a board's buffer goes to the board's engine
-/// (`rtg.ScalePixels`) where it takes the job. Between two surfaces of
+/// (`rtg.ScalePixels`, each pixel stored - `RTGPIXF_STORE`) where it
+/// takes the job. Between two surfaces of
 /// 32 bits a pixel (`bgra32` or `rgba32`) a smooth scale is drawn by
 /// every core at once, on the machines whose displays read their picture
 /// out of RAM.
@@ -67,10 +68,7 @@ const pixelBytes = _blit.pixelBytes;
 /// Nothing is allocated. The surface stays the caller's.
 ///
 /// BUGS:
-/// A smooth scale the board's engine takes is laid over the destination
-/// by the source's coverage, as `rtg.ScalePixels` lays a picture, where
-/// the scale drawn here replaces each pixel with the source's: the two
-/// differ where the source's pixels do not cover fully.
+/// None known.
 ///
 /// SEE ALSO:
 /// `BltBitMapRastPort`
@@ -104,7 +102,7 @@ pub fn BitMapScale(gb: *GraphicsBase, src: *const rtg.Surface, src_area: *const 
     const dest_h = dest_area.height();
 
     if (src.pixels) |pixels| {
-        const described = rtg.RtgPixels{ .pixels = pixels, .pitch = src.pitch, .format = src.format, .x = from.min_x, .y = from.min_y };
+        const described = rtg.RtgPixels{ .pixels = pixels, .pitch = src.pitch, .format = src.format, .flags = rtg.RTGPIXF_STORE, .x = from.min_x, .y = from.min_y };
         if (_blit.scaleByEngine(gb, dest, &described, from, dest_area.*)) {
             drawing.handOn(gb, dest, dest_area.*);
             return;

@@ -114,9 +114,11 @@ pub const LIBRARY_VERSION = 0;
 /// display is first asked for. 55: a font on the list keeps the texts
 /// last laid out in it, and a text it has is not shaped again. 56: a
 /// smooth scale of an `rgba32` picture, or on to an `rgba32` surface, is
-/// drawn by every core as one of `bgra32` is. The version stays 0 until
-/// there is something to demand of it.
-pub const LIBRARY_REVISION = 56;
+/// drawn by every core as one of `bgra32` is. 57: a smooth `BitMapScale`
+/// a board's engine takes is stored by it (`RTGPIXF_STORE`), each pixel
+/// replaced, as the library draws it. The version stays 0 until there is
+/// something to demand of it.
+pub const LIBRARY_REVISION = 57;
 
 /// dd.mm.yyyy, the form every module's `$VER:` string uses so that
 /// `Version` reads them all the same way.

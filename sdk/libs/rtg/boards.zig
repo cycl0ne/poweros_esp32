@@ -769,8 +769,10 @@ pub const RtgEngineOps = extern struct {
     blend_rect: ?*const fn (*RtgBoard, *RtgBitMap, *const bitmaps.RtgRect, u32) callconv(.c) i32 = null,
     /// Scale the pixels' part of the given width and height to the
     /// rectangle's size, mixing neighbouring pixels, and lay the result
-    /// over it by its coverage. The rectangle lies wholly inside the
-    /// buffer.
+    /// over it by its coverage - or, where the pixels' flags hold
+    /// `RTGPIXF_STORE`, put each pixel down as it is, its alpha with it,
+    /// or answer RTGERR_NOT_SUPPORTED. The rectangle lies wholly inside
+    /// the buffer.
     scale_pixels: ?*const fn (*RtgBoard, *RtgBitMap, *const bitmaps.RtgRect, *const bitmaps.RtgPixels, u32, u32) callconv(.c) i32 = null,
 };
 

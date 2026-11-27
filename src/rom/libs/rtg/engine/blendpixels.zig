@@ -33,9 +33,10 @@ const err = rtg.errors;
 ///
 /// RESULT:
 /// `RTGERR_OK` - also when none of the rectangle is inside the buffer -
-/// `RTGERR_BAD_ARG` for a buffer with no pixels or no board, or a
-/// picture with none, `RTGERR_NOT_SUPPORTED` unless the engine takes the
-/// job, or what the driver answered.
+/// `RTGERR_BAD_ARG` for a buffer with no pixels or no board, a picture
+/// with none, or one with `RTGPIXF_STORE` in its flags, which ScalePixels
+/// alone reads, `RTGERR_NOT_SUPPORTED` unless the engine takes the job,
+/// or what the driver answered.
 ///
 /// BEHAVIOR:
 /// Each pixel is mixed with the one under it by its coverage: fully
@@ -74,7 +75,7 @@ const err = rtg.errors;
 /// _ = rb.BlendPixels(buffer, &.{ .x = 10, .y = 10, .width = 64, .height = 64 }, &picture, 255);
 /// ```
 pub fn BlendPixels(_: *RtgBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, pixels: *const rtg.RtgPixels, alpha: u32) i32 {
-    if (!drawable(dest) or pixels.pixels == null) return err.RTGERR_BAD_ARG;
+    if (!drawable(dest) or pixels.pixels == null or pixels.flags & rtg.RTGPIXF_STORE != 0) return err.RTGERR_BAD_ARG;
     const board = boardOf(dest) orelse return err.RTGERR_BAD_ARG;
     const cut = clip(dest, area) orelse return err.RTGERR_OK;
     const ops = board.ops orelse return err.RTGERR_NOT_SUPPORTED;

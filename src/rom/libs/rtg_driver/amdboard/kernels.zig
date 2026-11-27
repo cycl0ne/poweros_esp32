@@ -58,22 +58,23 @@
 //!
 //! **A job** is one dispatch over the rectangle, a thread a pixel in
 //! groups of 64 along a row, each group on a span of 64 pixels of the
-//! buffer's memory (`kernels/jobs.zig`), so that two groups of a row never
-//! write parts of one cache line - a row of groups for each row, as many
-//! as the spans a row can reach into: pixels laid over a `bgra32` buffer from a
-//! picture of `bgra32` or `rgba32`, at a strength or covering fully
-//! (`RTGPIXF_OPAQUE`); a colour laid over one; a part of such a picture
-//! scaled into one and laid over it by its coverage - each pixel mixed
-//! from the four round its place, or, made smaller either way, the mean
-//! of all the pixels it covers; a shape or a tile in two colours on a
-//! buffer of two bytes a pixel or of four, a clear bit leaving its pixel
-//! alone where the shape is transparent. Pixels of four bytes lie on four
-//! bytes and their rows' lengths are whole four bytes, of two bytes on
-//! two, and a picture's sides are at most `most_side`. A picture or a
-//! shape that shares memory with the rectangle it lands on is refused -
-//! its threads would read what others write - and so is a scale in which
-//! one pixel would be the mean of more than `most_covered` of the
-//! picture's, which one thread works through alone.
+//! buffer's memory (`kernels/jobs.zig`), so that two groups of a row
+//! never write parts of one cache line - a row of groups for each row, as
+//! many as the spans a row can reach into: pixels laid over a `bgra32`
+//! buffer from a picture of `bgra32` or `rgba32`, at a strength or
+//! covering fully (`RTGPIXF_OPAQUE`); a colour laid over one; a part of
+//! such a picture scaled into one and laid over it by its coverage, or
+//! stored there, alpha and all (`RTGPIXF_STORE`) - each pixel mixed from
+//! the four round its place, or, made smaller either way, the mean of all
+//! the pixels it covers; a shape or a tile in two colours on a buffer of
+//! two bytes a pixel or of four, a clear bit leaving its pixel alone
+//! where the shape is transparent. Pixels of four bytes lie on four bytes
+//! and their rows' lengths are whole four bytes, of two bytes on two, and
+//! a picture's sides are at most `most_side`. A picture or a shape that
+//! shares memory with the rectangle it lands on is refused - its threads
+//! would read what others write - and so is a scale in which one pixel
+//! would be the mean of more than `most_covered` of the picture's, which
+//! one thread works through alone.
 //!
 //! **Waiting.** As the DMA engine's: the job is sent and waited for
 //! (WaitGPUCompute), the task asleep meanwhile; one not done within a
@@ -271,6 +272,7 @@ pub fn scalePixelsJob(dest: *const rtg.RtgBitMap, area: *const rtg.RtgRect, pict
     const height: u32 = @intCast(area.height);
     const rgba = picture.format == .rgba32;
     const shrinks = src_width > width or src_height > height;
+    const store = picture.flags & rtg.RTGPIXF_STORE != 0;
     return .{
         .dest = dest_at,
         .picture = picture_at,
@@ -280,7 +282,7 @@ pub fn scalePixelsJob(dest: *const rtg.RtgBitMap, area: *const rtg.RtgRect, pict
         .height = height,
         .src_width = src_width,
         .src_height = src_height,
-        .flags = (if (rgba) pixels.rgba else 0) | (if (shrinks) pixels.shrinks else 0),
+        .flags = (if (rgba) pixels.rgba else 0) | (if (shrinks) pixels.shrinks else 0) | (if (store) pixels.store else 0),
     };
 }
 

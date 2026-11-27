@@ -175,6 +175,14 @@ pub const RtgPixels = extern struct {
 /// 1.8; a driver from before reads the coverage.
 pub const RTGPIXF_OPAQUE: u8 = 1;
 
+/// `RtgPixels.flags`, read by ScalePixels alone: each pixel of the
+/// rectangle replaced by the picture's colour at that place, its alpha
+/// with it, rather than laid over the rectangle by its coverage - as a
+/// smooth BitMapScale draws. Since rtg 1.46: a driver whose engine does
+/// not store it answers RTGERR_NOT_SUPPORTED, and BlendPixels answers
+/// RTGERR_BAD_ARG for it.
+pub const RTGPIXF_STORE: u8 = 2;
+
 /// A picture in YUV, as a video decoder hands it out: a plane of
 /// brightness (luma, Y) a sample a pixel, and the colour (chroma, Cb and
 /// Cr) at half the size each way - one Cb and one Cr for each two by two
