@@ -22,23 +22,58 @@
 //! rows start part way into a span took the kernels up to two thirds
 //! longer. A row takes as many groups as the spans its pixels can reach
 //! into.
+//!
+//! A job that lays what it lands on - a picture, a colour, a scale laid -
+//! would lay it twice where it ran twice, so its threads go through
+//! `layOnce`: the job names its marks, a byte for each wave of 32 threads
+//! of its groups (`wavesAcross` of them for each row), and its
+//! generation, 1 to 255, which none of them holds as it is sent. A wave
+//! reads its mark as it starts; where it holds the job's generation, the
+//! wave laid its pixels in a run of the job before - one the queue's
+//! reset gave up, or wrote again whole - and each of its threads writes
+//! its pixel back as it reads it, which leaves it as that run laid it.
+//! Its threads write the generation into the mark once the wave's pixels
+//! are written, the mark's store issued after the pixels': a mark that
+//! holds the generation is a wave's pixels laid. The queue's reset lets
+//! the waves on the engine finish before it gives a job up
+//! (ResetGPUCompute), 100 ms at most, so only a wave still running then -
+//! a kernel's that spins, not one of these, of some microseconds - is
+//! ended part way; one ended between the two stores would lay its pixels
+//! again. A stored scale, a
+//! job of the same kernel, sets its marks and stores its pixels whatever
+//! they hold; a shape and a tile write the same pixels however often they
+//! run, and take no marks.
 
 const AddressSpace = @import("std").builtin.AddressSpace;
 const pixels = @import("pixels.zig");
 
+/// The threads of a group, along a row, and of a wave, as the kernels are
+/// built for the engine: a group is two waves.
+pub const group: u32 = 64;
+pub const wave: u32 = 32;
+
+/// The waves along a row of a job `width` pixels wide - a job's marks
+/// have that many bytes for each of its rows: two for each of the row's
+/// groups, as many as the spans of 64 pixels the row can reach into.
+pub inline fn wavesAcross(width: u32) u32 {
+    return (width + 2 * group - 2) / group * (group / wave);
+}
+
 /// BlendPixels: a picture laid over the rectangle, each pixel by its
 /// coverage at `alpha`, 1 to 255; `picture` is its pixel that lands on
-/// the rectangle's top left. `flags`: `rgba`, `whole`.
-pub const BlendPixels = extern struct { dest: u64, picture: u64, dest_pitch: u32, picture_pitch: u32, width: u32, height: u32, alpha: u32, flags: u32 };
+/// the rectangle's top left, `marks` and `generation` the job's marks.
+/// `flags`: `rgba`, `whole`.
+pub const BlendPixels = extern struct { dest: u64, picture: u64, marks: u64, dest_pitch: u32, picture_pitch: u32, width: u32, height: u32, alpha: u32, flags: u32, generation: u32 };
 
-/// BlendRect: `pen` laid over the rectangle by its coverage.
-pub const BlendRect = extern struct { dest: u64, dest_pitch: u32, width: u32, height: u32, pen: u32 };
+/// BlendRect: `pen` laid over the rectangle by its coverage; `marks` and
+/// `generation` the job's marks.
+pub const BlendRect = extern struct { dest: u64, marks: u64, dest_pitch: u32, width: u32, height: u32, pen: u32, generation: u32 };
 
 /// ScalePixels: a part of a picture, `src_width` x `src_height` pixels
 /// from `picture`, its top left, scaled to the rectangle's size and laid
-/// over it by its coverage, or stored. `flags`: `rgba`, `shrinks`,
-/// `store`.
-pub const ScalePixels = extern struct { dest: u64, picture: u64, dest_pitch: u32, picture_pitch: u32, width: u32, height: u32, src_width: u32, src_height: u32, flags: u32 };
+/// over it by its coverage, or stored; `marks` and `generation` the job's
+/// marks. `flags`: `rgba`, `shrinks`, `store`.
+pub const ScalePixels = extern struct { dest: u64, picture: u64, marks: u64, dest_pitch: u32, picture_pitch: u32, width: u32, height: u32, src_width: u32, src_height: u32, flags: u32, generation: u32 };
 
 /// BlitTemplate: a shape in two colours, its bit `first_bit` of the row
 /// at `bits` landing on the rectangle's top left, a row of bits for each
@@ -75,6 +110,44 @@ inline fn byte(comptime space: AddressSpace, address: u64) *addrspace(space) con
     return @ptrFromInt(address);
 }
 
+/// Where the mark of the wave of the thread in `column` of row `y`'s
+/// groups of `job` is: the waves' marks one after another, along the
+/// job's rows.
+pub inline fn markAt(job: anytype, column: u32, y: u32) u64 {
+    return job.marks + y * wavesAcross(job.width) + column / wave;
+}
+
+/// The mark of the wave of the thread in `column` of row `y`'s groups of
+/// `job`.
+pub inline fn markOf(comptime space: AddressSpace, job: anytype, column: u32, y: u32) *addrspace(space) u8 {
+    return @ptrFromInt(markAt(job, column, y));
+}
+
+/// Whether a wave's mark `own` says it laid its pixels in a run of `job`
+/// before: it holds the job's generation.
+pub inline fn laidBefore(own: anytype, job: anytype) bool {
+    return own.* == @as(u8, @truncate(job.generation));
+}
+
+/// A wave's mark `own` set, the job's generation written into it - by
+/// each of its threads alike.
+pub inline fn markLaid(own: anytype, job: anytype) void {
+    own.* = @truncate(job.generation);
+}
+
+/// The thread in `column` of row `y`'s groups of a job that lays what it
+/// lands on: `work` - blendPixels, blendRect or scalePixels - told
+/// whether its wave laid its pixels before, then the wave's mark set, the
+/// store after the pixel's. The wave's threads run in step, so each reads
+/// the mark before any writes it. A thread of a row past the job's
+/// touches neither.
+pub inline fn layOnce(comptime space: AddressSpace, comptime work: anytype, job: anytype, column: u32, y: u32) void {
+    if (y >= job.height) return;
+    const own = markOf(space, job, column, y);
+    work(space, job, column, y, laidBefore(own, job));
+    markLaid(own, job);
+}
+
 /// A picture's pixel as a pen.
 inline fn penAt(comptime space: AddressSpace, address: u64, flags: u32) u32 {
     const value = word(space, address).*;
@@ -82,33 +155,42 @@ inline fn penAt(comptime space: AddressSpace, address: u64, flags: u32) u32 {
 }
 
 /// `pen` laid over the `bgra32` pixel at `address` by its coverage; the
-/// pixel is not touched where the pen covers none of it.
-inline fn layAt(comptime space: AddressSpace, address: u64, pen: u32) void {
+/// pixel is not touched where the pen covers none of it. Where `laid` -
+/// the pixel laid in a run of the job before - one the pen covers in
+/// part is written back as it is read: read either way, so that the
+/// read goes out beside the mark's rather than after it. One it covers
+/// fully is the pen either way.
+inline fn layAt(comptime space: AddressSpace, address: u64, pen: u32, laid: bool) void {
     const coverage = pen >> 24;
     if (coverage == 0) return;
     const to = word(space, address);
-    to.* = if (coverage == 0xFF) pen else pixels.over(pen, to.*);
+    if (coverage == 0xFF) {
+        to.* = pen;
+        return;
+    }
+    const under = to.*;
+    to.* = if (laid) under else pixels.over(pen, under);
 }
 
-pub inline fn blendPixels(comptime space: AddressSpace, job: BlendPixels, column: u32, y: u32) void {
+pub inline fn blendPixels(comptime space: AddressSpace, job: BlendPixels, column: u32, y: u32, laid: bool) void {
     if (y >= job.height) return;
     const line = job.dest + @as(u64, y) * job.dest_pitch;
     const x = rowPixel(line, 2, column);
     if (x >= job.width) return;
     const from = job.picture + @as(u64, y) * job.picture_pitch + @as(u64, x) * 4;
     const pen = pixels.strength(penAt(space, from, job.flags), job.alpha, job.flags & pixels.whole != 0);
-    layAt(space, line + @as(u64, x) * 4, pen);
+    layAt(space, line + @as(u64, x) * 4, pen, laid);
 }
 
-pub inline fn blendRect(comptime space: AddressSpace, job: BlendRect, column: u32, y: u32) void {
+pub inline fn blendRect(comptime space: AddressSpace, job: BlendRect, column: u32, y: u32, laid: bool) void {
     if (y >= job.height) return;
     const line = job.dest + @as(u64, y) * job.dest_pitch;
     const x = rowPixel(line, 2, column);
     if (x >= job.width) return;
-    layAt(space, line + @as(u64, x) * 4, job.pen);
+    layAt(space, line + @as(u64, x) * 4, job.pen, laid);
 }
 
-pub inline fn scalePixels(comptime space: AddressSpace, job: ScalePixels, column: u32, y: u32) void {
+pub inline fn scalePixels(comptime space: AddressSpace, job: ScalePixels, column: u32, y: u32, laid: bool) void {
     if (y >= job.height) return;
     const line = job.dest + @as(u64, y) * job.dest_pitch;
     const x = rowPixel(line, 2, column);
@@ -117,7 +199,7 @@ pub inline fn scalePixels(comptime space: AddressSpace, job: ScalePixels, column
     if (job.flags & pixels.store != 0) {
         word(space, line + @as(u64, x) * 4).* = pen;
     } else {
-        layAt(space, line + @as(u64, x) * 4, pen);
+        layAt(space, line + @as(u64, x) * 4, pen, laid);
     }
 }
 

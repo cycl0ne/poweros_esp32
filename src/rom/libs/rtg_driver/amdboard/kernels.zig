@@ -102,12 +102,43 @@
 //! asleep meanwhile. One not done within a second has the queue reset
 //! (ResetGPUCompute), which gives up the jobs it ends and writes the rest
 //! to the queue again: where this one is written again, it is waited for
-//! again; where it is given up, it is answered RTGERR_TIMEOUT - its memory
-//! unmapped all the same, and the library draws it - and the kernels go
-//! on, the log saying so. A job given up may have been drawn in part, or
-//! whole: the library lays a blend's pixels over what the kernel laid.
-//! Where the queue cannot be reset no kernel is used from then on, and
-//! the log says so once.
+//! again; where it is given up - by that reset, or by another task's - it
+//! is sent again at once and waited for the same way, the log saying so,
+//! and how many of its waves had set their marks; given up a second time,
+//! it is answered RTGERR_TIMEOUT - its memory unmapped all the same, and
+//! the library draws it - and the kernels go on. A job written or sent
+//! again may have been drawn in part, or whole. A shape, a tile and a
+//! stored scale come out the same; a job that lays what it lands on - a
+//! picture, a colour, a scale laid - goes by its marks, a byte for each
+//! wave of its groups, which its kernel sets once the wave has laid its
+//! pixels, and a wave whose mark is set leaves its pixels as they are
+//! (`kernels/jobs.zig`). A job's marks are one of the `marks_pieces` pieces
+//! of `marks_piece_bytes` of the machine's memory the board maps once its
+//! kernels are found, cached in the graphics block (GPUMAP_CACHED). On the
+//! NucBox they take the large jobs 1 to 5 per cent longer - a blend over
+//! 2560 x 2880 pixels 2348 us against 2325 without them, a scale up by 2
+//! 3633 against 3567; uncached, as the pixels are, each wave's read and
+//! write of its mark was a trip to the memory of its own, and those took
+//! 6110 and 6823 us. A job whose marks are past a piece, or that finds
+//! every piece taken, is the library's. A job's marks are set when they
+//! hold its generation, a piece's next as the job takes it, so the CPU
+//! clears a piece only once its generations have gone round. A job answered
+//! RTGERR_TIMEOUT may leave what its waves wrote in its piece in the
+//! block's cache, to be written back at any time, over a clearing too; so
+//! the piece is marked until a job of it is done, whose start writes the
+//! cache back, and a marked piece whose generations have gone round is
+//! cleared once a job of nothing sent first is done - the job is the
+//! library's where that one is not. The reset lets the queue's waves finish
+//! before it gives a job up, so that each wave of it has laid its pixels
+//! and set its mark, or not begun: on the NucBox nine resets 200 to 1000 us
+//! into a job give it up with 6 to 61 per cent of its waves done, and every
+//! pixel comes out the library's; with the waves reset at once, 1009 pixels
+//! were laid twice, a wave's at a time. Only waves still running after 100
+//! ms - a kernel's that spins - are reset then, by when the board's, of
+//! some microseconds each, have finished; and where a job sent again is
+//! given up as well, the library lays the whole of it over what the kernels
+//! laid. Where the queue cannot be reset no kernel is used from then on,
+//! and the log says so once.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -140,6 +171,18 @@ pub const Kernels = struct {
     ready: bool = false,
     /// Whether the log has said a job was not done: swapped atomically.
     failed: bool = false,
+    /// The jobs' marks: `marks_pieces` pieces of `marks_piece_bytes`, one
+    /// block of the machine's memory mapped at `marks_mapped`, cached in
+    /// the graphics block; a bit for each piece not taken, and one for
+    /// each whose last job sent was given up, so that the block's cache
+    /// may hold lines of it not written back - set and cleared
+    /// atomically; and the generation each piece last gave a job, 0
+    /// before the first, read and written by the job holding it.
+    marks: ?[*]u8 = null,
+    marks_mapped: amdgpu.GPUMemory = .{},
+    marks_free: u32 = 0,
+    marks_dirty: u32 = 0,
+    generations: [marks_pieces]u8 = @splat(0),
 };
 
 /// The kernels, by the names the code object has them under, which are
@@ -147,10 +190,17 @@ pub const Kernels = struct {
 const kernel_names = .{ "blend_pixels", "blend_rect", "scale_pixels", "blit_template", "blit_pattern" };
 
 /// How long a job is waited for before the queue is taken as no longer
-/// running.
+/// running, and what the log says of a job the board gave up so.
 const job_most_ms: u32 = 1000;
+const not_done_in_time = @import("std").fmt.comptimePrint("was not done within {d} ms: given up, the queue reset", .{job_most_ms});
 /// The threads of a group, along a row, as the kernels are built for.
-const group: u32 = 64;
+const group = jobs.group;
+/// The pieces of the machine's memory for jobs' marks, and the bytes of
+/// each: a byte for each wave of a job's groups, so that a piece holds
+/// the marks of a job over 7680 x 4320 pixels, 1045440 bytes, and of
+/// smaller ones.
+const marks_pieces: u5 = 4;
+const marks_piece_bytes: u32 = 1024 * 1024;
 /// The most a side of a rectangle or of a picture's part is.
 const most_side: u32 = 1 << 16;
 /// The most of a picture's pixels one pixel of a scale that makes it
@@ -201,16 +251,135 @@ pub fn start(compute: *Kernels, sys: *ExecBase, gpu: *AMDGPUBase) void {
             return;
         }
     }
+    const marks_bytes = @as(u32, marks_pieces) * marks_piece_bytes;
+    // The board's for as long as it lives, past the process starting it.
+    const marks = sys.AllocVec(marks_bytes, exec.MEMF_ANY | exec.MEMF_SYSTEM) orelse {
+        exec.kprintf(sys, "%s: no memory for the marks of the board's kernels' jobs: the kernels are not used\n", .{dcn.owner});
+        gpu.FreeGPUCode(&compute.code);
+        return;
+    };
+    if (!gpu.MapGPUMemory(marks, marks_bytes, amdgpu.GPUMAP_CACHED, &compute.marks_mapped)) {
+        exec.kprintf(sys, "%s: the marks of the board's kernels' jobs are not mapped: the kernels are not used\n", .{dcn.owner});
+        sys.FreeVec(marks);
+        gpu.FreeGPUCode(&compute.code);
+        return;
+    }
+    compute.marks = @ptrCast(marks);
+    compute.generations = @splat(0);
+    @atomicStore(u32, &compute.marks_dirty, 0, .release);
+    @atomicStore(u32, &compute.marks_free, (@as(u32, 1) << marks_pieces) - 1, .release);
     exec.kprintf(sys, "%s: the graphics block's compute engine runs the board's kernels: pictures and colours laid, scales, and shapes and tiles in both colours over %lu pixels and more are theirs, and fewer where they read the device's own memory\n", .{ dcn.owner, least_pixels });
     @atomicStore(bool, &compute.ready, true, .release);
 }
 
 /// The kernels let go of as the board goes, once nothing of the process
-/// starting them runs any more: no job is theirs, and their code object
-/// is freed.
-pub fn stop(compute: *Kernels, gpu: *AMDGPUBase) void {
+/// starting them runs any more: no job is theirs, their code object is
+/// freed, and so are the jobs' marks - where a piece's last job was given
+/// up, once a job of nothing is done, which writes back what the graphics
+/// block's cache may still hold of it; where that job is not done, the
+/// marks are left as they are, and the log says so.
+pub fn stop(compute: *Kernels, sys: *ExecBase, gpu: *AMDGPUBase) void {
     @atomicStore(bool, &compute.ready, false, .release);
     if (compute.code.bytes != 0) gpu.FreeGPUCode(&compute.code);
+    const marks = compute.marks orelse return;
+    if (@atomicLoad(u32, &compute.marks_dirty, .acquire) != 0 and !cacheWrittenBack(gpu)) {
+        exec.kprintf(sys, "%s: the marks of the board's kernels' jobs are kept, as the graphics block's cache may still write them\n", .{dcn.owner});
+        return;
+    }
+    gpu.UnmapGPUMemory(&compute.marks_mapped);
+    sys.FreeVec(marks);
+    compute.marks = null;
+}
+
+/// Whether a job of nothing sent now is done within `job_most_ms`: its
+/// start and its end write the graphics block's caches back.
+fn cacheWrittenBack(gpu: *AMDGPUBase) bool {
+    const nothing = [_]u32{0};
+    const job = gpu.SendGPUCompute(&nothing, 0);
+    return job != 0 and gpu.WaitGPUCompute(job, job_most_ms);
+}
+
+// --- the jobs' marks -----------------------------------------------------------------
+
+/// A job's marks (`kernels/jobs.zig`): a piece of the board's, and the
+/// generation that sets them.
+const Marks = struct {
+    /// Where the engine reaches them.
+    device: u64,
+    generation: u8,
+    piece: u5,
+
+    /// The marks of a job over `width` x `height` pixels: a free piece at
+    /// its next generation, cleared first where its generations have gone
+    /// round - once a job of nothing is done, where the piece's last job
+    /// sent was given up; null where they are past a piece, every piece
+    /// is taken, or that job is not done.
+    fn take(compute: *Kernels, sys: *ExecBase, gpu: *AMDGPUBase, width: u32, height: u32) ?Marks {
+        if (marksBytes(width, height) > marks_piece_bytes) return null;
+        const marks = compute.marks orelse return null;
+        const piece = takePiece(&compute.marks_free) orelse return null;
+        const offset = @as(usize, piece) * marks_piece_bytes;
+        const generation = nextGeneration(compute.generations[piece]);
+        if (generation == 1) {
+            const bit = @as(u32, 1) << piece;
+            if (@atomicLoad(u32, &compute.marks_dirty, .acquire) & bit != 0) {
+                if (!cacheWrittenBack(gpu)) {
+                    givePiece(&compute.marks_free, piece);
+                    return null;
+                }
+                _ = @atomicRmw(u32, &compute.marks_dirty, .And, ~bit, .acq_rel);
+            }
+            sys.SetMem(marks + offset, 0, marks_piece_bytes);
+        }
+        compute.generations[piece] = generation;
+        return .{ .device = compute.marks_mapped.device + offset, .generation = generation, .piece = piece };
+    }
+
+    /// The piece given back once its job is answered `status`, and
+    /// `status` answered: marked where the job was given up
+    /// (RTGERR_TIMEOUT), as the graphics block's cache may still hold what
+    /// its waves wrote there, and no longer where it is done (RTGERR_OK),
+    /// its start having written the cache back; as it was where the job
+    /// was never sent.
+    fn after(marks: Marks, compute: *Kernels, status: i32) i32 {
+        const bit = @as(u32, 1) << marks.piece;
+        if (status == err.RTGERR_TIMEOUT) {
+            _ = @atomicRmw(u32, &compute.marks_dirty, .Or, bit, .acq_rel);
+        } else if (status == err.RTGERR_OK) {
+            _ = @atomicRmw(u32, &compute.marks_dirty, .And, ~bit, .acq_rel);
+        }
+        givePiece(&compute.marks_free, marks.piece);
+        return status;
+    }
+};
+
+/// The generation a piece gives its next job after `last`: 1 to 255, 1
+/// again after 255 - and 1 the first time - when the piece is cleared
+/// first, as a mark may hold any generation before.
+fn nextGeneration(last: u8) u8 {
+    return if (last == 0xFF) 1 else last + 1;
+}
+
+/// The bytes of the marks of a job over `width` x `height` pixels: a
+/// byte for each wave of its groups.
+pub fn marksBytes(width: u32, height: u32) u64 {
+    return @as(u64, jobs.wavesAcross(width)) * height;
+}
+
+/// A piece not taken of those whose bits `free` holds, taken - its bit
+/// cleared - or null where every one is.
+fn takePiece(free: *u32) ?u5 {
+    var seen = @atomicLoad(u32, free, .acquire);
+    while (seen != 0) {
+        const piece: u5 = @intCast(@ctz(seen));
+        seen = @cmpxchgWeak(u32, free, seen, seen & ~(@as(u32, 1) << piece), .acq_rel, .acquire) orelse return piece;
+    }
+    return null;
+}
+
+/// Piece `piece` given back: its bit set.
+fn givePiece(free: *u32, piece: u5) void {
+    _ = @atomicRmw(u32, free, .Or, @as(u32, 1) << piece, .release);
 }
 
 // --- the jobs ------------------------------------------------------------------------
@@ -235,27 +404,31 @@ pub fn blendPixels(compute: *Kernels, dma: *const Dma, sys: *ExecBase, dest: *rt
     if (!target.map(gpu, &into)) return err.RTGERR_NOT_SUPPORTED;
     defer gpu.UnmapGPUMemory(&into);
     var from: amdgpu.GPUMemory = .{};
-    if (!gpu.MapGPUMemory(@ptrFromInt(part.start), @intCast(part.bytes), &from)) return err.RTGERR_NOT_SUPPORTED;
+    if (!gpu.MapGPUMemory(@ptrFromInt(part.start), @intCast(part.bytes), 0, &from)) return err.RTGERR_NOT_SUPPORTED;
     defer gpu.UnmapGPUMemory(&from);
-    const job = blendPixelsJob(dest, area, picture, alpha, target.device(into), from.device);
-    return run(compute, sys, gpu, &compute.blend_pixels, &job, width, height);
+    const marks = Marks.take(compute, sys, gpu, width, height) orelse return err.RTGERR_NOT_SUPPORTED;
+    const job = blendPixelsJob(dest, area, picture, alpha, target.device(into), from.device, marks.device, marks.generation);
+    return marks.after(compute, run(compute, sys, gpu, &compute.blend_pixels, &job, width, height));
 }
 
 /// What blend_pixels is handed for `picture` laid over `area` of `dest`
-/// at `alpha`, the rectangle's first pixel reached at `dest_at` and the
-/// picture's pixel on it at `picture_at`.
-pub fn blendPixelsJob(dest: *const rtg.RtgBitMap, area: *const rtg.RtgRect, picture: *const rtg.RtgPixels, alpha: u32, dest_at: u64, picture_at: u64) jobs.BlendPixels {
+/// at `alpha`, the rectangle's first pixel reached at `dest_at`, the
+/// picture's pixel on it at `picture_at` and the job's marks at
+/// `marks_at`, set by `generation`.
+pub fn blendPixelsJob(dest: *const rtg.RtgBitMap, area: *const rtg.RtgRect, picture: *const rtg.RtgPixels, alpha: u32, dest_at: u64, picture_at: u64, marks_at: u64, generation: u8) jobs.BlendPixels {
     const rgba = picture.format == .rgba32;
     const whole = picture.flags & rtg.RTGPIXF_OPAQUE != 0;
     return .{
         .dest = dest_at,
         .picture = picture_at,
+        .marks = marks_at,
         .dest_pitch = dest.pitch,
         .picture_pitch = picture.pitch,
         .width = @intCast(area.width),
         .height = @intCast(area.height),
         .alpha = @min(alpha, 255),
         .flags = (if (rgba) pixels.rgba else 0) | (if (whole) pixels.whole else 0),
+        .generation = generation,
     };
 }
 
@@ -272,14 +445,16 @@ pub fn blendRect(compute: *Kernels, dma: *const Dma, sys: *ExecBase, dest: *rtg.
     var into: amdgpu.GPUMemory = .{};
     if (!target.map(gpu, &into)) return err.RTGERR_NOT_SUPPORTED;
     defer gpu.UnmapGPUMemory(&into);
-    const job = blendRectJob(dest, area, pen, target.device(into));
-    return run(compute, sys, gpu, &compute.blend_rect, &job, width, height);
+    const marks = Marks.take(compute, sys, gpu, width, height) orelse return err.RTGERR_NOT_SUPPORTED;
+    const job = blendRectJob(dest, area, pen, target.device(into), marks.device, marks.generation);
+    return marks.after(compute, run(compute, sys, gpu, &compute.blend_rect, &job, width, height));
 }
 
 /// What blend_rect is handed for `pen` laid over `area` of `dest`, the
-/// rectangle's first pixel reached at `dest_at`.
-pub fn blendRectJob(dest: *const rtg.RtgBitMap, area: *const rtg.RtgRect, pen: u32, dest_at: u64) jobs.BlendRect {
-    return .{ .dest = dest_at, .dest_pitch = dest.pitch, .width = @intCast(area.width), .height = @intCast(area.height), .pen = pen };
+/// rectangle's first pixel reached at `dest_at` and the job's marks at
+/// `marks_at`, set by `generation`.
+pub fn blendRectJob(dest: *const rtg.RtgBitMap, area: *const rtg.RtgRect, pen: u32, dest_at: u64, marks_at: u64, generation: u8) jobs.BlendRect {
+    return .{ .dest = dest_at, .marks = marks_at, .dest_pitch = dest.pitch, .width = @intCast(area.width), .height = @intCast(area.height), .pen = pen, .generation = generation };
 }
 
 /// ScalePixels: a `src_width` x `src_height` part of `picture` scaled to
@@ -306,16 +481,18 @@ pub fn scalePixels(compute: *Kernels, dma: *const Dma, sys: *ExecBase, dest: *rt
     if (!target.map(gpu, &into)) return err.RTGERR_NOT_SUPPORTED;
     defer gpu.UnmapGPUMemory(&into);
     var from: amdgpu.GPUMemory = .{};
-    if (!gpu.MapGPUMemory(@ptrFromInt(part.start), @intCast(part.bytes), &from)) return err.RTGERR_NOT_SUPPORTED;
+    if (!gpu.MapGPUMemory(@ptrFromInt(part.start), @intCast(part.bytes), 0, &from)) return err.RTGERR_NOT_SUPPORTED;
     defer gpu.UnmapGPUMemory(&from);
-    const job = scalePixelsJob(dest, area, picture, src_width, src_height, target.device(into), from.device);
-    return run(compute, sys, gpu, &compute.scale_pixels, &job, width, height);
+    const marks = Marks.take(compute, sys, gpu, width, height) orelse return err.RTGERR_NOT_SUPPORTED;
+    const job = scalePixelsJob(dest, area, picture, src_width, src_height, target.device(into), from.device, marks.device, marks.generation);
+    return marks.after(compute, run(compute, sys, gpu, &compute.scale_pixels, &job, width, height));
 }
 
 /// What scale_pixels is handed for a `src_width` x `src_height` part of
 /// `picture` scaled to `area` of `dest`, the rectangle's first pixel
-/// reached at `dest_at` and the part's top left at `picture_at`.
-pub fn scalePixelsJob(dest: *const rtg.RtgBitMap, area: *const rtg.RtgRect, picture: *const rtg.RtgPixels, src_width: u32, src_height: u32, dest_at: u64, picture_at: u64) jobs.ScalePixels {
+/// reached at `dest_at`, the part's top left at `picture_at` and the
+/// job's marks at `marks_at`, set by `generation`.
+pub fn scalePixelsJob(dest: *const rtg.RtgBitMap, area: *const rtg.RtgRect, picture: *const rtg.RtgPixels, src_width: u32, src_height: u32, dest_at: u64, picture_at: u64, marks_at: u64, generation: u8) jobs.ScalePixels {
     const width: u32 = @intCast(area.width);
     const height: u32 = @intCast(area.height);
     const rgba = picture.format == .rgba32;
@@ -324,6 +501,7 @@ pub fn scalePixelsJob(dest: *const rtg.RtgBitMap, area: *const rtg.RtgRect, pict
     return .{
         .dest = dest_at,
         .picture = picture_at,
+        .marks = marks_at,
         .dest_pitch = dest.pitch,
         .picture_pitch = picture.pitch,
         .width = width,
@@ -331,6 +509,7 @@ pub fn scalePixelsJob(dest: *const rtg.RtgBitMap, area: *const rtg.RtgRect, pict
         .src_width = src_width,
         .src_height = src_height,
         .flags = (if (rgba) pixels.rgba else 0) | (if (shrinks) pixels.shrinks else 0) | (if (store) pixels.store else 0),
+        .generation = generation,
     };
 }
 
@@ -352,7 +531,7 @@ pub fn blitTemplate(compute: *Kernels, dma: *const Dma, sys: *ExecBase, rb: *Rtg
     if (!target.map(gpu, &into)) return err.RTGERR_NOT_SUPPORTED;
     defer gpu.UnmapGPUMemory(&into);
     var from: amdgpu.GPUMemory = .{};
-    if (!gpu.MapGPUMemory(@ptrFromInt(first_row), @intCast(bits_bytes), &from)) return err.RTGERR_NOT_SUPPORTED;
+    if (!gpu.MapGPUMemory(@ptrFromInt(first_row), @intCast(bits_bytes), 0, &from)) return err.RTGERR_NOT_SUPPORTED;
     defer gpu.UnmapGPUMemory(&from);
     const job = blitTemplateJob(dest, area, shape, bytes_each, target.device(into), from.device);
     return run(compute, sys, gpu, &compute.blit_template, &job, width, height);
@@ -392,7 +571,7 @@ pub fn blitPattern(compute: *Kernels, dma: *const Dma, sys: *ExecBase, rb: *RtgB
     if (!target.map(gpu, &into)) return err.RTGERR_NOT_SUPPORTED;
     defer gpu.UnmapGPUMemory(&into);
     var from: amdgpu.GPUMemory = .{};
-    if (!gpu.MapGPUMemory(@ptrFromInt(tile_start), @intCast(tile_bytes), &from)) return err.RTGERR_NOT_SUPPORTED;
+    if (!gpu.MapGPUMemory(@ptrFromInt(tile_start), @intCast(tile_bytes), 0, &from)) return err.RTGERR_NOT_SUPPORTED;
     defer gpu.UnmapGPUMemory(&from);
     const job = blitPatternJob(dest, area, tile, bytes_each, target.device(into), from.device);
     return run(compute, sys, gpu, &compute.blit_pattern, &job, width, height);
@@ -546,9 +725,11 @@ const Part = struct {
 /// `job`, sent and waited for: RTGERR_OK once it is done;
 /// RTGERR_NOT_SUPPORTED, nothing written, where it was not sent. One not
 /// done within `job_most_ms` has the queue reset, and is waited for again
-/// where the reset writes it to the queue again; given up, it is answered
-/// RTGERR_TIMEOUT, said. Where the queue cannot be reset no job is the
-/// kernels' from then on, said once.
+/// where the reset writes it to the queue again; given up, it is sent
+/// again at once, said, and waited for the same way - given up a second
+/// time, or not taken again, it is answered RTGERR_TIMEOUT, said. Where
+/// the queue cannot be reset no job is the kernels' from then on, said
+/// once.
 fn run(compute: *Kernels, sys: *ExecBase, gpu: *AMDGPUBase, kernel: *const amdgpu.GPUKernel, job: anytype, width: u32, height: u32) i32 {
     const dispatch: amdgpu.GPUDispatch = .{
         // A group more than the pixels fill, for the part of the first
@@ -558,25 +739,61 @@ fn run(compute: *Kernels, sys: *ExecBase, gpu: *AMDGPUBase, kernel: *const amdgp
         .arguments = job,
         .argument_bytes = @sizeOf(@TypeOf(job.*)),
     };
-    const sent = gpu.SendGPUKernel(kernel, &dispatch);
+    var sent = gpu.SendGPUKernel(kernel, &dispatch);
     if (sent == 0) return err.RTGERR_NOT_SUPPORTED;
-    // A reset that gave up a job before this one leaves it on the queue;
-    // one that gave it up answers it false at once, and the next finds
-    // nothing to reset.
-    while (!gpu.WaitGPUCompute(sent, job_most_ms)) {
-        if (gpu.ResetGPUCompute(sent, 0) == 0) break;
-    }
-    if (gpu.WaitGPUCompute(sent, 0)) return err.RTGERR_OK;
-    var state: amdgpu.GPUComputeState = .{};
-    if (gpu.GetGPUComputeState(&state)) {
-        exec.kprintf(sys, "%s: a job of the board's kernels was not done within %u ms: given up, the queue reset\n", .{ dcn.owner, job_most_ms });
-        return err.RTGERR_TIMEOUT;
+    var again = false;
+    while (true) {
+        // A reset that gave up a job before this one leaves it on the
+        // queue; one that gave it up - this task's or another's - answers
+        // it false at once, and the next finds nothing to reset.
+        var reset_here = false;
+        while (!gpu.WaitGPUCompute(sent, job_most_ms)) {
+            if (gpu.ResetGPUCompute(sent, 0) == 0) break;
+            reset_here = true;
+        }
+        if (gpu.WaitGPUCompute(sent, 0)) return err.RTGERR_OK;
+        var state: amdgpu.GPUComputeState = .{};
+        if (!gpu.GetGPUComputeState(&state)) break;
+        if (again) {
+            if (reset_here) {
+                exec.kprintf(sys, "%s: a job of the board's kernels sent again was not done within %u ms either: given up, the queue reset\n", .{ dcn.owner, job_most_ms });
+            } else exec.kprintf(sys, "%s: a job of the board's kernels sent again was given up by a reset of the queue as well\n", .{dcn.owner});
+            return err.RTGERR_TIMEOUT;
+        }
+        const why: [*:0]const u8 = if (reset_here) not_done_in_time else "was given up by a reset of the queue";
+        const marked = markedWaves(compute, job);
+        // Its waves that laid their pixels marked, it is sent again for
+        // the rest.
+        sent = gpu.SendGPUKernel(kernel, &dispatch);
+        if (sent == 0) {
+            exec.kprintf(sys, "%s: a job of the board's kernels %s, and was not taken again\n", .{ dcn.owner, why });
+            return err.RTGERR_TIMEOUT;
+        }
+        if (marked.all != 0) {
+            exec.kprintf(sys, "%s: a job of the board's kernels %s, %lu of its %lu waves' marks set, and was sent again as job %u\n", .{ dcn.owner, why, marked.set, marked.all, sent });
+        } else exec.kprintf(sys, "%s: a job of the board's kernels %s, and was sent again as job %u\n", .{ dcn.owner, why, sent });
+        again = true;
     }
     @atomicStore(bool, &compute.ready, false, .release);
     if (!@atomicRmw(bool, &compute.failed, .Xchg, true, .acq_rel)) {
         exec.kprintf(sys, "%s: a job of the board's kernels was not done within %u ms, and the queue cannot be reset: they are not used from now on\n", .{ dcn.owner, job_most_ms });
     }
     return err.RTGERR_TIMEOUT;
+}
+
+/// The waves of `job` whose marks hold its generation, as the CPU reads
+/// them once a reset has given the job up and its end has come, which
+/// writes the graphics block's cache back; and all its waves - both 0 for
+/// a job without marks.
+fn markedWaves(compute: *const Kernels, job: anytype) struct { set: u64, all: u64 } {
+    if (!@hasField(@TypeOf(job.*), "marks")) return .{ .set = 0, .all = 0 };
+    const marks = compute.marks orelse return .{ .set = 0, .all = 0 };
+    const all = marksBytes(job.width, job.height);
+    const first = marks + @as(usize, @intCast(job.marks - compute.marks_mapped.device));
+    const generation: u8 = @truncate(job.generation);
+    var set: u64 = 0;
+    for (first[0..@intCast(all)]) |mark| set += @intFromBool(mark == generation);
+    return .{ .set = set, .all = all };
 }
 
 // --- tests (host: ./zig build test) -----------------------------------------
@@ -600,6 +817,54 @@ test "every job fits the arguments a dispatch hands a kernel" {
     inline for (.{ jobs.BlendPixels, jobs.BlendRect, jobs.ScalePixels, jobs.BlitTemplate, jobs.BlitPattern }) |Job| {
         try testing.expect(@sizeOf(Job) <= amdgpu.GPUKERNEL_ARGUMENTS_MAX);
     }
+}
+
+test "a job's marks are a piece of the board's while one is free, each taken once and given back" {
+    var free: u32 = (@as(u32, 1) << marks_pieces) - 1;
+    var taken_pieces: u32 = 0;
+    for (0..marks_pieces) |_| {
+        const piece = takePiece(&free) orelse return error.NoPiece;
+        try testing.expect(taken_pieces & @as(u32, 1) << piece == 0);
+        taken_pieces |= @as(u32, 1) << piece;
+    }
+    try testing.expectEqual(@as(?u5, null), takePiece(&free));
+    givePiece(&free, 2);
+    try testing.expectEqual(@as(?u5, 2), takePiece(&free));
+    try testing.expectEqual(@as(?u5, null), takePiece(&free));
+    // A piece holds the marks of a job over 7680 x 4320 pixels.
+    try testing.expect(marksBytes(7680, 4320) <= marks_piece_bytes);
+}
+
+test "a piece's generations go from 1 to 255, and round to 1, when it is cleared" {
+    try testing.expectEqual(@as(u8, 1), nextGeneration(0));
+    try testing.expectEqual(@as(u8, 2), nextGeneration(1));
+    try testing.expectEqual(@as(u8, 255), nextGeneration(254));
+    try testing.expectEqual(@as(u8, 1), nextGeneration(255));
+}
+
+test "a piece is given back however its job ends, marked once the job is given up until one of it is done" {
+    var compute: Kernels = .{};
+    const marks: Marks = .{ .device = 0x4_0000, .generation = 7, .piece = 2 };
+    const piece_bit: u32 = 1 << 2;
+    // Given up: marked, and given back all the same.
+    try testing.expectEqual(err.RTGERR_TIMEOUT, marks.after(&compute, err.RTGERR_TIMEOUT));
+    try testing.expectEqual(piece_bit, compute.marks_dirty);
+    try testing.expectEqual(piece_bit, compute.marks_free);
+    // Never sent: as it was.
+    compute.marks_free = 0;
+    try testing.expectEqual(err.RTGERR_NOT_SUPPORTED, marks.after(&compute, err.RTGERR_NOT_SUPPORTED));
+    try testing.expectEqual(piece_bit, compute.marks_dirty);
+    try testing.expectEqual(piece_bit, compute.marks_free);
+    // Another piece's job done: this one's mark kept.
+    compute.marks_free = 0;
+    const other: Marks = .{ .device = 0x4_0000, .generation = 3, .piece = 0 };
+    try testing.expectEqual(err.RTGERR_OK, other.after(&compute, err.RTGERR_OK));
+    try testing.expectEqual(piece_bit, compute.marks_dirty);
+    try testing.expectEqual(@as(u32, 1), compute.marks_free);
+    // Its own job done: no longer marked.
+    try testing.expectEqual(err.RTGERR_OK, marks.after(&compute, err.RTGERR_OK));
+    try testing.expectEqual(@as(u32, 0), compute.marks_dirty);
+    try testing.expectEqual(@as(u32, 1) | piece_bit, compute.marks_free);
 }
 
 test "a scale's pixel covers the picture's stretch, a pixel longer than the scale either way" {

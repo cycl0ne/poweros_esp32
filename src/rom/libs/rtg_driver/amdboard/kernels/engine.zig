@@ -12,15 +12,15 @@
 //! spans of 64 pixels of the buffer's memory a row of it can reach into,
 //! `(width + 126) / 64`. A thread is handed column `group x * 64 + thread` of
 //! row `group y`, and its job lays the groups on the buffer's memory and
-//! finds its pixel (`jobs.zig`); a thread with none does nothing.
+//! finds its pixel (`jobs.zig`); a thread with none does nothing. The
+//! three that lay what they land on go through their job's marks
+//! (`jobs.layOnce`), so that a wave lays its pixels once however often
+//! the job runs.
 
 const jobs = @import("jobs.zig");
 
-/// The threads of a group, along a row.
-const group = 64;
-
 inline fn column() u32 {
-    return @workGroupId(0) *% group +% @workItemId(0);
+    return @workGroupId(0) *% jobs.group +% @workItemId(0);
 }
 
 inline fn row() u32 {
@@ -28,15 +28,15 @@ inline fn row() u32 {
 }
 
 export fn blend_pixels(job: jobs.BlendPixels) callconv(.kernel) void {
-    jobs.blendPixels(.global, job, column(), row());
+    jobs.layOnce(.global, jobs.blendPixels, job, column(), row());
 }
 
 export fn blend_rect(job: jobs.BlendRect) callconv(.kernel) void {
-    jobs.blendRect(.global, job, column(), row());
+    jobs.layOnce(.global, jobs.blendRect, job, column(), row());
 }
 
 export fn scale_pixels(job: jobs.ScalePixels) callconv(.kernel) void {
-    jobs.scalePixels(.global, job, column(), row());
+    jobs.layOnce(.global, jobs.scalePixels, job, column(), row());
 }
 
 export fn blit_template(job: jobs.BlitTemplate) callconv(.kernel) void {

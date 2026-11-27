@@ -138,8 +138,8 @@ fn lvoWaitGPUDMA(ab: *AMDGPUBase, job: u32, most_ms: u32) callconv(.c) bool {
 fn lvoGetGPUDMAState(ab: *AMDGPUBase, state: *amdgpu.GPUDMAState) callconv(.c) bool {
     return GetGPUDMAState(ab, state);
 }
-fn lvoMapGPUMemory(ab: *AMDGPUBase, address: *anyopaque, bytes: u32, memory: *amdgpu.GPUMemory) callconv(.c) bool {
-    return MapGPUMemory(ab, address, bytes, memory);
+fn lvoMapGPUMemory(ab: *AMDGPUBase, address: *anyopaque, bytes: u32, flags: u32, memory: *amdgpu.GPUMemory) callconv(.c) bool {
+    return MapGPUMemory(ab, address, bytes, flags, memory);
 }
 fn lvoUnmapGPUMemory(ab: *AMDGPUBase, memory: *amdgpu.GPUMemory) callconv(.c) void {
     UnmapGPUMemory(ab, memory);

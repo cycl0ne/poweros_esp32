@@ -246,7 +246,7 @@ pub fn settle(dma: *Dma, sys: *ExecBase) void {
 pub fn stop(dma: *Dma, sys: *ExecBase) void {
     settle(dma, sys);
     @atomicStore(bool, &dma.ready, false, .release);
-    if (dma.kernels) |compute| if (dma.gpu) |gpu| kernels.stop(compute, gpu);
+    if (dma.kernels) |compute| if (dma.gpu) |gpu| kernels.stop(compute, sys, gpu);
 }
 
 /// The bytes a job has to be more than to be an engine's, under the rule
@@ -438,7 +438,7 @@ pub fn fill(dma: *Dma, sys: *ExecBase, rb: *RtgBase, bitmap: *rtg.RtgBitMap, are
     defer sys.FreeVec(row);
     paintRow(@ptrCast(row), row_pixels, colour, bytes_each);
     var source: amdgpu.GPUMemory = .{};
-    if (!gpu.MapGPUMemory(row, row_bytes, &source)) return err.RTGERR_NOT_SUPPORTED;
+    if (!gpu.MapGPUMemory(row, row_bytes, 0, &source)) return err.RTGERR_NOT_SUPPORTED;
     defer gpu.UnmapGPUMemory(&source);
     const words = subWindow(shiftOf(bytes_each), source.device, step, 0, target.device, pitch, x, width, height);
     return send(dma, sys, &words, words.len);
@@ -576,7 +576,7 @@ pub fn lined(pixels: [*]u8, pitch: u32) bool {
 pub fn mapRows(gpu: *AMDGPUBase, pixels: [*]u8, pitch: u32, first: u32, rows: u32, end_bytes: u32, into: *amdgpu.GPUMemory) bool {
     const bytes = @as(u64, rows - 1) * pitch + end_bytes;
     if (bytes > 0xffff_ffff) return false;
-    return gpu.MapGPUMemory(pixels + @as(usize, first) * pitch, @intCast(bytes), into);
+    return gpu.MapGPUMemory(pixels + @as(usize, first) * pitch, @intCast(bytes), 0, into);
 }
 
 /// `count` pixels of `colour` in a row of `bytes_each` bytes a pixel.

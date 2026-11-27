@@ -1953,9 +1953,35 @@ desktop's own start at boot; `RTGCTRL_SETTLED` answers once that has
 ended, which `C:Rtg TRIED` waits for, and the log says how it went.
 Until then, and where it failed, every job is the cores'. A job of the
 kernels not done within a second has the compute engine's queue reset
-(`ResetGPUCompute`) and, given up, is drawn by the library - over what
-the kernel drew of it, so a blend's pixels it had laid are laid twice;
-where the queue cannot be reset, the kernels are not used again. A fill or a
+(`ResetGPUCompute`): where the reset writes the job to the queue again
+it runs again, and where the reset gives it up the board sends it again
+at once - the library draws it only where that is given up too. A job
+may have been drawn in part or whole by then, and a picture, a colour
+or a scale laid twice would be wrong, so the kernels mark each wave of
+32 threads that has laid its pixels, a byte each, and a wave whose mark
+is set leaves its pixels as they are. The marks are in plain memory
+mapped cached in the graphics block (`GPUMAP_CACHED`), where they take
+the large jobs 1 to 5 per cent longer on the NucBox, against two to
+three times as long uncached; a job too large for the board's pieces
+of them, or one that finds them all taken, is the library's.
+The reset lets the waves on the engine finish before it gives a job
+up, so that each wave has laid its pixels and set its mark, or not
+begun; with the waves reset at once instead, nine resets in the middle
+of a job left 1009 pixels laid twice, a wave's at a time.
+`C:test/Gpu KERNELS RESET` holds
+the queue with spinning waves on one compute unit and on every one,
+and has the board lay a picture, a colour and a scale behind them,
+then resets the queue in the middle of each, 200 to 1000 us into it:
+on the NucBox the reset gives up the job behind one unit's waves,
+which had run beside them, and the board sends it again; the job
+behind every unit's waves the reset writes again; a job reset in its
+middle is given up with 6 to 61 per cent of its waves done, and the
+board sends it again for the rest; every pixel is the library's single
+job. Only waves still running after 100 ms - a kernel's that spins -
+are reset then, by when the board's, of some microseconds each, have
+finished; a job the library draws after its second give-up is laid
+over what the kernels had laid; where the queue cannot be reset, the kernels are not
+used again. A fill or a
 copy is the engine's where what it reads and writes is more than the
 CPU's caches below the memory hold together, as the cores' cache leaves
 give them - 24 MiB on the NucBox, where on its 2560x1440 desktop that is

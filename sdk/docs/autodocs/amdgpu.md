@@ -1069,12 +1069,12 @@ A range of the machine's memory mapped for the graphics block's engines: its pag
 **SYNOPSIS**
 
 ```zig
-fn MapGPUMemory(ab: *AMDGPUBase, address: *anyopaque, bytes: u32, memory: *amdgpu.GPUMemory) bool
+fn MapGPUMemory(ab: *AMDGPUBase, address: *anyopaque, bytes: u32, flags: u32, memory: *amdgpu.GPUMemory) bool
 ```
 
 **SINCE**
 
-1.11. LVO -68.
+1.11, `flags` 1.23. LVO -68.
 
 **INPUTS**
 
@@ -1083,6 +1083,8 @@ fn MapGPUMemory(ab: *AMDGPUBase, address: *anyopaque, bytes: u32, memory: *amdgp
   the machine has it, as AllocGPUMemory answers it, or in the device's
   memory window.
 - `bytes` - how long it is; more than 0.
+- `flags` - 0, or GPUMAP_CACHED: a range of the machine's memory
+  cached in the graphics block's second level.
 - `memory` - where to say where it is.
 
 **RESULT**
@@ -1090,12 +1092,13 @@ fn MapGPUMemory(ab: *AMDGPUBase, address: *anyopaque, bytes: u32, memory: *amdgp
 True with `memory` filled in: `cpu` the address given, `device` where
 the graphics block's engines reach the same byte, `bytes` its length.
 False, `memory` untouched, where StartGPUGraphics has not turned the
-hub on, `bytes` is 0, the range lies partly in the device's own memory
-and partly not or in the memory window where the device's host data
-path cannot be flushed, the hub's page table has no room left for the
-range -
-it maps 512 MiB, in at most 64 ranges at a time - or the hub does not
-take its new entries; and on a machine without the device.
+hub on, `bytes` is 0, `flags` holds a bit not named here, the range
+lies partly in the device's own memory and partly not, in the device's
+own memory with GPUMAP_CACHED, or in the memory window where the
+device's host data path cannot be flushed, the hub's page table has no
+room left for the range - it maps 512 MiB, in at most 64 ranges at a
+time - or the hub does not take its new entries; and on a machine
+without the device.
 
 **BEHAVIOR**
 
@@ -1113,9 +1116,12 @@ Each page of 4 KiB it lies in, the first and the last whole, gets an
 entry in the table, one after another in the first run of free
 entries that holds them all, as the vendor's driver maps a page into
 its GART: valid, in the machine's memory, snooped, readable, writable
-and executable, uncached in the block. Then the hub's TLB is dropped
-for its first context. The answer's `device` is the run's start, plus
-the range's place in its first page.
+and executable, uncached in the block - or, with GPUMAP_CACHED, of the
+memory type it maps a buffer of a program's with where nothing asks
+otherwise, cached in the block's second level (gmc_v11_0_get_vm_pte:
+MTYPE_NC). Then the hub's TLB is dropped for its first context. The
+answer's `device` is the run's start, plus the range's place in its
+first page.
 
 **CONTEXT**
 
@@ -1139,11 +1145,26 @@ wrote in the window, once the range is mapped, which flushes the path
 its writes take. What the engines write in the device's memory the CPU
 reads at once either way.
 
+A range mapped GPUMAP_CACHED goes through the block's second-level
+cache. What a compute job writes there is written back as the job
+ends, and is the CPU's once it is done; what the CPU writes there is
+the compute engine's from the next job sent to it, whose start writes
+the cache back and drops it. The DMA engine writes past the cache,
+but its reads may be answered from lines the cache still holds, which
+nothing drops before its jobs: a range it reads is mapped without
+GPUMAP_CACHED. A job given up by a reset may leave what it wrote in
+the cache, to be written back at any time after, over what the CPU
+wrote since: such a range is neither written by the CPU nor given
+away until a job sent after the reset is done.
+
 **NOTES**
 
 Only the graphics block's engines reach a mapping - its DMA engine's
 packets name it by `device`. The display and the video decoder read
 through the other hub, and reach the device's own memory only.
+Uncached, each read and each write of an engine's is one of the
+memory's; GPUMAP_CACHED is for what a kernel reads and writes in small
+pieces, many to a line.
 
 **BUGS**
 
@@ -1157,7 +1178,7 @@ None known.
 
 ```zig
 var mapped: amdgpu.GPUMemory = .{};
-if (!ab.MapGPUMemory(buffer.ptr, @intCast(buffer.len), &mapped)) return error.NoMapping;
+if (!ab.MapGPUMemory(buffer.ptr, @intCast(buffer.len), 0, &mapped)) return error.NoMapping;
 defer ab.UnmapGPUMemory(&mapped);
 // a job's packets name the buffer by mapped.device
 ```
@@ -1257,11 +1278,16 @@ and every call that sends a job answers 0 from then on.
 Under the queue's lock, as the vendor's driver resets a kernel compute
 queue on this block (amdgpu_gfx_mes_reset_queue_start, by its
 registers, as it does for compute): in the RLC's safe mode the queue
-is selected, every job not done marked given up, its dequeue asked
+is selected, every job not done marked given up, and its dequeue asked
+with its waves let finish and no group of its dispatches started any
+more (CP_HQD_DEQUEUE_REQUEST 1, since 1.23), as the vendor's compute
+driver takes a queue off the engine whose work is to stay right
+(hqd_destroy_v11's DRAIN_PIPE, update_queue); the queue is waited for
+to be inactive, 100 ms at most. Where it is not, its dequeue is asked
 with its waves reset (CP_HQD_DEQUEUE_REQUEST 2), the shader input's
 state of it reset (SPI_COMPUTE_QUEUE_RESET) and the queue waited for
-to be inactive, 100 ms at most (mes_v11_0_reset_queue_mmio). Where it
-is not - and at once with GPURESET_PIPE - the compute engine's pipe is
+the same way (mes_v11_0_reset_queue_mmio). Where it is still not - and
+at once with GPURESET_PIPE - the compute engine's pipe is
 held in reset while each of its eight queues is set inactive, then let
 go (mes_v11_0_reset_compute_pipe_mmio), and taken to have worked, as
 the vendor's driver takes it: the ring's test says.
@@ -1272,9 +1298,10 @@ reset ends waves still running, the end of every job the engine had
 got to comes as the queue stops: those jobs stay given up - the kernels
 of some ended, of others perhaps done, which nothing tells apart - and
 the jobs after them are written to the queue again as they were sent.
-Where no end comes - the engine itself held in a job's packets, by a
-wait on memory (GPUPACKET_WAIT_REG_MEM) - only the first job not done
-stays given up: it is written again with its own packets made NOPs, so
+Where no end comes - the waves let finish, or the engine itself held
+in a job's packets, by a wait on memory (GPUPACKET_WAIT_REG_MEM) - only
+the first job not done stays given up: it is written again with its
+own packets made NOPs, so
 that its end - its number written, its interrupt raised - comes in its
 place, and every job after it with it
 (amdgpu_ring_set_fence_errors_and_reemit). The words of the jobs to be
@@ -1295,9 +1322,11 @@ look again.
 
 **CONTEXT**
 
-- Waits: for the queue to be inactive, 100 ms at most; for each of the
-  scheduler's two calls, 2.1 s at most; for the ring's test, 100 ms at
-  most - a few milliseconds where all goes well.
+- Waits: for the queue's waves to finish, 100 ms at most, and then for
+  it to be inactive, 100 ms at most; for each of the scheduler's two
+  calls, 2.1 s at most; for the ring's test, 100 ms at most - a few
+  milliseconds where all goes well, 100 more where a kernel's waves
+  run on.
 - Interrupts: no.
 - Locks: takes the queue's lock.
 - Process: a Task will do.
@@ -1311,7 +1340,12 @@ before it returns.
 
 A job given up is gone: what its kernels wrote before the reset stays
 written, the rest never is - and one given up with others may have
-been done whole. WaitGPUCompute answers false at once for a job a reset
+been done whole. Where the queue's waves are let finish, each group of
+a job given up has run whole or not begun; only where they are reset
+may a wave have been ended between two of its instructions - on the
+NucBox, nine resets that did so in the middle of jobs of the board's
+left 1009 pixels laid twice, a wave's at a time. WaitGPUCompute answers
+false at once for a job a reset
 gave up, while fewer than 64 jobs have been sent after it. A job
 written again runs from its start. The queue's scratch, its slots of
 arguments and its interrupt are kept as they are.
@@ -2180,7 +2214,9 @@ The memory is the caller's alone again, to free or to keep.
 
 Every job that names the range must be done first (WaitGPUDMA): one
 still running when it is taken out reads the scratch page and writes
-nowhere.
+nowhere. A range mapped GPUMAP_CACHED that a job given up by a reset
+wrote to is neither written by the CPU nor freed before a job sent
+after the reset is done, as the block's cache may still write it back.
 
 **BUGS**
 

@@ -22,7 +22,8 @@
 //! SendGPUDMA puts a job of its packets on it, WaitGPUDMA waits for one
 //! to be done, GetGPUDMAState says how far it is. MapGPUMemory maps a
 //! range of the machine's memory into the hub's page table, so that the
-//! engines reach a buffer where it is, and UnmapGPUMemory takes it out.
+//! engines reach a buffer where it is - uncached in the block, or cached
+//! in its second level (GPUMAP_CACHED) - and UnmapGPUMemory takes it out.
 //! The block's compute engine runs one queue of jobs too, mapped by the
 //! block's scheduler (`compute/_compute.zig`): StartGPUCompute starts the
 //! scheduler and the queue, SendGPUCompute puts a job of its packets on
@@ -177,7 +178,7 @@ test "a machine without the device has the resource, and it answers false" {
     try testing.expectEqual(@as(u32, 7), state.sent);
     var buffer: [64]u8 = @splat(0);
     var mapped: amdgpu.GPUMemory = .{ .bytes = 7 };
-    try testing.expect(!call(ab).MapGPUMemory(&buffer, buffer.len, &mapped));
+    try testing.expect(!call(ab).MapGPUMemory(&buffer, buffer.len, 0, &mapped));
     try testing.expectEqual(@as(u32, 7), mapped.bytes);
     call(ab).UnmapGPUMemory(&mapped);
     try testing.expectEqual(@as(u32, 0), mapped.bytes);
@@ -255,21 +256,27 @@ test "the device's memory is handed out in pieces each address of which says the
     ab.host_flush = @intFromPtr(&bus_words[0]);
     ab.host_posted = @intFromPtr(&bus_words[1]);
     var mapped: amdgpu.GPUMemory = .{};
-    try testing.expect(call(ab).MapGPUMemory(@ptrFromInt(@as(usize, @intCast(ring.cpu)) + 16), 64, &mapped));
+    try testing.expect(call(ab).MapGPUMemory(@ptrFromInt(@as(usize, @intCast(ring.cpu)) + 16), 64, 0, &mapped));
     try testing.expectEqual(ring.device + 16, mapped.device);
     try testing.expectEqual(@as(u32, 64), mapped.bytes);
     try testing.expectEqual(@as(u32, 7), bus_words[0]);
     call(ab).UnmapGPUMemory(&mapped);
     try testing.expectEqual(@as(u32, 0), mapped.bytes);
-    try testing.expect(call(ab).MapGPUMemory(@ptrFromInt(0x7c_0000_0000 + 64 * mib), 4096, &mapped));
+    try testing.expect(call(ab).MapGPUMemory(@ptrFromInt(0x7c_0000_0000 + 64 * mib), 4096, 0, &mapped));
     try testing.expectEqual(@as(u64, 0x80_0000_0000 + 64 * mib), mapped.device);
     try testing.expectEqual(@as(u32, 0), bus_words[0]);
     call(ab).UnmapGPUMemory(&mapped);
-    try testing.expect(!call(ab).MapGPUMemory(@ptrFromInt(0x7c_0000_0000 + 256 * mib - 64), 128, &mapped));
-    try testing.expect(!call(ab).MapGPUMemory(@ptrFromInt(0x8_4000_0000 - 64), 128, &mapped));
-    try testing.expect(!call(ab).MapGPUMemory(@ptrFromInt(0x8_4000_0000 + 512 * mib - 64), 128, &mapped));
+    // The device's own memory takes no entry, and is not cached; a flag
+    // not named is refused.
+    try testing.expect(!call(ab).MapGPUMemory(@ptrFromInt(0x7c_0000_0000 + 64 * mib), 4096, amdgpu.GPUMAP_CACHED, &mapped));
+    try testing.expect(!call(ab).MapGPUMemory(@ptrFromInt(@as(usize, @intCast(ring.cpu)) + 16), 64, amdgpu.GPUMAP_CACHED, &mapped));
+    try testing.expect(!call(ab).MapGPUMemory(@ptrFromInt(@as(usize, @intCast(ring.cpu)) + 16), 64, 1 << 5, &mapped));
+    try testing.expectEqual(@as(u32, 0), mapped.bytes);
+    try testing.expect(!call(ab).MapGPUMemory(@ptrFromInt(0x7c_0000_0000 + 256 * mib - 64), 128, 0, &mapped));
+    try testing.expect(!call(ab).MapGPUMemory(@ptrFromInt(0x8_4000_0000 - 64), 128, 0, &mapped));
+    try testing.expect(!call(ab).MapGPUMemory(@ptrFromInt(0x8_4000_0000 + 512 * mib - 64), 128, 0, &mapped));
     ab.host_flush = 0;
-    try testing.expect(!call(ab).MapGPUMemory(@ptrFromInt(0x7c_0000_0000), 64, &mapped));
+    try testing.expect(!call(ab).MapGPUMemory(@ptrFromInt(0x7c_0000_0000), 64, 0, &mapped));
     try testing.expectEqual(@as(u32, 0), mapped.bytes);
     try testing.expectEqual(@as(u32, 0), ab.gart_arena.count);
     ab.graphics_started = false;

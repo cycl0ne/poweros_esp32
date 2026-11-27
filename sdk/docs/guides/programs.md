@@ -1117,6 +1117,17 @@ the job is done. Its addresses are the device's: a piece of the device's
 own memory by its `device` address (`AllocGPUMemory`), a buffer of the
 machine's by where it is mapped for the engines (`MapGPUMemory`), whose
 writes the CPU reads at once, without a cache written back or dropped.
+Mapped that way a buffer is uncached in the graphics block, so that
+each read and each write of a kernel's is one of the memory's; with
+`GPUMAP_CACHED` it goes through the block's second-level cache, which a
+compute job's end writes back and the next one's start drops - for what
+a kernel reads and writes in small pieces, many to a line. What the
+kernel wrote is the CPU's once its job is done, and what the CPU wrote
+the kernels' from the next job on; the DMA engine's reads may be
+answered from the cache, so a buffer it reads is mapped without the
+flag. A buffer of that kind a job given up by a reset wrote to is
+neither written by the CPU nor freed until a job sent after the reset
+is done, as the cache may still write it back.
 `MapGPUMemory` answers a buffer of the device's own memory as well -
 where the machine has it, as `AllocGPUMemory` gives it, or in the
 device's memory window - with its `device` address, mapping nothing;
@@ -1136,7 +1147,7 @@ const count = 4096;
 const buffer = sys.AllocVec(count * 4, exec.MEMF_ANY) orelse return error.NoMemory;
 defer sys.FreeVec(buffer);
 var mapped: amdgpu.GPUMemory = .{};
-if (!ab.MapGPUMemory(buffer, count * 4, &mapped)) return error.NotMapped;
+if (!ab.MapGPUMemory(buffer, count * 4, 0, &mapped)) return error.NotMapped;
 defer ab.UnmapGPUMemory(&mapped);
 
 const Arguments = extern struct { out: u64, value: u32, count: u32 };
@@ -1191,20 +1202,25 @@ done, the queue's own kept as it was.
 A job that is not done in time - a kernel that runs on, a wait on memory
 nothing writes - holds every job after it until the program resets the
 queue (`ResetGPUCompute`), which answers the last job it gave up. The
-engine goes on to the next jobs while a job's kernels run, and a job's
-end waits for the kernels of every job before it: so where the reset
-ends waves still running, the end of every job the engine had got to
-comes as the queue stops, and all of those are given up, done or not;
-the jobs after them are written to the queue again and run. Where the
-engine itself is held in a job's packets, by a wait
-(`GPUPACKET_WAIT_REG_MEM`), that job alone is given up. `WaitGPUCompute`
+reset first lets the waves on the engine finish, starting no group
+more, so that each group of the job it gives up ran whole or not at
+all, and resets the waves only where they do not finish within 100 ms.
+The engine goes on to the next jobs while a job's kernels run, and a
+job's end waits for the kernels of every job before it: so where the
+reset ends waves still running, the end of every job the engine had
+got to comes as the queue stops, and all of those are given up, done
+or not; the jobs after them are written to the queue again and run.
+Where the waves finish, or the engine itself is held in a job's
+packets, by a wait (`GPUPACKET_WAIT_REG_MEM`), that job alone is given
+up. `WaitGPUCompute`
 answers false at once for a job given up; what its kernels wrote stays
 written, and a job written again runs from its start. `GPURESET_PIPE`
 resets the engine's pipe as well, which the reset also does by itself
 where the queue does not stop. `C:test/Gpu COMPUTE RESET` holds the
 engine twice by a wait, resetting the queue alone and then with its
 pipe, and spins a kernel's waves on a word: on the NucBox the resets
-take 3.0, 5.1 and 3.1 ms; the held job is given up alone, the fill and
+take 3.3, 5.1 and 103 ms, the spin's waves given 100 ms to finish
+first; the held job is given up alone, the fill and
 the empty jobs after it are done right; the spin gives up all five jobs
 the engine had got to - the fill after it, which had run, with them -
 and the kernels after the resets are right.

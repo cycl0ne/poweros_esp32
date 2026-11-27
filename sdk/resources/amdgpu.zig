@@ -385,6 +385,13 @@ pub const GPUMemory = extern struct {
     bytes: u32 = 0,
 };
 
+/// MapGPUMemory's flags: a range of the machine's memory cached in the
+/// graphics block's second level, rather than uncached in the block -
+/// what a compute job writes there is the CPU's once the job is done,
+/// what the CPU writes the compute engine's from the next job sent to
+/// it; for ranges the DMA engine does not read.
+pub const GPUMAP_CACHED: u32 = 1 << 0;
+
 /// What GetGPUBios says: where the device's video BIOS image is, as the
 /// machine's firmware kept it, and how many bytes it is. Read only.
 pub const GPUBios = extern struct {

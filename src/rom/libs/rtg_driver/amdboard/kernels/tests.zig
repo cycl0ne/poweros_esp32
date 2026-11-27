@@ -7,8 +7,12 @@
 //! what graphics.library makes of the same job on the same pixels in
 //! software: BlendBitMapPixels, BlendBitMapRect, ScalePixelArray with
 //! RPTAG_Smooth, BltTemplate and BltPattern on a buffer of the host's
-//! memory, which no board is behind. And the code object the build makes
-//! of the kernels for the board, read as amdgpu.resource reads it.
+//! memory, which no board is behind. A job that lays what it lands on
+//! goes through its marks, as the kernel's threads do, and is run again
+//! after a run a reset ended part way, and once more, as a reset and a
+//! second send run it: each pixel laid once. And the code object the
+//! build makes of the kernels for the board, read as amdgpu.resource
+//! reads it.
 
 const std = @import("std");
 const testing = std.testing;
@@ -116,11 +120,28 @@ const Scene = struct {
 
     library: [pitch * height]u8 align(4) = undefined,
     kernel: [pitch * height]u8 align(4) = undefined,
+    /// The marks of a job over the buffer or a part of it.
+    marks: [kernels.marksBytes(width, height)]u8 = undefined,
 
     /// Both buffers the same background.
     fn paint(scene: *Scene, seed: u32) void {
         fillBytes(&scene.library, seed);
         scene.kernel = scene.library;
+    }
+
+    /// The marks cleared, as the board clears a piece of its own for a
+    /// job, which it sends at generation 1, and their address.
+    fn clearedMarks(scene: *Scene) u64 {
+        @memset(&scene.marks, 0);
+        return @intFromPtr(&scene.marks);
+    }
+
+    /// The marks as a piece of the board's holds them after a job before
+    /// - each the generation before this job's, or any other but this
+    /// one's, `generation` - and their address.
+    fn usedMarks(scene: *Scene, generation: u8) u64 {
+        for (&scene.marks, 0..) |*each, index| each.* = if (index % 3 == 0) generation -% 1 else generation +% @as(u8, @intCast(index % 7)) +% 1;
+        return @intFromPtr(&scene.marks);
     }
 
     fn bitmap(pixels: []u8, format: rtg.PixelFormat) rtg.RtgBitMap {
@@ -137,16 +158,45 @@ const Scene = struct {
         return @intFromPtr(&scene.kernel) + @as(u64, @intCast(area.y)) * pitch + @as(u64, @intCast(area.x)) * bytes_each;
     }
 
-    /// The kernel's threads over the area: as many groups along each row
-    /// as a dispatch over it has, and a row more than it, whose threads
-    /// must leave every pixel alone.
+    /// The kernel's threads over the job's rectangle: as many groups
+    /// along each row as a dispatch over it has, and a row more than it,
+    /// whose threads must leave every pixel alone.
     fn run(scene: *Scene, comptime work: anytype, job: anytype) void {
         _ = scene;
-        const groups_across = (@as(u32, @intCast(area.width)) + 2 * 64 - 2) / 64;
+        const groups_across = (job.width + 2 * jobs.group - 2) / jobs.group;
         var y: u32 = 0;
-        while (y <= @as(u32, @intCast(area.height))) : (y += 1) {
+        while (y <= job.height) : (y += 1) {
             var x: u32 = 0;
-            while (x < groups_across * 64) : (x += 1) work(.generic, job, x, y);
+            while (x < groups_across * jobs.group) : (x += 1) work(.generic, job, x, y);
+        }
+    }
+
+    /// The same for a job that lays what it lands on, through its marks,
+    /// a wave at a time as the engine runs one, its threads in step: each
+    /// reads the wave's mark before its first thread sets it
+    /// (`jobs.layOnce`). Each
+    /// wave whose number among the job's, counted along its rows, leaves
+    /// `left_out` - a number of 2 or more - no remainder is left out, as
+    /// if a reset had ended the job before it; with `left_out` 0 none is.
+    fn lay(scene: *Scene, comptime work: anytype, job: anytype, left_out: u32) void {
+        _ = scene;
+        const waves_across = jobs.wavesAcross(job.width);
+        var y: u32 = 0;
+        while (y <= job.height) : (y += 1) {
+            var each_wave: u32 = 0;
+            while (each_wave < waves_across) : (each_wave += 1) {
+                if (left_out != 0 and (y * waves_across + each_wave) % left_out == 0) continue;
+                const first_column = each_wave * jobs.wave;
+                if (y >= job.height) {
+                    // The row past the job's: its threads touch nothing.
+                    for (first_column..first_column + jobs.wave) |column| jobs.layOnce(.generic, work, job, @intCast(column), y);
+                    continue;
+                }
+                const own = jobs.markOf(.generic, job, first_column, y);
+                const laid = jobs.laidBefore(own, job);
+                for (first_column..first_column + jobs.wave) |column| work(.generic, job, @intCast(column), y, laid);
+                jobs.markLaid(own, job);
+            }
         }
     }
 
@@ -206,8 +256,8 @@ test "blend_pixels lays every pixel as BlendBitMapPixels does: both formats, eac
                 var theirs = Scene.bitmap(&scene.library, .bgra32);
                 try testing.expectEqual(graphics.GERR_OK, library(gb).BlendBitMapPixels(&theirs, &Scene.area, &described, alpha));
                 const ours = Scene.bitmap(&scene.kernel, .bgra32);
-                const job = kernels.blendPixelsJob(&ours, &Scene.area, &described, alpha, scene.first(4), picture.at(5, 3));
-                scene.run(jobs.blendPixels, job);
+                const job = kernels.blendPixelsJob(&ours, &Scene.area, &described, alpha, scene.first(4), picture.at(5, 3), scene.clearedMarks(), 1);
+                scene.lay(jobs.blendPixels, job, 0);
                 scene.expectSame(4) catch |failed| {
                     std.debug.print("{s}, flags {d}, alpha {d}\n", .{ @tagName(format), flags, alpha });
                     return failed;
@@ -234,7 +284,7 @@ test "blend_rect lays a colour as BlendBitMapRect does, at every coverage" {
             var theirs = Scene.bitmap(&scene.library, .bgra32);
             try testing.expectEqual(graphics.GERR_OK, library(gb).BlendBitMapRect(&theirs, &Scene.area, pen));
             const ours = Scene.bitmap(&scene.kernel, .bgra32);
-            scene.run(jobs.blendRect, kernels.blendRectJob(&ours, &Scene.area, pen, scene.first(4)));
+            scene.lay(jobs.blendRect, kernels.blendRectJob(&ours, &Scene.area, pen, scene.first(4), scene.clearedMarks(), 1), 0);
             scene.expectSame(4) catch |failed| {
                 std.debug.print("pen {x}\n", .{pen});
                 return failed;
@@ -288,8 +338,8 @@ test "scale_pixels scales and lays a picture's part as a smooth ScalePixelArray 
             // What the library hands the engine for it (ScalePixels).
             const described = picture.pixels(format, 0, case.x, case.y);
             const ours = Scene.bitmap(&scene.kernel, .bgra32);
-            const job = kernels.scalePixelsJob(&ours, &area, &described, case.width, case.height, scene.first(4), picture.at(case.x, case.y));
-            scene.run(jobs.scalePixels, job);
+            const job = kernels.scalePixelsJob(&ours, &area, &described, case.width, case.height, scene.first(4), picture.at(case.x, case.y), scene.clearedMarks(), 1);
+            scene.lay(jobs.scalePixels, job, 0);
             scene.expectSame(4) catch |failed| {
                 std.debug.print("{s}, {d}x{d} at {d},{d} to {d}x{d}\n", .{ @tagName(format), case.width, case.height, case.x, case.y, case.to_width, case.to_height });
                 return failed;
@@ -308,9 +358,9 @@ test "scale_pixels scales and lays a picture's part as a smooth ScalePixelArray 
         library(gb).BitMapScale(&source, &src_area, rp, &dest_area);
         const described = picture.pixels(.bgra32, rtg.RTGPIXF_STORE, case.x, case.y);
         const ours = Scene.bitmap(&scene.kernel, .bgra32);
-        const job = kernels.scalePixelsJob(&ours, &area, &described, case.width, case.height, scene.first(4), picture.at(case.x, case.y));
+        const job = kernels.scalePixelsJob(&ours, &area, &described, case.width, case.height, scene.first(4), picture.at(case.x, case.y), scene.clearedMarks(), 1);
         try testing.expect(job.flags & @import("pixels.zig").store != 0);
-        scene.run(jobs.scalePixels, job);
+        scene.lay(jobs.scalePixels, job, 0);
         scene.expectSame(4) catch |failed| {
             std.debug.print("stored, {d}x{d} at {d},{d} to {d}x{d}\n", .{ case.width, case.height, case.x, case.y, case.to_width, case.to_height });
             return failed;
@@ -318,6 +368,100 @@ test "scale_pixels scales and lays a picture's part as a smooth ScalePixelArray 
     }
     library(gb).FreeRastPort(rp);
     try tearDown(gb);
+}
+
+// --- a job run again ------------------------------------------------------------------
+
+test "a job that lays what it lands on, run again after a run a reset ended part way and once more, lays each pixel once: a picture, a colour and a scale" {
+    const gb = try setUp();
+    defer kexec.deinit();
+    var scene: Scene = .{};
+    var picture: Picture = .{};
+    fillPicture(&picture.words, 0x2545_f491);
+    var surface = Scene.surface(&scene.library, .bgra32);
+    const rp = try smoothOn(gb, &surface);
+    var seed: u32 = 300;
+    // Every second, third and fifth wave left out of the first run, the
+    // marks a piece's after jobs before it, at a generation in the middle,
+    // the last and the first after they went round.
+    const rounds = [_]struct { left_out: u32, generation: u8 }{ .{ .left_out = 2, .generation = 7 }, .{ .left_out = 3, .generation = 255 }, .{ .left_out = 5, .generation = 1 } };
+    for (rounds) |round| {
+        const left_out = round.left_out;
+        const generation = round.generation;
+        // A picture laid at half strength, its pixels covering by their
+        // own, none and all.
+        seed += 1;
+        scene.paint(seed);
+        const described = picture.pixels(.bgra32, 0, 5, 3);
+        var theirs = Scene.bitmap(&scene.library, .bgra32);
+        try testing.expectEqual(graphics.GERR_OK, library(gb).BlendBitMapPixels(&theirs, &Scene.area, &described, 128));
+        const ours = Scene.bitmap(&scene.kernel, .bgra32);
+        const blend = kernels.blendPixelsJob(&ours, &Scene.area, &described, 128, scene.first(4), picture.at(5, 3), scene.usedMarks(generation), generation);
+        scene.lay(jobs.blendPixels, blend, left_out);
+        scene.lay(jobs.blendPixels, blend, 0);
+        scene.lay(jobs.blendPixels, blend, 0);
+        try scene.expectSame(4);
+
+        // A colour covering in part.
+        seed += 1;
+        scene.paint(seed);
+        theirs = Scene.bitmap(&scene.library, .bgra32);
+        try testing.expectEqual(graphics.GERR_OK, library(gb).BlendBitMapRect(&theirs, &Scene.area, 0x80_30_C0_60));
+        const colour = kernels.blendRectJob(&ours, &Scene.area, 0x80_30_C0_60, scene.first(4), scene.usedMarks(generation), generation);
+        scene.lay(jobs.blendRect, colour, left_out);
+        scene.lay(jobs.blendRect, colour, 0);
+        scene.lay(jobs.blendRect, colour, 0);
+        try scene.expectSame(4);
+
+        // A part of the picture scaled up and laid.
+        seed += 1;
+        scene.paint(seed);
+        const src_area: graphics.Rect = .{ .min_x = 3, .min_y = 2, .max_x = 10, .max_y = 7 };
+        const dest_area: graphics.Rect = .{ .min_x = Scene.area.x, .min_y = Scene.area.y, .max_x = Scene.area.x + Scene.area.width, .max_y = Scene.area.y + Scene.area.height };
+        library(gb).ScalePixelArray(rp, @ptrCast(&picture.words), Picture.pitch, @intFromEnum(rtg.PixelFormat.bgra32), &src_area, &dest_area);
+        const part = picture.pixels(.bgra32, 0, 3, 2);
+        const scale = kernels.scalePixelsJob(&ours, &Scene.area, &part, 7, 5, scene.first(4), picture.at(3, 2), scene.usedMarks(generation), generation);
+        scene.lay(jobs.scalePixels, scale, left_out);
+        scene.lay(jobs.scalePixels, scale, 0);
+        scene.lay(jobs.scalePixels, scale, 0);
+        try scene.expectSame(4);
+    }
+    library(gb).FreeRastPort(rp);
+    try tearDown(gb);
+}
+
+test "a job's marks: a byte for each wave of its groups, two a group, the groups as many as the spans of 64 pixels a row reaches into" {
+    try testing.expectEqual(@as(u32, 2), jobs.wavesAcross(1));
+    try testing.expectEqual(@as(u32, 4), jobs.wavesAcross(2));
+    try testing.expectEqual(@as(u32, 4), jobs.wavesAcross(65));
+    try testing.expectEqual(@as(u32, 6), jobs.wavesAcross(66));
+    try testing.expectEqual(@as(u32, 82), jobs.wavesAcross(2560));
+    try testing.expectEqual(@as(u64, 82 * 2880), kernels.marksBytes(2560, 2880));
+    try testing.expectEqual(@as(u64, 242 * 4320), kernels.marksBytes(7680, 4320));
+}
+
+test "a job's marks: each wave's a byte of its own among the job's, the next wave's the next" {
+    const job: jobs.BlendRect = .{ .dest = 0, .marks = 0x4_0000, .dest_pitch = 0, .width = 2560, .height = 900, .pen = 0, .generation = 1 };
+    const bytes = kernels.marksBytes(job.width, job.height);
+    const seen = try testing.allocator.alloc(bool, @intCast(bytes));
+    defer testing.allocator.free(seen);
+    @memset(seen, false);
+    const waves_across = jobs.wavesAcross(job.width);
+    var y: u32 = 0;
+    while (y < job.height) : (y += 1) {
+        var each_wave: u32 = 0;
+        while (each_wave < waves_across) : (each_wave += 1) {
+            const at: usize = @intCast(jobs.markAt(job, each_wave * jobs.wave, y) - job.marks);
+            try testing.expect(at < bytes);
+            try testing.expect(!seen[at]);
+            seen[at] = true;
+        }
+    }
+    // A wave's threads share it, and the next wave's, in the same row and
+    // the next, is the next byte.
+    try testing.expectEqual(jobs.markAt(job, 0, 0), jobs.markAt(job, jobs.wave - 1, 0));
+    try testing.expectEqual(@as(u64, 1), jobs.markAt(job, jobs.wave, 0) - jobs.markAt(job, 0, 0));
+    try testing.expectEqual(@as(u64, 1), jobs.markAt(job, 0, 1) - jobs.markAt(job, (waves_across - 1) * jobs.wave, 0));
 }
 
 // --- BlitTemplate and BlitPattern ----------------------------------------------------------

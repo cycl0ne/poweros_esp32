@@ -423,6 +423,30 @@
 //! (RTGCTRL_AMD_ENGINE, RTG_AMD_ENGINE_ALL), then by the board's own
 //! rule, which it is left with. The watchdog is armed for it.
 //!
+//! KERNELS RESET does instead the board's jobs that lay what they land
+//! on - a picture laid at half strength over the whole buffer, a colour
+//! over part of it and a part of the picture scaled up by 2 - each handed
+//! to the kernels (RTG_AMD_ENGINE_ALL) and drawn into the board's buffer
+//! behind the kernel `spin` (kernels/fill.zig), which holds the queue:
+//! in one group, its waves on one compute unit, and in 4096, more waves
+//! than the compute units hold, on every one. The board waits a second
+//! for its job, resets the queue and sends the job again where the reset
+//! gave it up - its groups run beside the waves on one unit before the
+//! reset and are given up with them, and none run beside those on every
+//! unit, where the reset writes the job again - and every pixel is held
+//! to graphics.library's single job on the plain buffer. The queue's
+//! resets and its jobs are read before and after: one reset meant, and
+//! the board's job sent twice behind one unit's waves and once behind
+//! every unit's. Then each job is drawn with the queue reset in its
+//! middle, by a task of the test's own that waits until the board's job
+//! is sent and 200, 600 or 1000 us more: the reset lets the waves on the
+//! engine finish and gives the job up part way, the board sends it
+//! again, and each pixel is held to the library's as before - the log
+//! says how many of the job's waves had set their marks. A reset that
+//! finds the job done is said, and is no fault. Wrong pixels are sorted:
+//! those still as painted - a store lost - and those laid otherwise, and
+//! the runs along rows they lie in, a wave's 32 among them.
+//!
 //! With DEVICE the buffers BLITS and KERNELS hand the board are pieces of
 //! the device's own memory (AllocGPUMemory), where the machine has it;
 //! with WINDOW the same pieces through the device's memory window, made
@@ -495,7 +519,7 @@ const graphics_library = sdk.graphics;
 const GraphicsBase = sdk.interface.graphics.GraphicsBase;
 
 pub const COMMAND_NAME = "Gpu";
-const VERSION_STRING = "\x00$VER: Gpu 1.39 (27.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Gpu 1.40 (27.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,SLEEP/K/N,RANGE/S,POINTER/S,MIRROR/S,OVERLAY/S,DIRECT/S,BANDS/S,VIDEO/S,GFX/S,DMA/S,GART/S,ENGINE/S,BLITS/S,COMPUTE/S,KERNELS/S,DEVICE/S,WINDOW/S,BLOCK/K/N,WATCHDOG/K/N,RESET/S,POWER/S";
@@ -1801,7 +1825,7 @@ fn ramBuffer(sys: *ExecBase, bytes: u32) ?RamBuffer {
 /// again: the device's address it was mapped at, or null with why said.
 fn fillThroughMapping(dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUInfo, graphics: amdgpu.GPUBlock, buffer: RamBuffer, bytes: u32, value: u32) ?u64 {
     var mapped: amdgpu.GPUMemory = .{};
-    if (!ab.MapGPUMemory(buffer.at, bytes, &mapped)) {
+    if (!ab.MapGPUMemory(buffer.at, bytes, 0, &mapped)) {
         _ = Printf(dl, "%u bytes of the machine's memory at %lx are not mapped: see C:Log\n", .{ bytes, @as(u64, @intFromPtr(buffer.at)) });
         return null;
     }
@@ -1984,7 +2008,7 @@ fn engineBuffer(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase) ?EngineBuffer {
         return null;
     };
     var buffer: EngineBuffer = .{ .allocation = allocation, .pixels = @ptrFromInt(@intFromPtr(allocation) + 4095 & ~@as(usize, 4095)) };
-    if (!ab.MapGPUMemory(buffer.pixels, engine_bytes, &buffer.mapped)) {
+    if (!ab.MapGPUMemory(buffer.pixels, engine_bytes, 0, &buffer.mapped)) {
         _ = Printf(dl, "%u bytes at %lx are not mapped: see C:Log\n", .{ engine_bytes, @as(u64, @intFromPtr(buffer.pixels)) });
         sys.FreeVec(allocation);
         return null;
@@ -2425,7 +2449,7 @@ fn computeCheck(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUI
     defer sys.FreeVec(ram.allocation);
     for (0..piece_bytes / 4) |index| ram.words[index] = guard_value;
     var mapped: amdgpu.GPUMemory = .{};
-    if (!ab.MapGPUMemory(ram.at, piece_bytes, &mapped)) {
+    if (!ab.MapGPUMemory(ram.at, piece_bytes, 0, &mapped)) {
         _ = Printf(dl, "%u bytes of the machine's memory are not mapped: see C:Log\n", .{piece_bytes});
         return dos.RETURN_ERROR;
     }
@@ -2451,7 +2475,7 @@ fn computeCheck(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUI
     defer sys.FreeVec(long.allocation);
     for (0..long_bytes / 4) |index| long.words[index] = guard_value;
     var long_mapped: amdgpu.GPUMemory = .{};
-    if (!ab.MapGPUMemory(long.at, long_bytes, &long_mapped)) {
+    if (!ab.MapGPUMemory(long.at, long_bytes, 0, &long_mapped)) {
         _ = Printf(dl, "%u MiB of the machine's memory are not mapped: see C:Log\n", .{compute_long_bytes >> 20});
         return dos.RETURN_ERROR;
     }
@@ -2931,7 +2955,7 @@ fn scratchRow(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase) ?Scratch {
         return null;
     };
     var scratch: Scratch = .{ .allocation = allocation, .pixels = @ptrCast(@alignCast(allocation)) };
-    if (!ab.MapGPUMemory(allocation, scratch_bytes, &scratch.mapped)) {
+    if (!ab.MapGPUMemory(allocation, scratch_bytes, 0, &scratch.mapped)) {
         _ = Printf(dl, "%u bytes at %lx are not mapped: see C:Log\n", .{ scratch_bytes, @as(u64, @intFromPtr(allocation)) });
         sys.FreeVec(allocation);
         return null;
@@ -3114,7 +3138,7 @@ fn engineTimes(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, gb: *GraphicsBase,
 
     var mapped: amdgpu.GPUMemory = .{};
     var began = sys.UptimeUs();
-    if (ab.MapGPUMemory(first.pixels, engine_bytes, &mapped)) {
+    if (ab.MapGPUMemory(first.pixels, engine_bytes, 0, &mapped)) {
         const map_took = sys.UptimeUs() - began;
         began = sys.UptimeUs();
         ab.UnmapGPUMemory(&mapped);
@@ -3838,6 +3862,23 @@ fn drawnBitMap(pixels: [*]u8, halves: bool) rtg.RtgBitMap {
 /// KERNELS' memory: the board's buffer, as rtg.library has it of four
 /// bytes a pixel and of two; the plain buffer beside it; the picture; the
 /// shapes' and the tiles' bits.
+/// The pixels of a wave.
+const wave_pixels: u32 = 32;
+
+/// What `Drawing.wrongSorted` finds.
+const WrongPixels = struct {
+    painted: u32 = 0,
+    other: u32 = 0,
+    runs: u32 = 0,
+    whole_waves: u32 = 0,
+    first: [2]u32 = .{ 0, 0 },
+
+    fn print(sorted: WrongPixels, dl: *DosBase) void {
+        if (sorted.runs == 0) return;
+        _ = Printf(dl, "  wrong: %u as painted, %u laid otherwise, in %u runs along rows - %u of them a wave's 32 pixels from a multiple of 32 - the first at %u, %u\n", .{ sorted.painted, sorted.other, sorted.runs, sorted.whole_waves, sorted.first[0], sorted.first[1] });
+    }
+};
+
 const Drawing = struct {
     sys: *ExecBase,
     gb: *GraphicsBase,
@@ -3877,6 +3918,38 @@ const Drawing = struct {
     /// The pixels in which the two differ.
     fn wrong(drawing: Drawing, halves: bool) u32 {
         return differing(drawing.board_pixels, drawing.plain_pixels, blits_bytes, if (halves) 2 else 4);
+    }
+
+    /// The pixels of four bytes in which the two differ, sorted: those of
+    /// the board's buffer still as painted with `seed`, and the others;
+    /// the runs along rows they lie in, and those of them a wave's 32
+    /// pixels from a column a multiple of 32; and where the first starts.
+    fn wrongSorted(drawing: Drawing, seed: u32) WrongPixels {
+        var sorted: WrongPixels = .{};
+        for (0..blits_height) |row_index| {
+            const y: u32 = @intCast(row_index);
+            const board_row: [*]const volatile u32 = @ptrCast(@alignCast(drawing.board_pixels + y * blits_pitch));
+            const plain_row: [*]const u32 = @ptrCast(@alignCast(drawing.plain_pixels + y * blits_pitch));
+            var run: u32 = 0;
+            var run_start: u32 = 0;
+            for (0..blits_width + 1) |column| {
+                const x: u32 = @intCast(column);
+                const differs = x < blits_width and board_row[x] != plain_row[x];
+                if (!differs) {
+                    if (run == wave_pixels and run_start % wave_pixels == 0) sorted.whole_waves += 1;
+                    run = 0;
+                    continue;
+                }
+                if (board_row[x] == patternAt(x, y, seed)) sorted.painted += 1 else sorted.other += 1;
+                if (run == 0) {
+                    run_start = x;
+                    if (sorted.runs == 0) sorted.first = .{ x, y };
+                    sorted.runs += 1;
+                }
+                run += 1;
+            }
+        }
+        return sorted;
     }
 
     /// A RastPort for `job` drawing into the board's buffer itself, or
@@ -3961,7 +4034,7 @@ fn paintPicture(pixels: [*]u8) void {
 /// graphics.library's on plain memory pixel for pixel, each timed beside
 /// it: first with every job the board's kernels can do handed to them
 /// (RTG_AMD_ENGINE_ALL), then by the board's own rule.
-fn kernelsCheck(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUInfo, millis: u32, place: Place) i32 {
+fn kernelsCheck(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUInfo, millis: u32, place: Place, reset: bool) i32 {
     const rtg_lib = sys.OpenLibrary(rtg.RTGNAME, rtg.RTG_VERSION) orelse {
         _ = Printf(dl, "No %s\n", .{rtg.RTGNAME});
         return dos.RETURN_FAIL;
@@ -4027,6 +4100,7 @@ fn kernelsCheck(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUI
     _ = Printf(dl, "The board's buffer at %lx, %s, the plain one at %lx, the picture at %lx, %u x %u, four bytes a pixel, or twice as many of two\n", .{
         @as(u64, @intFromPtr(buffer.pixels)), place.name(), @as(u64, @intFromPtr(starts[0])), @as(u64, @intFromPtr(starts[1])), blits_width, blits_height,
     });
+    if (reset) return kernelsReset(sys, dl, ab, rb, board, drawing, wb);
 
     var all_right = true;
     var all_wrong: u32 = 0;
@@ -4090,6 +4164,199 @@ fn kernelsCheck(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUI
     }
     _ = Printf(dl, "%u pixels wrong\n", .{all_wrong});
     return if (all_right and all_wrong == 0) dos.RETURN_OK else dos.RETURN_WARN;
+}
+
+/// What KERNELS RESET draws behind the kernel spin: the board's jobs that
+/// lay what they land on.
+const reset_jobs = [_]Drawn{
+    .{ .name = "blend at 128", .kind = .blend, .alpha = 128, .area = whole_buffer },
+    .{ .name = "colour at 100, part", .kind = .tint, .pen = 0x64C0_4020, .area = .{ .x = 5, .y = 3, .width = 2550, .height = 2870 } },
+    .{ .name = "scale up 2x", .kind = .scale, .from = .{ .x = 0, .y = 0, .width = 1280, .height = 1440 }, .area = whole_buffer },
+};
+
+/// The groups of the kernel spin that hold every compute unit: waves past
+/// what the graphics block's units hold - 384 on the NucBox - so that the
+/// dispatch never has all its groups started, and no job after it any.
+const every_unit_groups: u32 = 4096;
+
+/// How long after the board's job is sent KERNELS RESET's own task resets
+/// the queue, for each job: within the time the job takes.
+const reset_delays_us = [_]u32{ 200, 600, 1000 };
+
+/// What KERNELS RESET's own task is told - the resource, the last job
+/// sent before the board's, and how long to wait once the board's is -
+/// and what it says: the job it saw sent, 0 where none was within
+/// `resetter_wait_us`, and the last job its reset gave up, 0 where it
+/// gave up none, the job being done.
+const Resetter = struct {
+    ab: *AMDGPUBase,
+    after: u32,
+    delay_us: u32,
+    job: u32 = 0,
+    given_up: u32 = 0,
+    /// Sent to the test's port as the task ends.
+    ended: exec.Message = .{},
+};
+
+const resetter_wait_us: u64 = 2_000_000;
+const resetter_stack: usize = 32768;
+const resetter_go: u32 = 1 << 30;
+
+/// KERNELS RESET's own task: once told to go, it reads the compute
+/// queue's state over and over until a job is sent after `after`, waits
+/// `delay_us` more, and resets the queue for that job.
+fn resetterCode(sys: *ExecBase) callconv(.c) void {
+    _ = sys.Wait(resetter_go);
+    const resetter: *Resetter = @ptrCast(@alignCast(sys.FindTask(null).?.user_data orelse return));
+    const began = sys.UptimeUs();
+    var state: amdgpu.GPUComputeState = .{};
+    while (true) {
+        if (!resetter.ab.GetGPUComputeState(&state)) return;
+        if (state.sent != resetter.after) break;
+        if (sys.UptimeUs() - began > resetter_wait_us) return;
+    }
+    const seen = sys.UptimeUs();
+    while (sys.UptimeUs() - seen < resetter.delay_us) {}
+    resetter.job = state.sent;
+    resetter.given_up = resetter.ab.ResetGPUCompute(state.sent, 0);
+}
+
+/// KERNELS RESET: each of `reset_jobs` handed to the board's kernels and
+/// drawn behind the kernel spin, held on one compute unit and on every
+/// one, and then with the queue reset in the job's middle by a task of
+/// the test's own; the board resets the queue or finds it reset, and
+/// every pixel is held to graphics.library's single job on the plain
+/// buffer.
+fn kernelsReset(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, rb: *RtgBase, board: *rtg.RtgBoard, drawing: Drawing, wb: *WatchdogBase) i32 {
+    const image = @embedFile("gpu_code");
+    var code: amdgpu.GPUCode = .{};
+    if (!ab.LoadGPUCode(image.ptr, image.len, &code)) {
+        _ = Printf(dl, "The code object of %u bytes is not loaded: see C:Log\n", .{@as(u32, image.len)});
+        return dos.RETURN_ERROR;
+    }
+    defer ab.FreeGPUCode(&code);
+    var spin: amdgpu.GPUKernel = .{};
+    if (!ab.FindGPUKernel(&code, "spin", &spin)) {
+        _ = Printf(dl, "The code object has no kernel spin that can be run: see C:Log\n", .{});
+        return dos.RETURN_ERROR;
+    }
+    var flag_piece: amdgpu.GPUMemory = .{};
+    if (!ab.AllocGPUMemory(4096, 4096, &flag_piece)) {
+        _ = Printf(dl, "No room in the device's memory for the word the kernel spin waits for\n", .{});
+        return dos.RETURN_ERROR;
+    }
+    defer ab.FreeGPUMemory(&flag_piece);
+    const flag = wordsOf(flag_piece);
+    const rule_before = rb.BoardControl(board, rtg.tags.RTGCTRL_AMD_ENGINE, rtg.tags.RTG_AMD_ENGINE_ALL);
+    if (rule_before < 0) {
+        _ = Printf(dl, "The board does not take RTGCTRL_AMD_ENGINE (%ld)\n", .{@as(i64, rule_before)});
+        return dos.RETURN_WARN;
+    }
+    const spin_arguments: SpinArguments = .{ .flag = flag_piece.device };
+    const spreads = [_]struct { groups: u32, name: [*:0]const u8, sends: u32 }{
+        .{ .groups = 1, .name = "on one compute unit", .sends = 2 },
+        .{ .groups = every_unit_groups, .name = "on every compute unit", .sends = 1 },
+    };
+    var all_right = true;
+    var all_wrong: u32 = 0;
+    for (spreads) |spread| {
+        const spin_dispatch: amdgpu.GPUDispatch = .{
+            .groups = .{ spread.groups, 1, 1 },
+            .threads = .{ fill_group, 1, 1 },
+            .arguments = &spin_arguments,
+            .argument_bytes = @sizeOf(SpinArguments),
+        };
+        for (reset_jobs, 0..) |job, index| {
+            drawing.paint(job.halves, @intCast(index + 1));
+            if (!drawing.draw(job, false)) {
+                _ = Printf(dl, "graphics.library did not draw %s\n", .{job.name});
+                return dos.RETURN_FAIL;
+            }
+            flag[0] = 0;
+            var state: amdgpu.GPUComputeState = .{};
+            _ = ab.GetGPUComputeState(&state);
+            const resets = state.resets;
+            const held = ab.SendGPUKernel(&spin, &spin_dispatch);
+            if (held == 0) {
+                _ = Printf(dl, "The kernel spin was not sent: see C:Log\n", .{});
+                return dos.RETURN_ERROR;
+            }
+            const began = sys.UptimeUs();
+            const drawn = drawing.draw(job, true);
+            const drawn_us = sys.UptimeUs() - began;
+            // Whatever came of it, the waves let go of.
+            flag[0] = 1;
+            const held_done = ab.WaitGPUCompute(held, compute_job_ms);
+            _ = ab.GetGPUComputeState(&state);
+            // The jobs sent after the spin: the board's, where nothing
+            // else draws on the board meanwhile.
+            const sends = state.sent -% held;
+            const wrong = drawing.wrong(job.halves);
+            _ = Printf(dl, "%s behind the kernel spin %s, job %u: drawn in %lu us, the spin %s (given up meant); the queue reset %u times (1 meant), %u jobs sent after the spin (%u meant), the last given up %u; %u pixels wrong\n", .{
+                job.name,                                                  spread.name,            held,  drawn_us,
+                @as([*:0]const u8, if (held_done) "done" else "given up"), state.resets -% resets, sends, spread.sends,
+                state.given_up,                                            wrong,
+            });
+            if (!drawn or held_done or state.resets -% resets != 1 or sends != spread.sends or wrong != 0) all_right = false;
+            all_wrong += wrong;
+            wb.FeedWatchdog();
+        }
+    }
+    const ended = sys.CreateMsgPort() orelse return dos.RETURN_FAIL;
+    defer sys.DeleteMsgPort(ended);
+    const priority = sys.FindTask(null).?.node.pri;
+    var ended_part_way: u32 = 0;
+    for (reset_jobs, 0..) |job, index| {
+        for (reset_delays_us) |delay_us| {
+            drawing.paint(job.halves, @intCast(index + 1));
+            if (!drawing.draw(job, false)) {
+                _ = Printf(dl, "graphics.library did not draw %s\n", .{job.name});
+                return dos.RETURN_FAIL;
+            }
+            var state: amdgpu.GPUComputeState = .{};
+            _ = ab.GetGPUComputeState(&state);
+            const resets = state.resets;
+            var resetter: Resetter = .{ .ab = ab, .after = state.sent, .delay_us = delay_us, .ended = .{ .reply_port = ended } };
+            const task = sys.CreateTask("Gpu reset", priority, &resetterCode, resetter_stack) orelse {
+                _ = Printf(dl, "No task to reset the queue with\n", .{});
+                return dos.RETURN_FAIL;
+            };
+            task.user_data = &resetter;
+            sys.SetTaskEndMsg(task, &resetter.ended);
+            sys.Signal(task, resetter_go);
+            const began = sys.UptimeUs();
+            const drawn = drawing.draw(job, true);
+            const drawn_us = sys.UptimeUs() - began;
+            _ = sys.WaitPort(ended);
+            while (sys.GetMsg(ended)) |_| {}
+            _ = ab.GetGPUComputeState(&state);
+            const sends = state.sent -% resetter.after;
+            const wrong = drawing.wrong(job.halves);
+            const sorted = drawing.wrongSorted(@intCast(index + 1));
+            if (resetter.job == 0) {
+                _ = Printf(dl, "%s, the queue to be reset %u us into the board's job: no job sent within %lu us; %u pixels wrong\n", .{ job.name, delay_us, resetter_wait_us, wrong });
+                all_right = false;
+            } else if (resetter.given_up == 0) {
+                _ = Printf(dl, "%s, the queue to be reset %u us into the board's job %u: drawn in %lu us, the job done before the reset; %u jobs sent (1 meant); %u pixels wrong\n", .{ job.name, delay_us, resetter.job, drawn_us, sends, wrong });
+                if (!drawn or sends != 1 or wrong != 0) all_right = false;
+            } else {
+                ended_part_way += 1;
+                _ = Printf(dl, "%s, the queue reset %u us into the board's job %u: drawn in %lu us, the last job given up %u; the queue reset %u times (1 meant), %u jobs sent (2 meant); %u pixels wrong\n", .{
+                    job.name,               delay_us, resetter.job, drawn_us, resetter.given_up,
+                    state.resets -% resets, sends,    wrong,
+                });
+                if (!drawn or state.resets -% resets != 1 or sends != 2 or wrong != 0) all_right = false;
+            }
+            sorted.print(dl);
+            all_wrong += wrong;
+            wb.FeedWatchdog();
+        }
+    }
+    _ = Printf(dl, "%u of %u jobs ended part way by a reset\n", .{ ended_part_way, @as(u32, reset_jobs.len * reset_delays_us.len) });
+    if (ended_part_way == 0) all_right = false;
+    printComputeQueue(dl, ab);
+    _ = Printf(dl, "%u pixels wrong\n", .{all_wrong});
+    return if (all_right) dos.RETURN_OK else dos.RETURN_WARN;
 }
 
 /// How long CYCLE waits for a picture to change by itself and then to
@@ -4183,7 +4450,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     if (argv[arg_power] != 0) return powerCheck(sys, dl, ab, millis);
     const place: Place = if (argv[arg_window] != 0) .window else if (argv[arg_device] != 0) .device else .machine;
     if (argv[arg_blits] != 0) return blitsCheck(sys, dl, ab, info, millis, place);
-    if (argv[arg_kernels] != 0) return kernelsCheck(sys, dl, ab, info, millis, place);
+    if (argv[arg_kernels] != 0) return kernelsCheck(sys, dl, ab, info, millis, place, argv[arg_reset] != 0);
     if (argv[arg_sleep] != 0) return asleepFor(sys, dl, ab, info, millis, number(argv[arg_sleep]), argv[arg_modes] != 0);
     if (argv[arg_gfx] != 0 or argv[arg_dma] != 0 or argv[arg_gart] != 0 or argv[arg_engine] != 0 or argv[arg_compute] != 0) {
         const compute_then: GraphicsThen = if (argv[arg_reset] != 0) .reset else .compute;

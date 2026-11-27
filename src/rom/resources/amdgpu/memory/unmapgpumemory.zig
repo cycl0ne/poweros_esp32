@@ -45,7 +45,9 @@ const _graphics = @import("../graphics/_graphics.zig");
 /// NOTES:
 /// Every job that names the range must be done first (WaitGPUDMA): one
 /// still running when it is taken out reads the scratch page and writes
-/// nowhere.
+/// nowhere. A range mapped GPUMAP_CACHED that a job given up by a reset
+/// wrote to is neither written by the CPU nor freed before a job sent
+/// after the reset is done, as the block's cache may still write it back.
 ///
 /// BUGS:
 /// None known.
@@ -67,6 +69,6 @@ pub fn UnmapGPUMemory(ab: *AMDGPUBase, memory: *amdgpu.GPUMemory) void {
     sys.ObtainSemaphore(&ab.gart_lock);
     defer sys.ReleaseSemaphore(&ab.gart_lock);
     if (!_arena.remove(&ab.gart_arena, pages.first)) return;
-    _graphics.writeEntries(ab, pages.first / _graphics.page_bytes, pages.count, null);
+    _graphics.writeEntries(ab, pages.first / _graphics.page_bytes, pages.count, null, false);
     _ = _graphics.dropTlb(ab);
 }

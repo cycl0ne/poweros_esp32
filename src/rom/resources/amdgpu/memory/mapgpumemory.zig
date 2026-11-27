@@ -18,10 +18,10 @@ const _graphics = @import("../graphics/_graphics.zig");
 ///
 /// SYNOPSIS:
 /// ```zig
-/// fn MapGPUMemory(ab: *AMDGPUBase, address: *anyopaque, bytes: u32, memory: *amdgpu.GPUMemory) bool
+/// fn MapGPUMemory(ab: *AMDGPUBase, address: *anyopaque, bytes: u32, flags: u32, memory: *amdgpu.GPUMemory) bool
 /// ```
 ///
-/// SINCE: 1.11. LVO -68.
+/// SINCE: 1.11, `flags` 1.23. LVO -68.
 ///
 /// INPUTS:
 /// - `address` - the range's first byte, as the CPU reaches it: any
@@ -29,18 +29,21 @@ const _graphics = @import("../graphics/_graphics.zig");
 ///   the machine has it, as AllocGPUMemory answers it, or in the device's
 ///   memory window.
 /// - `bytes` - how long it is; more than 0.
+/// - `flags` - 0, or GPUMAP_CACHED: a range of the machine's memory
+///   cached in the graphics block's second level.
 /// - `memory` - where to say where it is.
 ///
 /// RESULT:
 /// True with `memory` filled in: `cpu` the address given, `device` where
 /// the graphics block's engines reach the same byte, `bytes` its length.
 /// False, `memory` untouched, where StartGPUGraphics has not turned the
-/// hub on, `bytes` is 0, the range lies partly in the device's own memory
-/// and partly not or in the memory window where the device's host data
-/// path cannot be flushed, the hub's page table has no room left for the
-/// range -
-/// it maps 512 MiB, in at most 64 ranges at a time - or the hub does not
-/// take its new entries; and on a machine without the device.
+/// hub on, `bytes` is 0, `flags` holds a bit not named here, the range
+/// lies partly in the device's own memory and partly not, in the device's
+/// own memory with GPUMAP_CACHED, or in the memory window where the
+/// device's host data path cannot be flushed, the hub's page table has no
+/// room left for the range - it maps 512 MiB, in at most 64 ranges at a
+/// time - or the hub does not take its new entries; and on a machine
+/// without the device.
 ///
 /// BEHAVIOR:
 /// A range wholly in the device's own memory (since 1.15) - where the
@@ -57,9 +60,12 @@ const _graphics = @import("../graphics/_graphics.zig");
 /// entry in the table, one after another in the first run of free
 /// entries that holds them all, as the vendor's driver maps a page into
 /// its GART: valid, in the machine's memory, snooped, readable, writable
-/// and executable, uncached in the block. Then the hub's TLB is dropped
-/// for its first context. The answer's `device` is the run's start, plus
-/// the range's place in its first page.
+/// and executable, uncached in the block - or, with GPUMAP_CACHED, of the
+/// memory type it maps a buffer of a program's with where nothing asks
+/// otherwise, cached in the block's second level (gmc_v11_0_get_vm_pte:
+/// MTYPE_NC). Then the hub's TLB is dropped for its first context. The
+/// answer's `device` is the run's start, plus the range's place in its
+/// first page.
 ///
 /// CONTEXT:
 /// - Waits: for another task mapping or unmapping, and for the hub's
@@ -81,10 +87,25 @@ const _graphics = @import("../graphics/_graphics.zig");
 /// its writes take. What the engines write in the device's memory the CPU
 /// reads at once either way.
 ///
+/// A range mapped GPUMAP_CACHED goes through the block's second-level
+/// cache. What a compute job writes there is written back as the job
+/// ends, and is the CPU's once it is done; what the CPU writes there is
+/// the compute engine's from the next job sent to it, whose start writes
+/// the cache back and drops it. The DMA engine writes past the cache,
+/// but its reads may be answered from lines the cache still holds, which
+/// nothing drops before its jobs: a range it reads is mapped without
+/// GPUMAP_CACHED. A job given up by a reset may leave what it wrote in
+/// the cache, to be written back at any time after, over what the CPU
+/// wrote since: such a range is neither written by the CPU nor given
+/// away until a job sent after the reset is done.
+///
 /// NOTES:
 /// Only the graphics block's engines reach a mapping - its DMA engine's
 /// packets name it by `device`. The display and the video decoder read
 /// through the other hub, and reach the device's own memory only.
+/// Uncached, each read and each write of an engine's is one of the
+/// memory's; GPUMAP_CACHED is for what a kernel reads and writes in small
+/// pieces, many to a line.
 ///
 /// BUGS:
 /// None known.
@@ -95,21 +116,23 @@ const _graphics = @import("../graphics/_graphics.zig");
 /// EXAMPLES:
 /// ```zig
 /// var mapped: amdgpu.GPUMemory = .{};
-/// if (!ab.MapGPUMemory(buffer.ptr, @intCast(buffer.len), &mapped)) return error.NoMapping;
+/// if (!ab.MapGPUMemory(buffer.ptr, @intCast(buffer.len), 0, &mapped)) return error.NoMapping;
 /// defer ab.UnmapGPUMemory(&mapped);
 /// // a job's packets name the buffer by mapped.device
 /// ```
-pub fn MapGPUMemory(ab: *AMDGPUBase, address: *anyopaque, bytes: u32, memory: *amdgpu.GPUMemory) bool {
-    if (ab.device == null or !ab.graphics_started or bytes == 0) return false;
+pub fn MapGPUMemory(ab: *AMDGPUBase, address: *anyopaque, bytes: u32, flags: u32, memory: *amdgpu.GPUMemory) bool {
+    if (ab.device == null or !ab.graphics_started or bytes == 0 or flags & ~amdgpu.GPUMAP_CACHED != 0) return false;
+    const cached = flags & amdgpu.GPUMAP_CACHED != 0;
     switch (ownPlace(ab, @intFromPtr(address), bytes)) {
         .apart => {},
         .across => return false,
         .machine => |device| {
+            if (cached) return false;
             memory.* = .{ .cpu = @intFromPtr(address), .device = device, .bytes = bytes };
             return true;
         },
         .window => |device| {
-            if (!_memory.flushHostPath(ab)) return false;
+            if (cached or !_memory.flushHostPath(ab)) return false;
             memory.* = .{ .cpu = @intFromPtr(address), .device = device, .bytes = bytes };
             return true;
         },
@@ -123,9 +146,9 @@ pub fn MapGPUMemory(ab: *AMDGPUBase, address: *anyopaque, bytes: u32, memory: *a
     defer sys.ReleaseSemaphore(&ab.gart_lock);
     const offset = _arena.place(&ab.gart_arena, pages.count * _graphics.page_bytes, @intCast(_graphics.page_bytes)) orelse return false;
     const index = offset / _graphics.page_bytes;
-    _graphics.writeEntries(ab, index, pages.count, pages.first);
+    _graphics.writeEntries(ab, index, pages.count, pages.first, cached);
     if (!_graphics.dropTlb(ab)) {
-        _graphics.writeEntries(ab, index, pages.count, null);
+        _graphics.writeEntries(ab, index, pages.count, null, false);
         _ = _arena.remove(&ab.gart_arena, offset);
         return false;
     }

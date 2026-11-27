@@ -3,8 +3,9 @@
 //! does not end, as the vendor's driver resets a kernel compute queue on
 //! this block with the scheduler (amdgpu_gfx_mes_reset_queue_start,
 //! amdgpu_ring_reset_helper_end): every job not done marked given up, the
-//! queue dequeued with its waves reset - or its pipe reset - the jobs whose
-//! ends come as it stops left given up, or the first job not done where
+//! queue dequeued with its waves let finish - or reset where they do not,
+//! or its pipe reset - the jobs whose ends come as it stops left given
+//! up, or the first job not done where
 //! none comes, the queue removed by the scheduler, made new, mapped again
 //! and tried, and the jobs after those written to it again - where none
 //! came, the given-up one with its own packets made NOPs.
@@ -46,11 +47,16 @@ const _graphics = @import("../graphics/_graphics.zig");
 /// Under the queue's lock, as the vendor's driver resets a kernel compute
 /// queue on this block (amdgpu_gfx_mes_reset_queue_start, by its
 /// registers, as it does for compute): in the RLC's safe mode the queue
-/// is selected, every job not done marked given up, its dequeue asked
+/// is selected, every job not done marked given up, and its dequeue asked
+/// with its waves let finish and no group of its dispatches started any
+/// more (CP_HQD_DEQUEUE_REQUEST 1, since 1.23), as the vendor's compute
+/// driver takes a queue off the engine whose work is to stay right
+/// (hqd_destroy_v11's DRAIN_PIPE, update_queue); the queue is waited for
+/// to be inactive, 100 ms at most. Where it is not, its dequeue is asked
 /// with its waves reset (CP_HQD_DEQUEUE_REQUEST 2), the shader input's
 /// state of it reset (SPI_COMPUTE_QUEUE_RESET) and the queue waited for
-/// to be inactive, 100 ms at most (mes_v11_0_reset_queue_mmio). Where it
-/// is not - and at once with GPURESET_PIPE - the compute engine's pipe is
+/// the same way (mes_v11_0_reset_queue_mmio). Where it is still not - and
+/// at once with GPURESET_PIPE - the compute engine's pipe is
 /// held in reset while each of its eight queues is set inactive, then let
 /// go (mes_v11_0_reset_compute_pipe_mmio), and taken to have worked, as
 /// the vendor's driver takes it: the ring's test says.
@@ -61,9 +67,10 @@ const _graphics = @import("../graphics/_graphics.zig");
 /// got to comes as the queue stops: those jobs stay given up - the kernels
 /// of some ended, of others perhaps done, which nothing tells apart - and
 /// the jobs after them are written to the queue again as they were sent.
-/// Where no end comes - the engine itself held in a job's packets, by a
-/// wait on memory (GPUPACKET_WAIT_REG_MEM) - only the first job not done
-/// stays given up: it is written again with its own packets made NOPs, so
+/// Where no end comes - the waves let finish, or the engine itself held
+/// in a job's packets, by a wait on memory (GPUPACKET_WAIT_REG_MEM) - only
+/// the first job not done stays given up: it is written again with its
+/// own packets made NOPs, so
 /// that its end - its number written, its interrupt raised - comes in its
 /// place, and every job after it with it
 /// (amdgpu_ring_set_fence_errors_and_reemit). The words of the jobs to be
@@ -83,9 +90,11 @@ const _graphics = @import("../graphics/_graphics.zig");
 /// look again.
 ///
 /// CONTEXT:
-/// - Waits: for the queue to be inactive, 100 ms at most; for each of the
-///   scheduler's two calls, 2.1 s at most; for the ring's test, 100 ms at
-///   most - a few milliseconds where all goes well.
+/// - Waits: for the queue's waves to finish, 100 ms at most, and then for
+///   it to be inactive, 100 ms at most; for each of the scheduler's two
+///   calls, 2.1 s at most; for the ring's test, 100 ms at most - a few
+///   milliseconds where all goes well, 100 more where a kernel's waves
+///   run on.
 /// - Interrupts: no.
 /// - Locks: takes the queue's lock.
 /// - Process: a Task will do.
@@ -97,7 +106,12 @@ const _graphics = @import("../graphics/_graphics.zig");
 /// NOTES:
 /// A job given up is gone: what its kernels wrote before the reset stays
 /// written, the rest never is - and one given up with others may have
-/// been done whole. WaitGPUCompute answers false at once for a job a reset
+/// been done whole. Where the queue's waves are let finish, each group of
+/// a job given up has run whole or not begun; only where they are reset
+/// may a wave have been ended between two of its instructions - on the
+/// NucBox, nine resets that did so in the middle of jobs of the board's
+/// left 1009 pixels laid twice, a wave's at a time. WaitGPUCompute answers
+/// false at once for a job a reset
 /// gave up, while fewer than 64 jobs have been sent after it. A job
 /// written again runs from its start. The queue's scratch, its slots of
 /// arguments and its interrupt are kept as they are.
@@ -183,7 +197,7 @@ pub fn ResetGPUCompute(ab: *AMDGPUBase, job: u32, flags: u32) u32 {
     // The jobs after those given up written again - no longer given up -
     // or, where their words are not kept, every job not done given up.
     ab.compute_resets +%= 1;
-    const with: [*:0]const u8 = if (stopped.pipe) " with its pipe" else "";
+    const with: [*:0]const u8 = if (stopped.pipe) " with its pipe" else if (stopped.drained) ", its waves let finish" else ", its waves reset";
     if (anything_again and kept == null) {
         _compute.forceDone(ab);
         given_up = sent;
@@ -206,11 +220,11 @@ pub fn ResetGPUCompute(ab: *AMDGPUBase, job: u32, flags: u32) u32 {
     return given_up;
 }
 
-/// How the queue was stopped: whether its pipe was reset, the last job
-/// done just before it was told to stop - every job after it marked given
-/// up then - and whether the first job not done was one a reset had given
-/// up before.
-const Stopped = struct { pipe: bool, before: u32, repeated: bool };
+/// How the queue was stopped: whether its pipe was reset, or else whether
+/// its waves finished as it was drained; the last job done just before it
+/// was told to stop - every job after it marked given up then - and
+/// whether the first job not done was one a reset had given up before.
+const Stopped = struct { pipe: bool, drained: bool, before: u32, repeated: bool };
 
 /// Every job not done marked given up, just before the queue is told to
 /// stop - the ends of those it ends come at once, to tasks waiting for
@@ -225,9 +239,11 @@ fn markNotDone(ab: *AMDGPUBase, stopped: *Stopped) void {
 
 /// The queue stopped in the RLC's safe mode (mes_v11_0_reset_queue_mmio):
 /// selected, every job not done marked given up, its dequeue asked with
-/// its waves reset, the shader input's state of it reset, and waited for
-/// to be inactive, 100 ms at most; where it is not, or `pipe_at_once`
-/// says so, the compute engine's pipe reset
+/// its waves let finish and no group of its dispatches started any more
+/// (hqd_destroy_v11's DRAIN_PIPE), and waited for to be inactive, 100 ms
+/// at most; where it is not, its dequeue asked with its waves reset, the
+/// shader input's state of it reset, and waited for the same way; where it
+/// is still not, or `pipe_at_once` says so, the compute engine's pipe reset
 /// (mes_v11_0_reset_compute_pipe_mmio) - held in reset while each queue
 /// on it is set inactive and its dequeue cleared, then let go, its first
 /// instruction's place said.
@@ -236,21 +252,21 @@ fn stopQueue(ab: *AMDGPUBase, pipe_at_once: bool) Stopped {
     const owner = amdgpu.AMDGPUNAME;
     const at = _graphics.at;
     const queue = _compute.compute_queue;
-    var stopped: Stopped = .{ .pipe = pipe_at_once, .before = 0, .repeated = false };
+    var stopped: Stopped = .{ .pipe = pipe_at_once, .drained = false, .before = 0, .repeated = false };
     if (!stopped.pipe) {
         const safe = _graphics.enterSafeMode(ab);
         _compute.select(ab, queue, 0);
         markNotDone(ab, &stopped);
-        at(ab, _compute.CP_HQD_DEQUEUE_REQUEST).* = _compute.DEQUEUE_RESET_WAVES;
-        at(ab, _compute.SPI_COMPUTE_QUEUE_RESET).* = _compute.QUEUE_RESET;
-        const until = sys.UptimeUs() + _compute.dequeue_most_us;
-        while (at(ab, _compute.CP_HQD_ACTIVE).* & _compute.HQD_ACTIVE != 0) {
-            if (sys.UptimeUs() > until) {
+        at(ab, _compute.CP_HQD_DEQUEUE_REQUEST).* = _compute.DEQUEUE_DRAIN_PIPE;
+        stopped.drained = inactiveWithin(ab, _compute.drain_most_us);
+        if (!stopped.drained) {
+            at(ab, _compute.CP_HQD_DEQUEUE_REQUEST).* = _compute.DEQUEUE_RESET_WAVES;
+            at(ab, _compute.SPI_COMPUTE_QUEUE_RESET).* = _compute.QUEUE_RESET;
+            if (!inactiveWithin(ab, _compute.dequeue_most_us)) {
                 exec.kprintf(sys, "%s: the compute engine's queue stays active after its dequeue: CP_HQD_DEQUEUE_REQUEST %x; its pipe is reset\n", .{
                     owner, at(ab, _compute.CP_HQD_DEQUEUE_REQUEST).*,
                 });
                 stopped.pipe = true;
-                break;
             }
         }
         _compute.select(ab, _compute.no_queue, 0);
@@ -275,6 +291,16 @@ fn stopQueue(ab: *AMDGPUBase, pipe_at_once: bool) Stopped {
         exec.kprintf(sys, "%s: the compute engine's pipe %u was reset: CP_MEC1_INSTR_PNTR %x\n", .{ owner, queue.pipe, pointer });
     }
     return stopped;
+}
+
+/// Whether the queue selected is inactive within `most_us`.
+fn inactiveWithin(ab: *AMDGPUBase, most_us: u64) bool {
+    const sys = ab.sys_base;
+    const until = sys.UptimeUs() + most_us;
+    while (_graphics.at(ab, _compute.CP_HQD_ACTIVE).* & _compute.HQD_ACTIVE != 0) {
+        if (sys.UptimeUs() > until) return false;
+    }
+    return true;
 }
 
 /// A reset that did not bring the queue back, said with `what`: every job

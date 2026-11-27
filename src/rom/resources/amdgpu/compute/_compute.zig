@@ -158,9 +158,13 @@ pub const MES_HALT: u32 = 1 << 30;
 pub const TIME_STAMP_INT_ENABLE: u32 = 1 << 26;
 pub const GENERIC0_INT_ENABLE: u32 = 1 << 31;
 pub const HQD_VMID_MASK: u32 = 0xf;
-/// A queue's dequeue asked with its waves reset; the shader input's
-/// state of the queue reset; the queue active; the compute engine's first
-/// micro engine's pipe 0 held in reset - the next pipes' bits follow it.
+/// A queue's dequeue asked with its waves let finish and no group of its
+/// dispatches started any more, or with its waves reset
+/// (hqd_dequeue_request_type's DRAIN_PIPE and RESET_WAVES); the shader
+/// input's state of the queue reset; the queue active; the compute
+/// engine's first micro engine's pipe 0 held in reset - the next pipes'
+/// bits follow it.
+pub const DEQUEUE_DRAIN_PIPE: u32 = 1;
 pub const DEQUEUE_RESET_WAVES: u32 = 2;
 pub const QUEUE_RESET: u32 = 1 << 0;
 pub const HQD_ACTIVE: u32 = 1 << 0;
@@ -313,8 +317,9 @@ comptime {
 /// and how long a job waits for room in the ring at most.
 pub const test_most_us: u64 = 100_000;
 /// How long a reset waits for the queue to be inactive: the vendor's
-/// 100 ms.
+/// 100 ms; and as long, first, for its waves to finish as it is drained.
 pub const dequeue_most_us: u64 = 100_000;
+pub const drain_most_us: u64 = 100_000;
 pub const scheduler_most_us: u64 = 2_100_000;
 pub const room_most_us: u64 = 1_000_000;
 

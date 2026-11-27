@@ -257,6 +257,7 @@ const ECO_BITS_MASK: u32 = 0xf << 7;
 const MTYPE_SHIFT = 11;
 const MTYPE_MASK: u32 = 7 << MTYPE_SHIFT;
 const MTYPE_UC: u32 = 3;
+const MTYPE_NC: u32 = 0;
 
 // L2_CNTL's fields.
 const ENABLE_L2_CACHE: u32 = 1 << 0;
@@ -315,8 +316,7 @@ const PTE_READABLE: u64 = 1 << 5;
 const PTE_WRITEABLE: u64 = 1 << 6;
 const PTE_MTYPE_SHIFT = 48;
 const PTE_ADDRESS_MASK: u64 = 0x0000_ffff_ffff_f000;
-const system_page: u64 = valid | PTE_SYSTEM | PTE_SNOOPED | PTE_EXECUTABLE | PTE_READABLE | PTE_WRITEABLE |
-    @as(u64, MTYPE_UC) << PTE_MTYPE_SHIFT;
+const system_page: u64 = valid | PTE_SYSTEM | PTE_SNOOPED | PTE_EXECUTABLE | PTE_READABLE | PTE_WRITEABLE;
 
 /// The range the first context maps, as the vendor places it: 512 MiB at
 /// the top of the device's addresses below the hole at 2^47, started on
@@ -650,9 +650,14 @@ pub fn dropTlb(ab: *AMDGPUBase) bool {
     return true;
 }
 
-/// The table's entry for the page of the machine's memory at `machine`.
-pub fn entryOf(machine: u64) u64 {
-    return machine & PTE_ADDRESS_MASK | system_page;
+/// The table's entry for the page of the machine's memory at `machine`:
+/// uncached in the block, as the vendor's driver maps a page into its
+/// GART (gart_pte_flags), or `cached` in its second level, as it maps a
+/// buffer of a program's where nothing asks otherwise
+/// (gmc_v11_0_get_vm_pte: MTYPE_NC).
+pub fn entryOf(machine: u64, cached: bool) u64 {
+    const mtype: u64 = if (cached) MTYPE_NC else MTYPE_UC;
+    return machine & PTE_ADDRESS_MASK | system_page | mtype << PTE_MTYPE_SHIFT;
 }
 
 /// The pages a range of `bytes` at the machine's `machine` lies in: the
@@ -665,13 +670,14 @@ pub fn pagesOf(machine: u64, bytes: u64) Pages {
 }
 
 /// The table's entries from the `index`th on, `count` of them: each page
-/// of the machine's memory from `machine` on, one after another - or,
-/// with `machine` null, taken out. The TLB is not dropped here.
-pub fn writeEntries(ab: *AMDGPUBase, index: u64, count: u64, machine: ?u64) void {
+/// of the machine's memory from `machine` on, one after another, `cached`
+/// or not - or, with `machine` null, taken out. The TLB is not dropped
+/// here.
+pub fn writeEntries(ab: *AMDGPUBase, index: u64, count: u64, machine: ?u64, cached: bool) void {
     const entries: [*]volatile u64 = @ptrFromInt(@as(usize, @intCast(ab.gart.cpu)));
     var page: u64 = 0;
     while (page < count) : (page += 1) {
-        entries[@intCast(index + page)] = if (machine) |first| entryOf(first + page * page_bytes) else 0;
+        entries[@intCast(index + page)] = if (machine) |first| entryOf(first + page * page_bytes, cached) else 0;
     }
 }
 
@@ -685,10 +691,12 @@ test "the first context's range as the vendor places it" {
     try testing.expectEqual(@as(u64, 1024 * 1024), gart_bytes / page_bytes * entry_bytes);
 }
 
-test "a page of the machine's memory as the vendor maps one into its GART" {
+test "a page of the machine's memory as the vendor maps one into its GART, and one of a program's buffer" {
     // Valid, system, snooped, executable, readable, writable, uncached.
-    try testing.expectEqual(@as(u64, 0x0003_0001_2345_6077), entryOf(0x1_2345_6789));
-    try testing.expectEqual(@as(u64, 0x0003_0000_0000_0077), entryOf(0));
+    try testing.expectEqual(@as(u64, 0x0003_0001_2345_6077), entryOf(0x1_2345_6789, false));
+    try testing.expectEqual(@as(u64, 0x0003_0000_0000_0077), entryOf(0, false));
+    // The same, cached in the second level: memory type 0.
+    try testing.expectEqual(@as(u64, 0x0000_0001_2345_6077), entryOf(0x1_2345_6789, true));
 }
 
 test "the pages a range lies in" {
