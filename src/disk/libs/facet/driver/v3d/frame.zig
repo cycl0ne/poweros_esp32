@@ -281,7 +281,10 @@ pub const DrawState = struct {
     /// The pixels it may touch.
     clip: Area,
     cfg: cl.Cfg = .{},
-    mixing: cl.Mixing = .{},
+    /// How each render target is written, by its number: blended where
+    /// its mixing is `enabled` and `cfg.blend` is set, and its channels
+    /// (since 1.233; render target 0's alone before).
+    mixings: [cl.most_render_targets]cl.Mixing = @splat(.{}),
     /// The front's and the back's test, with `cfg.stencil`.
     stencil: [2]cl.StencilFace = undefined,
     /// What a triangle adds to its depth, with `cfg.biased`: the constant
@@ -322,7 +325,7 @@ pub fn beginBin(list: *List, frame: *const Frame) void {
     list.byte(cl.FLUSH_VCD_CACHE);
     cl.occlusionQueryOff(list);
     list.byte(cl.START_TILE_BINNING);
-    cl.colorWriteMasks(list, 0xF);
+    cl.colorWriteMasks(list, 0);
     cl.sampleState(list, 0xF);
     list.byte(cl.ZERO_ALL_CENTROID_FLAGS);
     cl.pointSize(list, 1.0);
@@ -350,18 +353,30 @@ pub fn writeDrawState(list: *List, frame: *const Frame, state: *const DrawState)
     if (frame.four) cl.sampleState(list, state.sample_mask);
     if (state.cfg.biased) cl.depthOffset(list, state.bias_slope, state.bias_constant, state.bias_clamp);
     if (state.cfg.bounded) cl.depthBounds(list, state.bounds[0], state.bounds[1]);
-    if (state.cfg.blend) cl.blend(list, &state.mixing);
+    if (state.cfg.blend) cl.blend(list, state.mixings[0..frame.configured().len]);
     if (state.cfg.stencil) {
         cl.stencilCfg(list, &state.stencil[0], true);
         cl.stencilCfg(list, &state.stencil[1], false);
     }
-    cl.colorWriteMasks(list, state.mixing.channels);
+    cl.colorWriteMasks(list, unwrittenOf(frame, &state.mixings));
     cl.clipperXy(list, state.width * 32.0, state.height * 32.0);
     cl.clipperZ(list, state.max_depth - state.min_depth, state.min_depth);
     cl.clipperZLimits(list, @min(state.min_depth, state.max_depth), @max(state.min_depth, state.max_depth));
     cl.viewportOffset(list, state.x + state.width * 0.5, state.y + state.height * 0.5);
     cl.varyingFlags(list, cl.FLAT_SHADE_FLAGS, cl.ZERO_ALL_FLAT_SHADE_FLAGS, state.flat_shade_flags);
     cl.varyingFlags(list, cl.NON_PERSPECTIVE_FLAGS, cl.ZERO_ALL_NON_PERSPECTIVE_FLAGS, state.noperspective_flags);
+}
+
+/// The channels a draw leaves alone, four bits a render target
+/// (`cl.colorWriteMasks`): of each with an image those its mixing does not
+/// write, and of one without none, as v3dv leaves an undefined
+/// attachment's bits 0 (v3dvx_pipeline.c:101-106).
+pub fn unwrittenOf(frame: *const Frame, mixings: []const cl.Mixing) u32 {
+    var unwritten: u32 = 0;
+    for (frame.configured(), mixings[0..frame.configured().len], 0..) |each, mixing, rt| if (each != null) {
+        unwritten |= (~mixing.channels & 0xF) << @intCast(4 * rt);
+    };
+    return unwritten;
 }
 
 /// The end of the binner's list.
@@ -613,11 +628,15 @@ test "a draw's state writes its program's flat and non-perspective flags, or zer
 
     // Every packet a draw's state can have, the occlusion query's that
     // `_play.countSamples` may write after the room was asked for, and
-    // the branch to the next part: inside what `roomOnList` keeps.
+    // the branch to the next part: inside what `roomOnList` keeps. Four
+    // render targets, each blended: a BLEND_CFG of each (since 1.233).
     frame.four = true;
-    frame.tile = chooseTile(8, true);
+    frame.targets = 4;
+    for (frame.colors[1..]) |*each| each.* = frame.colors[0];
+    frame.tile = chooseTile(frame.colorBytes(), true);
     var most = flagged;
     most.cfg = .{ .biased = true, .bounded = true, .blend = true, .stencil = true, .clamped = true, .depth_write = true };
+    most.mixings = @splat(.{ .enabled = true });
     const face = cl.StencilFace{ .fail = 1, .pass = 2, .depth_fail = 1, .compare = cl.COMPARE_ALWAYS, .compare_mask = 0xFF, .write_mask = 0xFF, .reference = 1 };
     most.stencil = .{ face, face };
     list.used = 0;
@@ -1047,4 +1066,43 @@ test "a frame of no colour, or of unused attachments alone, configures one unuse
     try std.testing.expectEqual(@as(u8, 29), memory[17]);
     try std.testing.expectEqual(@as(u64, 1), std.mem.readInt(u64, memory[18..26], .little) & 0xF);
     try std.testing.expectEqual(cl.CLEAR_RENDER_TARGETS, memory[30]);
+}
+
+test "a draw blends each render target its mixing enables, by a BLEND_CFG naming it, and writes the channels of each, a target without an image left at 0, as v3dv's masks (since 1.233)" {
+    var memory: [256]u8 = undefined;
+    var list = List{ .at = &memory, .address = 0x1000 };
+    const color = Color{ .image = 0x10_0000, .stride = 256 };
+    const frame = Frame{ .width = 64, .height = 64, .colors = .{ color, null, color, color }, .targets = 4, .tile_lists = 0x20_0000, .binned = false };
+    var state = DrawState{ .clip = .{ .left = 0, .top = 0, .right = 64, .bottom = 64 }, .x = 0, .y = 0, .width = 64, .height = 64, .cfg = .{ .blend = true } };
+    // Render target 0 additive, 2 not blended and writing red alone, 3
+    // blended by the source's alpha with constants of its own, which are
+    // not the first's.
+    state.mixings[0] = .{ .enabled = true, .dst_color = 1, .dst_alpha = 1, .constants = .{ 0.5, 0, 0, 1 } };
+    // Render target 1, without an image, writes no channel, as
+    // `_play.mixingsOf` gives it: its bits stay 0 all the same.
+    state.mixings[1] = .{ .channels = 0 };
+    state.mixings[2] = .{ .channels = 0x1 };
+    state.mixings[3] = .{ .enabled = true, .src_color = 6, .dst_color = 7, .channels = 0xC, .constants = .{ 1, 1, 1, 1 } };
+    writeDrawState(&list, &frame, &state);
+    var at: usize = 0;
+    while (memory[at] != 83) at += 1;
+    // BLEND_ENABLES: 0 and 3.
+    try std.testing.expectEqual(@as(u8, 0b1001), memory[at + 1]);
+    try std.testing.expectEqual(@as(u8, 84), memory[at + 2]);
+    try std.testing.expectEqual(@as(u32, 1 << 24 | 0x11 << 16 | 0x11 << 4), std.mem.readInt(u32, memory[at + 3 ..][0..4], .little));
+    try std.testing.expectEqual(@as(u8, 84), memory[at + 7]);
+    try std.testing.expectEqual(@as(u32, 1 << 27 | 0x76 << 16 | 0x01 << 4), std.mem.readInt(u32, memory[at + 8 ..][0..4], .little));
+    // The one constant colour: the first blended target's.
+    try std.testing.expectEqual(@as(u8, 86), memory[at + 12]);
+    try std.testing.expectEqual(@as(u32, 0x3800), std.mem.readInt(u32, memory[at + 13 ..][0..4], .little));
+    try std.testing.expectEqual(@as(u32, 0x3C00 << 16), std.mem.readInt(u32, memory[at + 17 ..][0..4], .little));
+    // COLOR_WRITE_MASKS: 0 all, 1 without an image 0, 2 red alone, 3 blue
+    // and alpha.
+    while (memory[at] != 87) at += 1;
+    try std.testing.expectEqual(@as(u32, 0x3 << 12 | 0xE << 8), std.mem.readInt(u32, memory[at + 1 ..][0..4], .little));
+    try std.testing.expectEqual(@as(u32, 0x3 << 12 | 0xE << 8), unwrittenOf(&frame, &state.mixings));
+    // Render target 0 alone, as every frame was: its own four bits.
+    const one = Frame{ .width = 64, .height = 64, .colors = .{ color, null, null, null }, .tile_lists = 0x20_0000, .binned = false };
+    try std.testing.expectEqual(@as(u32, 0), unwrittenOf(&one, &state.mixings));
+    try std.testing.expectEqual(@as(u32, 0xE), unwrittenOf(&one, &.{ .{ .channels = 1 }, .{}, .{}, .{} }));
 }

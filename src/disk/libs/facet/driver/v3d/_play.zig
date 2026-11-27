@@ -116,11 +116,6 @@ pub const Player = struct {
     line_width: f32 = 1,
     stencil: _vertices.StencilSet = .{},
     resources: shader.Resources = .{},
-    /// The location of the colour attachment the part draws: its place
-    /// among its subpass's, which its blend state is at and which a
-    /// fragment program has to write for it to be drawn (since 1.230;
-    /// `shader.Resources.output` until then).
-    output: u32 = 0,
     /// Which of its subpass's parts is being drawn: a query counts the
     /// first alone (since 1.116).
     part: u32 = 0,
@@ -141,16 +136,11 @@ pub const Player = struct {
     /// The frame being made.
     frame: Frame = undefined,
     area: Area = undefined,
-    /// The colour's image, or null in a frame of no colour (since 1.150).
-    image: ?*Image = null,
-    /// Where in that image's memory the frame's rows begin: the layer its
-    /// view begins at, which the GPU is given and the CPU's caches are kept
-    /// in step over (since 1.91). Mesa's v3dv adds the same to every load
-    /// and store it emits (`v3dv_layer_offset`, v3dv_image.c).
-    image_first: usize = 0,
-    /// And the bytes from there the frame stores into: the rows of its
-    /// height, or a level of four samples (since 1.147).
-    image_bytes: usize = 0,
+    /// The colour drawn into each render target, by its number, which is
+    /// its location: null for one the frame draws none into (since 1.233;
+    /// the player's fields of its one colour until then, which was the
+    /// part's, at `output`).
+    drawn: [cl.most_render_targets]?Drawn = @splat(null),
     /// The image whose rows hold the depth or the stencil the frame keeps,
     /// for the caches either side of the job: null where the pass keeps
     /// neither (since 1.47).
@@ -160,22 +150,6 @@ pub const Player = struct {
     kept_first: usize = 0,
     /// And how many bytes of it the frame reaches.
     kept_bytes: usize = 0,
-    /// The layer of its colour's image the frame draws into, the one its
-    /// view begins at (since 1.148).
-    color_layer: u32 = 0,
-    /// What the tiles draw the frame's colour as (`v3d.target`): its
-    /// output format, its width in the tile buffer, whether the TLB takes
-    /// it a float at a time, and whether it has an alpha (since 1.228).
-    target: v3d.target.Target = .{ .output = cl.OUTPUT_RGBA8 },
-    /// The colour's resolve attachment in a frame of four, or null for
-    /// none: averaged into by the tiles as they end where the frame has a
-    /// `Frame.resolve`, and by the CPU after the frame where it has not
-    /// (since 1.148).
-    resolve_view: ?*const _image.ImageView = null,
-    /// The first byte of its rows the tiles store into, and how many, for
-    /// the caches either side of the job.
-    resolve_first: usize = 0,
-    resolve_bytes: usize = 0,
     /// The occlusion query being counted into, or null for none: what
     /// CmdBeginQuery begins and CmdEndQuery ends (since 1.47).
     counting: ?_queries.Counting = null,
@@ -219,6 +193,37 @@ pub const Player = struct {
     /// A draw left out for want of room has been reported.
     told_no_room: bool = false,
     tile_state: ?Block = null,
+};
+
+/// A colour a frame draws into a render target of its own: its colour
+/// attachment's image, and how the tiles draw it (since 1.233; the
+/// player's own fields until then).
+pub const Drawn = struct {
+    image: *Image,
+    /// Where in that image's memory the frame's rows begin: the layer its
+    /// view begins at, which the GPU is given and the CPU's caches are kept
+    /// in step over (since 1.91). Mesa's v3dv adds the same to every load
+    /// and store it emits (`v3dv_layer_offset`, v3dv_image.c).
+    first: usize,
+    /// And the bytes from there the frame stores into: the rows of its
+    /// height, or a level of four samples (since 1.147).
+    bytes: usize,
+    /// The layer of the image the frame draws into, the one its view
+    /// begins at (since 1.148).
+    layer: u32,
+    /// What the tiles draw it as (`v3d.target`): its output format, its
+    /// width in the tile buffer, whether the TLB takes it a float at a
+    /// time, and whether it has an alpha (since 1.228).
+    target: v3d.target.Target,
+    /// Its resolve attachment in a frame of four, or null for none:
+    /// averaged into by the tiles as they end where its `frames.Color` has
+    /// a `resolve`, and by the CPU after the frame where it has not (since
+    /// 1.148).
+    resolve_view: ?*const _image.ImageView = null,
+    /// The first byte of its rows the tiles store into, and how many, for
+    /// the caches either side of the job.
+    resolve_first: usize = 0,
+    resolve_bytes: usize = 0,
 };
 
 pub fn open(queue: *Queue) callconv(.c) bool {
@@ -608,25 +613,9 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, part
     const player = playerOf(queue);
     if (player.hardware.broken) return;
     player.part = part;
-    // The location its colour is written at: its part's number, unless a
-    // colour before it is unused and has none (since 1.118).
-    player.output = command.parts[part].locations[0];
+    player.drawn = @splat(null);
+    const drawn_part = &command.parts[part];
     const framebuffer = &command.targets[part];
-    // A part of no colour - a subpass of no colour attachment, or of
-    // unused ones alone - has no image of colour, and `colors[0]` is not
-    // set: its frame configures the unused render target and moves no
-    // colour (`Frame.color`, since 1.150).
-    const has_color = command.parts[part].color_count != 0;
-    const image: ?*Image = if (has_color) framebuffer.colors[0].image else null;
-    // What the tiles draw it as, by v3dv's table (`v3d.target`): since
-    // 1.228 the fourteen of docs/facet-vulkan10.md item 36 too, each
-    // stored and loaded as its own output format at its own width.
-    const drawn: v3d.target.Target = if (image) |each| v3d.target.of(each.format) orelse return else .{ .output = cl.OUTPUT_RGBA8 };
-    const address = if (image) |each| addressOf(queue, each) else 0;
-    if (image) |each| if (address == 0) {
-        exec.kprintf(queue.device.sys, "v3d: an image at %lx is out of its reach\n", .{@intFromPtr(each.data)});
-        return;
-    };
     // The render area, cut to the framebuffer.
     const offset = command.area.offset;
     const left: u32 = @intCast(std.math.clamp(offset.x, 0, @as(i64, framebuffer.width)));
@@ -635,27 +624,79 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, part
     const bottom: u32 = @intCast(std.math.clamp(@as(i64, offset.y) + command.area.extent.height, top, framebuffer.height));
     if (left == right or top == bottom) return;
     const whole = left == 0 and top == 0 and right == framebuffer.width and bottom == framebuffer.height;
-    const clears = has_color and command.parts[part].color_loads[0] == .clear;
+    // The subpass's clears are in the order its parts draw their colours
+    // (`_command.beginRenderPass`): this part's after those of the parts
+    // before it.
+    var first_clear: u32 = 0;
+    for (command.parts[0..part]) |before| first_clear += before.color_count;
+    // Each colour the part draws is the render target its location names,
+    // as v3dv configures render target i for the subpass's colour
+    // attachment i, and an unused one for an attachment it does not draw
+    // (v3dvx_cmd_buffer.c:1077-1086, 1189-1197): a subpass of several
+    // drawn together in the one frame (since 1.233; each the render target
+    // 0 of a frame of its own until then). v3dv configures the subpass's
+    // count; here they end at the last drawn, those past it being unused
+    // ones that nothing stores. A part of no colour - a subpass of no
+    // colour attachment, or of unused ones alone - has none, and its frame
+    // configures render target 0 unused and moves no colour (since 1.150).
+    var colors: [cl.most_render_targets]?frames.Color = @splat(null);
+    var targets: u32 = 1;
+    // What each colour that clears is cleared to inside a render area that
+    // is not the framebuffer's whole, by a rectangle (below).
+    var inside: [cl.most_render_targets]?[4]u32 = @splat(null);
+    var samples = drawn_part.samples;
+    for (framebuffer.colors[0..drawn_part.color_count], 0..) |view, plane| {
+        const rt = drawn_part.locations[plane];
+        std.debug.assert(rt < cl.most_render_targets);
+        const image = view.image;
+        // What the tiles draw it as, by v3dv's table (`v3d.target`): since
+        // 1.228 the fourteen of docs/facet-vulkan10.md item 36 too, each
+        // stored and loaded as its own output format at its own width.
+        const drawn = v3d.target.of(image.format) orelse return;
+        const address = addressOf(queue, image);
+        if (address == 0) {
+            exec.kprintf(queue.device.sys, "v3d: an image at %lx is out of its reach\n", .{@intFromPtr(image.data)});
+            return;
+        }
+        // The layer the view begins at, an image kept in rows having
+        // layers since 1.91: until then the frame began at the image's
+        // first byte whatever its view said. And the level it names, an
+        // image laid out as a texture here having levels since 1.210.
+        const place = colorPlace(image, view.base_level, view.base_layer, framebuffer.height);
+        const clear_at = @min(first_clear + plane, _render.most_colors - 1);
+        const clear_color = command.clear_colors[clear_at];
+        const clear_words = command.clear_values[clear_at];
+        const clears = drawn_part.color_loads[plane] == .clear;
+        player.drawn[rt] = .{ .image = image, .first = place.first, .bytes = place.bytes, .layer = view.base_layer, .target = drawn };
+        colors[rt] = .{
+            .image = address + @as(u32, @intCast(place.first)),
+            .stride = place.stride,
+            .memory = place.memory,
+            .format = drawn.output,
+            .swap_rb = drawn.swap_rb,
+            // Its bits, type and clamp, and the clear as the tile buffer
+            // holds it: red in the low byte for normalized bytes, and the
+            // clear's own words for the others (`cl.clearColor`, since
+            // 1.228).
+            .target = drawn.renderTarget(clear_color, clear_words),
+            .load = !clears or !whole,
+            .clear_inside = clears and !whole,
+        };
+        if (clears and !whole) inside[rt] = drawn.clearWords(clear_color, clear_words);
+        targets = @max(targets, rt + 1);
+        samples = image.samples;
+    }
     // The tile its samples and its render targets fit (`chooseTile` of
     // the frame's `colorBytes`, below), at the bits a pixel each target
     // takes in the tile buffer (32 whatever the format until 1.228; 64
     // for half-floats and sRGB, 128 for four floats), or none: v3dv's
     // tile from its subpass's total bpp (v3dv_pass.c:353-371). Four
-    // samples where the colour has four, which its depth has too, Vulkan having a subpass's
-    // attachments of one count (since 1.147, docs/facet-vulkan10.md item
-    // 61, step V4); in a part of no colour, where its depth has, and in
-    // one of no attachment where its first draw's pipeline has
-    // (`restartAtFour`, V8).
-    const four = if (image) |each| each.samples > 1 else command.parts[part].samples > 1;
-    const color = command.clear_colors[part];
-    player.image = image;
-    // The layer the view begins at, an image kept in rows having layers
-    // since 1.91: until then the frame began at the image's first byte
-    // whatever its view said. And the level it names, an image laid out
-    // as a texture here having levels since 1.210.
-    const place = if (image) |each| colorPlace(each, framebuffer.colors[0].base_level, framebuffer.colors[0].base_layer, framebuffer.height) else ColorPlace{ .first = 0, .bytes = 0, .stride = 0, .memory = cl.MEMORY_RASTER };
-    player.image_first = place.first;
-    player.image_bytes = place.bytes;
+    // samples where the colours have four, which its depth has too, Vulkan
+    // having a subpass's attachments of one count (since 1.147,
+    // docs/facet-vulkan10.md item 61, step V4); in a part of no colour,
+    // where its depth has, and in one of no attachment where its first
+    // draw's pipeline has (`restartAtFour`, V8).
+    const four = samples > 1;
     player.kept_image = null;
     // `beginBin` stops the hardware's counter, so the frame starts with no
     // word and writes the packet again at the first draw that counts.
@@ -668,36 +709,21 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, part
     player.tmu_dirty_rcl = false;
     player.storage_count = 0;
     player.storage_over = false;
-    // The part's colour is render target 0 of its frame, the one its
-    // programs write (the frame takes a render target of each colour
-    // attachment since 1.232, `frames.Frame.colors`).
-    const drawn_color: ?frames.Color = if (image != null) .{
-        .image = address + @as(u32, @intCast(player.image_first)),
-        .stride = place.stride,
-        .memory = place.memory,
-        .format = drawn.output,
-        .swap_rb = drawn.swap_rb,
-        // Its bits, type and clamp, and the clear as the tile buffer holds
-        // it: red in the low byte for normalized bytes, and the clear's
-        // own words for the others (`cl.clearColor`, since 1.228).
-        .target = drawn.renderTarget(color, command.clear_values[part]),
-        .load = !clears or !whole,
-        .clear_inside = clears and !whole,
-    } else null;
     player.frame = .{
         .width = framebuffer.width,
         .height = framebuffer.height,
-        .colors = .{ drawn_color, null, null, null },
+        .colors = colors,
+        .targets = targets,
         // `startBinning`'s, once it has made them.
         .tile_lists = 0,
         .binned = false,
-        .depth = command.parts[part].tests_depth,
-        .depth24 = command.parts[part].depth_bits == 24,
-        .clear_depth = @as(f32, @floatFromInt(command.clear_depth)) / @as(f32, @floatFromInt(_render.depthUnits(command.parts[part].depth_bits))),
-        .stencil = command.parts[part].tests_stencil,
+        .depth = drawn_part.tests_depth,
+        .depth24 = drawn_part.depth_bits == 24,
+        .clear_depth = @as(f32, @floatFromInt(command.clear_depth)) / @as(f32, @floatFromInt(_render.depthUnits(drawn_part.depth_bits))),
+        .stencil = drawn_part.tests_stencil,
         .clear_stencil = command.clear_stencil,
         .kept = kept: {
-            const made = keptOf(queue, &command.parts[part], framebuffer);
+            const made = keptOf(queue, drawn_part, framebuffer);
             if (made != null) player.kept_image = framebuffer.depth.?.image;
             break :kept made;
         },
@@ -705,9 +731,7 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, part
         .four = four,
     };
     player.frame.tile = frames.chooseTile(player.frame.colorBytes(), four);
-    player.color_layer = if (has_color) framebuffer.colors[0].base_layer else 0;
-    player.target = drawn;
-    // The colour's resolve attachment, in a frame of four. The tiles
+    // Each colour's resolve attachment, in a frame of four. The tiles
     // average its samples into it as each ends where every tile they
     // render lies inside the area, and the CPU does after the frame where
     // one does not, as v3dv resolves in the TLB only over a render area
@@ -719,26 +743,31 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, part
     // texture, sampled as well, the tiles storing the average into the
     // level its view names in that level's own tiling, as v3dv stores a
     // resolve into its image's slice (v3dvx_cmd_buffer.c:364-411); one of
-    // any other shape is not resolved into.
-    player.resolve_view = null;
-    if (four) if (image) |each| if (framebuffer.resolves[0]) |view| resolve: {
-        const into = view.image;
-        if (into.samples != 1 or into.format != each.format or into.kind != .rows or !_image.readable(into)) break :resolve;
-        player.resolve_view = view;
-        if (!frames.tilesInArea(&player.frame)) break :resolve;
-        // The tiles average normalized bytes and half-floats as they are
-        // stored and nothing else: the CPU resolves floats of 32 bits
-        // after the frame, as v3dv resolves a format the TLB cannot with
-        // a job of its own (`format_supports_tlb_resolve`,
-        // v3dvx_formats.c:468-483; since 1.228).
-        if (!cl.tilesBlend(drawn.internal().kind)) break :resolve;
-        const at = addressOf(queue, into);
-        if (at == 0) break :resolve;
-        const resolved = colorPlace(into, view.base_level, view.base_layer, framebuffer.height);
-        player.resolve_first = resolved.first;
-        player.resolve_bytes = resolved.bytes;
-        player.frame.colors[0].?.resolve = .{ .image = at + @as(u32, @intCast(resolved.first)), .stride = resolved.stride, .memory = resolved.memory };
-    };
+    // any other shape is not resolved into. Each render target's its own
+    // since 1.233, as v3dv emits a resolve store for each
+    // (v3dvx_cmd_buffer.c:640-670).
+    if (four) {
+        for (framebuffer.resolves[0..drawn_part.color_count], drawn_part.locations[0..drawn_part.color_count]) |resolve, rt| {
+            const view = resolve orelse continue;
+            const each = &player.drawn[rt].?;
+            const into = view.image;
+            if (into.samples != 1 or into.format != each.image.format or into.kind != .rows or !_image.readable(into)) continue;
+            each.resolve_view = view;
+            if (!frames.tilesInArea(&player.frame)) continue;
+            // The tiles average normalized bytes and half-floats as they
+            // are stored and nothing else: the CPU resolves floats of 32
+            // bits after the frame, as v3dv resolves a format the TLB
+            // cannot with a job of its own (`format_supports_tlb_resolve`,
+            // v3dvx_formats.c:468-483; since 1.228).
+            if (!cl.tilesBlend(each.target.internal().kind)) continue;
+            const at = addressOf(queue, into);
+            if (at == 0) continue;
+            const resolved = colorPlace(into, view.base_level, view.base_layer, framebuffer.height);
+            each.resolve_first = resolved.first;
+            each.resolve_bytes = resolved.bytes;
+            player.frame.colors[rt].?.resolve = .{ .image = at + @as(u32, @intCast(resolved.first)), .stride = resolved.stride, .memory = resolved.memory };
+        }
+    }
     // A depth or a stencil kept in memory and stored, over a render area
     // a tile the renderer renders sticks out of, is loaded first whatever
     // its load op, so that the tile's store writes back what lay outside
@@ -766,23 +795,33 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, part
     };
     if (!startBinning(queue)) return;
     player.drawing = true;
-    const colors_inside = clears and !whole;
-    if (colors_inside or depth_inside or stencil_inside) {
-        clearRectangle(
-            queue,
-            player.area,
-            drawn.clearWords(color, command.clear_values[part]),
-            if (colors_inside) 0xF else 0,
-            if (depth_inside) player.frame.clear_depth else null,
-            if (stencil_inside) @truncate(player.frame.clear_stencil) else null,
-        );
+    // Inside an area not the framebuffer's whole, a rectangle of each
+    // colour that clears, as v3dv clears there with CmdClearAttachments
+    // (`cmd_buffer_emit_subpass_clears`, v3dv_cmd_buffer.c:1421-1488),
+    // which draws each colour attachment by a rectangle of its own
+    // (`emit_subpass_color_clear_rects`, v3dv_meta_clear.c:1259-1265; each
+    // its own since 1.233). The depth and the stencil go with the first, as
+    // they went with the one colour before; v3dv draws them by a rectangle
+    // of their own (`emit_subpass_ds_clear_rects`, :1266-1271), which
+    // leaves the same pixels.
+    var depth_left = depth_inside;
+    var stencil_left = stencil_inside;
+    for (inside, 0..) |cleared, rt| {
+        const words = cleared orelse continue;
+        clearRectangle(queue, player.area, @intCast(rt), words, 0xF, if (depth_left) player.frame.clear_depth else null, if (stencil_left) @truncate(player.frame.clear_stencil) else null);
+        depth_left = false;
+        stencil_left = false;
+    }
+    if (depth_left or stencil_left) {
+        clearRectangle(queue, player.area, 0, @splat(0), 0, if (depth_left) player.frame.clear_depth else null, if (stencil_left) @truncate(player.frame.clear_stencil) else null);
     }
 }
 
-/// Whether the tiles resolve the part's colour, render target 0, as they
-/// are stored (`frames.Color.resolve`), and the CPU does not after.
-fn resolvedByTiles(player: *const Player) bool {
-    const color = player.frame.colors[0] orelse return false;
+/// Whether the tiles resolve render target `rt` as they store it
+/// (`frames.Color.resolve`), and the CPU does not after (render target 0
+/// alone until 1.233).
+fn tilesResolve(player: *const Player, rt: usize) bool {
+    const color = player.frame.colors[rt] orelse return false;
     return color.resolve != null;
 }
 
@@ -944,35 +983,47 @@ fn clearAttachment(queue: *Queue, command: *const _command.ClearAttachment) void
     const right: u32 = @intCast(std.math.clamp(x + rect.extent.width, left, area.right));
     const bottom: u32 = @intCast(std.math.clamp(y + rect.extent.height, top, area.bottom));
     if (left == right or top == bottom) return;
+    // The colour attachment it names is the render target of its
+    // location, as v3dv clears render target `colorAttachment`
+    // (`emit_subpass_color_clear_rects`, v3dv_meta_clear.c:1031-1046; since
+    // 1.233, the part's one colour where it was at `output` until then).
+    // None where the frame draws none there - an unused attachment, whose
+    // clear has no effect (since 1.150).
+    const rt = command.output;
+    const color: ?Drawn = if (aspect & facet.IMAGE_ASPECT_COLOR != 0 and rt < cl.most_render_targets) player.drawn[rt] else null;
     clearRectangle(
         queue,
         .{ .left = left, .top = top, .right = right, .bottom = bottom },
-        player.target.clearWords(command.color, command.words),
-        // No colour in a frame of none, where a colour attachment the
-        // clear names is an unused one, whose clear has no effect (since
-        // 1.150).
-        if (aspect & facet.IMAGE_ASPECT_COLOR != 0 and command.output == player.output and player.frame.hasColor()) 0xF else 0,
+        if (color != null) rt else 0,
+        if (color) |each| each.target.clearWords(command.color, command.words) else @splat(0),
+        if (color != null) 0xF else 0,
         if (aspect & facet.IMAGE_ASPECT_DEPTH != 0 and player.frame.depth) command.depth else null,
         if (aspect & facet.IMAGE_ASPECT_STENCIL != 0 and player.frame.stencil) @truncate(command.stencil) else null,
     );
 }
 
 /// A rectangle over the whole image, cut to `clip`, writing the `channels` of
-/// the colour and the depth and the stencil given. The colour is its four
-/// words, `Target.clearWords`': into a target the TLB takes a word a
-/// channel they are the program's uniforms, moved to it untouched
-/// (`qpu.words_fragment`, as v3dv clears with push constants; since
-/// 1.229), and otherwise four floats the vertices carry.
-fn clearRectangle(queue: *Queue, clip: frames.Area, color: [4]u32, channels: u32, depth: ?f32, stencil: ?u8) void {
+/// render target `rt`'s colour and the depth and the stencil given. The
+/// colour is its four words, `Target.clearWords`': into a target the TLB
+/// takes a word a channel they are the program's uniforms, moved to it
+/// untouched (`qpu.words_fragment`, as v3dv clears with push constants;
+/// since 1.229), and otherwise four floats the vertices carry. Every
+/// other render target's channels are left alone, as v3dv's clear
+/// pipeline writes the one attachment and has every other's write mask 0
+/// (`create_color_clear_pipeline`, v3dv_meta_clear.c:623-628; since 1.233).
+fn clearRectangle(queue: *Queue, clip: frames.Area, rt: u32, color: [4]u32, channels: u32, depth: ?f32, stencil: ?u8) void {
     const player = playerOf(queue);
     // Nothing to write: a colour the frame does not draw, and neither
     // plane (since 1.150, where it drew a rectangle that wrote nothing).
     if (channels == 0 and depth == null and stencil == null) return;
-    // In a frame of no colour, the program of no colour, which reads no
-    // varying and writes the depth the rasterizer made, the rectangle's
-    // own (since 1.150).
-    const no_color = !player.frame.hasColor();
-    const words = !no_color and player.target.wide();
+    // Where no colour is written - a frame of none, or the depth or the
+    // stencil alone - the program of no colour, which reads no varying and
+    // writes the depth the rasterizer made, the rectangle's own (since
+    // 1.150; since 1.233 for the depth or the stencil alone in a frame of
+    // colour too, whose program wrote render target 0 masked).
+    const into: ?Drawn = if (channels != 0) player.drawn[rt] else null;
+    const no_color = into == null;
+    const words = if (into) |each| each.target.wide() else false;
     const varyings: u32 = if (no_color or words) 0 else 4;
     const corners = [_]u32{ 0, 1, 2, 2, 1, 3 };
     const indices = carve(queue, @sizeOf(@TypeOf(corners)), 4) orelse return;
@@ -989,7 +1040,11 @@ fn clearRectangle(queue: *Queue, clip: frames.Area, color: [4]u32, channels: u32
     const state = frames.DrawState{
         .clip = clip,
         .cfg = .{ .compare = cl.COMPARE_ALWAYS, .depth_write = depth != null, .stencil = stencil != null },
-        .mixing = .{ .channels = channels },
+        .mixings = mixings: {
+            var each: [cl.most_render_targets]cl.Mixing = @splat(.{ .channels = 0 });
+            if (into != null) each[rt].channels = channels;
+            break :mixings each;
+        },
         .stencil = .{ stencil_face, stencil_face },
         .x = 0,
         .y = 0,
@@ -997,15 +1052,19 @@ fn clearRectangle(queue: *Queue, clip: frames.Area, color: [4]u32, channels: u32
         .height = half_height * 2,
     };
     const hardware = player.hardware;
+    // Of half-floats, render target 0 by the colour of the vertices'
+    // program, and another by the same aimed at it by a TLBU write of its
+    // specifier (`qpu.targeted`, as Mesa's back end aims a write at a
+    // render target but 0; since 1.233).
     const uniforms = if (no_color)
         streamOf(queue, hardware.no_color.stream(), &.{}, null, 0, .{}) orelse return noRoom(queue, "a clear with no memory for its uniforms")
     else if (words)
-        wordUniforms(queue, color) orelse return noRoom(queue, "a clear with no memory for its uniforms")
+        wordUniforms(queue, color, rt) orelse return noRoom(queue, "a clear with no memory for its uniforms")
     else
-        colorUniforms(queue) orelse return noRoom(queue, "a clear with no memory for its uniforms");
+        specifierUniforms(queue, if (rt == 0) null else qpu.f16Specifier(rt)) orelse return noRoom(queue, "a clear with no memory for its uniforms");
     if (!roomOnList(queue)) return noRoom(queue, "a clear with no memory for the binner's list");
     frames.writeDrawState(&player.bin, &player.frame, &state);
-    const fragment = if (no_color) hardware.no_color.address else if (words) hardware.programs.words else colorsOf(player).color;
+    const fragment = if (no_color) hardware.no_color.address else if (words) hardware.programs.words else if (rt == 0) hardware.programs.color else hardware.programs.targeted_color;
     if (!sendVertices(queue, vertices.address, varyings, fragment, uniforms, if (no_color) &hardware.no_color else null)) return;
     cl.indexBufferSetup(&player.bin, indices.address, @sizeOf(@TypeOf(corners)));
     cl.indexedPrimList(&player.bin, cl.PRIM_TRIANGLES, corners.len);
@@ -1053,12 +1112,10 @@ fn endRenderPass(queue: *Queue) void {
     frames.writeRender(&render, &player.frame, tiles, inside);
 
     const space = &hardware.space;
-    const image = player.image;
-    const image_bytes = player.image_bytes;
     for (player.chunks[0..player.chunk_count]) |*chunk| {
         if (chunk.used != 0) space.rangeToGpu(chunk.block.cpu, chunk.used);
     }
-    if (image) |each| space.rangeToGpu(each.data.? + player.image_first, image_bytes);
+    for (player.drawn) |drawn| if (drawn) |each| space.rangeToGpu(each.image.data.? + each.first, each.bytes);
     // The depth or the stencil the frame keeps lies in another image: what
     // the CPU wrote there goes out to memory before the frame, and what a
     // store writes is dropped from the CPU's caches after. Out before a
@@ -1069,7 +1126,9 @@ fn endRenderPass(queue: *Queue) void {
     const kept_bytes: usize = if (player.frame.kept != null) player.kept_bytes else 0;
     if (player.frame.kept != null) space.rangeToGpu(player.kept_image.?.data.? + player.kept_first, kept_bytes);
     // And the rows the tiles resolve into, for the same reason.
-    if (resolvedByTiles(player)) space.rangeToGpu(player.resolve_view.?.image.data.? + player.resolve_first, player.resolve_bytes);
+    for (player.drawn, 0..) |drawn, rt| if (drawn) |each| if (tilesResolve(player, rt)) {
+        space.rangeToGpu(each.resolve_view.?.image.data.? + each.resolve_first, each.resolve_bytes);
+    };
 
     sys.ObtainSemaphore(&device.base.v3d_lock);
     defer sys.ReleaseSemaphore(&device.base.v3d_lock);
@@ -1098,9 +1157,11 @@ fn endRenderPass(queue: *Queue) void {
         for (player.storage[0..player.storage_count]) |each| space.rangeFromGpu(each.at, each.bytes);
         if (player.storage_over) exec.kprintf(sys, "v3d: a job bound more than %lu storage buffers, and the CPU may read the rest stale\n", .{@as(u64, most_storage)});
     }
-    if (image) |each| space.rangeFromGpu(each.data.? + player.image_first, image_bytes);
+    for (player.drawn) |drawn| if (drawn) |each| space.rangeFromGpu(each.image.data.? + each.first, each.bytes);
     if (player.frame.kept) |kept| if (kept.store) space.rangeFromGpu(player.kept_image.?.data.? + player.kept_first, kept_bytes);
-    if (resolvedByTiles(player)) space.rangeFromGpu(player.resolve_view.?.image.data.? + player.resolve_first, player.resolve_bytes);
+    for (player.drawn, 0..) |drawn, rt| if (drawn) |each| if (tilesResolve(player, rt)) {
+        space.rangeFromGpu(each.resolve_view.?.image.data.? + each.resolve_first, each.resolve_bytes);
+    };
     addTallies(player, space);
     if (rendered != .done) return lost(player, sys, rendered, "rendering");
     // A resolve the tiles could not do, over the render area, from the
@@ -1110,19 +1171,23 @@ fn endRenderPass(queue: *Queue) void {
     // v3dv_cmd_buffer.c:957-1005): here that path's body on the CPU
     // (`_transfer.resolveRectangle`).
     const area = player.area;
-    // A frame of no colour has no resolve and nothing shown.
-    const color_image = image orelse return;
-    // What the CPU wrote goes out before the TMU reads it, where the
-    // resolve attachment is sampled as well (since 1.210).
-    if (player.resolve_view) |view| if (!resolvedByTiles(player)) {
-        _transfer.resolveRectangle(color_image, player.color_layer, .{ area.left, area.top }, view.image, view.base_level, view.base_layer, .{ area.left, area.top }, area.right - area.left, area.bottom - area.top);
-        texturesToGpu(queue, view.image);
-    };
-    // What is shown is the resolve where there is one, as the cores show
-    // it (`cpu/_play.zig`), a swapchain's image being of one sample.
-    const shown = if (player.resolve_view) |view| view.image else color_image;
-    if (shown.display) |display| {
-        display.handOn(area.left, area.top, area.right - area.left, area.bottom - area.top);
+    // Of each colour drawn (a frame of no colour has no resolve and
+    // nothing shown):
+    for (player.drawn, 0..) |drawn, rt| {
+        const each = drawn orelse continue;
+        // What the CPU wrote goes out before the TMU reads it, where the
+        // resolve attachment is sampled as well (since 1.210).
+        if (each.resolve_view) |view| if (!tilesResolve(player, rt)) {
+            _transfer.resolveRectangle(each.image, each.layer, .{ area.left, area.top }, view.image, view.base_level, view.base_layer, .{ area.left, area.top }, area.right - area.left, area.bottom - area.top);
+            texturesToGpu(queue, view.image);
+        };
+        // What is shown is the resolve where there is one, as the cores
+        // show it (`cpu/_play.zig`), a swapchain's image being of one
+        // sample.
+        const shown = if (each.resolve_view) |view| view.image else each.image;
+        if (shown.display) |display| {
+            display.handOn(area.left, area.top, area.right - area.left, area.bottom - area.top);
+        }
     }
 }
 
@@ -1736,7 +1801,7 @@ fn textureUniforms(queue: *Queue, fixed: shader.Fixed) ?u32 {
     const made = tmuConfiguration(queue, 0, 0, how, dref) orelse return null;
     // And after the two, where the program writes 32-bit floats, the
     // specifier its TLBU write reads (`qpu.wide`, since 1.228).
-    const wide = playerOf(queue).target.wide();
+    const wide = fixedWide(playerOf(queue));
     const place = carve(queue, if (wide) 12 else 8, 4) orelse return null;
     const words: [*]u32 = @ptrCast(@alignCast(place.cpu));
     words[0] = made.texture;
@@ -1745,13 +1810,13 @@ fn textureUniforms(queue: *Queue, fixed: shader.Fixed) ?u32 {
     return place.address;
 }
 
-/// The fixed forms' programs for the frame's render target: those that
-/// write 32-bit floats where the TLB takes it a float at a time
-/// (`driver.Programs.wide`, since 1.228), and the ones of half-floats
-/// otherwise.
+/// The fixed forms' programs for the frame's render target 0, the one
+/// they write: those that write 32-bit floats where the TLB takes it a
+/// float at a time (`driver.Programs.wide`, since 1.228), and the ones of
+/// half-floats otherwise.
 fn colorsOf(player: *const Player) driver.Colors {
     const programs = &player.hardware.programs;
-    if (player.target.wide()) return programs.wide;
+    if (fixedWide(player)) return programs.wide;
     return .{
         .color = programs.color,
         .texture = programs.texture,
@@ -1767,19 +1832,34 @@ fn colorsOf(player: *const Player) driver.Colors {
 /// word carved that nothing reads, or for a target of 32-bit floats the
 /// specifier its TLBU write reads (since 1.228).
 fn colorUniforms(queue: *Queue) ?u32 {
+    return specifierUniforms(queue, if (fixedWide(playerOf(queue))) qpu.tlb_f32_specifier else null);
+}
+
+/// A program's one uniform, the specifier its TLBU write reads, or a word
+/// it does not read where it has none.
+fn specifierUniforms(queue: *Queue, specifier: ?u32) ?u32 {
     const place = carve(queue, 4, 4) orelse return null;
-    if (playerOf(queue).target.wide()) std.mem.writeInt(u32, place.cpu[0..4], qpu.tlb_f32_specifier, .little);
+    if (specifier) |word| std.mem.writeInt(u32, place.cpu[0..4], word, .little);
     return place.address;
 }
 
 /// `qpu.words_fragment`'s uniforms: the clear's four words, then the
-/// specifier its TLBU write reads (since 1.229).
-fn wordUniforms(queue: *Queue, color: [4]u32) ?u32 {
+/// specifier its TLBU write reads, naming render target `rt` (since
+/// 1.229; 0 alone until 1.233).
+fn wordUniforms(queue: *Queue, color: [4]u32, rt: u32) ?u32 {
     const place = carve(queue, 20, 4) orelse return null;
     const into: [*]u32 = @ptrCast(@alignCast(place.cpu));
     @memcpy(into[0..4], &color);
-    into[4] = qpu.tlb_f32_specifier;
+    into[4] = qpu.f32Specifier(rt);
     return place.address;
+}
+
+/// Whether render target 0, the one the fixed forms' programs write,
+/// takes a float at a time (`v3d.target.Target.wide`): those of 32-bit
+/// floats draw it (`colorsOf`). In a frame without it, none.
+fn fixedWide(player: *const Player) bool {
+    const at_zero = player.drawn[0] orelse return false;
+    return at_zero.target.wide();
 }
 
 /// The TMU's two words for a generated program's sampler: the texture
@@ -1859,33 +1939,45 @@ fn stencilFaceOf(face: _pipeline.StencilFace) cl.StencilFace {
     };
 }
 
-/// A pipeline's mixing in the hardware's terms: the one for the colour
-/// attachment this part draws. None of its channels written where the
-/// fragment program writes no colour at the part's location - every part
-/// past the first, the V3D's programs writing location 0 alone - as v3d
-/// writes no render target its shader has no output for
-/// (`vir_emit_tlb_color_write`, nir_to_vir.c:1958) and llvmpipe blends no
-/// colour buffer it has none for (lp_state_fs.c:3618-3623). (Since 1.230;
-/// every part took the one colour until then.)
-fn mixingOf(player: *const Player, pipeline: *const Pipeline) cl.Mixing {
-    const asked = _pipeline.mixingAt(pipeline, player.output);
-    // What is there has no alpha: it reads as wholly opaque, as v3dv
-    // blends a format whose swizzle reads alpha as 1 (`dst_alpha_one`,
-    // v3dvx_pipeline.c:121): R5G6B5, and since 1.228 R8, R8G8 and the
-    // half-floats and floats of one channel or two.
-    const mixing = if (!player.target.alpha) asked.overOpaque() else asked.*;
-    return .{
-        .src_color = @intFromEnum(mixing.src_color),
-        .dst_color = @intFromEnum(mixing.dst_color),
-        .color_mode = @intFromEnum(mixing.color_op),
-        .src_alpha = @intFromEnum(mixing.src_alpha),
-        .dst_alpha = @intFromEnum(mixing.dst_alpha),
-        .alpha_mode = @intFromEnum(mixing.alpha_op),
-        .constants = mixing.constants orelse
-            player.attachment_constants[@min(player.output, _render.most_colors - 1)] orelse
-            player.blend_constants,
-        .channels = if (player.output < pipeline.outputs) mixing.mask else 0,
-    };
+/// A pipeline's mixings in the hardware's terms: of each render target the
+/// frame draws a colour into, the attachment state at its location, as
+/// v3dv packs one for each attachment of the subpass
+/// (v3dvx_pipeline.c:85-160; since 1.233, the one of the part's colour
+/// until then). None of a target's channels written where the fragment
+/// program writes no colour at its location, as v3d writes no render
+/// target its shader has no output for (`vir_emit_tlb_color_write`,
+/// nir_to_vir.c:1958) and llvmpipe blends no colour buffer it has none
+/// for (lp_state_fs.c:3618-3623; since 1.230). A target the frame draws
+/// nothing into is neither blended nor written.
+fn mixingsOf(player: *const Player, pipeline: *const Pipeline) [cl.most_render_targets]cl.Mixing {
+    var made: [cl.most_render_targets]cl.Mixing = @splat(.{ .channels = 0 });
+    for (player.drawn, &made, 0..) |drawn, *into, rt| {
+        const each = drawn orelse continue;
+        const asked = _pipeline.mixingAt(pipeline, @intCast(rt));
+        // What is there has no alpha: it reads as wholly opaque, as v3dv
+        // blends a format whose swizzle reads alpha as 1 (`dst_alpha_one`,
+        // v3dvx_pipeline.c:121): R5G6B5, and since 1.228 R8, R8G8 and the
+        // half-floats and floats of one channel or two.
+        const mixing = if (!each.target.alpha) asked.overOpaque() else asked.*;
+        into.* = .{
+            .enabled = mixing.enabled,
+            .src_color = @intFromEnum(mixing.src_color),
+            .dst_color = @intFromEnum(mixing.dst_color),
+            .color_mode = @intFromEnum(mixing.color_op),
+            .src_alpha = @intFromEnum(mixing.src_alpha),
+            .dst_alpha = @intFromEnum(mixing.dst_alpha),
+            .alpha_mode = @intFromEnum(mixing.alpha_op),
+            // The hardware has one constant colour, and `cl.blend` gives
+            // it the first blended target's: facet's own constants for one
+            // attachment (CmdSetBlendConstantsAt) reach the others only
+            // where they agree, as Vulkan has the one set.
+            .constants = mixing.constants orelse
+                player.attachment_constants[rt] orelse
+                player.blend_constants,
+            .channels = if (rt < pipeline.outputs) mixing.mask else 0,
+        };
+    }
+    return made;
 }
 
 /// The samples a draw writes. In a frame of four, the pipeline's mask
@@ -1912,6 +2004,7 @@ fn drawStateOf(player: *const Player, pipeline: *const Pipeline, viewport: *cons
     if (left == right or top == bottom or viewport.width == 0 or viewport.height == 0) return null;
     const has_depth = player.frame.depth;
     const stencil = if (player.frame.stencil) player.stencil.of(pipeline) else null;
+    const mixings = mixingsOf(player, pipeline);
     // What a triangle moves its depth by, and the bounds a pixel's own is
     // tested against: the pipeline's, or what a command set where it left
     // them dynamic. Neither means anything without a depth buffer (since
@@ -1930,12 +2023,15 @@ fn drawStateOf(player: *const Player, pipeline: *const Pipeline, viewport: *cons
             .compare = if (has_depth) (if (pipeline.depth_test) |compare| @intFromEnum(compare) else cl.COMPARE_ALWAYS) else cl.COMPARE_ALWAYS,
             .depth_write = has_depth and pipeline.depth_test != null and pipeline.depth_write,
             .stencil = stencil != null,
-            .blend = _pipeline.mixingAt(pipeline, player.output).enabled,
+            .blend = blended: {
+                for (mixings) |each| if (each.enabled) break :blended true;
+                break :blended false;
+            },
             .biased = bias != null,
             .bounded = bounds != null,
             .clamped = pipeline.clamped,
         },
-        .mixing = mixingOf(player, pipeline),
+        .mixings = mixings,
         .stencil = if (stencil) |faces| .{ stencilFaceOf(faces[0]), stencilFaceOf(faces[1]) } else undefined,
         .bias_constant = if (bias) |moved| moved.constant else 0,
         .bias_slope = if (bias) |moved| moved.slope else 0,
@@ -2074,8 +2170,8 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
         if (kept == 0) return;
     }
 
-    // The fixed forms' programs for the frame's target: of 32-bit floats
-    // where it takes them (since 1.228).
+    // The fixed forms' programs for the frame's render target 0, the one
+    // they write: of 32-bit floats where it takes them (since 1.228).
     const programs = colorsOf(player);
     const fixed = pipeline.fixed;
     var varyings = pipeline.varyings;
@@ -2089,9 +2185,11 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
     // (v3dv_pipeline.c:2616-2645), and in a frame of no colour every
     // fixed form, whose program writes a colour the frame has not and
     // drops no pixel: what it leaves is the depth and the stencil, which
-    // the program of no colour leaves the same. A compiled program was
+    // the program of no colour leaves the same - and since 1.233 in a frame
+    // without render target 0, the one a fixed form writes, the others'
+    // locations being past its one output. A compiled program was
     // compiled for its subpass (`Pipeline.colorless`) and draws itself.
-    var no_color = !player.frame.hasColor() and fixed.kind != .none;
+    var no_color = player.drawn[0] == null and fixed.kind != .none;
     if (!no_color) switch (fixed.kind) {
         .color => {
             carried = .{ .colors_from = 0 };
@@ -2148,7 +2246,7 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
             // A uniform buffer the program reads and the draw has not
             // bound is what has gone wrong too (since 1.160).
             const lacking = found != made.sampled().len or !buffersBound(queue, made.stream());
-            if (lacking and !player.frame.hasColor()) {
+            if (lacking and player.drawn[0] == null) {
                 // No colour to say what has gone wrong with: the depth
                 // drawn as if nothing dropped a pixel.
                 no_color = true;

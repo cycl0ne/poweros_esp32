@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetProbe";
-const VERSION_STRING = "\x00$VER: FacetProbe 1.58 (27.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetProbe 1.59 (27.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "CORES/S,V3D/S,QUIET/S";
@@ -6218,6 +6218,19 @@ fn togetherChecks(probe: *Probe) void {
         // well - and so is one of the program's own, every fragment
         // program of such a device being a fixed form.
         probe.check(pipelineOf(probe, apart, module.?, layout.?, .{ .name = "three", .attributes = &attributes, .blends = &@as([3]facet.PipelineColorBlendAttachmentState, @splat(.{})) }) == null, "a fragment function of three colours refused there");
+        return;
+    }
+    // A device whose programs write several colours and read none of the
+    // attachments they draw into - the V3D since facet 1.233 - draws a
+    // plain subpass of three together, refuses one that reads two of its
+    // own (`tile_inputs`), and draws a program it compiles, not a function
+    // of the program's own that ships no words: the function of three
+    // colours is refused there (since 1.59).
+    if (!probe.can.tile_inputs) {
+        const together = togetherPass(probe, .plain) orelse return probe.check(false, "a plain subpass whose three colour attachments are drawn together");
+        probe.check(true, "a plain subpass whose three colour attachments are drawn together");
+        probe.check(togetherPass(probe, .reads_two) == null, "one that reads two of its own refused, the device reading none of them");
+        probe.check(pipelineOf(probe, together, module.?, layout.?, .{ .name = "three", .attributes = &attributes, .blends = &@as([3]facet.PipelineColorBlendAttachmentState, @splat(.{})) }) == null, "a fragment function of three colours that ships no words refused there");
         return;
     }
 

@@ -447,7 +447,26 @@ const pack = @import("qpu/pack.zig");
 /// TLB_RENDER_TARGET_SHIFT, TLB_TYPE_F32_COLOR and a vector size of 4
 /// less one (nir_to_vir.c:1931-1940), over the 0xffffff00 every
 /// specifier has.
-pub const tlb_f32_specifier: u32 = 0xffffff00 | 1 << 2 | 7 << 3 | 0 << 6 | (4 - 1);
+pub const tlb_f32_specifier: u32 = f32Specifier(0);
+
+/// The specifier of four 32-bit channels into render target `rt`
+/// (`tlb_f32_specifier` for 0): render target `rt` reversed, 7 - rt at
+/// TLB_RENDER_TARGET_SHIFT (nir_to_vir.c:1971; since 1.233).
+pub fn f32Specifier(rt: u32) u32 {
+    std.debug.assert(rt < 8);
+    return 0xffffff00 | 1 << 2 | (7 - rt) << 3 | 0 << 6 | (4 - 1);
+}
+
+/// The specifier of four half-floats into render target `rt`:
+/// TLB_SAMPLE_MODE_PER_PIXEL, 7 - rt, TLB_TYPE_F16_COLOR,
+/// TLB_F16_SWAP_HI_LO and TLB_VEC_SIZE_4_F16 (nir_to_vir.c:1966-1985).
+/// Render target 0's is ~0, which the TLB takes without a TLBU write
+/// (`conf != ~0`, :2028), so only another target's is a uniform (since
+/// 1.233).
+pub fn f16Specifier(rt: u32) u32 {
+    std.debug.assert(rt < 8);
+    return 0xffffff00 | 1 << 2 | (7 - rt) << 3 | 3 << 6 | 1 << 1 | 1 << 0;
+}
 
 /// The low or the high half-float of `from`, as a float, to a magic
 /// address.
@@ -501,6 +520,38 @@ pub fn wide(comptime fragment: Fragment) Fragment {
         return widened;
     }
 }
+
+/// `fragment`, a program of half-floats, as it draws into a render target
+/// other than 0: its first write to the TLB made to TLBU, which reads the
+/// specifier naming the target (`f16Specifier`) as the uniform after the
+/// program's own, as Mesa's back end aims the first VFPACK of a target
+/// whose specifier is not ~0 (vir_emit_tlb_color_write, nir_to_vir.c:
+/// 2026-2037). What it writes is the same. A clear of a render target but
+/// 0 draws with it (`_play.zig`'s `clearRectangle`, since 1.233).
+pub fn targeted(comptime fragment: Fragment) Fragment {
+    comptime {
+        @setEvalBranchQuota(200_000);
+        var code: [fragment.code.len]u64 = fragment.code[0..fragment.code.len].*;
+        var aimed = false;
+        for (&code) |*word| {
+            var inst = pack.unpack(word.*) orelse unreachable;
+            const add = inst.alu.add;
+            if (!(inst.kind == .alu and add.magic_write and add.waddr == instr.magic(.tlb))) continue;
+            inst.alu.add.waddr = instr.magic(.tlbu);
+            word.* = pack.pack(&inst).?;
+            aimed = true;
+            break;
+        }
+        if (!aimed) @compileError("a fragment program that writes no colour");
+        const made = code;
+        var targeted_fragment = fragment;
+        targeted_fragment.code = &made;
+        targeted_fragment.uniforms = fragment.uniforms + 1;
+        return targeted_fragment;
+    }
+}
+
+pub const targeted_color_fragment = targeted(color_fragment);
 
 pub const wide_color_fragment = wide(color_fragment);
 pub const wide_texture_fragment = wide(texture_fragment);
@@ -665,6 +716,33 @@ test "a fixed form's program for floats of 32 bits: each write of two half-float
         try std.testing.expectEqual(@as(u32, 1), tlbu);
     }
     try std.testing.expectEqual(@as(u32, 0xFFFF_FF3F), tlb_f32_specifier);
+}
+
+test "the colour of the vertices into a render target but 0: its first VFPACK to TLBU, a uniform more, and each target's specifier Mesa's (since 1.233)" {
+    const aimed = targeted_color_fragment;
+    try std.testing.expectEqual(color_fragment.code.len, aimed.code.len);
+    try std.testing.expectEqual(@as(u32, 1), aimed.uniforms);
+    try std.testing.expectEqual(color_fragment.varyings, aimed.varyings);
+    var differ: u32 = 0;
+    for (color_fragment.code, aimed.code) |old, new| {
+        if (old == new) continue;
+        differ += 1;
+        try std.testing.expectEqual(vfpackMagic(WADDR_TLB, 4, 5), old);
+        const inst = pack.unpack(new).?;
+        try std.testing.expectEqual(instr.AddOp.vfpack, inst.alu.add.op);
+        try std.testing.expectEqual(instr.magic(.tlbu), inst.alu.add.waddr);
+        try std.testing.expectEqual(@as(u6, 4), inst.alu.add.a.raddr);
+        try std.testing.expectEqual(@as(u6, 5), inst.alu.add.b.raddr);
+    }
+    try std.testing.expectEqual(@as(u32, 1), differ);
+    // Render target 0 of half-floats is ~0, which needs no TLBU write;
+    // the others name 7 - rt at bit 3 (as compile.zig's tests read them
+    // out of Mesa's back end's code).
+    try std.testing.expectEqual(~@as(u32, 0), f16Specifier(0));
+    try std.testing.expectEqual(@as(u32, 0xFFFF_FFF7), f16Specifier(1));
+    try std.testing.expectEqual(@as(u32, 0xFFFF_FFE7), f16Specifier(3));
+    try std.testing.expectEqual(tlb_f32_specifier, f32Specifier(0));
+    try std.testing.expectEqual(@as(u32, 0xFFFF_FF27), f32Specifier(3));
 }
 
 test "a clear's four words into a target taken a word a channel: four uniforms moved as they are, the first to TLBU, and the specifier the fifth (since 1.229)" {

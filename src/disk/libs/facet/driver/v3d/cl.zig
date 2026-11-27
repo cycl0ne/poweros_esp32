@@ -587,9 +587,14 @@ pub fn depthBounds(list: *List, least: f32, most: f32) void {
     list.word(@bitCast(most));
 }
 
-/// How render target 0 is written: factors and modes as facet.library
-/// numbers them, which is as the hardware does.
+/// How a render target is written: factors and modes as facet.library
+/// numbers them, which is as the hardware does (render target 0's alone
+/// until 1.233).
 pub const Mixing = struct {
+    /// It is blended (`blend`): its bit of BLEND_ENABLES, as v3dv sets
+    /// one for each attachment of the pipeline that blends
+    /// (v3dvx_pipeline.c:121-131; since 1.233).
+    enabled: bool = false,
     src_color: u32 = 1,
     dst_color: u32 = 0,
     color_mode: u32 = 0,
@@ -602,28 +607,48 @@ pub const Mixing = struct {
     channels: u32 = 0xF,
 };
 
-/// Render target 0 blended as `mixing` says.
-pub fn blend(list: *List, mixing: *const Mixing) void {
+/// Each render target whose mixing is `enabled` blended as it says, as
+/// v3dv emits a pipeline's blend (`cmd_buffer_emit_blend`,
+/// v3dvx_cmd_buffer.c:1621-1668): BLEND_ENABLES with a bit for each, then
+/// a BLEND_CFG of each naming it in its "Render Target Mask"
+/// (v3dvx_pipeline.c:131-134), then the one constant colour the hardware
+/// has, Vulkan's one blendConstants: the first blended target's (render
+/// target 0 alone until 1.233).
+pub fn blend(list: *List, mixings: []const Mixing) void {
+    std.debug.assert(mixings.len <= most_render_targets);
+    var enables: u8 = 0;
+    for (mixings, 0..) |mixing, rt| {
+        if (mixing.enabled) enables |= @as(u8, 1) << @intCast(rt);
+    }
     list.byte(83);
-    list.byte(1);
-    list.byte(84);
-    const color = mixing.dst_color << 4 | mixing.src_color;
-    const alpha = mixing.dst_alpha << 4 | mixing.src_alpha;
-    list.word(1 << 24 | color << 16 | mixing.color_mode << 12 | alpha << 4 | mixing.alpha_mode);
+    list.byte(enables);
+    var constants: ?[4]f32 = null;
+    for (mixings, 0..) |mixing, rt| if (mixing.enabled) {
+        list.byte(84);
+        const color = mixing.dst_color << 4 | mixing.src_color;
+        const alpha = mixing.dst_alpha << 4 | mixing.src_alpha;
+        list.word(@as(u32, 1) << @intCast(24 + rt) | color << 16 | mixing.color_mode << 12 | alpha << 4 | mixing.alpha_mode);
+        if (constants == null) constants = mixing.constants;
+    };
+    const color = constants orelse @as([4]f32, @splat(0));
     list.byte(86);
-    list.word(half(mixing.constants[0]) | half(mixing.constants[1]) << 16);
-    list.word(half(mixing.constants[2]) | half(mixing.constants[3]) << 16);
+    list.word(half(color[0]) | half(color[1]) << 16);
+    list.word(half(color[2]) | half(color[3]) << 16);
 }
 
 fn half(value: f32) u32 {
     return @as(u16, @bitCast(@as(f16, @floatCast(value))));
 }
 
-/// The channels of render target 0 written, red in bit 0, and all of the
-/// others: a bit here says not to.
-pub fn colorWriteMasks(list: *List, channels: u32) void {
+/// The channels not written: four bits a render target, render target 0
+/// lowest, red first, each set bit one left alone - v3dv's
+/// `color_write_mask`, the attachments' write masks inverted
+/// (v3dvx_pipeline.c:105-106; `cmd_buffer_emit_color_write_mask`,
+/// v3dvx_cmd_buffer.c:1672-1694). Since 1.233 the word; render target 0's
+/// channels written before.
+pub fn colorWriteMasks(list: *List, unwritten: u32) void {
     list.byte(87);
-    list.word(~channels & 0xF);
+    list.word(unwritten);
 }
 
 /// A face's stencil test, the operations and compare as the hardware numbers

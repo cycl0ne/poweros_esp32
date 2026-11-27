@@ -7700,4 +7700,75 @@ pub const LIBRARY_VERSION = 1;
 /// by the compiler). On the CM5 (package f244) FacetProbe is 1074 of 1074
 /// and FacetBoth's 316 cases are each as at 1.231: a frame of one render
 /// target is configured as it was.
-pub const LIBRARY_REVISION = 232;
+///
+/// 233: **A subpass of several colour attachments drawn together on the
+/// V3D (docs/facet-vulkan10.md item 55, step 3 of 3: the item is done).**
+/// The V3D has `several_outputs`, so such a subpass is one part, and the
+/// frame draws each of its planes into the render target its location
+/// names, as v3dv's render target i is the subpass's colour attachment i
+/// (v3dvx_cmd_buffer.c:1077-1086), an unused one configured unused
+/// (`_play.beginRenderPass`); until now each was a frame of its own.
+/// maxFragmentOutputAttachments is 4, v3dv's max_rts
+/// (v3dv_device.c:1135), and maxFragmentCombinedOutputResources the sum
+/// of those, the storage buffers and the storage images a stage has, as
+/// v3dv sums them (:1137-1139). A pipeline keeps its subpass's colour
+/// formats by location (`Pipeline.color_formats`, which replaces
+/// `part_formats`), and the V3D compiles for them: cbufs a bit for each
+/// drawn and f32_color_rb one for each the TLB takes a word a channel
+/// (`target.colorKey`; v3dv_pipeline.c:2137-2146, 1240-1257). The refusal
+/// of a subpass whose parts are of both widths is gone.
+///
+/// Blending and write masks are each render target's: BLEND_ENABLES has a
+/// bit for each blended, each has a BLEND_CFG naming it in its render
+/// target mask, and the one BLEND_CONSTANT_COLOR is the first blended
+/// one's (`cl.blend`; `cmd_buffer_emit_blend`, v3dvx_cmd_buffer.c:
+/// 1621-1668; v3dvx_pipeline.c:85-160). COLOR_WRITE_MASKS has four bits a
+/// target, a set bit a channel left alone, and a target without an image
+/// 0 (`frame.unwrittenOf`; :1672-1694). The constants facet's own
+/// CmdSetBlendConstantsAt sets for one attachment reach only the first
+/// blended target where they differ: the hardware has the one colour.
+/// CmdClearAttachments, and a clear inside a render area that is not the
+/// framebuffer's whole, draw a rectangle of each colour into its render
+/// target, every other target's channels left alone, as v3dv's meta clear
+/// draws each attachment with a pipeline that writes it alone
+/// (v3dv_meta_clear.c:623-628, 1259-1265). Into a target of half-floats
+/// but 0 the rectangle is drawn by `qpu.targeted_color_fragment`, the
+/// colour of the vertices' program whose first VFPACK goes to TLBU and
+/// reads the target's specifier as a uniform (`qpu.f16Specifier`), as
+/// Mesa's back end aims a write at a render target but 0
+/// (nir_to_vir.c:1966-1985, 2026-2037); into one taken a word a channel
+/// by `qpu.words_fragment` with `qpu.f32Specifier` of it. A depth or a
+/// stencil cleared alone is drawn by the program of no colour. The fixed
+/// forms write location 0 alone, render target 0, and in a frame without
+/// it draw with the program of no colour. The player keeps what it drew
+/// of each target (`_play.Drawn`): the image's range for the caches, its
+/// layer, its target and its resolve, which the tiles or the CPU do for
+/// each, and each image drawn is shown.
+///
+/// Four host tests are new: the targeted colour program, one VFPACK
+/// aimed at TLBU and a uniform more, and each target's specifier; a draw
+/// blending render targets 0 and 3 by a BLEND_CFG of each, the first's
+/// constants, and the write masks of four targets, one without an image;
+/// the compile's key of formats at their locations; and a pipeline
+/// keeping its subpass's formats by location, an unused one undefined,
+/// the subpass one part whose planes name locations 0 and 2. The test of
+/// a draw's packets fitting `roomOnList` has four blended targets. 4568
+/// of the 4571 pass, 3 skipped. Each of 16 mutants of the new code the
+/// host tests reach fails them, one after the draw test gave its target
+/// without an image no channels, as `_play.mixingsOf` gives it: with every
+/// channel written there it could not tell a look at the image from
+/// none. `_play.zig` the host tests do not compile through, and the board
+/// holds it. FacetBoth 1.81 draws glslc's two colour outs into the
+/// subpass of two attachments, laid over and then added, and asks a
+/// program that stores in such a subpass made on both devices; FacetProbe
+/// 1.59 has the V3D make a plain subpass of three together, refuse one
+/// that reads two of its own, and refuse a function of the program's own
+/// of three colours. On the CM5 (package f245) FacetProbe 1.59 is 1075
+/// of 1075. FacetBoth 1.81's 316 cases of 1.80 are each as at 1.232,
+/// and the program that stores in the subpass of two colours is made on
+/// the V3D where it was refused; its two new ones, "shipped two
+/// colours, first" and "second", are each 11 of 230400 pixels apart, at
+/// the quad's edge, where the two rasterizers' edges differ as in the
+/// other cases: inside it, and over the triangle added, both render
+/// targets match the cores'.
+pub const LIBRARY_REVISION = 233;

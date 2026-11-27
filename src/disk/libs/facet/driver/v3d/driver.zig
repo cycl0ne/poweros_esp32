@@ -88,6 +88,10 @@ pub const Programs = struct {
     /// taken a word a channel, of 32-bit floats or whole numbers, as v3dv
     /// clears one (since 1.229).
     words: u32,
+    /// `qpu.targeted_color_fragment`: the colour of the vertices into a
+    /// render target of half-floats but 0, named by its one uniform
+    /// (since 1.233).
+    targeted_color: u32,
 };
 
 /// The programs of the fixed forms that write a colour.
@@ -184,11 +188,14 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
             said.max_per_stage_descriptor_storage_images = 4;
             said.max_descriptor_set_storage_images = 24;
             said.max_per_stage_descriptor_input_attachments = 4;
-            // A QPU fragment program writes one colour: the forms that
-            // write several are refused here and drawn on the cores
-            // (`can.several_outputs`). docs/facet-vulkan10.md item 55.
-            said.max_fragment_output_attachments = 1;
-            said.max_fragment_combined_output_resources = 1;
+            // A compiled fragment program writes a colour at each of
+            // locations 0 to 3, each into its render target (since 1.233,
+            // docs/facet-vulkan10.md item 55; one until then): v3dv's
+            // max_rts (v3dv_device.c:1135), facet's most colour
+            // attachments. Its outputs with the storage buffers and images
+            // a stage has, as v3dv sums the three (:1137-1139).
+            said.max_fragment_output_attachments = v3d.cl.most_render_targets;
+            said.max_fragment_combined_output_resources = v3d.cl.most_render_targets + said.max_per_stage_descriptor_storage_buffers + said.max_per_stage_descriptor_storage_images;
             said.max_descriptor_set_input_attachments = 4;
             // What this device will sample from, by what the image holds: a
             // colour, and a depth since 1.142 (`can.sampled_depth`), each
@@ -372,9 +379,12 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // never spread an 8888 texel: one byte a texel there, and the
         // packed flag costs nothing and changes nothing (tiling.zig).
         .small_texels = true,
-        // Its fragment programs are the fixed forms, and each writes the
-        // one colour: a subpass of several is drawn once for each.
-        .several_outputs = false,
+        // A subpass of several colour attachments is drawn together, in
+        // one frame of a render target for each, a compiled program
+        // writing each at its location (`compile.most_colors`), as v3dv
+        // draws one (since 1.233, docs/facet-vulkan10.md item 55; once for
+        // each until then). A fixed form writes location 0's.
+        .several_outputs = true,
         // A set layout's own sampler is the library's doing, not a
         // driver's: it is kept here as well, though no program of the QPUs
         // reads a sampler.
@@ -560,7 +570,7 @@ const wide_fragments = [_]*const qpu.Fragment{ &qpu.wide_color_fragment, &qpu.wi
 
 /// Every program in one block of the V3D's.
 fn loadPrograms(hardware: *Hardware) bool {
-    const fragments = [_]*const qpu.Fragment{ &qpu.color_fragment, &qpu.texture_fragment, &qpu.texture_color_fragment, &qpu.array_fragment, &qpu.cube_fragment, &qpu.volume_fragment, &qpu.shadow_fragment, &qpu.no_color_fragment, &qpu.words_fragment } ++ wide_fragments;
+    const fragments = [_]*const qpu.Fragment{ &qpu.color_fragment, &qpu.texture_fragment, &qpu.texture_color_fragment, &qpu.array_fragment, &qpu.cube_fragment, &qpu.volume_fragment, &qpu.shadow_fragment, &qpu.no_color_fragment, &qpu.words_fragment, &qpu.targeted_color_fragment } ++ wide_fragments;
     var words: usize = qpu.coordinate_program.len;
     for (0..qpu.most_varyings + 1) |varyings| words += qpu.vertexProgram(@intCast(varyings)).len;
     for (fragments) |fragment| words += fragment.code.len;
@@ -591,6 +601,7 @@ fn loadPrograms(hardware: *Hardware) bool {
     hardware.programs.shadow = put(block, &used, qpu.shadow_fragment.code);
     hardware.programs.no_color = put(block, &used, qpu.no_color_fragment.code);
     hardware.programs.words = put(block, &used, qpu.words_fragment.code);
+    hardware.programs.targeted_color = put(block, &used, qpu.targeted_color_fragment.code);
     var wide: [wide_fragments.len]u32 = undefined;
     for (&wide, wide_fragments) |*address, fragment| address.* = put(block, &used, fragment.code);
     hardware.programs.wide = .{ .color = wide[0], .texture = wide[1], .texture_color = wide[2], .array = wide[3], .cube = wide[4], .volume = wide[5], .shadow = wide[6] };
@@ -897,13 +908,6 @@ fn samplesHere(fixed: facet.shader.Fixed) bool {
     };
 }
 
-/// The TLB takes a colour of `format` a 32-bit float at a time
-/// (`v3d.target.Target.wide`).
-fn wideTarget(format: facet.Format) bool {
-    const target = v3d.target.of(format) orelse return false;
-    return target.wide();
-}
-
 /// Whether the pipeline's program covers by its colour's alpha: alpha to
 /// coverage, at four samples (`makePipeline`).
 fn coverageOf(pipeline: *const Pipeline) bool {
@@ -926,18 +930,15 @@ fn compiled(pipeline: *Pipeline) facet.Result {
     const sys = device.sys;
     const work = _objects.create(sys, compile.Work) orelse return .error_out_of_host_memory;
     defer _objects.destroy(sys, work);
-    // Keyed as v3dv keys it: alpha to coverage, and render target 0 where
-    // the subpass draws a colour (v3dv_pipeline.c:2137-2142, since 1.150),
-    // written a float at a time where it is of 32-bit floats
-    // (f32_color_rb, v3dv_pipeline.c:1240-1243; since 1.228) and a word at
-    // a time where it is of whole numbers (:1253-1256; since 1.229). Each part of
-    // a subpass drawn in parts is render target 0 of its own frame with the
-    // one program: parts of both widths are not compiled for.
-    const wide = wideTarget(pipeline.part_formats[0]);
-    for (pipeline.part_formats[1..]) |format| {
-        if (format != .undefined and wideTarget(format) != wide) return .error_feature_not_present;
-    }
-    const key = compile.Key{ .sample_alpha_to_coverage = coverageOf(pipeline), .cbufs = if (pipeline.colorless) 0 else 1, .f32_color_rb = @intFromBool(wide) };
+    // Keyed as v3dv keys it: alpha to coverage, and a render target for
+    // each colour attachment of the subpass by its location, an unused
+    // one left out (cbufs, v3dv_pipeline.c:2137-2142; since 1.233, render
+    // target 0 alone since 1.150), each written a float at a time where it
+    // is of 32-bit floats (f32_color_rb, v3dv_pipeline.c:1240-1243; since
+    // 1.228) and a word at a time where it is of whole numbers
+    // (:1253-1256; since 1.229).
+    const colors = v3d.target.colorKey(&pipeline.color_formats);
+    const key = compile.Key{ .sample_alpha_to_coverage = coverageOf(pipeline), .cbufs = if (pipeline.colorless) 0 else colors.cbufs, .f32_color_rb = colors.f32_color_rb };
     const code = compile.compileThroughMesa(work, pipeline.fragment_words, v3d.heap.of(sys), key) catch |err| return switch (err) {
         error.OutOfMemory => .error_out_of_host_memory,
         else => .error_feature_not_present,
@@ -952,10 +953,12 @@ fn compiled(pipeline: *Pipeline) facet.Result {
     if (code.varyings - @intFromBool(code.reads_layer) != pipeline.varyings) return .error_feature_not_present;
     // A program that writes memory in a subpass drawn a part for each
     // colour attachment would write once for each part: its stores again,
-    // its atomics counted again (docs/facet-vulkan10.md item 87). v3dv
-    // draws such a subpass once, its fragment program writing every
-    // render target (item 55); until a program here writes more than the
-    // one colour, the pipeline is refused (since 1.170).
+    // its atomics counted again (docs/facet-vulkan10.md item 87), and the
+    // pipeline is refused (since 1.170). Since 1.233 the V3D draws a
+    // subpass of several once, its program writing every render target,
+    // as v3dv does (item 55), and none of its pipelines is replayed: a
+    // subpass that reads its own attachment, the one drawn in parts, it
+    // does not make (`can.tile_inputs`).
     if (code.tmu_dirty_rcl and pipeline.replayed) return .error_feature_not_present;
     // The floats of each location the fragment program reads, which the
     // vertex program is keyed by (used_outputs, from the fragment
