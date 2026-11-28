@@ -3903,8 +3903,8 @@ facet.library/WaitForFences
 	image there read as an input attachment, a depth one too, which that
 	device's fragment programs read through the TMU where the pass stored
 	it: in optimal tiling, and of a format the TMU reads. One of four
-	samples is made as well, kept as a sampled one is, though no pipeline
-	there reads it yet (SubpassDataMS).
+	samples is made as well, kept as a sampled one is, and read through
+	SubpassDataMS since 1.238.
 
 	**An image may have four samples a pixel** on a device that draws them
 	(`Capabilities.multisampling`, since 1.98): 2D, optimal, one level and

@@ -120,6 +120,31 @@ pub const most_tile_inputs = 4;
 pub const TileInputs = [most_tile_inputs]u8;
 pub const no_tile: u8 = 0xFF;
 pub const no_tile_inputs: TileInputs = @splat(no_tile);
+/// The samples of a pixel the tile buffer holds where a pipeline draws
+/// several: V3D_MAX_SAMPLES (v3d_limits.h), each read in turn (since
+/// 1.238).
+pub const tile_samples_most = 4;
+/// What a fragment program reads out of the tile buffer: the render
+/// target of each input attachment of the subpass (`TileInputs`), and
+/// the samples each of a pixel has, 1, or 4 where the pipeline draws
+/// four (lower_tlb_load's num_samples, v3d_nir_lower_load_output.c:52;
+/// since 1.238).
+pub const Tiles = struct {
+    inputs: TileInputs = no_tile_inputs,
+    samples: u8 = 1,
+};
+/// A `tile_load`'s `at`: the render target, and which sample of it the
+/// step is, past it (since 1.238). Both are the step's, so two of one
+/// target and other samples are not one to nir_opt_cse (`equalSteps`).
+pub fn tileAt(rt: u8, which: u8) u32 {
+    return @as(u32, rt) | @as(u32, which) << 8;
+}
+pub fn tileTarget(at: u32) u32 {
+    return at & 0xFF;
+}
+pub fn tileSample(at: u32) u32 {
+    return at >> 8;
+}
 /// The colour outs a fragment program writes, one for each render target
 /// at its location: facet's colour attachments a subpass
 /// (`_render.most_colors`), which is V3D_MAX_RENDER_TARGETS at 4.2
@@ -1075,6 +1100,15 @@ pub const Lookup = enum(u8) {
     /// 1849-1858), runs before it (vir.c:1987, :2004). So no TMUB is
     /// written (handle_tex_src, v3d_tex.c:137-153; since 1.209).
     fetch_sample,
+    /// A sample of an input attachment of four, of SubpassDataMS: the
+    /// txf_ms nir_lower_input_attachments makes of it has the level of 0
+    /// a txf of one has (nir_lower_input_attachments.c:142-147), and
+    /// v3d_nir_lower_txf_ms takes its coordinate and its sample out and
+    /// gives it the texel of the pixel's quad last (v3d_nir_lower_txf_ms.c:
+    /// 42-57). So TMUB is written first, before T: vir_tex_handle_srcs
+    /// writes the sources in their order (v3d_tex.c:205-218; since
+    /// 1.238).
+    fetch_sample_level,
 
     /// nir_tex_instr_has_implicit_derivative: whether the quad's helper
     /// pixels are needed for the coordinate.
@@ -1085,13 +1119,13 @@ pub const Lookup = enum(u8) {
     /// Whether `from[0]` is a bias or a level, a TMUB write (since 1.209,
     /// when a fetch came to have none).
     pub fn leveled(lookup: Lookup) bool {
-        return lookup == .bias or lookup == .lod or lookup == .fetch;
+        return lookup == .bias or lookup == .lod or lookup == .fetch or lookup == .fetch_sample_level;
     }
 
     /// A txf or a txf_ms: no sampler state (nir_tex_instr_need_sampler),
     /// and the lookup started at TMUSF (v3d_tex.c:375-377).
     pub fn fetches(lookup: Lookup) bool {
-        return lookup == .fetch or lookup == .fetch_sample;
+        return lookup == .fetch or lookup == .fetch_sample or lookup == .fetch_sample_level;
     }
 };
 
@@ -1650,6 +1684,9 @@ pub const Work = struct {
     /// input attachment of the subpass is, by its index, where the
     /// subpass draws into it as well (`Key.tile_inputs`, since 1.237).
     tile_inputs: TileInputs = no_tile_inputs,
+    /// And the samples of a pixel each has (`Tiles.samples`, since
+    /// 1.238).
+    tile_samples: u8 = 1,
     /// Which sampler an id names: the variable, and the value an OpLoad
     /// of it answers. A sampler is not a value a step can hold, so it is
     /// carried beside the steps rather than among them.
@@ -2024,7 +2061,7 @@ pub const Work = struct {
 /// follows a pointer out of them, and a module that is not one has
 /// already been turned down by `CreateShaderModule`.
 pub fn compile(work: *Work, words: []const u32) Error!Code {
-    try readModule(work, words, no_tile_inputs);
+    try readModule(work, words, .{});
     // Every hand-written program writes one colour, at location 0, which
     // the tile buffer takes without a configuration of its own
     // (`qpu.zig`): several are Mesa's back end's (since 1.231).
@@ -2108,7 +2145,7 @@ pub fn compileVertexThroughMesa(work: *Work, words: []const u32, child: std.mem.
 
 /// `compileVertexThroughMesa` with the register sets the caller's.
 pub fn compileVertexVir(work: *Work, words: []const u32, allocator: std.mem.Allocator, compiler: *const vir.Compiler, key: VertexKey) (Error || std.mem.Allocator.Error)!Code {
-    try readStage(work, words, .vertex, key, no_tile_inputs);
+    try readStage(work, words, .vertex, key, .{});
     return compileRead(work, allocator, compiler, .{});
 }
 
@@ -2126,7 +2163,7 @@ pub fn compileComputeThroughMesa(work: *Work, words: []const u32, child: std.mem
 
 /// `compileComputeThroughMesa` with the register sets the caller's.
 pub fn compileComputeVir(work: *Work, words: []const u32, allocator: std.mem.Allocator, compiler: *const vir.Compiler) (Error || std.mem.Allocator.Error)!Code {
-    try readStage(work, words, .gl_compute, .{}, no_tile_inputs);
+    try readStage(work, words, .gl_compute, .{}, .{});
     return compileRead(work, allocator, compiler, .{});
 }
 
@@ -2137,7 +2174,7 @@ pub fn compileComputeVir(work: *Work, words: []const u32, allocator: std.mem.All
 /// `compiler` is the register sets (`allocate.initRegSets`), made once
 /// for every compile.
 pub fn compileVir(work: *Work, words: []const u32, allocator: std.mem.Allocator, compiler: *const vir.Compiler, key: Key) (Error || std.mem.Allocator.Error)!Code {
-    try readModule(work, words, key.tile_inputs);
+    try readModule(work, words, .{ .inputs = key.tile_inputs, .samples = if (key.msaa) tile_samples_most else 1 });
     return compileRead(work, allocator, compiler, key);
 }
 
@@ -2373,19 +2410,20 @@ const Units = struct {
 
 /// The words looked at against the profile and read into `work`: what
 /// `compile` and `compileVir` share.
-fn readModule(work: *Work, words: []const u32, tiles: TileInputs) Error!void {
+fn readModule(work: *Work, words: []const u32, tiles: Tiles) Error!void {
     return readStage(work, words, .fragment, .{}, tiles);
 }
 
 /// The words of a program of `stage`, read into `work`; a vertex program
 /// for `key` (since 1.163), a fragment program for a subpass whose input
-/// attachments `tiles` are among its render targets (since 1.237).
-fn readStage(work: *Work, words: []const u32, stage: spirv.ExecutionModel, key: VertexKey, tiles: TileInputs) Error!void {
+/// attachments `tiles` are among its render targets (since 1.237), of
+/// the samples `tiles` says (since 1.238).
+fn readStage(work: *Work, words: []const u32, stage: spirv.ExecutionModel, key: VertexKey, tiles: Tiles) Error!void {
     // The variables found to live in scratch so far, each a walk of its
     // own (since 1.177).
     var scratch: Scratch = .{};
     while (true) {
-        work.* = .{ .stage = stage, .vertex_key = key, .tile_inputs = tiles, .scratch = scratch, .scratch_size = scratch.size() };
+        work.* = .{ .stage = stage, .vertex_key = key, .tile_inputs = tiles.inputs, .tile_samples = tiles.samples, .scratch = scratch, .scratch_size = scratch.size() };
         // The VPM's layout, v3d_nir_setup_vpm_layout_vs (v3d_nir_lower_io.c:
         // 400-435): the coordinate program's position first, then the place
         // on screen; the vertex program's place, its Zs and 1/Wc. A point
@@ -2968,8 +3006,13 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     work.thing[id] = .image;
                     continue;
                 }
+                // An input attachment of four, SubpassDataMS, as well
+                // (since 1.238): GLSL_SAMPLER_DIM_SUBPASS_MS
+                // (spirv_to_nir.c:2428-2435), which
+                // nir_lower_input_attachments reads with a txf_ms
+                // (:142-147).
                 if (operands[5] == 1) {
-                    if (dim != .dim_2d) return Error.Refused;
+                    if (dim != .dim_2d and dim != .subpass_data) return Error.Refused;
                     work.multisampled.set(id);
                 }
                 work.sampler_dim[id] = switch (dim) {
@@ -2980,11 +3023,8 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     // reads with a txf of is_array, the layer its
                     // coordinate's third word (nir_lower_input_attachments.c:
                     // 102-106, :133-140; since 1.215). One of four samples,
-                    // SubpassDataMS, is refused above: its txf_ms has the
-                    // level of 0 that one of one has, which once
-                    // v3d_nir_lower_txf_ms has made it a txf is written to
-                    // TMUB before the coordinate (v3d_nir_lower_txf_ms.c:
-                    // 42-57), which `emitTex` has no order for.
+                    // SubpassDataMS, its txf_ms, since 1.238
+                    // (`Lookup.fetch_sample_level`).
                     .subpass_data => if (arrayed) return Error.Refused else sub: {
                         work.subpass.set(id);
                         break :sub .layers;
@@ -11358,16 +11398,32 @@ fn readSample(work: *Work, op: spirv.Op, operands: []const u32) Error!void {
 /// (try_lower_intrinsic, :263-286). The image is read through no sampler,
 /// as a fetch is (since 1.215). The read's result is four floats: a
 /// format of whole numbers is no input attachment this device takes.
+///
+/// One of four samples, SubpassDataMS, is read at the read's Sample, the
+/// image operand SPIR-V asks of it and no other, which vtn makes the
+/// load's sample (spirv_to_nir.c:3905-3911): a read without one, which
+/// vtn gives an undef, is refused, as SPIR-V's validation refuses it. Its
+/// txf is a txf_ms of
+/// that sample (nir_lower_input_attachments.c:142-147), and
+/// v3d_nir_lower_txf_ms fetches the texel of the pixel's quad the sample
+/// is (`sampleTexelOf`), its level of 0 before it
+/// (`Lookup.fetch_sample_level`; since 1.238).
 fn readSubpass(work: *Work, operands: []const u32) Error!void {
-    // ResultType, Result, Image, Coordinate: no image operand, as a
-    // Sample is an image of four's, which is refused.
+    // ResultType, Result, Image, Coordinate, and of an image of four the
+    // image operands, Sample alone, and the sample.
     if (operands.len < 4) return Error.Body;
-    if (operands.len > 4) return Error.Operands;
     const type_id = try idOf(operands[0]);
     const id = try idOf(operands[1]);
     if (try kindOf(work, type_id) != .f32x4) return Error.Type;
     const which = work.sampler_of[try idOf(operands[2])];
     if (which == none or !work.samplers[which].input_attachment) return Error.Body;
+    const multisampled = work.samplers[which].multisampled;
+    var ms_index: ?u16 = null;
+    if (multisampled) {
+        if (operands.len != 6) return Error.Operands;
+        if (operands[4] != @intFromEnum(spirv.ImageOperands.sample)) return Error.Operands;
+        ms_index = try operand(work, operands[5], .f32x1);
+    } else if (operands.len > 4) return Error.Operands;
     // An attachment the subpass draws into as well is read out of the
     // tile buffer, its render target's colour where the pixel is, and
     // the read's place is not looked at: lower_tlb_input_attachment_instr
@@ -11375,10 +11431,10 @@ fn readSubpass(work: *Work, operands: []const u32) Error!void {
     // tlb_input_attachment_location gives the input attachment's index,
     // where it gives one (v3dv_pipeline.c:301-356). The txf's place and
     // layer go with the txf, and so does its unit: nothing samples it
-    // (since 1.237).
+    // (since 1.237). Its sample goes to the load, or 0 (:341-343).
     const index = work.samplers[which].input_index;
     if (index < work.tile_inputs.len and work.tile_inputs[index] != no_tile) {
-        work.step_of[id] = try put(work, .{ .tag = .tile_load, .kind = .f32x4, .at = work.tile_inputs[index] });
+        work.step_of[id] = try tileLoadOf(work, work.tile_inputs[index], ms_index);
         return;
     }
     // The read's two words, each a constant of its own where it is one,
@@ -11399,17 +11455,52 @@ fn readSubpass(work: *Work, operands: []const u32) Error!void {
     place.from[1] = try integerOf(work, .iadd, y, moved[1]);
     place.from[2] = try integerOf(work, .iadd, layer, zero);
     place.part = .{ 0, 0, 0, 0 };
+    var coordinate = try put(work, place);
+    var lookup: Lookup = .fetch;
+    if (ms_index) |chosen| {
+        coordinate = try sampleTexelOf(work, coordinate, chosen, .layers);
+        lookup = .fetch_sample_level;
+    }
     const at = try put(work, .{
         .tag = .sample,
         .kind = .f32x4,
-        .a = try put(work, place),
+        .a = coordinate,
         .at = which,
-        .lookup = .fetch,
+        .lookup = lookup,
         .from = .{ zero, 0, 0, 0 },
     });
     work.step_of[id] = at;
     if (work.sampled == none) work.sampled = at;
     work.sample_count += 1;
+}
+
+/// The colour of render target `rt` out of the tile buffer at `sample`,
+/// as lower_tlb_load makes a load_tile_image
+/// (v3d_nir_lower_load_output.c:26-98): of one sample a pixel, its load
+/// of sample 0, whatever the sample. Of four, the load of each, the
+/// first's kept unless the sample is another's: a bcsel of each later
+/// one on the ieq of the sample and its number (:52-80), a float at a
+/// time, as nir_lower_alu_to_scalar leaves it. Of a constant sample,
+/// what nir_opt_constant_folding leaves of that, which v3d_optimize_nir
+/// runs after it (vir.c:1309, :2077): the load of that sample, or of the
+/// first where it is past the fourth (since 1.238).
+fn tileLoadOf(work: *Work, rt: u8, ms_index: ?u16) Error!u16 {
+    const samples = work.tile_samples;
+    if (samples == 1) return put(work, .{ .tag = .tile_load, .kind = .f32x4, .at = tileAt(rt, 0) });
+    const chosen = ms_index orelse try wordConstant(work, 0);
+    if (floatBits(work, .{ .step = chosen, .part = 0 })) |bits| {
+        const kept: u8 = if (bits < samples) @intCast(bits) else 0;
+        return put(work, .{ .tag = .tile_load, .kind = .f32x4, .at = tileAt(rt, kept) });
+    }
+    const first = try put(work, .{ .tag = .tile_load, .kind = .f32x4, .at = tileAt(rt, 0) });
+    var out: [4]u16 = undefined;
+    for (&out, 0..) |*each, k| each.* = try floatOf(work, partOf(work, first, @intCast(k)));
+    for (1..samples) |i| {
+        const equal = try put(work, compareOf(.int_equal, chosen, try wordConstant(work, @intCast(i))));
+        const value = try put(work, .{ .tag = .tile_load, .kind = .f32x4, .at = tileAt(rt, @intCast(i)) });
+        for (&out, 0..) |*each, k| each.* = try put(work, selectOf(equal, try floatOf(work, partOf(work, value, @intCast(k))), each.*));
+    }
+    return vectorOf(work, &out);
 }
 
 /// The storage image the OpLoad of `operands[at]` reads, as the
@@ -23591,10 +23682,159 @@ test "through Mesa's back end, a subpassLoad read out of the tile buffer beside 
     try testing.expectEqual(@as(u32, 3), switches);
 }
 
+/// How many times `name` is among a program's instructions as the
+/// disassembler prints them, both sides and the signals.
+fn timesOf(code: Code, name: []const u8) usize {
+    var count: usize = 0;
+    for (code.words) |word| {
+        var buffer: [disasm.most_text]u8 = undefined;
+        count += std.mem.count(u8, disasm.disasm(word, &buffer).?, name);
+    }
+    return count;
+}
+
+test "through Mesa's back end, a subpassLoad of an input attachment of four samples is a txf_ms, which v3d_nir_lower_txf_ms makes the texel of the pixel's quad, its level of 0 at TMUB (since 1.238)" {
+    // nir_lower_input_attachments makes the SubpassDataMS read a txf_ms
+    // of the read's Sample, at the pixel's place and layer, of level 0
+    // (nir_lower_input_attachments.c:133-147). v3d_nir_lower_txf_ms
+    // fetches the texel of the pixel's quad: x and y doubled, the
+    // sample's low bit added to x and its next to y, which of sample 2
+    // nir_opt_constant_folding leaves 0 and 1 (v3d_nir_lower_txf_ms.c:
+    // 42-57). Its coordinate goes last, after the level: TMUB is
+    // written, as a fetch of a sampler2DMS's sample has not.
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_subpass_ms);
+    var fetched: u32 = 0;
+    for (work.steps[0..work.step_count]) |each| if (each.tag == .sample) {
+        try testing.expectEqual(Lookup.fetch_sample_level, each.lookup);
+        fetched += 1;
+    };
+    try testing.expectEqual(@as(u32, 1), fetched);
+    try testing.expect(Lookup.fetch_sample_level.leveled() and Lookup.fetch_sample_level.fetches() and !Lookup.fetch_sample_level.derived());
+    try testing.expect(code.reads_layer);
+    try testing.expectEqual(@as(u32, 1), code.sampler_count);
+    try expectText(code, &.{
+        text("fycd rf5", "nop", "ldvary.rf6; wrtmuc"),
+        text("ftoiz rf9, rf5", "nop", ""),
+        text("fxcd rf4", "mov rf7, rf0", ""),
+        text("shl rf11, rf9, 1", "mov tmui, rf7", ""),
+        text("ftoiz rf8, rf4", "add rf12, 1, rf11", ""),
+        text("nop", "mov tmub, 0", ""),
+        text("shl rf10, rf8, 1", "mov tmut, rf12", ""),
+        text("nop", "mov tmusf, rf10", "thrsw"),
+        text("nop", "nop", "thrsw"),
+        text("nop", "nop", ""),
+        text("nop", "mov tlbu, rf5", "ldtmu.rf13"),
+        text("nop", "nop", "ldtmu.rf14"),
+        text("nop", "fmul rf15, rf13.l, 0x3f000000", ""),
+        text("nop", "fmul rf16, rf13.h, 0x3f000000", ""),
+        text("vfpack tlb, rf15, rf16", "fmul rf17, rf14.l, 0x3f000000", ""),
+        text("nop", "fmul rf18, rf14.h, 0x3f000000", ""),
+        text("vfpack tlb, rf17, rf18", "nop", "thrsw"),
+        text("nop", "nop", ""),
+        text("nop", "nop", ""),
+    });
+    try expectStream(&.{ .{ .texture = 0 }, wordOf(0xFFFF_FF84) }, code.stream());
+
+    // A sample worked out at run time, the two lowest bits of the pixel's
+    // x: its low bit and its next found by and and shr, which the
+    // constant folded away (v3d_nir_lower_txf_ms.c:46-51).
+    work = .{};
+    const picked = try throughMesa(&work, &reference.glslc_subpass_ms_picked);
+    try testing.expectEqual(@as(usize, 1), countOf(picked, "and rf9, rf8, 3"));
+    try testing.expectEqual(@as(usize, 1), countOf(picked, "shr "));
+    try testing.expectEqual(@as(usize, 2), countOf(picked, "shl "));
+    try testing.expectEqual(@as(usize, 3), countOf(picked, "and "));
+    for ([_][]const u8{ "mov tmub, 0", "mov tmut", "mov tmui", "mov tmusf" }) |write| try testing.expectEqual(@as(usize, 1), countOf(picked, write));
+}
+
+test "through Mesa's back end, a subpassLoad of four samples read out of the tile buffer reads each sample, a sample at a time, and keeps the one asked for (since 1.238)" {
+    // A pipeline of four samples, Mesa's msaa: tlb_read_config's
+    // TLB_SAMPLE_MODE_PER_SAMPLE, so render target 0's four half-floats
+    // are configured by 0xfffffffb and no longer the default, and
+    // vir_emit_tlb_color_read reads each of the four samples, two words
+    // each (nir_to_vir.c:2705-2706, :2757-2805). Sample 2 is what the
+    // bcsels lower_tlb_load makes come to once their ieqs are folded
+    // (v3d_nir_lower_load_output.c:52-80): its two words, the fifth and
+    // the sixth read, are the ones halved.
+    var work: Work = .{};
+    const code = try throughMesaKeyed(&work, &reference.glslc_subpass_ms, .{ .tile_inputs = .{ 0, no_tile, no_tile, no_tile }, .msaa = true });
+    try testing.expect(!code.reads_layer);
+    try testing.expectEqual(@as(u32, 0), code.sampler_count);
+    try testing.expectEqual(@as(u32, 0), code.varyings);
+    try testing.expect(!code.lock_scoreboard_on_first_thrsw);
+    try expectText(code, &.{
+        text("nop", "nop", "thrsw"),
+        text("nop", "nop", "thrsw"),
+        text("nop", "nop", ""),
+        text("nop", "nop", "ldtlbu.rf4"),
+        text("nop", "nop", "ldtlb.rf5"),
+        text("nop", "nop", "ldtlb.rf6"),
+        text("nop", "nop", "ldtlb.rf7"),
+        text("nop", "nop", "ldtlb.rf8"),
+        text("nop", "fmul rf12, rf8.l, 0x3f000000", ""),
+        text("nop", "fmul rf13, rf8.h, 0x3f000000", ""),
+        text("nop", "nop", "ldtlb.rf9"),
+        text("nop", "fmul rf14, rf9.l, 0x3f000000", ""),
+        text("nop", "fmul rf15, rf9.h, 0x3f000000", ""),
+        text("nop", "nop", "ldtlb.rf10"),
+        text("nop", "nop", "ldtlb.rf11"),
+        text("nop", "mov tlbu, rf5", "thrsw"),
+        text("vfpack tlb, rf12, rf13", "nop", ""),
+        text("vfpack tlb, rf14, rf15", "nop", ""),
+    });
+    try expectStream(&.{ wordOf(0xFFFF_FFFB), wordOf(0xFFFF_FF84) }, code.stream());
+
+    // A sample past the fourth: no ieq holds, and the first sample's
+    // load is what is left (:71-79). The program reads all four the
+    // same, the first two words halved.
+    work = .{};
+    const past = try throughMesaKeyed(&work, &comptime patched(&reference.glslc_subpass_ms, .constant, 0, 2, 5), .{ .tile_inputs = .{ 0, no_tile, no_tile, no_tile }, .msaa = true });
+    try testing.expectEqual(@as(usize, 8), timesOf(past, "ldtlb"));
+    try testing.expectEqual(@as(usize, 1), countOf(past, "fmul rf12, rf4.l, 0x3f000000"));
+    try testing.expectEqual(@as(usize, 1), countOf(past, "fmul rf14, rf5.l, 0x3f000000"));
+
+    // Of one sample a pixel, the load is of sample 0 whatever the read
+    // asks for (:52-62): the default configuration and two words, as a
+    // subpassLoad of one sample is read (since 1.237).
+    work = .{};
+    const single = try throughMesaKeyed(&work, &reference.glslc_subpass_ms, .{ .tile_inputs = .{ 0, no_tile, no_tile, no_tile } });
+    try testing.expectEqual(@as(usize, 2), timesOf(single, "ldtlb"));
+    try testing.expectEqual(@as(usize, 0), timesOf(single, "ldtlbu"));
+    try expectStream(&.{wordOf(0xFFFF_FF84)}, single.stream());
+}
+
+test "through Mesa's back end, a sample worked out at run time is kept out of the tile buffer's four by a bcsel of each later one on its ieq (since 1.238)" {
+    // lower_tlb_load's chain: the first sample's load, then of samples
+    // 1, 2 and 3 an ieq of the sample and that number and a bcsel of
+    // each of the four floats (v3d_nir_lower_load_output.c:71-79), which
+    // ntq_emit_bcsel makes a move under the flag the ieq's XOR pushed.
+    // Four loads in the steps, each its own sample, which nir_opt_cse
+    // does not take for one another (`tileAt`).
+    var work: Work = .{};
+    const code = try throughMesaKeyed(&work, &reference.glslc_subpass_ms_picked, .{ .tile_inputs = .{ 0, no_tile, no_tile, no_tile }, .msaa = true });
+    var seen: [tile_samples_most]bool = @splat(false);
+    for (work.steps[0..work.step_count]) |each| if (each.tag == .tile_load) {
+        try testing.expectEqual(@as(u32, 0), tileTarget(each.at));
+        try testing.expect(!seen[tileSample(each.at)]);
+        seen[tileSample(each.at)] = true;
+    };
+    for (seen) |each| try testing.expect(each);
+    try testing.expectEqual(@as(usize, 8), timesOf(code, "ldtlb"));
+    try testing.expectEqual(@as(usize, 1), timesOf(code, "ldtlbu"));
+    for (1..tile_samples_most) |i| {
+        var line: [32]u8 = undefined;
+        try testing.expectEqual(@as(usize, 1), countOf(code, try std.fmt.bufPrint(&line, "xor.pushz -, rf6, {}", .{i})));
+    }
+    try testing.expectEqual(@as(usize, 12), timesOf(code, "mov.ifa"));
+    try expectStream(&.{ wordOf(0xFFFF_FFFB), wordOf(0xFFFF_FF84) }, code.stream());
+}
+
 test "a subpassLoad of an image of four samples, of an array of input attachments' images, or with an image operand, and an input attachment of Sampled 1, are refused" {
     var work: Work = .{};
-    // MS 1: SubpassDataMS, whose txf_ms is not taken.
-    try testing.expectError(Error.Refused, compile(&work, &comptime patched(&reference.glslc_subpass, .type_image, 0, 5, 1)));
+    // MS 1: SubpassDataMS, read since 1.238, but with no Sample, which
+    // SPIR-V asks of it.
+    try testing.expectError(Error.Operands, compile(&work, &comptime patched(&reference.glslc_subpass, .type_image, 0, 5, 1)));
     // Arrayed 1, which SPIR-V does not allow SubpassData.
     work = .{};
     try testing.expectError(Error.Refused, compile(&work, &comptime patched(&reference.glslc_subpass, .type_image, 0, 4, 1)));

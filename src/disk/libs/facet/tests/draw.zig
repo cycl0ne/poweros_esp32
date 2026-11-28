@@ -11596,8 +11596,8 @@ test "a device of a layout of its own keeps an image's four samples together, ea
     try testing.expectEqual(sampled_image.bytes, drawn_image.bytes);
     // And one read as an input attachment (since 1.216, item 56): in the
     // same quads, the query saying both counts, which a colour
-    // attachment's have to hold. A pipeline that reads it through
-    // SubpassDataMS is what the device refuses.
+    // attachment's have to hold. A pipeline reads it through
+    // SubpassDataMS since 1.238.
     const read_four = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_INPUT_ATTACHMENT;
     try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(bench.physical, .b8g8r8a8_unorm, .@"2d", .optimal, read_four, 0, &said));
     try testing.expectEqual(facet.SAMPLE_COUNT_1 | facet.SAMPLE_COUNT_4, said.sample_counts);

@@ -2495,7 +2495,7 @@ Still left out. Each is marked *facet-wide* or *V3D-only*:
 
 ### 56. V3D: input attachments, through SubpassData in the compiler's profile **[critical path]**
 
-*V3D compiler* &mdash; conformance-blocking, large &mdash; **done in 1.214 to 1.216, and the read of an attachment the subpass draws into in 1.237**; three entries left out, all V3D-only but the 32-bit return
+*V3D compiler* &mdash; conformance-blocking, large &mdash; **done in 1.214 to 1.216, the read of an attachment the subpass draws into in 1.237, and SubpassDataMS in 1.238**; two entries left out, V3D-only but the 32-bit return
 
 After: SubpassData in the compiler's profile
 
@@ -2517,7 +2517,7 @@ Found independently by: features, semantics (both conformance-blocking).
 
 Still left out. Each is marked *facet-wide* or *V3D-only*:
 - **A subpass that reads an attachment it draws into**, refused at CreateRenderPass with `error_feature_not_present` on a device without `can.tile_inputs`, which the V3D lacked. *V3D-only*. **Done in 1.237**, below.
-- **SubpassDataMS**, from step 2: an input attachment of four is made and stored, and a pipeline that reads it is refused. *V3D-only*.
+- **SubpassDataMS**, from step 2: an input attachment of four is made and stored, and a pipeline that reads it is refused. *V3D-only*. **Done in 1.238**, below.
 - **A stencil read as an input attachment**, refused as a sampled stencil is (`can.sampled_stencil`, item 58). *V3D-only*.
 - **The 32-bit return** for a variable not RelaxedPrecision, from step 2. *Facet-wide* on the V3D.
 
@@ -2558,6 +2558,30 @@ Left out of it, *V3D-only*:
 
 Found doing it, *V3D-only*:
 - **An input a fragment program declares and never reads is still a varying.** The walk takes each input variable at its declaration (`readModule`'s inputs), where nir_remove_dead_variables leaves Mesa none of an unread one. The read-twice test's module, glslc's with its varying's load made a second read, keeps four. The vertex program writes them all the same, so nothing is drawn wrongly: the cost is the ldvarys.
+
+**Then the second, in 1.238: an input attachment of four samples, read through SubpassDataMS.** The V3D made such an image and stored it, and refused the pipeline that read it. Both of v3dv's ways are ported:
+
+- **The read.** OpTypeImage SubpassData of MS 1 is GLSL_SAMPLER_DIM_SUBPASS_MS (spirv_to_nir.c:2428-2435). Its OpImageRead's Sample is the load's sample (:3905-3911). vtn gives a read without one an undef; facet refuses it, as SPIR-V's validation does.
+- **Through the TMU**, where the subpass does not draw into the attachment:
+  - nir_lower_input_attachments makes the read a txf_ms of that sample, at the pixel's place and layer and of level 0 (nir_lower_input_attachments.c:133-147).
+  - v3d_nir_lower_txf_ms makes that the texel of the pixel's quad (v3d_nir_lower_txf_ms.c:42-57; `sampleTexelOf`, as a sampler2DMS's since 1.209).
+  - That pass puts the coordinate last, so the level goes before it: TMUB is written before T. This is the new `Lookup.fetch_sample_level`. The scheduler may move TMUB and T past each other (can_reorder_tmu_write, qpu_schedule.c:226-235), and in the modules tested it does: with the level written last, the programs are the same, and that mutant fails no test.
+- **Out of the tile buffer**, where it draws into the attachment:
+  - lower_tlb_load (v3d_nir_lower_load_output.c:26-98) loads each of the four samples and keeps the one asked for, through a bcsel of each later one on the ieq of the sample and its number (:71-79). Of a constant sample, nir_opt_constant_folding leaves that sample's load alone.
+  - The pipeline's key says it draws four samples (`Key.msaa`, v3dv_pipeline.c:2115). So the back end reads a sample at a time, in TLB_SAMPLE_MODE_PER_SAMPLE: all four, with only the first read configured (tlb_read_config, nir_to_vir.c:2705-2706; vir_emit_tlb_color_read, :2757-2805).
+  - A tile load's sample is in its `at`, beside the render target (`tileAt`), so nir_opt_cse does not take two loads of different samples for one.
+
+The tests:
+
+- Three host tests are new, of two glslc modules: one reads sample 2, the other the sample the two lowest bits of the pixel's x pick.
+  - The TMU's fetch: nineteen instructions with the level at TMUB, and the picked sample's and and shift.
+  - The tile buffer's reads: eight, configured by 0xfffffffb, with sample 2's words the ones halved. A sample past the fourth reads the first's, and at one sample a pixel there are two reads.
+  - The picked sample out of the tile buffer: three ieqs and twelve conditional moves, over four loads, each of its own sample.
+- 4583 of the 4586 pass, 3 skipped. Of 12 mutants, 10 fail a test. One survives as above. The other is the driver keying a pipeline of four samples `msaa`, which no host test reaches. The board's "... of its own" case runs that pipeline keyed and matches the cores, but the mutant was not run on the board: a read a pixel at a time out of a tile buffer of four samples is not one Mesa makes.
+- FacetBoth 1.86 has two new cases. Both draw the quad and the glass at four samples and read them through glslc's subpassLoad of a subpassInputMS, at the sample the pixel's x picks:
+  - "shipped input attachment of four samples" reads them in a later subpass of one sample;
+  - "... of its own" reads them in the subpass that draws into the attachment, then again in a later one, over a clear of its own so that a read of what the first case left stored would show.
+- On the board (f251): FacetProbe 1088 of 1088. Both new cases are 11 of 230400 apart, 140 and 103 at worst, as many as the cases of one sample. The other 332 cases are as in 1.237.
 
 ### 57. V3D: storage images, in the layout the TMU reads **[critical path]**
 

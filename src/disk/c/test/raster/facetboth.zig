@@ -33,6 +33,11 @@
 //! The shipped input attachment of its own (since 1.85) is the same
 //! subpassLoad in the subpass that draws into the image, after a barrier
 //! by region: the V3D reads it out of the tile buffer since facet 1.237.
+//! The shipped input attachments of four samples (since 1.86) are the
+//! subpassLoad of a subpassInputMS at the sample the pixel's x picks,
+//! once in a later subpass, which the V3D fetches through the TMU, and
+//! once in the subpass of four samples that draws into it, which the V3D
+//! reads out of the tile buffer a sample at a time (facet 1.238).
 //! The texture stored by a function (since 1.76) is written by a compute
 //! function of the program's, each group a texel, and drawn: on the V3D
 //! the function runs on the cores, which write each texel where its TMU
@@ -186,7 +191,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.85 (27.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.86 (28.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -1813,6 +1818,32 @@ fn subpassFragment(fragments: *const shader.Fragments) callconv(.c) void {
     }
 }
 
+/// What `shipped_subpass_four` computes, for the cores: `subpassFragment`
+/// of an input attachment of four samples, the sample read the one the
+/// two lowest bits of the pixel's x pick (`Attachment.sampleOf`; since
+/// 1.86).
+fn subpassFourFragment(fragments: *const shader.Fragments) callconv(.c) void {
+    const from = fragments.input(0, 0, 0) orelse return shader.fill(fragments, shader.missing);
+    @setRuntimeSafety(false);
+    var rows = shader.Rows(5).of(fragments);
+    for (fragments.quads[0..fragments.count], fragments.colors[0..fragments.count]) |quad, *out| {
+        const planes = rows.at(quad);
+        const over = @as(shader.Pixels, @splat(1)) / planes[0];
+        var made: [4]shader.Pixels = undefined;
+        inline for (&made, 0..) |*each, c| each.* = planes[1 + c] * over * @as(shader.Pixels, @splat(0.25));
+        inline for (0..4) |i| {
+            const x = fragments.x + @as(u32, quad.x) + @as(u32, i & 1);
+            const y = fragments.y + @as(u32, quad.y) + @as(u32, i >> 1);
+            const texel = from.sampleOf(x & 3).colorAt(x, y);
+            const read = [4]u32{ texel & 0xFF, texel >> 8 & 0xFF, texel >> 16 & 0xFF, texel >> 24 };
+            inline for (&made, read) |*each, part| each.*[i] += @as(f32, @floatFromInt(part)) / 255.0 * 0.75;
+        }
+        var bytes: [4]@Vector(4, u32) = undefined;
+        inline for (&bytes, 0..) |*channel, c| channel.* = channelOf(made[c]);
+        out.* = bytes[3] << @splat(24) | bytes[0] << @splat(16) | bytes[1] << @splat(8) | bytes[2];
+    }
+}
+
 /// What `shipped_fetch_dependent` computes, for the cores: the texture
 /// bound at set 0, binding 0 sampled through the sampler beside it at the
 /// centre of the texel of level 0 the two floats of varying 0 times 64
@@ -2966,6 +2997,9 @@ const shipped_entries = [_]shader.Entry{
     // A cube of an array, glslc's sample of SampledCubeArray (since
     // 1.83).
     shader.fragment("shipped cubes", layeredFragment(.texture_cube_array_sampled), 4),
+    // An input attachment of four samples, read at the sample the pixel's
+    // x picks (since 1.86).
+    shader.fragment("shipped subpass of four", &subpassFourFragment, 4),
 };
 const shipped_words = [_]shader.Spirv{
     .{},                                            .{},                                        .{},                                           .{},
@@ -2996,7 +3030,7 @@ const shipped_words = [_]shader.Spirv{
     shader.Spirv.of(&shipped_determinant4),         shader.Spirv.of(&shipped_bits),             shader.Spirv.of(&shipped_vertex_branch),       shader.Spirv.of(&shipped_branches),
     shader.Spirv.of(&shipped_outputs),              shader.Spirv.of(&shipped_vertex_outputs),   Shipped.NestedKept.spirv,                      Shipped.SelectsKept.spirv,
     Shipped.CollapsedKept.spirv,                    shader.Spirv.of(&shipped_fetch_four),       shader.Spirv.of(&shipped_subpass),             shader.Spirv.of(&shipped_stored),
-    shader.Spirv.of(&shipped_drawn_stored),         shader.Spirv.of(&shipped_two_colours),      shader.Spirv.of(&shipped_cubes),
+    shader.Spirv.of(&shipped_drawn_stored),         shader.Spirv.of(&shipped_two_colours),      shader.Spirv.of(&shipped_cubes),               shader.Spirv.of(&shipped_subpass_four),
 };
 
 /// glslc's own output, at -O, for a sample of an image of four at the
@@ -3109,6 +3143,70 @@ const shipped_subpass = [_]u32{
     0x00000018, 0x00000017, 0x0005008E, 0x00000007, 0x0000001A, 0x00000018,
     0x00000019, 0x00050081, 0x00000007, 0x0000001B, 0x00000015, 0x0000001A,
     0x0003003E, 0x00000009, 0x0000001B, 0x000100FD, 0x00010038,
+};
+
+/// glslc's own output, at -O, for an input attachment of four samples
+/// read at the pixel's own place, at the sample the two lowest bits of
+/// its x pick, its red and blue the other way round, mixed with the
+/// colour: OpImageRead of a SubpassData image of MS 1 with its Sample,
+/// which nir_lower_input_attachments makes a txf_ms
+/// (nir_lower_input_attachments.c:133-147). The V3D fetches the sample's
+/// texel of the
+/// pixel's quad through the TMU, or reads the four samples out of the
+/// tile buffer and keeps the one picked where the subpass draws into it
+/// (since 1.86).
+///
+/// ```glsl
+/// #version 450
+/// layout(input_attachment_index = 0, set = 0, binding = 0) uniform subpassInputMS drawn;
+/// layout(location = 0) in vec4 color;
+/// layout(location = 0) out vec4 outColor;
+/// void main() {
+///     outColor = subpassLoad(drawn, int(gl_FragCoord.x) & 3).bgra * 0.75 + color * 0.25;
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=frag subpass_four.frag -o subpass_four.spv   # 212 words
+/// spirv-val --target-env vulkan1.0 subpass_four.spv                     # no output, and 0
+/// ```
+const shipped_subpass_four = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000025, 0x00000000, 0x00020011,
+    0x00000001, 0x00020011, 0x00000028, 0x0006000B, 0x00000001, 0x4C534C47,
+    0x6474732E, 0x3035342E, 0x00000000, 0x0003000E, 0x00000000, 0x00000001,
+    0x0008000F, 0x00000004, 0x00000004, 0x6E69616D, 0x00000000, 0x00000009,
+    0x0000000F, 0x00000020, 0x00030010, 0x00000004, 0x00000007, 0x00040047,
+    0x00000009, 0x0000001E, 0x00000000, 0x00040047, 0x0000000C, 0x00000021,
+    0x00000000, 0x00040047, 0x0000000C, 0x00000022, 0x00000000, 0x00040047,
+    0x0000000C, 0x0000002B, 0x00000000, 0x00040047, 0x0000000F, 0x0000000B,
+    0x0000000F, 0x00040047, 0x00000020, 0x0000001E, 0x00000000, 0x00020013,
+    0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00030016, 0x00000006,
+    0x00000020, 0x00040017, 0x00000007, 0x00000006, 0x00000004, 0x00040020,
+    0x00000008, 0x00000003, 0x00000007, 0x0004003B, 0x00000008, 0x00000009,
+    0x00000003, 0x00090019, 0x0000000A, 0x00000006, 0x00000006, 0x00000000,
+    0x00000000, 0x00000001, 0x00000002, 0x00000000, 0x00040020, 0x0000000B,
+    0x00000000, 0x0000000A, 0x0004003B, 0x0000000B, 0x0000000C, 0x00000000,
+    0x00040020, 0x0000000E, 0x00000001, 0x00000007, 0x0004003B, 0x0000000E,
+    0x0000000F, 0x00000001, 0x00040015, 0x00000010, 0x00000020, 0x00000000,
+    0x0004002B, 0x00000010, 0x00000011, 0x00000000, 0x00040020, 0x00000012,
+    0x00000001, 0x00000006, 0x00040015, 0x00000015, 0x00000020, 0x00000001,
+    0x0004002B, 0x00000015, 0x00000017, 0x00000003, 0x0004002B, 0x00000015,
+    0x00000019, 0x00000000, 0x00040017, 0x0000001A, 0x00000015, 0x00000002,
+    0x0005002C, 0x0000001A, 0x0000001B, 0x00000019, 0x00000019, 0x0004002B,
+    0x00000006, 0x0000001E, 0x3F400000, 0x0004003B, 0x0000000E, 0x00000020,
+    0x00000001, 0x0004002B, 0x00000006, 0x00000022, 0x3E800000, 0x00050036,
+    0x00000002, 0x00000004, 0x00000000, 0x00000003, 0x000200F8, 0x00000005,
+    0x0004003D, 0x0000000A, 0x0000000D, 0x0000000C, 0x00050041, 0x00000012,
+    0x00000013, 0x0000000F, 0x00000011, 0x0004003D, 0x00000006, 0x00000014,
+    0x00000013, 0x0004006E, 0x00000015, 0x00000016, 0x00000014, 0x000500C7,
+    0x00000015, 0x00000018, 0x00000016, 0x00000017, 0x00070062, 0x00000007,
+    0x0000001C, 0x0000000D, 0x0000001B, 0x00000040, 0x00000018, 0x0009004F,
+    0x00000007, 0x0000001D, 0x0000001C, 0x0000001C, 0x00000002, 0x00000001,
+    0x00000000, 0x00000003, 0x0005008E, 0x00000007, 0x0000001F, 0x0000001D,
+    0x0000001E, 0x0004003D, 0x00000007, 0x00000021, 0x00000020, 0x0005008E,
+    0x00000007, 0x00000023, 0x00000021, 0x00000022, 0x00050081, 0x00000007,
+    0x00000024, 0x0000001F, 0x00000023, 0x0003003E, 0x00000009, 0x00000024,
+    0x000100FD, 0x00010038,
 };
 
 /// glslc's own output, at -O: `shippedStored`, "stored"'s texels written
@@ -10391,6 +10489,17 @@ const Side = struct {
     own_pass: ?*facet.RenderPass = null,
     own_frame: ?*facet.Framebuffer = null,
     own_set: ?*facet.DescriptorSet = null,
+    /// An input attachment of four samples, the passes that read it, a
+    /// later subpass and the one that draws into it, their framebuffers
+    /// and a set of it for each (since 1.86).
+    four_input: ?*facet.Image = null,
+    four_input_view: ?*facet.ImageView = null,
+    four_input_pass: ?*facet.RenderPass = null,
+    four_input_frame: ?*facet.Framebuffer = null,
+    four_input_set: ?*facet.DescriptorSet = null,
+    four_own_pass: ?*facet.RenderPass = null,
+    four_own_frame: ?*facet.Framebuffer = null,
+    four_own_set: ?*facet.DescriptorSet = null,
     /// The texture a compute function writes, its view, the set layout,
     /// layout, pipeline and set it writes it through, and the set a draw
     /// samples it through (since 1.76).
@@ -10540,7 +10649,7 @@ const Side = struct {
         const binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .sampled_image, .stage_flags = facet.SHADER_STAGE_FRAGMENT };
         try expect(fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&binding) }, &side.set_layout), error.Refused);
         // The last two are "shipped stored"'s (since 1.77).
-        try expect(fb.CreateDescriptorPool(device, &.{ .max_sets = formats.len + 10 + layered_count + throughs.len + shadow_ops.len + formats.len * 2 + 4 + 2 + 1 }, &side.descriptor_pool), error.Refused);
+        try expect(fb.CreateDescriptorPool(device, &.{ .max_sets = formats.len + 10 + layered_count + throughs.len + shadow_ops.len + formats.len * 2 + 4 + 2 + 1 + 2 }, &side.descriptor_pool), error.Refused);
         const layouts: [formats.len]?*facet.DescriptorSetLayout = @splat(side.set_layout);
         try expect(fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = side.descriptor_pool.?, .descriptor_set_count = formats.len, .set_layouts = @ptrCast(&layouts) }, &side.sets), error.Refused);
         for (side.sets, side.texture_views) |set, texture_view| {
@@ -10625,6 +10734,7 @@ const Side = struct {
         try side.upFour();
         try side.upDrawn();
         try side.upInput();
+        try side.upFourInput();
         try side.upStored();
     }
 
@@ -10851,6 +10961,76 @@ const Side = struct {
         const own_info = facet.DescriptorImageInfo{ .image_view = side.input_view.?, .image_layout = .general };
         const own_write = facet.WriteDescriptorSet{ .dst_set = side.own_set.?, .dst_binding = 0, .descriptor_type = .input_attachment, .image_info = @ptrCast(&own_info) };
         fb.UpdateDescriptorSets(device, 1, @ptrCast(&own_write), 0, null);
+    }
+
+    /// The image of four samples a later subpass reads as an input
+    /// attachment, and the one that draws into it (`four_input`; since
+    /// 1.86): `four_input_pass` is `input_pass` of four samples, the
+    /// first subpass drawing four and the second one, and `four_own_pass`
+    /// is `own_pass` of four, its first subpass reading where it draws.
+    fn upFourInput(side: *Side) Failure!void {
+        const fb = side.fb;
+        const device = side.device.?;
+        const extent = facet.Extent3D{ .width = side.width, .height = side.height };
+        try side.image(.{ .format = formats[0], .extent = extent, .samples = 4, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_INPUT_ATTACHMENT }, 0, &side.four_input);
+        side.four_input_view = try side.view(side.four_input.?, formats[0], facet.IMAGE_ASPECT_COLOR, 1);
+        const views = [2]*facet.ImageView{ side.four_input_view.?, side.picture_views[0].? };
+        const picture = facet.AttachmentDescription{ .format = formats[0], .load_op = .clear, .store_op = .store, .final_layout = .general };
+        const written = facet.SubpassDependency{
+            .src_subpass = 0,
+            .dst_subpass = 1,
+            .src_stage_mask = facet.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT,
+            .dst_stage_mask = facet.PIPELINE_STAGE_FRAGMENT_SHADER,
+            .src_access_mask = facet.ACCESS_COLOR_ATTACHMENT_WRITE,
+            .dst_access_mask = facet.ACCESS_INPUT_ATTACHMENT_READ,
+            .dependency_flags = facet.DEPENDENCY_BY_REGION,
+        };
+        {
+            const attachments = [2]facet.AttachmentDescription{
+                .{ .format = formats[0], .samples = 4, .load_op = .clear, .store_op = .dont_care, .final_layout = .shader_read_only_optimal },
+                picture,
+            };
+            const drawn = facet.AttachmentReference{ .attachment = 0, .layout = .color_attachment_optimal };
+            const read = facet.AttachmentReference{ .attachment = 0, .layout = .shader_read_only_optimal };
+            const into = facet.AttachmentReference{ .attachment = 1, .layout = .color_attachment_optimal };
+            const subpasses = [2]facet.SubpassDescription{
+                .{ .color_attachment_count = 1, .color_attachments = @ptrCast(&drawn) },
+                .{ .input_attachment_count = 1, .input_attachments = @ptrCast(&read), .color_attachment_count = 1, .color_attachments = @ptrCast(&into) },
+            };
+            try expect(fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &attachments, .subpass_count = 2, .subpasses = &subpasses, .dependency_count = 1, .dependencies = @ptrCast(&written) }, &side.four_input_pass), error.Refused);
+            try expect(fb.CreateFramebuffer(device, &.{ .render_pass = side.four_input_pass.?, .attachment_count = 2, .attachments = &views, .width = side.width, .height = side.height }, &side.four_input_frame), error.Refused);
+            side.four_input_set = try side.inputSet(side.four_input_view.?, .shader_read_only_optimal);
+        }
+        const own = facet.AttachmentReference{ .attachment = 0, .layout = .general };
+        const own_picture = facet.AttachmentReference{ .attachment = 1, .layout = .general };
+        const subpasses = [2]facet.SubpassDescription{
+            .{ .input_attachment_count = 1, .input_attachments = @ptrCast(&own), .color_attachment_count = 1, .color_attachments = @ptrCast(&own) },
+            .{ .input_attachment_count = 1, .input_attachments = @ptrCast(&own), .color_attachment_count = 1, .color_attachments = @ptrCast(&own_picture) },
+        };
+        const own_written = [2]facet.SubpassDependency{
+            .{ .src_subpass = 0, .dst_subpass = 0, .src_stage_mask = written.src_stage_mask, .dst_stage_mask = written.dst_stage_mask, .src_access_mask = written.src_access_mask, .dst_access_mask = written.dst_access_mask, .dependency_flags = facet.DEPENDENCY_BY_REGION },
+            written,
+        };
+        const attachments = [2]facet.AttachmentDescription{
+            .{ .format = formats[0], .samples = 4, .load_op = .clear, .store_op = .dont_care, .final_layout = .general },
+            picture,
+        };
+        try expect(fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &attachments, .subpass_count = 2, .subpasses = &subpasses, .dependency_count = 2, .dependencies = &own_written }, &side.four_own_pass), error.Refused);
+        try expect(fb.CreateFramebuffer(device, &.{ .render_pass = side.four_own_pass.?, .attachment_count = 2, .attachments = &views, .width = side.width, .height = side.height }, &side.four_own_frame), error.Refused);
+        side.four_own_set = try side.inputSet(side.four_input_view.?, .general);
+    }
+
+    /// A set of `input_set_layout` of `input_view` in `layout` (since
+    /// 1.86).
+    fn inputSet(side: *Side, input_view: *facet.ImageView, layout: facet.ImageLayout) Failure!*facet.DescriptorSet {
+        const fb = side.fb;
+        const device = side.device.?;
+        var sets: [1]?*facet.DescriptorSet = undefined;
+        try expect(fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = side.descriptor_pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&side.input_set_layout) }, &sets), error.Refused);
+        const info = facet.DescriptorImageInfo{ .image_view = input_view, .image_layout = layout };
+        const write = facet.WriteDescriptorSet{ .dst_set = sets[0].?, .dst_binding = 0, .descriptor_type = .input_attachment, .image_info = @ptrCast(&info) };
+        fb.UpdateDescriptorSets(device, 1, @ptrCast(&write), 0, null);
+        return sets[0].?;
     }
 
     /// A set of `sampler_set_layout` that samples `view` through
@@ -11322,6 +11502,12 @@ const Side = struct {
         fb.DestroyBuffer(device, side.computed);
         fb.DestroyBuffer(device, side.numbers);
         fb.DestroyFence(device, side.fence);
+        fb.DestroyFramebuffer(device, side.four_own_frame);
+        fb.DestroyRenderPass(device, side.four_own_pass);
+        fb.DestroyFramebuffer(device, side.four_input_frame);
+        fb.DestroyRenderPass(device, side.four_input_pass);
+        fb.DestroyImageView(device, side.four_input_view);
+        fb.DestroyImage(device, side.four_input);
         fb.DestroyFramebuffer(device, side.own_frame);
         fb.DestroyRenderPass(device, side.own_pass);
         fb.DestroyFramebuffer(device, side.input_frame);
@@ -13071,6 +13257,58 @@ const Cases = struct {
         side.draw(quad_at, 6);
         side.end();
     }
+    /// `inputRead` of four samples (since 1.86): the quad and the glass
+    /// drawn at four samples into `four_input`, then read by the second
+    /// subpass, of one, through glslc's subpassLoad of a subpassInputMS
+    /// at the sample the two lowest bits of the pixel's x pick, so that
+    /// each of the four is read across a row. The V3D fetches the
+    /// sample's texel of the pixel's quad through the TMU, its level of 0
+    /// written first (docs/facet-vulkan10.md item 56, facet 1.238); the
+    /// cores read the sample's plane.
+    fn inputFour(side: *Side) Failure!void {
+        const fb = side.fb;
+        const commands = side.commands.?;
+        const clears = [2]facet.ClearValue{ .{ .color = .{ .float32 = .{ 0.28, 0.1, 0.22, 1 } } }, .{ .color = .{ .float32 = .{ 0.05, 0.1, 0.3, 1 } } } };
+        fb.CmdBeginRenderPass(commands, &.{ .render_pass = side.four_input_pass.?, .framebuffer = side.four_input_frame.?, .render_area = side.areaOf(null), .clear_value_count = 2, .clear_values = &clears }, .@"inline");
+        side.state();
+        try side.use(.{ .pass = side.four_input_pass.?, .samples = 4 });
+        side.draw(clockwise_at, 6);
+        try side.use(.{ .pass = side.four_input_pass.?, .samples = 4, .blend = true });
+        side.draw(glass_at, 3);
+        fb.CmdNextSubpass(commands, .@"inline");
+        fb.CmdBindDescriptorSets(commands, .graphics, side.input_layout.?, 0, 1, @ptrCast(&side.four_input_set), 0, null);
+        try side.use(.{ .pass = side.four_input_pass.?, .subpass = 1, .vertex = "shipped as it is", .fragment = "shipped subpass of four", .layout = side.input_layout.? });
+        side.draw(quad_at, 6);
+        side.end();
+    }
+    /// `inputOwn` of four samples (since 1.86): the first subpass, of
+    /// four, reads `four_input` where it draws into it, after a barrier
+    /// by region, at the sample the pixel's x picks, and the second, of
+    /// one, reads it the same way into the picture. The V3D reads the
+    /// first out of the tile buffer a sample at a time, all four, and
+    /// keeps the one picked; it fetches the second through the TMU. Over
+    /// a clear of its own, so that a read of what `inputFour` left stored
+    /// shows.
+    fn inputFourOwn(side: *Side) Failure!void {
+        const fb = side.fb;
+        const commands = side.commands.?;
+        const clears = [2]facet.ClearValue{ .{ .color = .{ .float32 = .{ 0.12, 0.3, 0.26, 1 } } }, .{ .color = .{ .float32 = .{ 0.05, 0.1, 0.3, 1 } } } };
+        fb.CmdBeginRenderPass(commands, &.{ .render_pass = side.four_own_pass.?, .framebuffer = side.four_own_frame.?, .render_area = side.areaOf(null), .clear_value_count = 2, .clear_values = &clears }, .@"inline");
+        side.state();
+        try side.use(.{ .pass = side.four_own_pass.?, .samples = 4 });
+        side.draw(clockwise_at, 6);
+        try side.use(.{ .pass = side.four_own_pass.?, .samples = 4, .blend = true });
+        side.draw(glass_at, 3);
+        const written = facet.MemoryBarrier{ .src_access_mask = facet.ACCESS_COLOR_ATTACHMENT_WRITE, .dst_access_mask = facet.ACCESS_INPUT_ATTACHMENT_READ };
+        fb.CmdPipelineBarrier(commands, facet.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT, facet.PIPELINE_STAGE_FRAGMENT_SHADER, facet.DEPENDENCY_BY_REGION, 1, @ptrCast(&written), 0, null, 0, null);
+        fb.CmdBindDescriptorSets(commands, .graphics, side.input_layout.?, 0, 1, @ptrCast(&side.four_own_set), 0, null);
+        try side.use(.{ .pass = side.four_own_pass.?, .samples = 4, .vertex = "shipped as it is", .fragment = "shipped subpass of four", .layout = side.input_layout.? });
+        side.draw(quad_at, 6);
+        fb.CmdNextSubpass(commands, .@"inline");
+        try side.use(.{ .pass = side.four_own_pass.?, .subpass = 1, .vertex = "shipped as it is", .fragment = "shipped subpass of four", .layout = side.input_layout.? });
+        side.draw(quad_at, 6);
+        side.end();
+    }
     /// A texture written by the compute function "stored", a group a
     /// texel, then drawn over the quad, nearest. On the V3D the function
     /// runs on the cores, which write each texel where its TMU reads it,
@@ -13438,6 +13676,8 @@ const cases = [_]Case{
     // attachment, which the V3D does since facet 1.216 (item 56).
     .{ .name = "shipped input attachment", .run = &Cases.inputRead },
     .{ .name = "shipped input attachment of its own", .run = &Cases.inputOwn },
+    .{ .name = "shipped input attachment of four samples", .run = &Cases.inputFour },
+    .{ .name = "shipped input attachment of four samples of its own", .run = &Cases.inputFourOwn },
     .{ .name = "stored by a function", .run = &Cases.storedByFunction },
     // 1.77: the same texels by glslc's imageStore, which the V3D compiles
     // since facet 1.218 (item 57 step 2).
