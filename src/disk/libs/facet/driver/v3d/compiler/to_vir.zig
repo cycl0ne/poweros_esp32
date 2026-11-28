@@ -2175,19 +2175,24 @@ fn emitTex(e: *Emit, each: Step, at: u16) Error!bool {
 
 /// v3d_vir_emit_image_load_store (v3d_tex.c:564-655), for a compute
 /// program's image_load and image_store of an Rgba8 image (since 1.218),
-/// and a fragment program's (since 1.219).
+/// and a fragment program's (since 1.219), and of an Rgba16f, Rgba32f or
+/// R32f one (since 1.241).
 /// P0 the words to hand back, and the image's number in its high bits for
 /// the driver to put the image's state there (:609-613), as a sample's;
 /// a store hands back none (return_channels_required, :531-561), a load
 /// both words of its four 16-bit floats, the output of an image of 8 bits
 /// a channel (v3d_gl_format_is_return_32,
 /// v3d_nir_lower_image_load_store.c:48-62), whatever the program reads of
-/// them, as a sample does (`texel_words`). P1 has the per-pixel mask and
-/// the 16-bit output (:576-580); P2 the regular operation (:592). Both
-/// are the defaults, p1_unpacked_default's and p2_unpacked_default's, so
-/// neither is written (:645-648), but for a fragment program's load that
-/// reads its helper pixels (ACCESS_SKIP_HELPERS not set, `lanes`): its
-/// mask is off, and P1 the constant 0 of no bit set. Then
+/// them, as a sample does (`texel_words`); since 1.241 the four words of
+/// an image of 32-bit floats, Rgba32f's or R32f's, a float each
+/// (`wide_texel_words`). P1 has the per-pixel mask and the 16-bit output
+/// (:576-580), or the 32-bit one for those two, a store's as well as a
+/// load's; P2 the regular operation (:592). Both are the defaults,
+/// p1_unpacked_default's and p2_unpacked_default's, so neither is
+/// written (:645-648), but for a fragment program's load that reads its
+/// helper pixels (ACCESS_SKIP_HELPERS not set, `lanes`), whose mask is
+/// off, and for an image of 32-bit floats: P1 then the constant of the
+/// bits it has. Then
 /// vir_image_emit_register_writes (:440-518): the coordinate's y to TMUT,
 /// a 3D image's slice to TMUR and a layer, an array's or a cube's face, to
 /// TMUI; a store's words to TMUD; and x to TMUSF, which starts the lookup,
@@ -2202,7 +2207,10 @@ fn emitImageLoadStore(e: *Emit, each: Step, at: u16) Error!void {
     const c = e.c;
     const is_store = each.tag == .image_store;
     const dim = e.work.samplers[each.at].dim;
-    const return_words: u32 = if (is_store) 0 else texel_words;
+    // Of 32-bit words where the format's are (`compile.StorageFormat.wide`;
+    // since 1.241): four of them, a float each.
+    const wide = e.work.samplers[each.at].format.wide();
+    const return_words: u32 = if (is_store) 0 else if (wide) wide_texel_words else texel_words;
     const data: u32 = if (is_store) @intCast(e.work.steps[each.b].kind.parts()) else 0;
     if (is_store) c.tmu_dirty_rcl = true;
 
@@ -2222,7 +2230,8 @@ fn emitImageLoadStore(e: *Emit, each: Step, at: u16) Error!void {
 
     try wrtmuc(c, .image_tmu_config_p0, return_words | @as(u32, each.at) << 24);
     const per_pixel = c.stage != .fragment or is_store or e.work.skip_helpers[at];
-    if (!per_pixel) try wrtmuc(c, .constant, 0);
+    const p1_packed: u32 = (if (per_pixel) compile.per_pixel_mask else 0) | if (wide) compile.output_type_32_bit else 0;
+    if (p1_packed != compile.per_pixel_mask) try wrtmuc(c, .constant, p1_packed);
     _ = try tmuWrite(c, .tmut, try getSrc(e, each.a, 1));
     switch (dim) {
         .flat => {},

@@ -478,6 +478,10 @@ pub const Sampler = struct {
     /// (pipeline_get_descriptor_map, v3dv_pipeline.c:601-606; since
     /// 1.218).
     storage: bool = false,
+    /// A storage image's format, as its OpTypeImage names it (since
+    /// 1.241): what its texels are written in and how the TMU hands them
+    /// back (`StorageFormat`).
+    format: StorageFormat = .rgba8,
     /// The variable decorated RelaxedPrecision, which vtn makes
     /// GLSL_PRECISION_MEDIUM (apply_var_decoration, vtn_variables.c:
     /// 1367-1369): its texels come back as 16-bit floats, and any other
@@ -497,6 +501,47 @@ pub const Sampler = struct {
 /// What an image's texels are: floats, or whole numbers of one sign or
 /// the other (`Sampler.whole`; since 1.240).
 pub const Whole = enum(u2) { none, unsigned, signed };
+
+/// A storage image's format, of the profile's (`profile.storage_formats`):
+/// four bytes of 0 to 1 (since 1.218), and since 1.241 four halves, four
+/// floats and one float, v3dv's RGBA16F, RGBA32F and R32F
+/// (v3dvx_formats.c:136, :142, :181), which the TMU keeps as they lie
+/// (`tiling.Texels`).
+pub const StorageFormat = enum(u2) {
+    rgba8,
+    rgba16f,
+    rgba32f,
+    r32f,
+
+    /// The format a storage image's OpTypeImage names, or null for one
+    /// none of these is.
+    pub fn of(format: spirv.ImageFormat) ?StorageFormat {
+        return switch (format) {
+            .rgba8 => .rgba8,
+            .rgba16f => .rgba16f,
+            .rgba32f => .rgba32f,
+            .r32f => .r32f,
+            else => null,
+        };
+    }
+
+    /// Whether the TMU hands its texels back as 32-bit words, a float
+    /// each, and takes them so: v3d_gl_format_is_return_32, a channel of
+    /// more than 16 bits, or of 16 normalized
+    /// (v3d_nir_lower_image_load_store.c:48-62), P1's output_type_32_bit
+    /// on a load and a store alike (v3d_tex.c:580). The others' come back
+    /// as two words of four halves, and an RGBA16F one's are its own.
+    pub fn wide(format: StorageFormat) bool {
+        return format == .rgba32f or format == .r32f;
+    }
+
+    /// How many channels a texel of it holds, util_format_get_nr_components,
+    /// which a store's texel is trimmed to (v3d71_nir_lower_image_store,
+    /// v3d_nir_lower_image_load_store.c:363-364).
+    pub fn channels(format: StorageFormat) u32 {
+        return if (format == .r32f) 1 else 4;
+    }
+};
 
 /// What a sampled image's coordinate names, as a nir_tex_instr's
 /// sampler_dim and is_array have it, and so which of the TMU's registers
@@ -662,12 +707,14 @@ pub const profile: spirv.Profile = .{
     // SubpassData: an input attachment (since 1.215).
     .image_dims = &.{ .dim_2d, .dim_3d, .cube, .subpass_data },
     // A storage image of 8 bits a channel, R8G8B8A8_UNORM's, which the
-    // TMU keeps as RGBA8 (v3dvx_formats.c:131): the one of Vulkan's
-    // storage formats of no StorageImageExtendedFormats this device keeps
-    // in its own layout (`can.kept_floats` is false), and of the others
-    // it keeps, BGRA8 and RGB565 have no SPIR-V format and R8 needs that
-    // capability (since 1.218).
-    .storage_formats = &.{.rgba8},
+    // TMU keeps as RGBA8 (v3dvx_formats.c:131; since 1.218), and since
+    // 1.241 of four halves, four floats and one float, which it keeps as
+    // RGBA16F, RGBA32F and R32F (:136, :142, :181; `can.kept_floats`):
+    // Vulkan's storage formats of no StorageImageExtendedFormats this
+    // device keeps in its own layout. Of the others it keeps, BGRA8 and
+    // RGB565 have no SPIR-V format, and R8 and the 11/11/10 floats need
+    // that capability.
+    .storage_formats = &.{ .rgba8, .rgba16f, .rgba32f, .r32f },
     // A bias, a level and a constant texel offset, TMUB's and P2's
     // (handle_tex_src, v3d_tex.c:129-170; since 1.180); and a gradient,
     // which nir_lower_tex's lower_txd makes a level (vir.c:802; since
@@ -1755,6 +1802,8 @@ pub const Work = struct {
     /// An image type of Sampled 2 and a format, a storage image's (since
     /// 1.218).
     storage_image: std.StaticBitSet(most_ids) = .initEmpty(),
+    /// A storage image type's format (since 1.241).
+    storage_format: [most_ids]StorageFormat = @splat(.rgba8),
     /// An id decorated RelaxedPrecision (since 1.239). Only a sampler's
     /// variable is read for it: v3dv sets no mediump_16bit_alu, so vtn
     /// keeps every other value at its own width (vtn_value_needs_mediump_16bit,
@@ -2303,10 +2352,10 @@ fn compileRead(work: *Work, allocator: std.mem.Allocator, compiler: *const vir.C
             },
             .tmu_config_p1 => if (vir.unitDataGetOffset(data) & ~(per_pixel_mask | output_type_32_bit) == 0) .{ .sampler = .{ .unit = try units.at(vir.unitDataGetUnit(data)), .bits = vir.unitDataGetOffset(data) } } else return Error.Invalid,
             // A storage image's: the words a load hands back, or a
-            // store's none (since 1.218).
+            // store's none (since 1.218), and four of 32 bits since 1.241.
             .image_tmu_config_p0 => image: {
                 const bits = vir.unitDataGetOffset(data);
-                if (bits != 0 and bits != to_vir.texel_words) return Error.Invalid;
+                if (bits != 0 and bits != to_vir.texel_words and bits != to_vir.wide_texel_words) return Error.Invalid;
                 break :image .{ .image = .{ .unit = try units.at(vir.unitDataGetUnit(data)), .bits = bits } };
             },
             // A word of the push constants: `Step.at` of a `.push`.
@@ -3092,8 +3141,11 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 if (operands[6] == 2 and dim != .subpass_data) {
                     if (operands[5] == 1) return Error.Refused;
                     // A format of whole numbers is none of the profile's
-                    // (`spirv.ImageFormat`), and an Rgba8 one holds floats.
+                    // (`spirv.ImageFormat`), and each of its formats
+                    // holds floats: Rgba8, and since 1.241 Rgba16f,
+                    // Rgba32f and R32f (`StorageFormat`).
                     if (work.whole_image.isSet(id)) return Error.Refused;
+                    work.storage_format[id] = StorageFormat.of(@enumFromInt(operands[7])) orelse return Error.Refused;
                     work.sampler_dim[id] = switch (dim) {
                         .dim_2d => if (arrayed) .layers else .flat,
                         .dim_3d => if (arrayed) return Error.Refused else .volume,
@@ -3307,7 +3359,7 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     work.thing[id] = .variable;
                     work.class[id] = @intCast(@intFromEnum(class));
                     work.sampler_of[id] = @intCast(work.sampler_count);
-                    work.samplers[work.sampler_count] = .{ .set = work.set[id], .binding = work.binding[id], .dim = work.sampler_dim[pointee], .multisampled = work.multisampled.isSet(pointee), .input_attachment = subpass, .input_index = if (subpass) work.attachment_index[id] else no_tile, .storage = storage, .relaxed = work.relaxed.isSet(id), .whole = wholeOf(work, pointee) };
+                    work.samplers[work.sampler_count] = .{ .set = work.set[id], .binding = work.binding[id], .dim = work.sampler_dim[pointee], .multisampled = work.multisampled.isSet(pointee), .input_attachment = subpass, .input_index = if (subpass) work.attachment_index[id] else no_tile, .storage = storage, .format = work.storage_format[pointee], .relaxed = work.relaxed.isSet(id), .whole = wholeOf(work, pointee) };
                     work.sampler_count += 1;
                     continue;
                 }
@@ -11661,7 +11713,14 @@ fn storageCoordinate(work: *Work, word: u32, which: u16) Error!u16 {
 /// the u2u16 of the word shifted down by 16, as v3dv lowers the split
 /// (lower_unpack_32_2x16_split, v3dv_pipeline.c:191;
 /// nir_opt_algebraic.py:2271-2272), and the f2f32 of each, an FMOV of the
-/// low half (`half_float`). Its ImageOperands are refused: a Sample is an
+/// low half (`half_float`). An Rgba16f one's are its own halves, the same
+/// two words read the same way. An Rgba32f one or an R32f one returns
+/// 32-bit floats (`StorageFormat.wide`), which v3d_nir_lower_image_load
+/// leaves as they are (:401-402): its four words are the four floats, an
+/// R32f one's (red, 0, 0, 1) by its texture's swizzle (`tiling.Texels`;
+/// since 1.241). All four are read, as a sample's are, where
+/// return_channels_required reads up to the last the program reads
+/// (v3d_tex.c:531-561). Its ImageOperands are refused: a Sample is an
 /// image of four's, which is refused, and no other is in the profile. A
 /// compute program's (since 1.218) or a fragment program's (since 1.219),
 /// whose load leaves its helper pixels out where nothing derived from
@@ -11677,6 +11736,10 @@ fn readStorage(work: *Work, operands: []const u32) Error!void {
     if (try kindOf(work, type_id) != .f32x4) return Error.Type;
     const which = storageOf(work, operands, 2) orelse return Error.Body;
     const coordinate = try storageCoordinate(work, operands[3], which);
+    if (work.samplers[which].format.wide()) {
+        work.step_of[id] = try put(work, .{ .tag = .image_load, .kind = .f32x4, .a = coordinate, .at = which });
+        return;
+    }
     const words = try put(work, .{ .tag = .image_load, .kind = .f32x2, .a = coordinate, .at = which });
     const sixteen = try integerSplat(work, .f32x1, 16);
     var floats: [4]u16 = undefined;
@@ -11697,8 +11760,17 @@ fn readStorage(work: *Work, operands: []const u32) Error!void {
 /// and the last two each two halves (pack_half_2x16_split, VFPACK), each
 /// pair of halves two bytes (pack_2x16_to_unorm_2x8_v3d, VFTOUNORM8), and
 /// the two pairs the four bytes of one word (pack_4x16_to_4x8_v3d,
-/// V8PACK). Each a constant where its floats are, as
-/// nir_opt_constant_folding makes it (`Order.fold`). A compute program's
+/// V8PACK). Since 1.241 an Rgba16f one's as two words of two halves
+/// each: nir_format_float_to_half's pack_half_2x16_split of each float
+/// and 0, and pack_bits' bits_16 the second of a pair shifted up 16 and
+/// ORed over the first (:383-386; nir_format_convert.c:346-353;
+/// v3d_nir_lower_image_load_store.c:69-98), which nir_opt_algebraic
+/// makes one pack_half_2x16_split of the pair (nir_opt_algebraic.py:2295,
+/// :2304), a VFPACK. An Rgba32f one's and an R32f one's four floats, or
+/// the one, as they are, the vector trimmed to the format's channels
+/// (:363-364, :375-379; `StorageFormat.channels`). Each a constant where
+/// its floats are, as nir_opt_constant_folding makes it (`Order.fold`).
+/// A compute program's
 /// or a fragment program's, as `readStorage`; a fragment program's is
 /// written where the pixel is covered alone, the TMU's per-pixel mask
 /// leaving its helper pixels out (p1_unpacked_default, v3d_tex.c:64-66;
@@ -11721,10 +11793,18 @@ fn writeStorage(work: *Work, operands: []const u32) Error!void {
         const part = partOf(work, texel, @intCast(k));
         each.* = if (floatBits(work, part)) |bits| try wordConstant(work, bits) else try floatOf(work, part);
     }
-    const low = try integerOf(work, .pack_unorm_8, try integerOf(work, .pack_half, channels[0], channels[1]), null);
-    const high = try integerOf(work, .pack_unorm_8, try integerOf(work, .pack_half, channels[2], channels[3]), null);
-    const word = try integerOf(work, .pack_4x8, low, high);
-    _ = try put(work, .{ .tag = .image_store, .kind = .f32x1, .a = coordinate, .b = word, .at = which });
+    const format = work.samplers[which].format;
+    const words = switch (format) {
+        .rgba8 => words: {
+            const low = try integerOf(work, .pack_unorm_8, try integerOf(work, .pack_half, channels[0], channels[1]), null);
+            const high = try integerOf(work, .pack_unorm_8, try integerOf(work, .pack_half, channels[2], channels[3]), null);
+            break :words try integerOf(work, .pack_4x8, low, high);
+        },
+        .rgba16f => try vectorOf(work, &.{ try integerOf(work, .pack_half, channels[0], channels[1]), try integerOf(work, .pack_half, channels[2], channels[3]) }),
+        .rgba32f => try vectorOf(work, &channels),
+        .r32f => channels[0],
+    };
+    _ = try put(work, .{ .tag = .image_store, .kind = .f32x1, .a = coordinate, .b = words, .at = which });
 }
 
 /// Whether the program's stage reads and writes storage images: a
@@ -24159,6 +24239,157 @@ test "through Mesa's back end, an imageLoad of an Rgba8 storage image is two wor
     try testing.expectEqual(Sampler{ .set = 0, .binding = 1, .storage = true }, code.sampled()[1]);
 }
 
+test "through Mesa's back end, an imageStore of an Rgba16f storage image is its texel as two words of halves, VFPACK of the place's pair and the constant of the other, P1 the default (since 1.241)" {
+    // v3d71_nir_lower_image_store's 16-bit float branch
+    // (v3d_nir_lower_image_load_store.c:383-386): nir_format_float_to_half
+    // and pack_bits' bits_16, which nir_opt_algebraic makes a
+    // pack_half_2x16_split of each pair (nir_opt_algebraic.py:2295,
+    // :2304), a VFPACK. The place's red and green packed at run time, the
+    // 0.5 and 1 of blue and alpha the constant 0x3C003800 folded, the
+    // second word at TMUD. Not of 32 bits (v3d_gl_format_is_return_32 is
+    // false, :48-62), so P1 is the default and not written (v3d_tex.c:
+    // 645-646), as an Rgba8 store's.
+    var work: Work = .{};
+    const code = try computeThroughMesa(&work, &reference.glslc_storage_half_store);
+    try expectText(code, &.{
+        text("nop", "nop", "ldunif"),
+        text("and rf4, rf3, rf0", "nop", "ldunif"),
+        text("shr rf5, rf3, rf0", "nop", "ldunif"),
+        text("add rf6, rf4, rf0", "nop", "ldunif"),
+        text("add rf7, rf5, rf0", "nop", "ldunif"),
+        text("shr rf8, rf2, rf0", "nop", "ldunif"),
+        text("shr rf10, rf8, 3", "nop", ""),
+        text("shl rf12, rf6, 3", "nop", ""),
+        text("shl rf14, rf7, 3", "nop", ""),
+        text("and rf9, rf8, 7", "nop", ""),
+        text("and rf11, rf10, 7", "add rf13, rf12, rf9", ""),
+        text("itof rf16, rf13", "add rf15, rf14, rf11", "wrtmuc"),
+        text("itof rf17, rf15", "fmul rf18, rf16, 0x3c800000", ""),
+        text("mov tmut, rf15", "fmul rf19, rf17, 0x3c800000", ""),
+        text("vfpack rf20, rf18, rf19", "nop", ""),
+        text("nop", "mov tmud, rf20", "thrsw"),
+        text("nop", "mov tmud, rf0", "thrsw"),
+        text("nop", "mov tmusf, rf13", ""),
+        text("tmuwt -", "nop", "thrsw"),
+        text("nop", "nop", ""),
+        text("nop", "nop", ""),
+    });
+    try expectStream(&.{
+        wordOf(0xFFFF),
+        wordOf(16),
+        .{ .work_group_base = 0 },
+        .{ .work_group_base = 1 },
+        wordOf(26),
+        wordOf(0x3C00_3800),
+        .{ .image = .{ .unit = 0, .bits = 0 } },
+    }, code.stream());
+    try testing.expect(code.tmu_dirty_rcl);
+    try testing.expectEqual(Sampler{ .set = 0, .binding = 0, .storage = true, .format = .rgba16f }, code.sampled()[0]);
+}
+
+test "through Mesa's back end, an imageLoad of an Rgba16f storage image is two words of its halves, and an imageStore of an Rgba32f one its four floats as they are at TMUD, under P1's 32-bit output (since 1.241)" {
+    // The load as an Rgba8 one's, its halves each an FMOV (v3d_nir_lower_
+    // image_load, :397-420); the store's texel the four floats, red and
+    // blue swapped, moved across as they are (:375-379), and P1 the
+    // per-pixel mask and output_type_32_bit, 5, a constant after P0
+    // (v3d_tex.c:576-580, :645-646). The store's P1 is written after its
+    // TMUT, which a wrtmuc may be inside the one lookup
+    // (qpu_schedule.c:511-516).
+    var work: Work = .{};
+    const code = try computeThroughMesa(&work, &reference.glslc_storage_float_copy);
+    try expectText(code, &.{
+        text("nop", "nop", "ldunif"),
+        text("and rf4, rf3, rf0", "nop", "ldunif"),
+        text("shr rf5, rf3, rf0", "nop", "ldunif"),
+        text("add rf6, rf4, rf0", "nop", "ldunif"),
+        text("add rf7, rf5, rf0", "nop", "ldunif"),
+        text("shr rf8, rf2, rf0", "nop", "wrtmuc"),
+        text("shr rf10, rf8, 3", "nop", ""),
+        text("shl rf14, rf7, 3", "nop", ""),
+        text("and rf11, rf10, 7", "nop", ""),
+        text("shl rf12, rf6, 3", "add rf15, rf14, rf11", ""),
+        text("and rf9, rf8, 7", "mov tmut, rf15", ""),
+        text("add rf13, rf12, rf9", "nop", "thrsw"),
+        text("nop", "mov tmusf, rf13", ""),
+        text("nop", "nop", ""),
+        text("nop", "mov tmut, rf15", "ldtmu.rf16; wrtmuc"),
+        text("fmov rf18, rf16.l", "fmov rf19, rf16.h", "ldtmu.rf17; wrtmuc"),
+        text("fmov rf21, rf17.h", "fmov rf20, rf17.l", ""),
+        text("nop", "mov tmud, rf20", ""),
+        text("nop", "mov tmud, rf19", ""),
+        text("nop", "mov tmud, rf18", "thrsw"),
+        text("nop", "mov tmud, rf21", "thrsw"),
+        text("nop", "mov tmusf, rf13", ""),
+        text("tmuwt -", "nop", "thrsw"),
+        text("nop", "nop", ""),
+        text("nop", "nop", ""),
+    });
+    try expectStream(&.{
+        wordOf(0xFFFF),
+        wordOf(16),
+        .{ .work_group_base = 0 },
+        .{ .work_group_base = 1 },
+        wordOf(26),
+        .{ .image = .{ .unit = 0, .bits = to_vir.texel_words } },
+        .{ .image = .{ .unit = 1, .bits = 0 } },
+        wordOf(per_pixel_mask | output_type_32_bit),
+    }, code.stream());
+    try testing.expectEqual(Sampler{ .set = 0, .binding = 0, .storage = true, .format = .rgba16f }, code.sampled()[0]);
+    try testing.expectEqual(Sampler{ .set = 0, .binding = 1, .storage = true, .format = .rgba32f }, code.sampled()[1]);
+}
+
+test "through Mesa's back end, an R32f storage image is read as four 32-bit words and written as the one, each under P1's 32-bit output (since 1.241)" {
+    // v3d_gl_format_is_return_32 is true of a channel of 32 bits
+    // (v3d_nir_lower_image_load_store.c:48-62): the load is left as it is
+    // (:401-402), its P0 four words of floats (`wide_texel_words`, all
+    // four read as a sample's are, where return_channels_required would
+    // read the red alone, v3d_tex.c:531-561), and the store's texel
+    // trimmed to the format's one channel (:363-364), one TMUD. P1 is 5
+    // for both, a constant after each P0.
+    var work: Work = .{};
+    const code = try computeThroughMesa(&work, &reference.glslc_storage_one_float);
+    try expectText(code, &.{
+        text("nop", "nop", "ldunif"),
+        text("and rf4, rf3, rf0", "nop", "ldunif"),
+        text("shr rf5, rf3, rf0", "nop", "ldunif"),
+        text("add rf6, rf4, rf0", "nop", "ldunif"),
+        text("add rf7, rf5, rf0", "nop", "ldunif"),
+        text("shr rf8, rf2, rf0", "nop", "wrtmuc"),
+        text("shr rf10, rf8, 3", "nop", ""),
+        text("shl rf14, rf7, 3", "nop", ""),
+        text("and rf11, rf10, 7", "nop", ""),
+        text("shl rf12, rf6, 3", "add rf15, rf14, rf11", ""),
+        text("and rf9, rf8, 7", "mov tmut, rf15", ""),
+        text("add rf13, rf12, rf9", "nop", "thrsw; wrtmuc"),
+        text("nop", "mov tmusf, rf13", ""),
+        text("nop", "nop", ""),
+        text("nop", "mov tmut, rf15", "ldtmu.rf16; wrtmuc"),
+        text("nop", "nop", "ldtmu.rf17; wrtmuc"),
+        text("nop", "fmul rf20, rf16, 0x40000000", ""),
+        text("nop", "nop", "ldtmu.rf18"),
+        text("fadd rf21, rf20, 0x3f800000", "nop", ""),
+        text("nop", "mov tmud, rf21", "thrsw; ldtmu.rf19"),
+        text("nop", "mov tmusf, rf13", "thrsw"),
+        text("nop", "nop", ""),
+        text("tmuwt -", "nop", "thrsw"),
+        text("nop", "nop", ""),
+        text("nop", "nop", ""),
+    });
+    try expectStream(&.{
+        wordOf(0xFFFF),
+        wordOf(16),
+        .{ .work_group_base = 0 },
+        .{ .work_group_base = 1 },
+        wordOf(26),
+        .{ .image = .{ .unit = 0, .bits = to_vir.wide_texel_words } },
+        wordOf(per_pixel_mask | output_type_32_bit),
+        .{ .image = .{ .unit = 0, .bits = 0 } },
+        wordOf(per_pixel_mask | output_type_32_bit),
+    }, code.stream());
+    try testing.expectEqual(@as(u32, 1), code.sampler_count);
+    try testing.expectEqual(Sampler{ .set = 0, .binding = 0, .storage = true, .format = .r32f }, code.sampled()[0]);
+}
+
 test "a storage image's texel packs as the V3D's VFTOUNORM8 and V8PACK do: 0 below 0, 255 above 1, a NaN 0, the even of two as near, each pair's low bytes one word" {
     var work: Work = .{};
     // _mesa_float_to_unorm (format_utils.h:69-79): 0.5 is 127.5, and
@@ -24182,15 +24413,17 @@ test "a storage image's texel packs as the V3D's VFTOUNORM8 and V8PACK do: 0 bel
     try testing.expectEqual(@as(u32, 0x1122_FF80), @as(u32, @bitCast(work.pool[work.steps[word].at])));
 }
 
-test "a storage image in a vertex program, of four samples, of a format other than Rgba8, or with an image operand, is refused" {
+test "a storage image in a vertex program, of four samples, of a format other than the profile's, or with an image operand, is refused" {
     // A vertex program's store asks for vertexPipelineStoresAndAtomics,
     // which the device does not take (since 1.219).
     var work: Work = .{};
     try expectRefusal(Error.Refused, vertexThroughMesa(&work, &reference.glslc_storage_vertex, .{}));
     work = .{};
     try expectRefusal(Error.Refused, computeThroughMesa(&work, &comptime patched(&reference.glslc_storage_store, .type_image, 0, 5, 1)));
-    // Rgba32f, which the V3D's profile does not take (`storage_formats`).
-    try testing.expect(spirv.look(&comptime patched(&reference.glslc_storage_store, .type_image, 0, 7, 1), profile) == .fault);
+    // Rg32f, which the V3D's profile does not take (`storage_formats`),
+    // being of StorageImageExtendedFormats. Until 1.241 Rgba32f, which it
+    // takes since.
+    try testing.expect(spirv.look(&comptime patched(&reference.glslc_storage_store, .type_image, 0, 7, 6), profile) == .fault);
     try testing.expect(spirv.look(&reference.glslc_storage_store, profile) == .seen);
     // A Sample, or any operand: none is in the profile.
     work = .{};
@@ -24518,6 +24751,20 @@ test "through Mesa's back end, a fragment program's imageLoad that a sample's co
     try testing.expect(!kept.tmu_dirty_rcl);
     try testing.expectEqual(Sampler{ .set = 0, .binding = 1 }, kept.sampled()[0]);
     try testing.expectEqual(Sampler{ .set = 0, .binding = 0, .storage = true }, kept.sampled()[1]);
+
+    // Of Rgba32f (since 1.241): four words of floats, and P1 the 32-bit
+    // output alone, the per-pixel mask off (v3d_tex.c:576-580); the
+    // sample's coordinate is the first two words as they are.
+    work = .{};
+    const wide = try throughMesa(&work, &comptime patched(&reference.glslc_storage_helpers, .type_image, 0, 7, 1));
+    try expectStream(&.{
+        .{ .image = .{ .unit = 1, .bits = to_vir.wide_texel_words } },
+        wordOf(output_type_32_bit),
+        wideTexture(0),
+        .{ .sampler = .{ .unit = 0, .bits = per_pixel_mask | output_type_32_bit } },
+        wordOf(0xFFFF_FF84),
+    }, wide.stream());
+    try testing.expectEqual(Sampler{ .set = 0, .binding = 0, .storage = true, .format = .rgba32f }, wide.sampled()[1]);
 
     work = .{};
     const skipped = try throughMesa(&work, &reference.glslc_storage_read);

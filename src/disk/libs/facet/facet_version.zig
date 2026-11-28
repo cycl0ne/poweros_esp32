@@ -8116,4 +8116,59 @@ pub const LIBRARY_VERSION = 1;
 /// bits the colour mixed with the rectangle's. On the board FacetProbe
 /// passes 1096 of 1096; the new case is 17 of 230400 apart, at the
 /// triangles' edges, and the other 336 are as in 1.239.
-pub const LIBRARY_REVISION = 240;
+/// 241: **A float storage image on the V3D, and its float textures
+/// sampled as they lie (docs/facet-vulkan10.md item 57, V3D-only).**
+/// v3dv keeps R16G16B16A16_SFLOAT, R32G32B32A32_SFLOAT and R32_SFLOAT in
+/// their own formats and writes them through, and samples
+/// B10G11R11_UFLOAT_PACK32 and E5B9G9R9_UFLOAT_PACK32 as they lie too
+/// (v3dvx_formats.c:136, :142, :181, :200-201; v3dv_formats.c:188-202).
+/// Ported:
+/// - **The texture.** `Capabilities.kept_floats` is true on the V3D.
+///   `tiling.Texels` has the five, of texture types 18, 31, 29, 19 and 20
+///   under v3dv's swizzles. A texel of 8 bytes lies in a microtile of 4 x
+///   2 and one of 16 in one of 2 x 2 (v3d_tiling.c:37-70), where the
+///   tiling knew 1, 2 and 4 bytes alone. A clear writes the floats where
+///   they lie.
+/// - **The filter.** `Capabilities.filtered_float32`, false on the V3D:
+///   RGBA32F and R32F are sampled unfiltered, as v3dv has them.
+/// - **The compiler.** `spirv.ImageFormat` has Rgba32f, Rgba16f and R32f,
+///   which the V3D's profile takes beside Rgba8, and each storage image
+///   keeps its format (`compile.StorageFormat`). An Rgba16f load is two
+///   words of halves, as an Rgba8 one; an Rgba32f or R32f one four 32-bit
+///   words as they are (v3d_nir_lower_image_load_store.c:48-62,
+///   :397-420). A store is packed as v3d71_nir_lower_image_store packs it
+///   (:354-394): two VFPACK words of halves (nir_opt_algebraic.py:2295,
+///   :2304), or the floats, trimmed to R32f's one.
+/// - **The TMU.** For the 32-bit formats P0 asks for four words and P1
+///   is output_type_32_bit, on a load and a store (v3d_tex.c:576-580,
+///   :645-646).
+/// - **The draw.** `_play.tmuConfiguration` gives the five formats their
+///   texture states, reading the `Texels` of each from `tiling.texelsOf`,
+///   where its own switch was.
+///
+/// Still left out, V3D-only: storage formats of
+/// StorageImageExtendedFormats (R8, R11fG11fB10f, ...), and a load's words
+/// cut to the channels read.
+///
+/// Nine host tests are new and two change: three glslc modules (an
+/// Rgba16f store, an Rgba16f load into an Rgba32f store, an R32f load
+/// and store) and a fragment load patched to Rgba32f through the back
+/// end; the tiling of texels of 8 and 16 bytes, each format's `Texels`
+/// and its bytes, and the five texture types; the float formats'
+/// features where the floats are kept; and a float texture copied,
+/// cleared and copied out on a device of the V3D's layout. The
+/// profile's refused format is Rg32f, where it was Rgba32f, and the
+/// cores' storage test checks they filter the 32-bit floats. 4608 of the
+/// 4611 pass, 3 skipped. Of 22 mutants, 21 fail a host test; the one
+/// left, `kept_floats` false on the V3D, is the board's.
+///
+/// FacetBoth 1.89 has "shipped float stored": colours written as floats
+/// into an Rgba16f storage image and an R32f one, read back and written
+/// again into an Rgba32f one, which the draw samples. FacetProbe 1.64
+/// checks the filters, and asks a kept texture for at least its texels'
+/// bytes, which the V3D rounds up to its page. On the board (package
+/// f259, exec 1.46): FacetProbe 1105 of 1105; FacetBoth's 338 cases,
+/// "shipped float stored" 0 of 230400 apart and the other 337 as in
+/// 1.240, the four float textures among them now sampled in their own
+/// types.
+pub const LIBRARY_REVISION = 241;

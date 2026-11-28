@@ -69,6 +69,12 @@ fn describe(can: *const _instance.Capabilities, format: facet.Format) facet.Form
     // the V3D took no storage image at all, and from then a float one it
     // took kept its texels in 8 bits a channel.
     const float_storage = if (can.kept_floats) storage else 0;
+    // A texture of 32-bit floats is filtered where the device filters
+    // one (`Capabilities.filtered_float32`), and always where its floats
+    // are unpacked into 8888, which every device filters: v3dv says
+    // neither RGBA32F nor R32F filterable (v3dvx_formats.c:142, :181),
+    // and the V3D keeps them since 1.241.
+    const float32_sampled = if (can.filtered_float32 or !can.kept_floats) sampled else sampled & ~facet.FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR;
     // What a depth image adds on a device that samples one where its rows
     // lie (`Capabilities.sampled_depth`).
     // Filtered where the device filters a depth (`Capabilities.filtered_depth`,
@@ -288,7 +294,7 @@ fn describe(can: *const _instance.Capabilities, format: facet.Format) facet.Form
         },
         .r32g32b32a32_sfloat => .{
             .linear_tiling_features = 0,
-            .optimal_tiling_features = sampled | float_storage | facet.FORMAT_FEATURE_TRANSFER_DST | float_target |
+            .optimal_tiling_features = float32_sampled | float_storage | facet.FORMAT_FEATURE_TRANSFER_DST | float_target |
                 if (can.kept_floats) facet.FORMAT_FEATURE_TRANSFER_SRC else 0,
             .buffer_features = vertices | texels,
         },
@@ -299,7 +305,7 @@ fn describe(can: *const _instance.Capabilities, format: facet.Format) facet.Form
         // through, where it does not.
         .r32_sfloat => .{
             .linear_tiling_features = 0,
-            .optimal_tiling_features = sampled | float_storage | facet.FORMAT_FEATURE_TRANSFER_DST | float_target |
+            .optimal_tiling_features = float32_sampled | float_storage | facet.FORMAT_FEATURE_TRANSFER_DST | float_target |
                 if (can.kept_floats) facet.FORMAT_FEATURE_TRANSFER_SRC else 0,
             .buffer_features = vertices | texels,
         },
@@ -423,6 +429,7 @@ const unpacking = _instance.Capabilities{
 const keeping = _instance.Capabilities{
     .kept_compressed = true,
     .kept_floats = true,
+    .filtered_float32 = true,
     .wide_channels = true,
     .whole_textures = true,
     .sampled_depth = true,
@@ -593,6 +600,27 @@ test "four channels in 16 bits are sampled and blitted out of on either device, 
         try testing.expectEqual(want, said.optimal_tiling_features);
         try testing.expectEqual(@as(u32, 0), said.linear_tiling_features | said.buffer_features);
     };
+}
+
+test "where the floats are kept, the two formats of 32-bit floats are filtered where the device filters them, and every one is a storage image (since 1.241)" {
+    // The V3D's: v3dv says RGBA16F, R11F_G11F_B10F and RGB9_E5
+    // filterable and RGBA32F and R32F not (v3dvx_formats.c:136, :142,
+    // :181, :200-201).
+    const tmu = _instance.Capabilities{ .kept_floats = true, .stored_stencil = true };
+    const linear = facet.FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR;
+    const filtered = [_]facet.Format{ .r16g16b16a16_sfloat, .b10g11r11_ufloat_pack32, .e5b9g9r9_ufloat_pack32 };
+    const unfiltered = [_]facet.Format{ .r32g32b32a32_sfloat, .r32_sfloat };
+    for (filtered ++ unfiltered) |format| {
+        const said = describe(&tmu, format).optimal_tiling_features;
+        try testing.expect(said & facet.FORMAT_FEATURE_SAMPLED_IMAGE != 0);
+        try testing.expect(said & facet.FORMAT_FEATURE_STORAGE_IMAGE != 0);
+        try testing.expectEqual(std.mem.indexOfScalar(facet.Format, &unfiltered, format) == null, said & linear != 0);
+        // The cores filter each, and a device that unpacks them into
+        // 8888 does too, writing none through.
+        try testing.expect(describe(&keeping, format).optimal_tiling_features & linear != 0);
+        const unpacked = describe(&unpacking, format).optimal_tiling_features;
+        try testing.expect(unpacked & linear != 0 and unpacked & facet.FORMAT_FEATURE_STORAGE_IMAGE == 0);
+    }
 }
 
 // The one format whose four features a single bool used to stand for is

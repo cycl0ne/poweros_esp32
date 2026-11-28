@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetProbe";
-const VERSION_STRING = "\x00$VER: FacetProbe 1.63 (28.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetProbe 1.64 (28.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "CORES/S,V3D/S,QUIET/S";
@@ -1139,8 +1139,9 @@ fn storageImageChecks(probe: *Probe) void {
     // Every float format says it may be written through, and R32_SFLOAT
     // is an image format of its own.
     const float_formats = [5]facet.Format{ .r16g16b16a16_sfloat, .r32g32b32a32_sfloat, .b10g11r11_ufloat_pack32, .e5b9g9r9_ufloat_pack32, .r32_sfloat };
-    // Where the floats are not kept, as on the V3D, which unpacks them
-    // into 8 bits a channel, none is (since 1.49, facet 1.220). CreateImage
+    // Where the floats are not kept, as on the V3D until facet 1.241,
+    // which unpacked them into 8 bits a channel, none is (since 1.49,
+    // facet 1.220); since then the V3D keeps them and says each. CreateImage
     // and the query still make such an image with SAMPLED beside STORAGE,
     // unpacked, as they make a compressed one: holding each usage to its
     // format's feature is docs/facet-vulkan10.md item 94.
@@ -1153,6 +1154,16 @@ fn storageImageChecks(probe: *Probe) void {
     if (!probe.can.kept_floats) {
         probe.check(!any_storage, "no float format says it may be written through where its floats are not kept");
     } else probe.check(all_storage, "every float format says it may be written through");
+    // The three Vulkan has filtered wherever they are sampled, kept or
+    // unpacked; the two of 32-bit floats it does not ask it of, and the
+    // V3D, which keeps them since facet 1.241, filters neither, as v3dv
+    // has it (v3dvx_formats.c:142, :181).
+    var all_filtered = true;
+    for ([3]facet.Format{ .r16g16b16a16_sfloat, .b10g11r11_ufloat_pack32, .e5b9g9r9_ufloat_pack32 }) |format| {
+        fb.GetPhysicalDeviceFormatProperties(probe.physical, format, &properties);
+        if (properties.optimal_tiling_features & facet.FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR == 0) all_filtered = false;
+    }
+    probe.check(all_filtered, "the halves and the two packed float formats are filtered");
 
     // Each written with the same four floats and read back: what the
     // format keeps of them. A whole number above 1 is what a colour could
@@ -4216,12 +4227,13 @@ fn floatChecks(probe: *Probe) void {
         return probe.check(false, "a texture of 4 by 4 of halves");
     // Four halves a texel where they are kept; where they are not, the
     // 8888 they unpack into, which a texture keeps spread in 8 bytes as
-    // well - so a device with a layout of its own is the only one that
-    // asks for more.
+    // well. A device with a layout of its own rounds either up to its
+    // page: the V3D, which keeps them since facet 1.241, asks for 4096
+    // as the blocks' check above has it.
     var needs: facet.MemoryRequirements = undefined;
     fb.GetImageMemoryRequirements(device, texture[0], &needs);
-    const sized = if (kept) needs.size == across * across * 8 else needs.size >= across * across * 4;
-    if (sized) probe.check(true, "its memory is its texels' own") else probe.checkEqual(across * across * 8, needs.size, "its memory is its texels' own");
+    const asked: u64 = if (kept) across * across * 8 else across * across * 4;
+    if (needs.size >= asked) probe.check(true, "its memory is its texels' own, or the page they are rounded up to") else probe.checkEqual(asked, needs.size, "its memory is its texels' own, or the page they are rounded up to");
 
     var slot: usize = 0;
     for (probe.memories, 0..) |each, k| if (each == null) {

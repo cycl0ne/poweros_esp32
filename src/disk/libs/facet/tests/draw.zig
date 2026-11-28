@@ -3202,6 +3202,14 @@ test "storage images of floats and of channels of their own: a texel written and
     const can = _objects.of(_instance.PhysicalDevice, bench.physical).can;
     try testing.expect(can.storage_images);
     try testing.expect(can.kept_floats);
+    // And filters the two formats of 32-bit floats, as the V3D does not
+    // (since 1.241).
+    try testing.expect(can.filtered_float32);
+    for ([2]facet.Format{ .r32g32b32a32_sfloat, .r32_sfloat }) |format| {
+        var properties: facet.FormatProperties = undefined;
+        fb.GetPhysicalDeviceFormatProperties(bench.physical, format, &properties);
+        try testing.expect(properties.optimal_tiling_features & facet.FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR != 0);
+    }
     // And since 1.69 a texture whose channels are its own, since 1.70
     // one of whole numbers.
     try testing.expect(can.wide_channels);
@@ -11466,6 +11474,66 @@ const QuadLayout = struct {
         return .{ .at = layer * image.layer_bytes + layout.levels[level].offset, .bytes = layout.levels[level].slice_bytes };
     }
 };
+
+test "a device of the V3D's layout keeps a float texture's texels as they lie, each of 8 or 16 bytes where its tiling puts one, and copies and clears its floats through them (since 1.241)" {
+    // The V3D keeps its floats since 1.241 (`Capabilities.kept_floats`),
+    // which the cores' capabilities say here: RGBA16F's texel 8 bytes and
+    // RGBA32F's 16, in a microtile of 4 x 2 and of 2 x 2 of them
+    // (v3d_utile_width, v3d_utile_height, v3d_tiling.c:37-70).
+    var bench = try Bench.on(&QuadLayout.ops);
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const _image = @import("../image/_image.zig");
+    const Image = _image.Image;
+    const tiling = QuadLayout.tiling;
+    const usage = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_SRC | facet.IMAGE_USAGE_TRANSFER_DST;
+    const extent = facet.Extent3D{ .width = 20, .height = 9, .depth = 1 };
+    const staging, const staged = try bench.buffer(20 * 9 * 16, facet.BUFFER_USAGE_TRANSFER_SRC | facet.BUFFER_USAGE_TRANSFER_DST);
+    const floatOf = struct {
+        fn of(x: usize, y: usize, c: usize) f32 {
+            // Above 1, below 0 and between, each a half exactly.
+            return @as(f32, @floatFromInt(x)) * 0.25 - @as(f32, @floatFromInt(y)) * 0.5 + @as(f32, @floatFromInt(c));
+        }
+    }.of;
+    for ([_]facet.Format{ .r16g16b16a16_sfloat, .r32g32b32a32_sfloat }) |format| {
+        const pixel: u32 = if (format == .r32g32b32a32_sfloat) 16 else 8;
+        const made = try bench.bareImage(.{ .format = format, .extent = extent, .mip_levels = 2, .usage = usage }, false);
+        const image = _objects.of(Image, made);
+        try testing.expectEqual(format, image.format);
+        try testing.expect(_image.deviceLaid(image));
+        const layout = tiling.layoutOf(pixel, 20, 9, 1, 2, false);
+        try testing.expectEqual(std.mem.alignForward(u64, layout.bytes, tiling.alignment), image.bytes);
+        // Level 0 copied in, each texel's four floats in the format.
+        for (0..9) |y| for (0..20) |x| for (0..4) |c| {
+            const at = (y * 20 + x) * pixel;
+            const value = floatOf(x, y, c);
+            if (pixel == 16) {
+                std.mem.writeInt(u32, staged[at + c * 4 ..][0..4], @bitCast(value), .little);
+            } else std.mem.writeInt(u16, staged[at + c * 2 ..][0..2], @bitCast(@as(f16, @floatCast(value))), .little);
+        };
+        var commands = try bench.record();
+        fb.CmdCopyBufferToImage(commands, staging, made, .transfer_dst_optimal, 1, @ptrCast(&facet.BufferImageCopy{ .image_extent = extent }));
+        // Level 1 cleared to floats no byte holds.
+        const color = facet.ClearColorValue{ .float32 = .{ 1.5, -2, 0.25, 8 } };
+        fb.CmdClearColorImage(commands, made, .transfer_dst_optimal, &color, 1, @ptrCast(&facet.ImageSubresourceRange{ .base_mip_level = 1, .level_count = 1 }));
+        try bench.submit();
+        // Each texel where the V3D's tiling puts one of its bytes.
+        for (0..9) |y| for (0..20) |x| {
+            const offset = tiling.texelOffset(&layout, 0, @intCast(x), @intCast(y));
+            try testing.expectEqualSlices(u8, staged[(y * 20 + x) * pixel ..][0..pixel], image.data.?[offset..][0..pixel]);
+        };
+        // And both levels copied out again: what went in, and the clear.
+        @memset(staged[0 .. 20 * 9 * 16], 0);
+        commands = try bench.record();
+        fb.CmdCopyImageToBuffer(commands, made, .transfer_src_optimal, staging, 1, @ptrCast(&facet.BufferImageCopy{ .image_subresource = .{ .mip_level = 1 }, .image_extent = .{ .width = 10, .height = 4, .depth = 1 } }));
+        try bench.submit();
+        for (0..4) |y| for (0..10) |x| for (color.float32, 0..) |want, c| {
+            const at = (y * 10 + x) * pixel;
+            const found: f32 = if (pixel == 16) @bitCast(std.mem.readInt(u32, staged[at + c * 4 ..][0..4], .little)) else @floatCast(@as(f16, @bitCast(std.mem.readInt(u16, staged[at + c * 2 ..][0..2], .little))));
+            try testing.expectEqual(want, found);
+        };
+    }
+}
 
 test "a device of a layout of its own keeps an image's four samples together, each pixel a quad of the V3D's image of twice the size, and clears, copies and resolves through them (item 61, step V3)" {
     var bench = try Bench.on(&QuadLayout.ops);

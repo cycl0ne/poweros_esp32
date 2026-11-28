@@ -35541,3 +35541,323 @@ pub const glslc_counted_shadow = [_]u32{
     0x00070050, 0x00000007, 0x0000001D, 0x0000001C, 0x0000001C, 0x0000001C,
     0x0000001C, 0x0003003E, 0x00000009, 0x0000001D, 0x000100FD, 0x00010038,
 };
+
+/// glslc -O -fshader-stage=comp: an 8x8 workgroup each invocation of which
+/// writes an Rgba16f storage image where it is, its texel made of its place:
+/// OpImageWrite of four halves, an image_store of two words (since 1.241).
+/// 197 words.
+///
+/// ```glsl
+/// #version 450
+/// // A storage image of four halves written where each invocation is, its
+/// // texel made of its place: imageStore of an Rgba16f image, NIR's
+/// // image_store of the two words v3d71_nir_lower_image_store packs (facet
+/// // 1.241).
+/// layout(local_size_x = 8, local_size_y = 8) in;
+/// layout(set = 0, binding = 0, rgba16f) uniform writeonly image2D target;
+/// void main() {
+///     ivec2 at = ivec2(gl_GlobalInvocationID.xy);
+///     imageStore(target, at, vec4(vec2(at) / 64.0, 0.5, 1.0));
+/// }
+/// ```
+///
+/// ```
+/// ; SPIR-V
+/// ; Version: 1.0
+/// ; Generator: Google Shaderc over Glslang; 11
+/// ; Bound: 42
+/// ; Schema: 0
+///                OpCapability Shader
+///           %1 = OpExtInstImport "GLSL.std.450"
+///                OpMemoryModel Logical GLSL450
+///                OpEntryPoint GLCompute %4 "main" %13
+///                OpExecutionMode %4 LocalSize 8 8 1
+///                OpDecorate %13 BuiltIn GlobalInvocationId
+///                OpDecorate %21 NonReadable
+///                OpDecorate %21 Binding 0
+///                OpDecorate %21 DescriptorSet 0
+///                OpDecorate %38 BuiltIn WorkgroupSize
+///           %2 = OpTypeVoid
+///           %3 = OpTypeFunction %2
+///           %6 = OpTypeInt 32 1
+///           %7 = OpTypeVector %6 2
+///          %10 = OpTypeInt 32 0
+///          %11 = OpTypeVector %10 3
+///          %12 = OpTypePointer Input %11
+///          %13 = OpVariable %12 Input
+///          %14 = OpTypeVector %10 2
+///          %18 = OpTypeFloat 32
+///          %19 = OpTypeImage %18 2D 0 0 0 2 Rgba16f
+///          %20 = OpTypePointer UniformConstant %19
+///          %21 = OpVariable %20 UniformConstant
+///          %25 = OpTypeVector %18 2
+///          %30 = OpConstant %18 0.5
+///          %31 = OpConstant %18 1
+///          %32 = OpTypeVector %18 4
+///          %36 = OpConstant %10 8
+///          %37 = OpConstant %10 1
+///          %38 = OpConstantComposite %11 %36 %36 %37
+///          %40 = OpConstant %18 0.015625
+///          %41 = OpConstantComposite %25 %40 %40
+///           %4 = OpFunction %2 None %3
+///           %5 = OpLabel
+///          %15 = OpLoad %11 %13
+///          %16 = OpVectorShuffle %14 %15 %15 0 1
+///          %17 = OpBitcast %7 %16
+///          %22 = OpLoad %19 %21
+///          %26 = OpConvertSToF %25 %17
+///          %29 = OpFMul %25 %26 %41
+///          %33 = OpCompositeExtract %18 %29 0
+///          %34 = OpCompositeExtract %18 %29 1
+///          %35 = OpCompositeConstruct %32 %33 %34 %30 %31
+///                OpImageWrite %22 %17 %35
+///                OpReturn
+///                OpFunctionEnd
+/// ```
+pub const glslc_storage_half_store = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x0000002A, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0006000F, 0x00000005,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000D, 0x00060010, 0x00000004,
+    0x00000011, 0x00000008, 0x00000008, 0x00000001, 0x00040047, 0x0000000D,
+    0x0000000B, 0x0000001C, 0x00030047, 0x00000015, 0x00000019, 0x00040047,
+    0x00000015, 0x00000021, 0x00000000, 0x00040047, 0x00000015, 0x00000022,
+    0x00000000, 0x00040047, 0x00000026, 0x0000000B, 0x00000019, 0x00020013,
+    0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00040015, 0x00000006,
+    0x00000020, 0x00000001, 0x00040017, 0x00000007, 0x00000006, 0x00000002,
+    0x00040015, 0x0000000A, 0x00000020, 0x00000000, 0x00040017, 0x0000000B,
+    0x0000000A, 0x00000003, 0x00040020, 0x0000000C, 0x00000001, 0x0000000B,
+    0x0004003B, 0x0000000C, 0x0000000D, 0x00000001, 0x00040017, 0x0000000E,
+    0x0000000A, 0x00000002, 0x00030016, 0x00000012, 0x00000020, 0x00090019,
+    0x00000013, 0x00000012, 0x00000001, 0x00000000, 0x00000000, 0x00000000,
+    0x00000002, 0x00000002, 0x00040020, 0x00000014, 0x00000000, 0x00000013,
+    0x0004003B, 0x00000014, 0x00000015, 0x00000000, 0x00040017, 0x00000019,
+    0x00000012, 0x00000002, 0x0004002B, 0x00000012, 0x0000001E, 0x3F000000,
+    0x0004002B, 0x00000012, 0x0000001F, 0x3F800000, 0x00040017, 0x00000020,
+    0x00000012, 0x00000004, 0x0004002B, 0x0000000A, 0x00000024, 0x00000008,
+    0x0004002B, 0x0000000A, 0x00000025, 0x00000001, 0x0006002C, 0x0000000B,
+    0x00000026, 0x00000024, 0x00000024, 0x00000025, 0x0004002B, 0x00000012,
+    0x00000028, 0x3C800000, 0x0005002C, 0x00000019, 0x00000029, 0x00000028,
+    0x00000028, 0x00050036, 0x00000002, 0x00000004, 0x00000000, 0x00000003,
+    0x000200F8, 0x00000005, 0x0004003D, 0x0000000B, 0x0000000F, 0x0000000D,
+    0x0007004F, 0x0000000E, 0x00000010, 0x0000000F, 0x0000000F, 0x00000000,
+    0x00000001, 0x0004007C, 0x00000007, 0x00000011, 0x00000010, 0x0004003D,
+    0x00000013, 0x00000016, 0x00000015, 0x0004006F, 0x00000019, 0x0000001A,
+    0x00000011, 0x00050085, 0x00000019, 0x0000001D, 0x0000001A, 0x00000029,
+    0x00050051, 0x00000012, 0x00000021, 0x0000001D, 0x00000000, 0x00050051,
+    0x00000012, 0x00000022, 0x0000001D, 0x00000001, 0x00070050, 0x00000020,
+    0x00000023, 0x00000021, 0x00000022, 0x0000001E, 0x0000001F, 0x00040063,
+    0x00000016, 0x00000011, 0x00000023, 0x000100FD, 0x00010038,
+};
+
+/// glslc -O -fshader-stage=comp: an 8x8 workgroup each invocation of which
+/// reads a texel of an Rgba16f storage image and writes it into an Rgba32f
+/// one, red and blue swapped: OpImageRead of two words of halves and
+/// OpImageWrite of four floats (since 1.241).
+/// 196 words.
+///
+/// ```glsl
+/// #version 450
+/// // An Rgba16f storage image's texel read and written into an Rgba32f one,
+/// // red and blue swapped: imageLoad of two words of halves, and imageStore
+/// // of four 32-bit floats as they are (facet 1.241).
+/// layout(local_size_x = 8, local_size_y = 8) in;
+/// layout(set = 0, binding = 0, rgba16f) uniform readonly image2D source;
+/// layout(set = 0, binding = 1, rgba32f) uniform writeonly image2D target;
+/// void main() {
+///     ivec2 at = ivec2(gl_GlobalInvocationID.xy);
+///     imageStore(target, at, imageLoad(source, at).bgra);
+/// }
+/// ```
+///
+/// ```
+/// ; SPIR-V
+/// ; Version: 1.0
+/// ; Generator: Google Shaderc over Glslang; 11
+/// ; Bound: 35
+/// ; Schema: 0
+///                OpCapability Shader
+///           %1 = OpExtInstImport "GLSL.std.450"
+///                OpMemoryModel Logical GLSL450
+///                OpEntryPoint GLCompute %4 "main" %13
+///                OpExecutionMode %4 LocalSize 8 8 1
+///                OpDecorate %13 BuiltIn GlobalInvocationId
+///                OpDecorate %21 NonReadable
+///                OpDecorate %21 Binding 1
+///                OpDecorate %21 DescriptorSet 0
+///                OpDecorate %26 NonWritable
+///                OpDecorate %26 Binding 0
+///                OpDecorate %26 DescriptorSet 0
+///                OpDecorate %34 BuiltIn WorkgroupSize
+///           %2 = OpTypeVoid
+///           %3 = OpTypeFunction %2
+///           %6 = OpTypeInt 32 1
+///           %7 = OpTypeVector %6 2
+///          %10 = OpTypeInt 32 0
+///          %11 = OpTypeVector %10 3
+///          %12 = OpTypePointer Input %11
+///          %13 = OpVariable %12 Input
+///          %14 = OpTypeVector %10 2
+///          %18 = OpTypeFloat 32
+///          %19 = OpTypeImage %18 2D 0 0 0 2 Rgba32f
+///          %20 = OpTypePointer UniformConstant %19
+///          %21 = OpVariable %20 UniformConstant
+///          %24 = OpTypeImage %18 2D 0 0 0 2 Rgba16f
+///          %25 = OpTypePointer UniformConstant %24
+///          %26 = OpVariable %25 UniformConstant
+///          %29 = OpTypeVector %18 4
+///          %32 = OpConstant %10 8
+///          %33 = OpConstant %10 1
+///          %34 = OpConstantComposite %11 %32 %32 %33
+///           %4 = OpFunction %2 None %3
+///           %5 = OpLabel
+///          %15 = OpLoad %11 %13
+///          %16 = OpVectorShuffle %14 %15 %15 0 1
+///          %17 = OpBitcast %7 %16
+///          %22 = OpLoad %19 %21
+///          %27 = OpLoad %24 %26
+///          %30 = OpImageRead %29 %27 %17
+///          %31 = OpVectorShuffle %29 %30 %30 2 1 0 3
+///                OpImageWrite %22 %17 %31
+///                OpReturn
+///                OpFunctionEnd
+/// ```
+pub const glslc_storage_float_copy = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000023, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0006000F, 0x00000005,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000D, 0x00060010, 0x00000004,
+    0x00000011, 0x00000008, 0x00000008, 0x00000001, 0x00040047, 0x0000000D,
+    0x0000000B, 0x0000001C, 0x00030047, 0x00000015, 0x00000019, 0x00040047,
+    0x00000015, 0x00000021, 0x00000001, 0x00040047, 0x00000015, 0x00000022,
+    0x00000000, 0x00030047, 0x0000001A, 0x00000018, 0x00040047, 0x0000001A,
+    0x00000021, 0x00000000, 0x00040047, 0x0000001A, 0x00000022, 0x00000000,
+    0x00040047, 0x00000022, 0x0000000B, 0x00000019, 0x00020013, 0x00000002,
+    0x00030021, 0x00000003, 0x00000002, 0x00040015, 0x00000006, 0x00000020,
+    0x00000001, 0x00040017, 0x00000007, 0x00000006, 0x00000002, 0x00040015,
+    0x0000000A, 0x00000020, 0x00000000, 0x00040017, 0x0000000B, 0x0000000A,
+    0x00000003, 0x00040020, 0x0000000C, 0x00000001, 0x0000000B, 0x0004003B,
+    0x0000000C, 0x0000000D, 0x00000001, 0x00040017, 0x0000000E, 0x0000000A,
+    0x00000002, 0x00030016, 0x00000012, 0x00000020, 0x00090019, 0x00000013,
+    0x00000012, 0x00000001, 0x00000000, 0x00000000, 0x00000000, 0x00000002,
+    0x00000001, 0x00040020, 0x00000014, 0x00000000, 0x00000013, 0x0004003B,
+    0x00000014, 0x00000015, 0x00000000, 0x00090019, 0x00000018, 0x00000012,
+    0x00000001, 0x00000000, 0x00000000, 0x00000000, 0x00000002, 0x00000002,
+    0x00040020, 0x00000019, 0x00000000, 0x00000018, 0x0004003B, 0x00000019,
+    0x0000001A, 0x00000000, 0x00040017, 0x0000001D, 0x00000012, 0x00000004,
+    0x0004002B, 0x0000000A, 0x00000020, 0x00000008, 0x0004002B, 0x0000000A,
+    0x00000021, 0x00000001, 0x0006002C, 0x0000000B, 0x00000022, 0x00000020,
+    0x00000020, 0x00000021, 0x00050036, 0x00000002, 0x00000004, 0x00000000,
+    0x00000003, 0x000200F8, 0x00000005, 0x0004003D, 0x0000000B, 0x0000000F,
+    0x0000000D, 0x0007004F, 0x0000000E, 0x00000010, 0x0000000F, 0x0000000F,
+    0x00000000, 0x00000001, 0x0004007C, 0x00000007, 0x00000011, 0x00000010,
+    0x0004003D, 0x00000013, 0x00000016, 0x00000015, 0x0004003D, 0x00000018,
+    0x0000001B, 0x0000001A, 0x00050062, 0x0000001D, 0x0000001E, 0x0000001B,
+    0x00000011, 0x0009004F, 0x0000001D, 0x0000001F, 0x0000001E, 0x0000001E,
+    0x00000002, 0x00000001, 0x00000000, 0x00000003, 0x00040063, 0x00000016,
+    0x00000011, 0x0000001F, 0x000100FD, 0x00010038,
+};
+
+/// glslc -O -fshader-stage=comp: an 8x8 workgroup each invocation of which
+/// reads the float of an R32f storage image where it is and writes it back
+/// doubled and one more: OpImageRead and OpImageWrite of 32-bit words
+/// (since 1.241).
+/// 186 words.
+///
+/// ```glsl
+/// #version 450
+/// // One float a texel, read and written back where each invocation is,
+/// // doubled and one more: imageLoad and imageStore of an R32f image, the
+/// // TMU's 32-bit words both ways (facet 1.241).
+/// layout(local_size_x = 8, local_size_y = 8) in;
+/// layout(set = 0, binding = 0, r32f) uniform image2D height;
+/// void main() {
+///     ivec2 at = ivec2(gl_GlobalInvocationID.xy);
+///     float h = imageLoad(height, at).r;
+///     imageStore(height, at, vec4(h * 2.0 + 1.0));
+/// }
+/// ```
+///
+/// ```
+/// ; SPIR-V
+/// ; Version: 1.0
+/// ; Generator: Google Shaderc over Glslang; 11
+/// ; Bound: 41
+/// ; Schema: 0
+///                OpCapability Shader
+///           %1 = OpExtInstImport "GLSL.std.450"
+///                OpMemoryModel Logical GLSL450
+///                OpEntryPoint GLCompute %4 "main" %13
+///                OpExecutionMode %4 LocalSize 8 8 1
+///                OpDecorate %13 BuiltIn GlobalInvocationId
+///                OpDecorate %23 Binding 0
+///                OpDecorate %23 DescriptorSet 0
+///                OpDecorate %40 BuiltIn WorkgroupSize
+///           %2 = OpTypeVoid
+///           %3 = OpTypeFunction %2
+///           %6 = OpTypeInt 32 1
+///           %7 = OpTypeVector %6 2
+///          %10 = OpTypeInt 32 0
+///          %11 = OpTypeVector %10 3
+///          %12 = OpTypePointer Input %11
+///          %13 = OpVariable %12 Input
+///          %14 = OpTypeVector %10 2
+///          %18 = OpTypeFloat 32
+///          %21 = OpTypeImage %18 2D 0 0 0 2 R32f
+///          %22 = OpTypePointer UniformConstant %21
+///          %23 = OpVariable %22 UniformConstant
+///          %26 = OpTypeVector %18 4
+///          %33 = OpConstant %18 2
+///          %35 = OpConstant %18 1
+///          %38 = OpConstant %10 8
+///          %39 = OpConstant %10 1
+///          %40 = OpConstantComposite %11 %38 %38 %39
+///           %4 = OpFunction %2 None %3
+///           %5 = OpLabel
+///          %15 = OpLoad %11 %13
+///          %16 = OpVectorShuffle %14 %15 %15 0 1
+///          %17 = OpBitcast %7 %16
+///          %24 = OpLoad %21 %23
+///          %27 = OpImageRead %26 %24 %17
+///          %29 = OpCompositeExtract %18 %27 0
+///          %30 = OpLoad %21 %23
+///          %34 = OpFMul %18 %29 %33
+///          %36 = OpFAdd %18 %34 %35
+///          %37 = OpCompositeConstruct %26 %36 %36 %36 %36
+///                OpImageWrite %30 %17 %37
+///                OpReturn
+///                OpFunctionEnd
+/// ```
+pub const glslc_storage_one_float = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000029, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0006000F, 0x00000005,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000D, 0x00060010, 0x00000004,
+    0x00000011, 0x00000008, 0x00000008, 0x00000001, 0x00040047, 0x0000000D,
+    0x0000000B, 0x0000001C, 0x00040047, 0x00000017, 0x00000021, 0x00000000,
+    0x00040047, 0x00000017, 0x00000022, 0x00000000, 0x00040047, 0x00000028,
+    0x0000000B, 0x00000019, 0x00020013, 0x00000002, 0x00030021, 0x00000003,
+    0x00000002, 0x00040015, 0x00000006, 0x00000020, 0x00000001, 0x00040017,
+    0x00000007, 0x00000006, 0x00000002, 0x00040015, 0x0000000A, 0x00000020,
+    0x00000000, 0x00040017, 0x0000000B, 0x0000000A, 0x00000003, 0x00040020,
+    0x0000000C, 0x00000001, 0x0000000B, 0x0004003B, 0x0000000C, 0x0000000D,
+    0x00000001, 0x00040017, 0x0000000E, 0x0000000A, 0x00000002, 0x00030016,
+    0x00000012, 0x00000020, 0x00090019, 0x00000015, 0x00000012, 0x00000001,
+    0x00000000, 0x00000000, 0x00000000, 0x00000002, 0x00000003, 0x00040020,
+    0x00000016, 0x00000000, 0x00000015, 0x0004003B, 0x00000016, 0x00000017,
+    0x00000000, 0x00040017, 0x0000001A, 0x00000012, 0x00000004, 0x0004002B,
+    0x00000012, 0x00000021, 0x40000000, 0x0004002B, 0x00000012, 0x00000023,
+    0x3F800000, 0x0004002B, 0x0000000A, 0x00000026, 0x00000008, 0x0004002B,
+    0x0000000A, 0x00000027, 0x00000001, 0x0006002C, 0x0000000B, 0x00000028,
+    0x00000026, 0x00000026, 0x00000027, 0x00050036, 0x00000002, 0x00000004,
+    0x00000000, 0x00000003, 0x000200F8, 0x00000005, 0x0004003D, 0x0000000B,
+    0x0000000F, 0x0000000D, 0x0007004F, 0x0000000E, 0x00000010, 0x0000000F,
+    0x0000000F, 0x00000000, 0x00000001, 0x0004007C, 0x00000007, 0x00000011,
+    0x00000010, 0x0004003D, 0x00000015, 0x00000018, 0x00000017, 0x00050062,
+    0x0000001A, 0x0000001B, 0x00000018, 0x00000011, 0x00050051, 0x00000012,
+    0x0000001D, 0x0000001B, 0x00000000, 0x0004003D, 0x00000015, 0x0000001E,
+    0x00000017, 0x00050085, 0x00000012, 0x00000022, 0x0000001D, 0x00000021,
+    0x00050081, 0x00000012, 0x00000024, 0x00000022, 0x00000023, 0x00070050,
+    0x0000001A, 0x00000025, 0x00000024, 0x00000024, 0x00000024, 0x00000024,
+    0x00040063, 0x0000001E, 0x00000011, 0x00000025, 0x000100FD, 0x00010038,
+};

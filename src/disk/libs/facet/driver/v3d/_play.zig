@@ -1725,23 +1725,8 @@ fn tmuConfiguration(queue: *Queue, set: u32, binding: u32, how: tiling.Sampled, 
     // A texture, or since 1.142 a depth image laid out as one, which the
     // pass stored where the TMU reads it (`_image.deviceLaid`).
     if (image.data == null or !_image.deviceLaid(image)) return null;
-    const texels: tiling.Texels = switch (image.format) {
-        .b8g8r8a8_unorm => .bgra,
-        .r8g8b8a8_unorm => .rgba,
-        .r5g6b5_unorm_pack16 => .rgb565,
-        // One byte of red a texel, the TMU's own R8 (since 1.48).
-        .r8_unorm => .r8,
-        // As v3dv samples D16_UNORM (v3dvx_formats.c:204; since 1.142).
-        .d16_unorm => .d16,
-        // And X8_D24_UNORM_PACK32 as DEPTH24_X8 (v3dvx_formats.c:206;
-        // since 1.222).
-        .x8_d24_unorm_pack32 => .d24,
-        // D24_UNORM_S8_UINT's depth the same way, and its stencil as the
-        // word's R8G8B8A8_UINT, the byte below the depth its red
-        // (v3dvx_formats.c:209; v3dv_image.c:781-800; since 1.240).
-        .d24_unorm_s8_uint => if (view.stencil) .stencil else .d24,
-        else => return null,
-    };
+    // The texture's format as the TMU reads it (`tiling.texelsOf`).
+    const texels = tiling.texelsOf(image.format, view.stencil) orelse return null;
     if (compared and texels != .d16 and texels != .d24) return null;
     const layout = imageLayout(image);
     const state = carve(queue, tiling.texture_state_bytes, tiling.texture_state_alignment) orelse return null;

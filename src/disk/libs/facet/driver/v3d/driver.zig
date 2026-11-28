@@ -375,10 +375,15 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // 1.240).
         .sampled_word_stencil = true,
         .filtered_depth = false,
-        // Its TMU is fed texels the library unpacked, so a compressed or a
-        // float image is unpacked on the copy here as before.
+        // Its TMU is fed texels the library unpacked, so a compressed
+        // image is unpacked on the copy here as before.
         .kept_compressed = false,
-        .kept_floats = false,
+        // But a float one is kept as it lies, the TMU sampling each of the
+        // five in its own type, and a program reading and writing RGBA16F,
+        // RGBA32F and R32F (v3dvx_formats.c:136, :142, :181, :200-201;
+        // `tiling.Texels`, `compile.StorageFormat`; since 1.241). Neither
+        // of 32-bit floats is filtered (`filtered_float32` stays false).
+        .kept_floats = true,
         // Its TMU is fed what the library unpacked, which is 8 bits a
         // channel: a texture of its own channels is refused here (since
         // 1.69).

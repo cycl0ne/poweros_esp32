@@ -384,9 +384,20 @@ pub const Capabilities = extern struct {
     /// is above 1 or below 0 is still lost there, and only on the way into
     /// the tiles. False where such an image is unpacked into
     /// `r8g8b8a8_unorm` on the copy, as it was before, and cannot be copied
-    /// out of. The cores have it since 1.45; the V3D's TMU is fed unpacked
-    /// texels, so there an image is unpacked as before.
+    /// out of. The cores have it since 1.45, and the V3D since 1.241, its
+    /// TMU reading each in a type of its own as v3dv has it sampled
+    /// (`tiling.Texels`; v3dvx_formats.c:136, :142, :181, :200-201), and
+    /// its programs reading and writing a storage image of the first three
+    /// (`compile.StorageFormat`); until then it was fed them unpacked.
     kept_floats: bool = false,
+    /// The two formats of 32-bit floats a texture keeps as they lie,
+    /// R32G32B32A32_SFLOAT and R32_SFLOAT, filtered: FILTER_LINEAR beside
+    /// their SAMPLED_IMAGE. The cores filter any float they keep; the
+    /// V3D's TMU none of 32 bits, as v3dv says neither filterable
+    /// (v3dvx_formats.c:142, :181) and Vulkan asks it of neither. (Since
+    /// 1.241: until then the V3D unpacked them into 8888, which it
+    /// filtered.)
+    filtered_float32: bool = false,
     /// Cubes in an array: an image of CUBE_COMPATIBLE, a view of
     /// `ImageViewType.cube_array` over a multiple of six of its layers, and
     /// the fixed forms that sample one of them
