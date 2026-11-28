@@ -207,13 +207,27 @@ pub const GPUDMA_OP_COPY: u32 = 1;
 pub const GPUDMA_COPY_SUB_WINDOW: u32 = 4 << 8;
 pub const GPUDMA_COPY_ELEMENT_SHIFT = 29;
 pub const GPUDMA_COPY_PITCH_SHIFT = 13;
+/// The engine held until a word of memory, masked, holds a value, six
+/// words: the header with GPUDMA_POLL_MEMORY and GPUDMA_POLL_EQUAL, the
+/// word's address (low word, high word), on four bytes, the value, the
+/// mask, and the time between the engine's reads of the word, 16 bits,
+/// with GPUDMA_POLL_RETRIES - the most reads the packet can ask for, as
+/// every wait the vendor's driver puts on the engine asks
+/// (sdma_v6_0_ring_emit_pipeline_sync). The job's next packets wait for
+/// it.
+pub const GPUDMA_OP_POLL_REGMEM: u32 = 8;
+pub const GPUDMA_POLL_EQUAL: u32 = 3 << 28;
+pub const GPUDMA_POLL_MEMORY: u32 = 1 << 31;
+pub const GPUDMA_POLL_RETRIES: u32 = 0xfff << 16;
 
 /// What GetGPUDMAState says of the DMA engine's queue: where its ring is
 /// and how long, in bytes; how far the engine has read it and how far it
 /// has been written, in bytes since it started; the number of the last
 /// job sent and of the last the engine has done; how many times the
-/// engine has raised its interrupt at the end of a job; and its status
-/// register as it reads now.
+/// engine has raised its interrupt at the end of a job; its status
+/// register as it reads now; the number of the last job a reset of the
+/// whole graphics block gave up, 0 where none has; and how many times the
+/// block has been reset whole.
 pub const GPUDMAState = extern struct {
     ring: u64 align(4) = 0,
     ring_bytes: u32 = 0,
@@ -223,6 +237,8 @@ pub const GPUDMAState = extern struct {
     done: u32 = 0,
     traps: u32 = 0,
     status: u32 = 0,
+    given_up: u32 = 0,
+    block_resets: u32 = 0,
 };
 
 /// The graphics block's compute engine's packets, as SendGPUCompute takes
@@ -266,7 +282,8 @@ pub const GPUWAIT_MEMORY: u32 = 1 << 4;
 /// queue, and the number of the last job it gave up; and the scratch
 /// SendGPUKernel made for one job alone, given back once that job is
 /// done - where it is to the device, its bytes, its waves and the job's
-/// number, all 0 where none is in use - and how many have been made.
+/// number, all 0 where none is in use - and how many have been made; and
+/// how many of the queue's resets reset the whole graphics block.
 pub const GPUComputeState = extern struct {
     ring: u64 align(4) = 0,
     ring_bytes: u32 = 0,
@@ -292,12 +309,18 @@ pub const GPUComputeState = extern struct {
     scratch_once_waves: u32 = 0,
     scratch_once_job: u32 = 0,
     scratch_once_made: u32 = 0,
+    block_resets: u32 = 0,
 };
 
 /// ResetGPUCompute's flags: the compute engine's pipe reset, every queue
 /// on it set inactive, rather than the queue alone - as where the queue's
 /// own reset does not take.
 pub const GPURESET_PIPE: u32 = 1 << 0;
+/// ResetGPUCompute's flags: the whole graphics block reset and its queues
+/// started again, every job not done on either given up - the reset's
+/// last resort, where the queue's own reset and its pipe's do not bring
+/// the queue back, taken at once.
+pub const GPURESET_BLOCK: u32 = 1 << 1;
 
 /// A code object loaded by LoadGPUCode: the piece of the device's memory
 /// its segments are in, the address the code object gives the start of

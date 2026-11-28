@@ -137,8 +137,13 @@
 //! ms - a kernel's that spins - are reset then, by when the board's, of
 //! some microseconds each, have finished; and where a job sent again is
 //! given up as well, the library lays the whole of it over what the kernels
-//! laid. Where the queue cannot be reset no kernel is used from then on,
-//! and the log says so once.
+//! laid. Where the queue cannot be reset, the resource resets the whole
+//! graphics block, which gives up every job not done, the board's with
+//! them, and starts the queues again - the board's job is sent again then
+//! as after any reset that gives it up, the block's caches having been
+//! written back first, so that every mark set is in memory. Where the
+//! block cannot be reset either no kernel is used from then on, and the
+//! log says so once.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;

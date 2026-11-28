@@ -19,7 +19,7 @@
 //!
 //!   Gpu TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,
 //!       SLEEP/K/N,RANGE/S,POINTER/S,MIRROR/S,OVERLAY/S,DIRECT/S,BANDS/S,VIDEO/S,GFX/S,DMA/S,GART/S,ENGINE/S,BLITS/S,COMPUTE/S,KERNELS/S,
-//!       DEVICE/S,WINDOW/S,BLOCK/K/N,WATCHDOG/K/N,RESET/S,POWER/S
+//!       DEVICE/S,WINDOW/S,BLOCK/K/N,WATCHDOG/K/N,RESET/S,POWER/S,WHOLE/S
 //!
 //! BIOS prints the device's video BIOS image (GetGPUBios): where it is
 //! and how long, its tables' header's version, the version of each of
@@ -386,6 +386,20 @@
 //! dispatched once more. Where a reset fails the word is written, for the
 //! engine and the waves to go on.
 //!
+//! With WHOLE the whole graphics block is reset as well, before the
+//! reset for a job done (GPURESET_BLOCK): the DMA engine's queue
+//! started, `spin` sent once more with `fill` and an empty job behind
+//! it, the spin waited for a second, and the DMA engine set polling the
+//! same word (GPUDMA_OP_POLL_REGMEM) with a fill of 64 words behind it,
+//! waited for 50 ms. The block's reset is to give up the three jobs on
+//! the compute engine's queue and both on the DMA engine's, the fill's
+//! words left untouched, both queues' states to count one block reset,
+//! and the display's first pipe to count frames in the 60 ms after it as
+//! in the 60 ms before; then the DMA engine's fill once more, which is to
+//! be done right, and the memory window held as WINDOW holds it, over 4
+//! KiB with 64 words written through it. The queue's resets read back are
+//! then to be four.
+//!
 //! KERNELS holds the board's own blends, scales, shapes and tiles (the
 //! kernels rtg-amd runs on the compute engine for BlendPixels, BlendRect,
 //! ScalePixels, BlitTemplate and BlitPattern) to graphics.library's: a
@@ -447,6 +461,13 @@
 //! those still as painted - a store lost - and those laid otherwise, and
 //! the runs along rows they lie in, a wave's 32 among them.
 //!
+//! With WHOLE the jobs drawn with a reset in their middle have the whole
+//! graphics block reset instead of the queue (GPURESET_BLOCK): the job
+//! is given up with every one on either queue, the board sends it again
+//! once the block runs, and every pixel is held to the library's as
+//! before. The block's resets the queue's state counts are to be as many
+//! as the jobs ended part way.
+//!
 //! With DEVICE the buffers BLITS and KERNELS hand the board are pieces of
 //! the device's own memory (AllocGPUMemory), where the machine has it;
 //! with WINDOW the same pieces through the device's memory window, made
@@ -459,9 +480,22 @@
 //! cores on the device's memory, for each job, which the board's own rule
 //! weighs.
 //!
+//! WINDOW alone holds the window to the memory it shows: a piece of 64
+//! KiB of the device's memory (AllocGPUMemory) is written where the
+//! machine has it and read through the window, and with LENGTH the
+//! piece's first LENGTH words are written through the window and read
+//! through it and, 40 ms on, where the machine has it. Each word holds
+//! the round that wrote it and its place in the piece, so a word read
+//! from elsewhere in the piece says where it came from. Printed are the
+//! piece's three addresses, how long each pass of reads took, and, for
+//! each, how many words differ, how many of them read all ones, and the
+//! first four. Nothing but the piece is written, and nothing through the
+//! window without LENGTH.
+//!
 //! Without BIOS, CLOCKS, DMCUB, CRC, EVENTS, AUX, EDID, CYCLE, MODES,
 //! SLEEP, RANGE, POINTER, MIRROR, OVERLAY, DIRECT, BANDS, VIDEO, POWER, GFX,
-//! DMA, GART, ENGINE, BLITS, COMPUTE, DUMP, FRAMES or FLIP the two files
+//! DMA, GART, ENGINE, BLITS, COMPUTE, KERNELS, WINDOW, DUMP, FRAMES or
+//! FLIP the two files
 //! are read from
 //! DEVS:firmware/amdgpu/, named for the blocks that use them as the
 //! device's table gives their versions - psp_13_0_4_toc.bin for the
@@ -511,6 +545,7 @@ const timer = sdk.devices.timer;
 const TimerBase = sdk.interface.timer.TimerBase;
 const dcn = sdk.hardware.amd_dcn;
 const reg = sdk.hardware.mmio.reg;
+const barrier = sdk.hardware.barrier;
 const Printf = dos.stdio.Printf;
 const rtg = sdk.rtg;
 const RtgBase = sdk.interface.rtg.RtgBase;
@@ -519,10 +554,10 @@ const graphics_library = sdk.graphics;
 const GraphicsBase = sdk.interface.graphics.GraphicsBase;
 
 pub const COMMAND_NAME = "Gpu";
-const VERSION_STRING = "\x00$VER: Gpu 1.40 (27.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Gpu 1.41 (28.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,SLEEP/K/N,RANGE/S,POINTER/S,MIRROR/S,OVERLAY/S,DIRECT/S,BANDS/S,VIDEO/S,GFX/S,DMA/S,GART/S,ENGINE/S,BLITS/S,COMPUTE/S,KERNELS/S,DEVICE/S,WINDOW/S,BLOCK/K/N,WATCHDOG/K/N,RESET/S,POWER/S";
+const template = "TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,BIOS/S,CLOCKS/S,DMCUB/S,START/S,CRC/S,EVENTS/S,LINE/K/N,AUX/K/N,ADDRESS/K/N,LENGTH/K/N,I2C/S,CONTROLLER/S,EDID/S,CONNECTOR/K/N,PIPE/K/N,FETCHER/K/N,CYCLE/S,DUMP/K/N,SEGMENT/K/N,MODES/S,HOLD/K/N,SLEEP/K/N,RANGE/S,POINTER/S,MIRROR/S,OVERLAY/S,DIRECT/S,BANDS/S,VIDEO/S,GFX/S,DMA/S,GART/S,ENGINE/S,BLITS/S,COMPUTE/S,KERNELS/S,DEVICE/S,WINDOW/S,BLOCK/K/N,WATCHDOG/K/N,RESET/S,POWER/S,WHOLE/S";
 const arg_toc = 0;
 const arg_firmware = 1;
 const arg_frames = 2;
@@ -569,7 +604,8 @@ const arg_block = 42;
 const arg_watchdog = 43;
 const arg_reset = 44;
 const arg_power = 45;
-const arg_count = 46;
+const arg_whole = 46;
+const arg_count = 47;
 
 /// Where the files are.
 const directory = "DEVS:firmware/amdgpu/";
@@ -1559,9 +1595,9 @@ fn powerCheck(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, millis: u32) i32 {
     return dos.RETURN_OK;
 }
 
-/// What GFX, DMA, GART, ENGINE, COMPUTE and COMPUTE RESET go on to once
-/// the block is started.
-const GraphicsThen = enum { nothing, dma, gart, engine, compute, reset };
+/// What GFX, DMA, GART, ENGINE, COMPUTE, COMPUTE RESET and COMPUTE RESET
+/// WHOLE go on to once the block is started.
+const GraphicsThen = enum { nothing, dma, gart, engine, compute, reset, whole };
 
 /// The graphics block's firmware loaded, the block started and its hub
 /// turned on, its registers printed before and after - and then its DMA
@@ -1642,8 +1678,9 @@ fn graphicsStart(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPU
         .dma => dmaCheck(sys, dl, ab, info, graphics, wb),
         .gart => gartCheck(sys, dl, ab, info, graphics, wb),
         .engine => engineCheck(sys, dl, ab, info, graphics, wb),
-        .compute => computeCheck(sys, dl, ab, info, graphics, wb, false),
-        .reset => computeCheck(sys, dl, ab, info, graphics, wb, true),
+        .compute => computeCheck(sys, dl, ab, info, graphics, wb, false, false),
+        .reset => computeCheck(sys, dl, ab, info, graphics, wb, true, false),
+        .whole => computeCheck(sys, dl, ab, info, graphics, wb, true, true),
     };
 }
 
@@ -2339,8 +2376,10 @@ fn kernelRight(dl: *DosBase, seen: KernelSeen, count: u32, guard_words: u32, whi
 
 /// The compute engine's queue started through the scheduler and tried:
 /// words the engine writes, empty jobs one after another, and the kernel
-/// the build made dispatched over the device's memory and the machine's.
-fn computeCheck(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUInfo, graphics: amdgpu.GPUBlock, wb: *WatchdogBase, reset: bool) i32 {
+/// the build made dispatched over the device's memory and the machine's;
+/// with `reset`, the queue's resets after, and with `whole` the whole
+/// block's too (`resetCheck`).
+fn computeCheck(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUInfo, graphics: amdgpu.GPUBlock, wb: *WatchdogBase, reset: bool, whole: bool) i32 {
     _ = Printf(dl, "The compute engine before its queue is started:\n", .{});
     printGraphics(dl, info, graphics, &compute_registers);
     var began = sys.UptimeUs();
@@ -2601,7 +2640,7 @@ fn computeCheck(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUI
         if (!kernelRight(dl, seen, run.words, guard_words, run.which)) all_right = false;
         wb.FeedWatchdog();
     }
-    if (reset and !resetCheck(sys, dl, ab, info, graphics, wb, &code, &kernel, &spill, piece)) all_right = false;
+    if (reset and !resetCheck(sys, dl, ab, info, graphics, wb, &code, &kernel, &spill, piece, whole)) all_right = false;
 
     _ = Printf(dl, "At the end:\n", .{});
     printComputeQueue(dl, ab);
@@ -2637,10 +2676,10 @@ fn atOrAfter(job: u32, than: u32) bool {
 
 /// COMPUTE RESET: the queue reset where the engine is held by a job's
 /// wait - with the queue alone, then with its pipe - and where a kernel's
-/// waves spin; then a reset for a job done, the queue's resets read back,
-/// and `spill` and `fill` dispatched once more. True where all of it is
-/// as meant.
-fn resetCheck(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUInfo, graphics: amdgpu.GPUBlock, wb: *WatchdogBase, code: *const amdgpu.GPUCode, fill: *const amdgpu.GPUKernel, spill: *const amdgpu.GPUKernel, piece: amdgpu.GPUMemory) bool {
+/// waves spin; with `whole`, the whole block reset as well (`wholeCheck`);
+/// then a reset for a job done, the queue's resets read back, and `spill`
+/// and `fill` dispatched once more. True where all of it is as meant.
+fn resetCheck(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUInfo, graphics: amdgpu.GPUBlock, wb: *WatchdogBase, code: *const amdgpu.GPUCode, fill: *const amdgpu.GPUKernel, spill: *const amdgpu.GPUKernel, piece: amdgpu.GPUMemory, whole: bool) bool {
     var spin: amdgpu.GPUKernel = .{};
     if (!ab.FindGPUKernel(code, "spin", &spin)) {
         _ = Printf(dl, "The code object has no kernel spin that can be run: see C:Log\n", .{});
@@ -2778,13 +2817,28 @@ fn resetCheck(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUInf
     printComputeQueue(dl, ab);
     flag[0] = 1;
 
+    // The whole block reset, every job not done on either queue given up.
+    var last_given_up = spin_given_up;
+    if (whole) {
+        for (0..piece_words) |index| words[index] = guard_value;
+        flag[0] = 0;
+        last_given_up = wholeCheck(sys, dl, ab, info, wb, flag, flag_piece, &spin, &spin_dispatch, fill, &fill_dispatch, &all_right);
+        if (last_given_up == 0) return released(dl, ab, flag, "The block's reset");
+        flag[0] = 1;
+        const whole_seen = kernelSeen(words, count, guard_words, .fill);
+        _ = Printf(dl, "%u of the fill's %u words right, %u of the guards' %u kept\n", .{ whole_seen.right, count, whole_seen.kept, 2 * guard_words });
+        if (whole_seen.kept != 2 * guard_words) all_right = false;
+        printComputeQueue(dl, ab);
+    }
+
     // A reset for a job done resets nothing.
     const nothing = ab.ResetGPUCompute(done_job, 0);
     _ = ab.GetGPUComputeState(&state);
-    _ = Printf(dl, "A reset for job %u, done: job %u given up (0 meant); the queue reset %u times here (3 meant), the last job given up %u (%u meant)\n", .{
-        done_job, nothing, state.resets -% resets_before, state.given_up, spin_given_up,
+    const resets_meant: u32 = if (whole) 4 else 3;
+    _ = Printf(dl, "A reset for job %u, done: job %u given up (0 meant); the queue reset %u times here (%u meant), the last job given up %u (%u meant)\n", .{
+        done_job, nothing, state.resets -% resets_before, resets_meant, state.given_up, last_given_up,
     });
-    if (done_job == 0 or nothing != 0 or state.resets -% resets_before != 3 or state.given_up != spin_given_up) all_right = false;
+    if (done_job == 0 or nothing != 0 or state.resets -% resets_before != resets_meant or state.given_up != last_given_up) all_right = false;
 
     // The kernels again, on the queue after its resets.
     const again = [_]struct { kernel: *const amdgpu.GPUKernel, which: TestKernel }{
@@ -2803,6 +2857,145 @@ fn resetCheck(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUInf
     }
     printComputeQueue(dl, ab);
     return all_right;
+}
+
+/// Where COMPUTE RESET WHOLE's DMA fill writes in the word's piece, in
+/// words, how many and what.
+const whole_fill_at: u32 = 256;
+const whole_fill_words: u32 = 64;
+const whole_fill_value: u32 = 0x5EED_F111;
+
+/// How many of `words`' first `count` hold `value`.
+fn wordsHolding(words: [*]volatile u32, count: u32, value: u32) u32 {
+    var holding: u32 = 0;
+    for (0..count) |index| {
+        if (words[index] == value) holding += 1;
+    }
+    return holding;
+}
+
+/// The frames the display engine's first pipe has counted, 0 where the
+/// device names no display engine.
+fn framesOf(ab: *AMDGPUBase, info: amdgpu.GPUInfo) u32 {
+    var block: amdgpu.GPUBlock = .{};
+    if (!ab.FindGPUBlock(amdgpu.GPUBLOCK_DISPLAY, 0, &block) or block.count < 3) return 0;
+    const engine = Display{ .registers = @intCast(info.registers), .segment = block.addresses[2], .pipe = 0, .fetcher = 0 };
+    return engine.otg(dcn.OTG_STATUS_FRAME_COUNT).*;
+}
+
+/// COMPUTE RESET WHOLE: the whole graphics block reset (GPURESET_BLOCK)
+/// with the compute engine held by the kernel spin on the word `flag`,
+/// with `fill` and an empty job behind it, and the DMA engine held by a
+/// poll of the same word, sent just before the reset, with a fill of the
+/// word's piece behind it: every job of either given up - the DMA
+/// engine's not done within the 100 ms the reset gives it - the block's
+/// resets counted, the display engine's first pipe counting frames before
+/// and after where it did before, and the DMA engine's fill done once
+/// more. The last compute job given up, 0 where the reset failed or a job
+/// was not sent; `all_right` cleared where any of it is not as meant.
+fn wholeCheck(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUInfo, wb: *WatchdogBase, flag: [*]volatile u32, flag_piece: amdgpu.GPUMemory, spin: *const amdgpu.GPUKernel, spin_dispatch: *const amdgpu.GPUDispatch, fill: *const amdgpu.GPUKernel, fill_dispatch: *const amdgpu.GPUDispatch, all_right: *bool) u32 {
+    if (!ab.StartGPUDMA()) {
+        _ = Printf(dl, "The DMA engine's queue does not run: see C:Log\n", .{});
+        return 0;
+    }
+    const fill_words = flag + whole_fill_at;
+    for (0..whole_fill_words) |index| fill_words[index] = 0;
+    const poll = [6]u32{
+        amdgpu.GPUDMA_OP_POLL_REGMEM | amdgpu.GPUDMA_POLL_MEMORY | amdgpu.GPUDMA_POLL_EQUAL,
+        @truncate(flag_piece.device),
+        @truncate(flag_piece.device >> 32),
+        1,
+        0xffff_ffff,
+        amdgpu.GPUDMA_POLL_RETRIES | 10,
+    };
+    const fill_at = flag_piece.device + whole_fill_at * 4;
+    const dma_fill = [5]u32{
+        amdgpu.GPUDMA_OP_CONST_FILL | amdgpu.GPUDMA_FILL_WORDS,
+        @truncate(fill_at),
+        @truncate(fill_at >> 32),
+        whole_fill_value,
+        whole_fill_words * 4 - 1,
+    };
+    const none = [1]u32{0};
+    var compute_before: amdgpu.GPUComputeState = .{};
+    var dma_before: amdgpu.GPUDMAState = .{};
+    _ = ab.GetGPUComputeState(&compute_before);
+    _ = ab.GetGPUDMAState(&dma_before);
+
+    const sent = [3]u32{
+        ab.SendGPUKernel(spin, spin_dispatch),
+        ab.SendGPUKernel(fill, fill_dispatch),
+        ab.SendGPUCompute(&none, 0),
+    };
+    _ = Printf(dl, "The kernel spin on the word, job %u; then fill, job %u, and an empty job, %u\n", .{ sent[0], sent[1], sent[2] });
+    for (sent) |job| {
+        if (job == 0) return 0;
+    }
+    const spin_done = ab.WaitGPUCompute(sent[0], 1000);
+    wb.FeedWatchdog();
+    const frames_first = framesOf(ab, info);
+    dl.Delay(3);
+    const frames_before = framesOf(ab, info);
+    const polled = ab.SendGPUDMA(&poll, poll.len);
+    const dma_filled = ab.SendGPUDMA(&dma_fill, dma_fill.len);
+    const poll_done = polled != 0 and ab.WaitGPUDMA(polled, 50);
+    _ = Printf(dl, "Job %u %s after a second; the DMA engine polling the same word, job %u, then a fill of %u words past it, job %u: the poll %s after 50 ms (neither done meant)\n", .{
+        sent[0], doneOr(spin_done), polled, whole_fill_words, dma_filled, doneOr(poll_done),
+    });
+    if (polled == 0 or dma_filled == 0) return 0;
+    if (spin_done or poll_done) all_right.* = false;
+
+    const began = sys.UptimeUs();
+    const given_up = ab.ResetGPUCompute(sent[0], amdgpu.GPURESET_BLOCK);
+    const reset_us = sys.UptimeUs() - began;
+    const frames_after = framesOf(ab, info);
+    dl.Delay(3);
+    const frames_later = framesOf(ab, info);
+    wb.FeedWatchdog();
+    _ = Printf(dl, "The block reset whole in %lu us: jobs %u to %u given up (to %u meant)\n", .{ reset_us, sent[0], given_up, sent[2] });
+    if (given_up == 0) return 0;
+    if (given_up != sent[2]) all_right.* = false;
+    for (sent) |job| {
+        const job_done = ab.WaitGPUCompute(job, 0);
+        _ = Printf(dl, "  job %u %s (not done meant)\n", .{ job, doneOr(job_done) });
+        if (job_done) all_right.* = false;
+    }
+    var compute_after: amdgpu.GPUComputeState = .{};
+    var dma_after: amdgpu.GPUDMAState = .{};
+    _ = ab.GetGPUComputeState(&compute_after);
+    _ = ab.GetGPUDMAState(&dma_after);
+    const poll_after = ab.WaitGPUDMA(polled, 0);
+    const fill_after = ab.WaitGPUDMA(dma_filled, 0);
+    const untouched = wordsHolding(fill_words, whole_fill_words, 0);
+    _ = Printf(dl, "  the DMA engine's poll %s and fill %s (neither done meant), %u of the fill's %u words untouched; the last DMA job given up %u (%u meant); the block reset %u times here, by either queue's state %u (1 meant)\n", .{
+        doneOr(poll_after),                                    doneOr(fill_after),                              untouched,
+        whole_fill_words,                                      dma_after.given_up,                              dma_filled,
+        compute_after.block_resets -% compute_before.block_resets, dma_after.block_resets -% dma_before.block_resets,
+    });
+    if (poll_after or fill_after or untouched != whole_fill_words or dma_after.given_up != dma_filled) all_right.* = false;
+    if (compute_after.block_resets -% compute_before.block_resets != 1 or dma_after.block_resets -% dma_before.block_resets != 1) all_right.* = false;
+    const running_before = frames_before != frames_first;
+    const running_after = frames_later != frames_after;
+    _ = Printf(dl, "  the display's first pipe counted %u frames in 60 ms before the reset, %u over the reset and %u in 60 ms after it\n", .{
+        frames_before -% frames_first, frames_after -% frames_before, frames_later -% frames_after,
+    });
+    if (running_before and !running_after) all_right.* = false;
+
+    // The DMA engine's fill once more, on the queue started again.
+    for (0..whole_fill_words) |index| fill_words[index] = 0;
+    const again = ab.SendGPUDMA(&dma_fill, dma_fill.len);
+    const again_done = again != 0 and ab.WaitGPUDMA(again, 100);
+    const right = wordsHolding(fill_words, whole_fill_words, whole_fill_value);
+    _ = Printf(dl, "The DMA engine's fill after the reset, job %u: %s, %u of its %u words right\n", .{ again, doneOr(again_done), right, whole_fill_words });
+    if (!again_done or right != whole_fill_words) all_right.* = false;
+    wb.FeedWatchdog();
+
+    // The memory window, which the reset shuts, let through again.
+    if (info.memory_machine != 0 and info.window_bytes != 0) {
+        const held = windowHolds(sys, dl, ab, info, whole_window_words, whole_window_written) orelse return 0;
+        if (!held) all_right.* = false;
+    }
+    return given_up;
 }
 
 /// ENGINE: the queue started, the engine's copies of rectangles and its
@@ -3248,6 +3441,104 @@ fn differing(board: [*]const u8, plain: [*]const u8, bytes: u32, bytes_each: u32
         while (apart != 0) : (apart >>= step) count += @intFromBool(apart & lane != 0);
     }
     return count;
+}
+
+// --- the window ----------------------------------------------------------------------
+
+/// The words of the piece WINDOW holds the window to: 64 KiB.
+const window_words = 16384;
+
+/// The window after COMPUTE RESET WHOLE's reset: a piece of 4 KiB read
+/// through it, 64 of its words written.
+const whole_window_words = 1024;
+const whole_window_written = 64;
+
+/// The word WINDOW's round `round` writes at `index`: the round in the top
+/// four bits and the index below, so a word read from elsewhere in the
+/// piece says which round wrote it where.
+fn windowWord(round: u32, index: u32) u32 {
+    return round << 28 | index;
+}
+
+/// WINDOW: the window held to the memory it shows, the whole piece read
+/// and `written` words of it written through the window.
+fn windowCheck(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUInfo, millis: u32, written: u32) i32 {
+    if (info.memory_machine == 0 or info.window_bytes == 0) {
+        _ = Printf(dl, "The device's memory has no window, or where the machine has it is not known\n", .{});
+        return dos.RETURN_WARN;
+    }
+    const wb = arm(sys, dl, millis) orelse return dos.RETURN_FAIL;
+    defer wb.DisarmWatchdog();
+    const held = windowHolds(sys, dl, ab, info, window_words, written) orelse return dos.RETURN_FAIL;
+    wb.FeedWatchdog();
+    return if (held) dos.RETURN_OK else dos.RETURN_ERROR;
+}
+
+/// A piece of `words` words of the device's memory written where the
+/// machine has it and read through the window; then its first `written`
+/// words written through the window and read through it and, 40 ms on,
+/// where the machine has it. Whether every word held; null, said, where
+/// there is no such piece.
+fn windowHolds(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUInfo, words: u32, written: u32) ?bool {
+    const bytes = words * 4;
+    var piece: amdgpu.GPUMemory = .{};
+    if (!ab.AllocGPUMemory(bytes, 4096, &piece)) {
+        _ = Printf(dl, "No room for %u bytes in the device's memory\n", .{bytes});
+        return null;
+    }
+    defer ab.FreeGPUMemory(&piece);
+    const offset = piece.device -% info.memory_start;
+    if (offset + bytes > info.window_bytes) {
+        _ = Printf(dl, "The piece at %lx of the device's memory is past its window of %ld MiB\n", .{ piece.device, @as(i64, @intCast(info.window_bytes >> 20)) });
+        return null;
+    }
+    const machine: [*]volatile u32 = @ptrFromInt(@as(usize, @intCast(piece.cpu)));
+    const window: [*]volatile u32 = @ptrFromInt(@as(usize, @intCast(info.window + offset)));
+    _ = Printf(dl, "A piece of %u bytes at %lx of the device's memory: at %lx where the machine has it, at %lx through the window\n", .{
+        bytes, piece.device, piece.cpu, info.window + offset,
+    });
+    for (0..words) |index| machine[index] = windowWord(1, @intCast(index));
+    barrier.full();
+    var differ = windowHeld(sys, dl, "Written where the machine has it, read through the window", window, 1, words);
+    const count = @min(written, words);
+    if (count != 0) {
+        for (0..count) |index| window[index] = windowWord(2, @intCast(index));
+        barrier.full();
+        differ += windowHeld(sys, dl, "Written through the window, read through it", window, 2, count);
+        dl.Delay(2);
+        differ += windowHeld(sys, dl, "Written through the window, read where the machine has it 40 ms on", machine, 2, count);
+    }
+    return differ == 0;
+}
+
+/// The first `count` words at `words` held to what round `round` wrote:
+/// how many differ, said with how long the reads took, how many of them
+/// read all ones, and the first four.
+fn windowHeld(sys: *ExecBase, dl: *DosBase, what: [*:0]const u8, words: [*]volatile u32, round: u32, count: u32) u32 {
+    const Differing = struct { index: u32, read: u32 };
+    var first: [4]Differing = undefined;
+    var differ: u32 = 0;
+    var ones: u32 = 0;
+    const began = sys.UptimeUs();
+    var index: u32 = 0;
+    while (index < count) : (index += 1) {
+        const read = words[index];
+        if (read == windowWord(round, index)) continue;
+        if (differ < first.len) first[differ] = .{ .index = index, .read = read };
+        differ += 1;
+        ones += @intFromBool(read == 0xffff_ffff);
+    }
+    const took = sys.UptimeUs() - began;
+    _ = Printf(dl, "%s: %u of %u words differ, %u of them all ones; read in %lu us\n", .{ what, differ, count, ones, took });
+    for (first[0..@min(differ, first.len)]) |word| {
+        const from = word.read & 0x0fff_ffff;
+        if (word.read != 0xffff_ffff and word.read >> 28 != 0 and from < window_words) {
+            _ = Printf(dl, "  word %u: %08x wanted, %08x read - round %u's word %u\n", .{ word.index, windowWord(round, word.index), word.read, word.read >> 28, from });
+        } else {
+            _ = Printf(dl, "  word %u: %08x wanted, %08x read\n", .{ word.index, windowWord(round, word.index), word.read });
+        }
+    }
+    return differ;
 }
 
 /// What a pass of jobs by the board's rule `rule` is said to be.
@@ -4034,7 +4325,7 @@ fn paintPicture(pixels: [*]u8) void {
 /// graphics.library's on plain memory pixel for pixel, each timed beside
 /// it: first with every job the board's kernels can do handed to them
 /// (RTG_AMD_ENGINE_ALL), then by the board's own rule.
-fn kernelsCheck(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUInfo, millis: u32, place: Place, reset: bool) i32 {
+fn kernelsCheck(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUInfo, millis: u32, place: Place, reset: bool, whole: bool) i32 {
     const rtg_lib = sys.OpenLibrary(rtg.RTGNAME, rtg.RTG_VERSION) orelse {
         _ = Printf(dl, "No %s\n", .{rtg.RTGNAME});
         return dos.RETURN_FAIL;
@@ -4100,7 +4391,7 @@ fn kernelsCheck(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUI
     _ = Printf(dl, "The board's buffer at %lx, %s, the plain one at %lx, the picture at %lx, %u x %u, four bytes a pixel, or twice as many of two\n", .{
         @as(u64, @intFromPtr(buffer.pixels)), place.name(), @as(u64, @intFromPtr(starts[0])), @as(u64, @intFromPtr(starts[1])), blits_width, blits_height,
     });
-    if (reset) return kernelsReset(sys, dl, ab, rb, board, drawing, wb);
+    if (reset) return kernelsReset(sys, dl, ab, rb, board, drawing, wb, whole);
 
     var all_right = true;
     var all_wrong: u32 = 0;
@@ -4184,14 +4475,15 @@ const every_unit_groups: u32 = 4096;
 const reset_delays_us = [_]u32{ 200, 600, 1000 };
 
 /// What KERNELS RESET's own task is told - the resource, the last job
-/// sent before the board's, and how long to wait once the board's is -
-/// and what it says: the job it saw sent, 0 where none was within
-/// `resetter_wait_us`, and the last job its reset gave up, 0 where it
-/// gave up none, the job being done.
+/// sent before the board's, how long to wait once the board's is, and the
+/// reset's flags - and what it says: the job it saw sent, 0 where none
+/// was within `resetter_wait_us`, and the last job its reset gave up, 0
+/// where it gave up none, the job being done.
 const Resetter = struct {
     ab: *AMDGPUBase,
     after: u32,
     delay_us: u32,
+    flags: u32,
     job: u32 = 0,
     given_up: u32 = 0,
     /// Sent to the test's port as the task ends.
@@ -4204,7 +4496,7 @@ const resetter_go: u32 = 1 << 30;
 
 /// KERNELS RESET's own task: once told to go, it reads the compute
 /// queue's state over and over until a job is sent after `after`, waits
-/// `delay_us` more, and resets the queue for that job.
+/// `delay_us` more, and resets the queue for that job, as `flags` says.
 fn resetterCode(sys: *ExecBase) callconv(.c) void {
     _ = sys.Wait(resetter_go);
     const resetter: *Resetter = @ptrCast(@alignCast(sys.FindTask(null).?.user_data orelse return));
@@ -4218,16 +4510,16 @@ fn resetterCode(sys: *ExecBase) callconv(.c) void {
     const seen = sys.UptimeUs();
     while (sys.UptimeUs() - seen < resetter.delay_us) {}
     resetter.job = state.sent;
-    resetter.given_up = resetter.ab.ResetGPUCompute(state.sent, 0);
+    resetter.given_up = resetter.ab.ResetGPUCompute(state.sent, resetter.flags);
 }
 
 /// KERNELS RESET: each of `reset_jobs` handed to the board's kernels and
 /// drawn behind the kernel spin, held on one compute unit and on every
 /// one, and then with the queue reset in the job's middle by a task of
-/// the test's own; the board resets the queue or finds it reset, and
-/// every pixel is held to graphics.library's single job on the plain
-/// buffer.
-fn kernelsReset(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, rb: *RtgBase, board: *rtg.RtgBoard, drawing: Drawing, wb: *WatchdogBase) i32 {
+/// the test's own - with `whole`, the whole block reset (GPURESET_BLOCK);
+/// the board resets the queue or finds it reset, and every pixel is held
+/// to graphics.library's single job on the plain buffer.
+fn kernelsReset(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, rb: *RtgBase, board: *rtg.RtgBoard, drawing: Drawing, wb: *WatchdogBase, whole: bool) i32 {
     const image = @embedFile("gpu_code");
     var code: amdgpu.GPUCode = .{};
     if (!ab.LoadGPUCode(image.ptr, image.len, &code)) {
@@ -4305,6 +4597,10 @@ fn kernelsReset(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, rb: *RtgBase, boa
     const ended = sys.CreateMsgPort() orelse return dos.RETURN_FAIL;
     defer sys.DeleteMsgPort(ended);
     const priority = sys.FindTask(null).?.node.pri;
+    const flags: u32 = if (whole) amdgpu.GPURESET_BLOCK else 0;
+    const what: [*:0]const u8 = if (whole) "the block reset whole" else "the queue reset";
+    var first_state: amdgpu.GPUComputeState = .{};
+    _ = ab.GetGPUComputeState(&first_state);
     var ended_part_way: u32 = 0;
     for (reset_jobs, 0..) |job, index| {
         for (reset_delays_us) |delay_us| {
@@ -4316,7 +4612,7 @@ fn kernelsReset(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, rb: *RtgBase, boa
             var state: amdgpu.GPUComputeState = .{};
             _ = ab.GetGPUComputeState(&state);
             const resets = state.resets;
-            var resetter: Resetter = .{ .ab = ab, .after = state.sent, .delay_us = delay_us, .ended = .{ .reply_port = ended } };
+            var resetter: Resetter = .{ .ab = ab, .after = state.sent, .delay_us = delay_us, .flags = flags, .ended = .{ .reply_port = ended } };
             const task = sys.CreateTask("Gpu reset", priority, &resetterCode, resetter_stack) orelse {
                 _ = Printf(dl, "No task to reset the queue with\n", .{});
                 return dos.RETURN_FAIL;
@@ -4341,9 +4637,9 @@ fn kernelsReset(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, rb: *RtgBase, boa
                 if (!drawn or sends != 1 or wrong != 0) all_right = false;
             } else {
                 ended_part_way += 1;
-                _ = Printf(dl, "%s, the queue reset %u us into the board's job %u: drawn in %lu us, the last job given up %u; the queue reset %u times (1 meant), %u jobs sent (2 meant); %u pixels wrong\n", .{
-                    job.name,               delay_us, resetter.job, drawn_us, resetter.given_up,
-                    state.resets -% resets, sends,    wrong,
+                _ = Printf(dl, "%s, %s %u us into the board's job %u: drawn in %lu us, the last job given up %u; the queue reset %u times (1 meant), %u jobs sent (2 meant); %u pixels wrong\n", .{
+                    job.name,          what,                   delay_us, resetter.job, drawn_us,
+                    resetter.given_up, state.resets -% resets, sends,    wrong,
                 });
                 if (!drawn or state.resets -% resets != 1 or sends != 2 or wrong != 0) all_right = false;
             }
@@ -4354,6 +4650,13 @@ fn kernelsReset(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, rb: *RtgBase, boa
     }
     _ = Printf(dl, "%u of %u jobs ended part way by a reset\n", .{ ended_part_way, @as(u32, reset_jobs.len * reset_delays_us.len) });
     if (ended_part_way == 0) all_right = false;
+    if (whole) {
+        var last_state: amdgpu.GPUComputeState = .{};
+        _ = ab.GetGPUComputeState(&last_state);
+        const block_resets = last_state.block_resets -% first_state.block_resets;
+        _ = Printf(dl, "The block reset whole %u times (%u meant)\n", .{ block_resets, ended_part_way });
+        if (block_resets != ended_part_way) all_right = false;
+    }
     printComputeQueue(dl, ab);
     _ = Printf(dl, "%u pixels wrong\n", .{all_wrong});
     return if (all_right) dos.RETURN_OK else dos.RETURN_WARN;
@@ -4450,10 +4753,11 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     if (argv[arg_power] != 0) return powerCheck(sys, dl, ab, millis);
     const place: Place = if (argv[arg_window] != 0) .window else if (argv[arg_device] != 0) .device else .machine;
     if (argv[arg_blits] != 0) return blitsCheck(sys, dl, ab, info, millis, place);
-    if (argv[arg_kernels] != 0) return kernelsCheck(sys, dl, ab, info, millis, place, argv[arg_reset] != 0);
+    if (argv[arg_kernels] != 0) return kernelsCheck(sys, dl, ab, info, millis, place, argv[arg_reset] != 0, argv[arg_whole] != 0);
+    if (argv[arg_window] != 0) return windowCheck(sys, dl, ab, info, millis, number(argv[arg_length]));
     if (argv[arg_sleep] != 0) return asleepFor(sys, dl, ab, info, millis, number(argv[arg_sleep]), argv[arg_modes] != 0);
     if (argv[arg_gfx] != 0 or argv[arg_dma] != 0 or argv[arg_gart] != 0 or argv[arg_engine] != 0 or argv[arg_compute] != 0) {
-        const compute_then: GraphicsThen = if (argv[arg_reset] != 0) .reset else .compute;
+        const compute_then: GraphicsThen = if (argv[arg_reset] != 0) (if (argv[arg_whole] != 0) .whole else .reset) else .compute;
         const then: GraphicsThen = if (argv[arg_compute] != 0) compute_then else if (argv[arg_engine] != 0) .engine else if (argv[arg_gart] != 0) .gart else if (argv[arg_dma] != 0) .dma else .nothing;
         return graphicsStart(sys, dl, ab, info, millis, then);
     }

@@ -37,7 +37,9 @@ const _graphics = @import("../graphics/_graphics.zig");
 /// version that maps the system's own queues (0x47), or the scheduler,
 /// its mapper or the queue does not answer in time; after any of these
 /// but the first three every later call answers false at once. On a
-/// machine without the device, false.
+/// machine without the device, false. Called again once ResetGPUCompute
+/// has reset the whole block, which stops the queue, it starts the queue
+/// again (since 1.24).
 ///
 /// BEHAVIOR:
 /// The block is kept powered first (SetGPUPower with GPUPOWER_GRAPHICS).
@@ -51,7 +53,8 @@ const _graphics = @import("../graphics/_graphics.zig");
 /// at most - as the vendor's driver does, it goes on where it is not.
 /// The scheduler's two pipes are reset, each pointed at the first
 /// instruction its file's header names, and let run (mes_v11_0_enable);
-/// their firmware's versions are read; the second pipe, the mapper, is
+/// their firmware's versions are read once each pipe has written its own,
+/// 500 us on and then every millisecond, 1 s at most (since 1.24); the second pipe, the mapper, is
 /// told it maps queues (kiq_setting) and its own queue set through its
 /// registers. Where the scheduler is 0x47 or later, its own queue is
 /// mapped by the mapper (MAP_QUEUES) and the mapper's ring tried with a
@@ -65,9 +68,17 @@ const _graphics = @import("../graphics/_graphics.zig");
 /// on. Where any of it fails the scheduler's pipes are halted, and the
 /// engines halted again.
 ///
+/// Started again after a reset of the whole block, the queues take the
+/// piece they had, cleared, and the queue's jobs' numbers go on from the
+/// last one sent, which the piece is given as the last done - so a job
+/// the reset gave up reads done, and WaitGPUCompute, which finds it
+/// marked given up, answers it false - and the end-of-pipe interrupt's
+/// server, still the queue's, is not handed over again.
+///
 /// CONTEXT:
 /// - Waits: yes, for the power manager, a millisecond or so; for the
-///   command processor and each ring's test, at most 100 ms; for each call
+///   command processor and each ring's test, at most 100 ms each; for the
+///   scheduler's versions, at most 1 s; for each call
 ///   of the scheduler, at most 2.1 s - a few milliseconds in all where
 ///   all goes well.
 /// - Interrupts: no.
@@ -78,7 +89,8 @@ const _graphics = @import("../graphics/_graphics.zig");
 /// OWNERSHIP:
 /// The rings, their descriptions, the engines' buffers and the slots of
 /// arguments, 136 KiB of the device's memory, are taken and kept for as
-/// long as the system runs.
+/// long as the system runs; a start after a reset of the block takes them
+/// again.
 ///
 /// NOTES:
 /// The queue runs in the graphics hub's first context, as the DMA
@@ -126,23 +138,34 @@ pub fn StartGPUCompute(ab: *AMDGPUBase) bool {
         exec.kprintf(sys, "%s: the power manager does not keep the graphics block powered for its compute engine\n", .{owner});
         return false;
     }
-    var piece: amdgpu.GPUMemory = .{};
-    if (!gpu.AllocGPUMemory(_compute.piece_bytes, 4096, &piece)) {
-        exec.kprintf(sys, "%s: no room in the device's memory for the compute engine's queues\n", .{owner});
-        return false;
+    // A start after a reset of the whole block: the piece it had, the
+    // queue's jobs' numbers going on and their records - those the reset
+    // gave up marked so - kept.
+    const again = ab.compute.bytes != 0;
+    var piece = ab.compute;
+    if (!again) {
+        if (!gpu.AllocGPUMemory(_compute.piece_bytes, 4096, &piece)) {
+            exec.kprintf(sys, "%s: no room in the device's memory for the compute engine's queues\n", .{owner});
+            return false;
+        }
+        ab.compute = piece;
+        ab.compute_sent = 0;
+        ab.compute_jobs = @splat(.{});
     }
-    ab.compute = piece;
+    // The last job done set first, then the rest cleared around it, so
+    // that a task waiting meanwhile never reads a number it had not.
+    _compute.word(ab, _compute.compute_fence_at).* = ab.compute_sent;
     var offset: u32 = 0;
-    while (offset < _compute.piece_bytes) : (offset += 4) _compute.word(ab, offset).* = 0;
+    while (offset < _compute.piece_bytes) : (offset += 4) {
+        if (offset != _compute.compute_fence_at) _compute.word(ab, offset).* = 0;
+    }
     _compute.fence();
     ab.scheduler_written = 0;
     ab.mapper_written = 0;
     ab.compute_written = 0;
     ab.scheduler_calls = 0;
-    ab.compute_sent = 0;
     ab.compute_slot = 0;
     ab.compute_slot_jobs = @splat(0);
-    ab.compute_jobs = @splat(.{});
 
     const at = _graphics.at;
     // The doorbell window, and the device's own way into it
@@ -187,14 +210,35 @@ pub fn StartGPUCompute(ab: *AMDGPUBase) bool {
     }
     _compute.select(ab, _compute.no_queue, 0);
     at(ab, _compute.CP_MES_CNTL).* = _compute.MES_PIPE0_ACTIVE | _compute.MES_PIPE1_ACTIVE;
+    const let_run = sys.UptimeUs();
     _compute.pause(ab, 500);
 
-    // Their firmware's versions (get_fw_version).
-    _compute.select(ab, _compute.scheduler_queue, 0);
-    ab.scheduler_version = at(ab, _compute.CP_MES_GP3_LO).*;
-    _compute.select(ab, _compute.mapper_queue, 0);
-    ab.mapper_version = at(ab, _compute.CP_MES_GP3_LO).*;
-    _compute.select(ab, _compute.no_queue, 0);
+    // Their firmware's versions (get_fw_version), which each pipe writes
+    // once it runs: read again until both have, 1 s at most - pipes let
+    // run after a reset of the whole block can take longer than the 500 us
+    // the vendor's driver gives them: on the NucBox some 110 ms, three
+    // times in 118 resets.
+    const versions_until = let_run + _compute.version_most_us;
+    var reads: u32 = 1;
+    while (true) : (reads += 1) {
+        ab.scheduler_version = versionOf(ab, _compute.scheduler_queue);
+        ab.mapper_version = versionOf(ab, _compute.mapper_queue);
+        if (ab.scheduler_version != 0 and ab.mapper_version != 0) {
+            if (reads > 1) {
+                exec.kprintf(sys, "%s: the compute engine's scheduler's pipes wrote their firmware's versions %lu us after they were let run\n", .{
+                    owner, sys.UptimeUs() - let_run,
+                });
+            }
+            break;
+        }
+        if (sys.UptimeUs() > versions_until) {
+            exec.kprintf(sys, "%s: the compute engine's scheduler's pipes have not written their firmware's versions %lu us after they were let run\n", .{
+                owner, sys.UptimeUs() - let_run,
+            });
+            break;
+        }
+        _compute.pause(ab, 1000);
+    }
 
     // The second pipe told it maps queues (kiq_setting), and its own queue
     // set through its registers (queue_init of the mapper's pipe).
@@ -275,17 +319,20 @@ pub fn StartGPUCompute(ab: *AMDGPUBase) bool {
         return stop(ab);
     }
 
-    // Its end-of-pipe interrupt, to the queue's server.
-    ab.compute_end = .{};
-    ab.compute_ends = 0;
-    ab.compute_end_int = .{
-        .node = .{ .type = .interrupt, .pri = 0, .name = owner },
-        .data = ab,
-        .code = &_compute.endServer,
-    };
-    if (!gpu.AddGPUIntServer(_compute.INTERRUPT_CLIENT, _compute.END_SOURCE, &ab.compute_end_int)) {
-        exec.kprintf(sys, "%s: the compute engine's interrupt cannot be had\n", .{owner});
-        return stop(ab);
+    // Its end-of-pipe interrupt, to the queue's server - which a start
+    // after a reset still has.
+    if (!again) {
+        ab.compute_end = .{};
+        ab.compute_ends = 0;
+        ab.compute_end_int = .{
+            .node = .{ .type = .interrupt, .pri = 0, .name = owner },
+            .data = ab,
+            .code = &_compute.endServer,
+        };
+        if (!gpu.AddGPUIntServer(_compute.INTERRUPT_CLIENT, _compute.END_SOURCE, &ab.compute_end_int)) {
+            exec.kprintf(sys, "%s: the compute engine's interrupt cannot be had\n", .{owner});
+            return stop(ab);
+        }
     }
     at(ab, _compute.CP_ME1_PIPE0_INT_CNTL).* = at(ab, _compute.CP_ME1_PIPE0_INT_CNTL).* | _compute.TIME_STAMP_INT_ENABLE | _compute.GENERIC0_INT_ENABLE;
     ab.compute_running = true;
@@ -313,6 +360,14 @@ fn describe(ab: *AMDGPUBase, kind: @FieldType(_compute.Description, "kind"), mqd
 }
 
 /// A call of the scheduler not answered: said so, and the start stopped.
+/// The firmware's version a pipe of the scheduler has written, 0 until it
+/// has (CP_MES_GP3_LO, with the pipe selected).
+fn versionOf(ab: *AMDGPUBase, pipe: _compute.Queue) u32 {
+    _compute.select(ab, pipe, 0);
+    defer _compute.select(ab, _compute.no_queue, 0);
+    return _graphics.at(ab, _compute.CP_MES_GP3_LO).*;
+}
+
 fn refused(ab: *AMDGPUBase, what: [*:0]const u8) bool {
     const at = _graphics.at;
     exec.kprintf(ab.sys_base, "%s: the compute engine's scheduler does not answer %s: its fence %x of call %d, MES_INSTR_PNTR %x\n", .{

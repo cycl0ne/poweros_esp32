@@ -23,7 +23,8 @@ const _graphics = @import("../graphics/_graphics.zig");
 ///
 /// RESULT:
 /// True with `state` filled; false, `state` untouched, where the queue
-/// does not run.
+/// does not run. While ResetGPUCompute resets the whole block the call
+/// waits for it, and answers for the queue started again (since 1.24).
 ///
 /// BEHAVIOR:
 /// The ring's address and length; how far the engine has read it, as it
@@ -40,7 +41,8 @@ const _graphics = @import("../graphics/_graphics.zig");
 /// (ResetGPUCompute), 0 until one has; and since 1.22 the scratch
 /// SendGPUKernel made for one job alone - where it is, its bytes, its
 /// waves and the job, all 0 where none is in use, one whose job is done
-/// given back first - and how many have been made.
+/// given back first - and how many have been made; and since 1.24, how
+/// many of the queue's resets reset the whole block.
 ///
 /// CONTEXT:
 /// - Waits: only for the queue's lock.
@@ -72,11 +74,14 @@ const _graphics = @import("../graphics/_graphics.zig");
 /// }
 /// ```
 pub fn GetGPUComputeState(ab: *AMDGPUBase, state: *amdgpu.GPUComputeState) bool {
-    if (ab.device == null or !ab.compute_running) return false;
+    if (ab.device == null or !_compute.runs(ab)) return false;
     const sys = ab.sys_base;
     const at = _graphics.at;
     sys.ObtainSemaphore(&ab.compute_lock);
     defer sys.ReleaseSemaphore(&ab.compute_lock);
+    // A reset of the whole block, which holds the lock, may leave it
+    // stopped.
+    if (!ab.compute_running) return false;
     _compute.giveBackOnce(ab);
     _compute.select(ab, _compute.compute_queue, 0);
     const active = at(ab, _compute.CP_HQD_ACTIVE).*;
@@ -108,6 +113,7 @@ pub fn GetGPUComputeState(ab: *AMDGPUBase, state: *amdgpu.GPUComputeState) bool 
         .scratch_once_waves = ab.scratch_once_waves,
         .scratch_once_job = ab.scratch_once_job,
         .scratch_once_made = ab.scratch_once_made,
+        .block_resets = ab.block_resets,
     };
     return true;
 }

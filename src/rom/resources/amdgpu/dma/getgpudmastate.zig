@@ -28,8 +28,10 @@ const _graphics = @import("../graphics/_graphics.zig");
 /// The ring's device address and length; how far the engine has read it,
 /// as it last wrote it back, and how far it has been written, in bytes
 /// since the queue started; the number of the last job sent and of the
-/// last done; the interrupts the engine raised at the ends of jobs; and
-/// the engine's status register - its bit 0 set while it is idle.
+/// last done; the interrupts the engine raised at the ends of jobs; the
+/// engine's status register - its bit 0 set while it is idle; and, since
+/// 1.24, the last job a reset of the whole block gave up and how many
+/// times the block has been reset whole.
 ///
 /// CONTEXT:
 /// - Waits: no.
@@ -57,7 +59,7 @@ const _graphics = @import("../graphics/_graphics.zig");
 /// if (ab.GetGPUDMAState(&state)) Printf(dl, "%u of %u done\n", .{ state.done, state.sent });
 /// ```
 pub fn GetGPUDMAState(ab: *AMDGPUBase, state: *amdgpu.GPUDMAState) bool {
-    if (ab.device == null or !ab.dma_running) return false;
+    if (ab.device == null or !_dma.runs(ab)) return false;
     state.* = .{
         .ring = ab.dma_ring.device,
         .ring_bytes = _dma.ring_bytes,
@@ -67,6 +69,8 @@ pub fn GetGPUDMAState(ab: *AMDGPUBase, state: *amdgpu.GPUDMAState) bool {
         .done = _dma.done(ab),
         .traps = ab.dma_traps,
         .status = _graphics.at(ab, _dma.STATUS_REG).*,
+        .given_up = @atomicLoad(u32, &ab.dma_given_up, .acquire),
+        .block_resets = ab.block_resets,
     };
     return true;
 }

@@ -95,7 +95,14 @@
 //! that no longer runs: its memory is unmapped all the same - whatever
 //! the engine reaches of it after lands on the hub's scratch page - the
 //! job answered RTGERR_TIMEOUT, the engine not used from then on, and the
-//! log says so once.
+//! log says so once. A job a reset of the whole graphics block gave up -
+//! which the resource makes where the compute engine's queue cannot be
+//! brought back otherwise, after the DMA engine has had 100 ms to finish
+//! its jobs - is answered RTGERR_TIMEOUT too, said, and the library draws
+//! it; the engine, started again with the block, is used on. Such a job
+//! may have been done in part: a fill or a copy the library draws again
+//! comes out the same, a scroll the engine had moved some bands of does
+//! not.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -529,18 +536,32 @@ pub fn copy(dma: *Dma, sys: *ExecBase, rb: *RtgBase, src: *rtg.RtgBitMap, dest: 
 
 /// A job's `count` words sent and waited for: RTGERR_OK once the engine
 /// has done it; RTGERR_NOT_SUPPORTED, nothing written, where it was not
-/// sent. One not done within `job_most_ms` is taken as a queue that no
-/// longer runs - no job is the engine's from then on - and said once.
+/// sent. One a reset of the whole block gave up is answered
+/// RTGERR_TIMEOUT, said. One not done within `job_most_ms` is taken as a
+/// queue that no longer runs - no job is the engine's from then on - and
+/// said once.
 fn send(dma: *Dma, sys: *ExecBase, words: [*]const u32, count: u32) i32 {
     const gpu = dma.gpu.?;
     const job = gpu.SendGPUDMA(words, count);
     if (job == 0) return err.RTGERR_NOT_SUPPORTED;
     if (gpu.WaitGPUDMA(job, job_most_ms)) return err.RTGERR_OK;
+    var state: amdgpu.GPUDMAState = .{};
+    if (gpu.GetGPUDMAState(&state) and givenUp(state, job)) {
+        exec.kprintf(sys, "%s: a job of the graphics block's DMA engine was given up by a reset of the whole block: the library draws it\n", .{dcn.owner});
+        return err.RTGERR_TIMEOUT;
+    }
     @atomicStore(bool, &dma.ready, false, .release);
     if (!@atomicRmw(bool, &dma.failed, .Xchg, true, .acq_rel)) {
         exec.kprintf(sys, "%s: a job of the graphics block's DMA engine was not done within %u ms: the engine is not used from now on\n", .{ dcn.owner, job_most_ms });
     }
     return err.RTGERR_TIMEOUT;
+}
+
+/// Whether job `job`, which WaitGPUDMA answered false, is one a reset of
+/// the whole block gave up: one at or before the last such, its number
+/// done - a job that was done would have been answered true.
+fn givenUp(state: amdgpu.GPUDMAState, job: u32) bool {
+    return state.given_up != 0 and @as(i32, @bitCast(state.given_up -% job)) >= 0 and @as(i32, @bitCast(state.done -% job)) >= 0;
 }
 
 /// Bytes a pixel of `format` is, where the engine takes it: one, two or
@@ -813,4 +834,18 @@ test "a list of copies spans the rows of each side" {
     try testing.expectEqual(@as(u32, 0), to.first);
     try testing.expectEqual(@as(u32, 11), to.rows);
     try testing.expectEqual(@as(u32, 30 * 4), to.end_bytes);
+}
+
+test "a job a reset of the whole block gave up, told from one not done in time" {
+    // Jobs 6 to 9 given up, the page reading 9 done.
+    const after_reset: amdgpu.GPUDMAState = .{ .sent = 9, .done = 9, .given_up = 9 };
+    try testing.expect(givenUp(after_reset, 6));
+    try testing.expect(givenUp(after_reset, 9));
+    // Job 10, sent after and not done in time: the engine's own fault.
+    const later: amdgpu.GPUDMAState = .{ .sent = 10, .done = 9, .given_up = 9 };
+    try testing.expect(!givenUp(later, 10));
+    // No reset yet.
+    try testing.expect(!givenUp(.{ .sent = 3, .done = 2 }, 3));
+    // Across the wrap.
+    try testing.expect(givenUp(.{ .sent = 2, .done = 2, .given_up = 2 }, 0xffff_ffff));
 }

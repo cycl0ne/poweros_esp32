@@ -32,7 +32,9 @@ const _graphics = @import("../graphics/_graphics.zig");
 /// powered, the device's memory has no room for the ring, the engine
 /// does not do the write within 100 ms, or its interrupt cannot be had;
 /// after the write fails or the interrupt cannot be had, every later call
-/// answers false at once. On a machine without the device, false.
+/// answers false at once. On a machine without the device, false. Called
+/// again once ResetGPUCompute has reset the whole block, which stops the
+/// queue, it starts the queue again (since 1.24).
 ///
 /// BEHAVIOR:
 /// The block is kept powered first (SetGPUPower with GPUPOWER_GRAPHICS),
@@ -50,6 +52,12 @@ const _graphics = @import("../graphics/_graphics.zig");
 /// server (AddGPUIntServer) and switched on, so that each job's end
 /// wakes whoever waits for it.
 ///
+/// Started again after a reset of the whole block, the queue takes the
+/// ring and page it had, cleared, and its jobs' numbers go on from the
+/// last one sent, which the page is given as the last done - so a job the
+/// reset gave up reads done, and WaitGPUDMA answers it false - and the
+/// trap's server, still the queue's, is not handed over again.
+///
 /// CONTEXT:
 /// - Waits: yes, for the power manager, a millisecond or so, and for the
 ///   write, at most 100 ms.
@@ -60,7 +68,8 @@ const _graphics = @import("../graphics/_graphics.zig");
 ///
 /// OWNERSHIP:
 /// The ring, 64 KiB, and its page, 4 KiB, are taken from the device's
-/// memory and kept for as long as the system runs.
+/// memory and kept for as long as the system runs; a start after a reset
+/// of the block takes them again.
 ///
 /// NOTES:
 /// The queue runs in the graphics hub's first context, so its packets
@@ -93,17 +102,26 @@ pub fn StartGPUDMA(ab: *AMDGPUBase) bool {
         exec.kprintf(sys, "%s: the power manager does not keep the graphics block powered for its DMA engine\n", .{owner});
         return false;
     }
-    var ring: amdgpu.GPUMemory = .{};
-    if (!gpu.AllocGPUMemory(_dma.ring_bytes + _dma.page_bytes, _dma.page_bytes, &ring)) {
-        exec.kprintf(sys, "%s: no room in the device's memory for the DMA engine's ring\n", .{owner});
-        return false;
+    // A start after a reset of the whole block: the ring it had, the
+    // jobs' numbers going on.
+    const again = ab.dma_ring.bytes != 0;
+    var ring = ab.dma_ring;
+    if (!again) {
+        if (!gpu.AllocGPUMemory(_dma.ring_bytes + _dma.page_bytes, _dma.page_bytes, &ring)) {
+            exec.kprintf(sys, "%s: no room in the device's memory for the DMA engine's ring\n", .{owner});
+            return false;
+        }
+        ab.dma_ring = ring;
     }
-    ab.dma_ring = ring;
+    // The last job done set first, then the rest cleared around it, so
+    // that a task waiting meanwhile never reads a number it had not.
+    _dma.word(ab, _dma.fence_at).* = ab.dma_sent;
     var offset: u32 = 0;
-    while (offset < _dma.ring_bytes + _dma.page_bytes) : (offset += 4) _dma.word(ab, offset).* = 0;
+    while (offset < _dma.ring_bytes + _dma.page_bytes) : (offset += 4) {
+        if (offset != _dma.fence_at) _dma.word(ab, offset).* = 0;
+    }
     _dma.word(ab, _dma.test_at).* = 0xCAFE_DEAD;
     ab.dma_written = 0;
-    ab.dma_sent = 0;
     _dma.fence();
 
     const at = _graphics.at;
@@ -159,18 +177,21 @@ pub fn StartGPUDMA(ab: *AMDGPUBase) bool {
         }
     }
 
-    // Its trap at each job's end, to the queue's server.
-    ab.dma_trap = .{};
-    ab.dma_traps = 0;
-    ab.dma_trap_int = .{
-        .node = .{ .type = .interrupt, .pri = 0, .name = owner },
-        .data = ab,
-        .code = &_dma.trapServer,
-    };
-    if (!gpu.AddGPUIntServer(_dma.INTERRUPT_CLIENT, _dma.TRAP_SOURCE, &ab.dma_trap_int)) {
-        exec.kprintf(sys, "%s: the DMA engine's interrupt cannot be had\n", .{owner});
-        stop(ab);
-        return false;
+    // Its trap at each job's end, to the queue's server - which a start
+    // after a reset still has.
+    if (!again) {
+        ab.dma_trap = .{};
+        ab.dma_traps = 0;
+        ab.dma_trap_int = .{
+            .node = .{ .type = .interrupt, .pri = 0, .name = owner },
+            .data = ab,
+            .code = &_dma.trapServer,
+        };
+        if (!gpu.AddGPUIntServer(_dma.INTERRUPT_CLIENT, _dma.TRAP_SOURCE, &ab.dma_trap_int)) {
+            exec.kprintf(sys, "%s: the DMA engine's interrupt cannot be had\n", .{owner});
+            stop(ab);
+            return false;
+        }
     }
     at(ab, _dma.CNTL).* |= _dma.TRAP_ENABLE;
     ab.dma_running = true;

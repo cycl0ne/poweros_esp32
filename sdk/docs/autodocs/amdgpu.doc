@@ -472,7 +472,8 @@ amdgpu.resource/WaitGPUDMA
 
    RESULT
 	True with `state` filled; false, `state` untouched, where the queue
-	does not run.
+	does not run. While ResetGPUCompute resets the whole block the call
+	waits for it, and answers for the queue started again (since 1.24).
 
    BEHAVIOR
 	The ring's address and length; how far the engine has read it, as it
@@ -489,7 +490,8 @@ amdgpu.resource/WaitGPUDMA
 	(ResetGPUCompute), 0 until one has; and since 1.22 the scratch
 	SendGPUKernel made for one job alone - where it is, its bytes, its
 	waves and the job, all 0 where none is in use, one whose job is done
-	given back first - and how many have been made.
+	given back first - and how many have been made; and since 1.24, how
+	many of the queue's resets reset the whole block.
 
    CONTEXT
 	- Waits: only for the queue's lock.
@@ -604,8 +606,10 @@ amdgpu.resource/WaitGPUDMA
 	The ring's device address and length; how far the engine has read it,
 	as it last wrote it back, and how far it has been written, in bytes
 	since the queue started; the number of the last job sent and of the
-	last done; the interrupts the engine raised at the ends of jobs; and
-	the engine's status register - its bit 0 set while it is idle.
+	last done; the interrupts the engine raised at the ends of jobs; the
+	engine's status register - its bit 0 set while it is idle; and, since
+	1.24, the last job a reset of the whole block gave up and how many
+	times the block has been reset whole.
 
    CONTEXT
 	- Waits: no.
@@ -989,7 +993,7 @@ amdgpu.resource/WaitGPUDMA
 amdgpu.resource/ResetGPUCompute                amdgpu.resource/ResetGPUCompute
 
    NAME
-	ResetGPUCompute -- The compute engine's queue reset where job `job` is not done: the jobs the reset ends given up, and the jobs after them written to the queue again.
+	ResetGPUCompute -- The compute engine's queue reset where job `job` is not done: the jobs the reset ends given up, and the jobs after them written to the queue again; where that does not bring it back, the whole graphics block reset and its queues started again.
 
    SYNOPSIS
 	    fn ResetGPUCompute(ab: *AMDGPUBase, job: u32, flags: u32) u32
@@ -1002,15 +1006,19 @@ amdgpu.resource/WaitGPUDMA
 	  it, that WaitGPUCompute found not done in time.
 	- `flags` - GPURESET_PIPE resets the compute engine's pipe, every
 	  queue on it, rather than the queue alone; with 0 the pipe is reset
-	  only where the queue's own reset does not take.
+	  only where the queue's own reset does not take. GPURESET_BLOCK
+	  (since 1.24) resets the whole block at once, the queue's waves let
+	  finish first.
 
    RESULT
 	The number of the last job the reset gave up, once the queue runs
-	again: every job from the first not done to it is given up. 0 where
-	nothing was: where `job` is 0, not sent or done - WaitGPUCompute says
-	which - or where the queue does not run; and where the queue could not
-	be reset: every job not done is given up then, the queue is stopped,
-	and every call that sends a job answers 0 from then on.
+	again: every job from the first not done to it is given up - after a
+	reset of the whole block, every job not done, the last one sent. 0
+	where nothing was: where `job` is 0, not sent or done - WaitGPUCompute
+	says which - or where the queue does not run; and where neither the
+	queue nor the block could be reset: every job not done on the block's
+	queues is given up then, the queues are stopped, and every call that
+	sends a job answers 0 from then on.
 
    BEHAVIOR
 	Under the queue's lock, as the vendor's driver resets a kernel compute
@@ -1058,14 +1066,57 @@ amdgpu.resource/WaitGPUDMA
 	the queue could not be reset. The tasks waiting for jobs are woken to
 	look again.
 
+	Where the scheduler does not remove the queue or map it again, or the
+	queue does not set the register it is tried with, the whole graphics
+	block is reset, since 1.24 - as the vendor's driver resets this block,
+	the power manager's 13.0.4 (soc21_asic_reset_method: MODE2,
+	smu_v13_0_4_mode2_reset), and resumes it (amdgpu_device_ip_resume) -
+	and at once with GPURESET_BLOCK, the queue's waves let finish first,
+	100 ms at most. Under the DMA engine's queue's lock, the security
+	processor's, the page table's and the mailbox's, taken after the
+	compute queue's in that order, every job not done on the compute
+	engine is marked given up; the DMA engine is given 100 ms to finish
+	its jobs, then one more job of its own rinses the block's caches
+	(SDMA_OP_GCR_REQ: the second level written back and dropped), so that
+	what the compute engine's waves wrote through the cache is in memory
+	before the cache is lost; where the engine has not done both in time,
+	its jobs not done are given up. The engines are halted - the DMA
+	engine, the command processor's micro engines and the scheduler's
+	pipes - and the power manager resets the block alone
+	(GfxDeviceDriverReset with SMU_RESET_MODE_2), waited for 2 s at most.
+	The reset shuts the memory window: the bus block lets none of the
+	CPU's reads and writes there through (BIF_BX0_BIF_FB_EN), a read
+	answering all ones and a write going nowhere. So what the window let
+	through is read before the reset and set again once the power manager
+	answers, whatever its answer - the firmware's framebuffer is drawn
+	through the window. The security processor and its region are left as they are, as the
+	vendor's driver leaves them in a reset of a block with an IMU
+	(amdgpu_device_ip_suspend_phase2): it loads the IMU and the RLC again
+	from there, and the RLC the engines' code. Then the block is started
+	again as StartGPUGraphics starts it, the loading left out: kept
+	powered (SetGPUPower), its engines' code waited for, the hub turned on
+	over the page table it had - every mapping kept - its values set, the
+	RLC resumed and its clocks let gate. Last StartGPUDMA and
+	StartGPUCompute start both queues again in the memory they had, their
+	jobs' numbers going on and every job before read done, so that one
+	given up is answered false (WaitGPUDMA, WaitGPUCompute). Meanwhile the
+	queues' calls wait for the reset rather than take the queues as
+	stopped. The log says why the block was reset, the jobs given up, and
+	how long it took. The display engine and the video decoders are not
+	part of the block and run on.
+
    CONTEXT
 	- Waits: for the queue's waves to finish, 100 ms at most, and then for
 	  it to be inactive, 100 ms at most; for each of the scheduler's two
 	  calls, 2.1 s at most; for the ring's test, 100 ms at most - a few
 	  milliseconds where all goes well, 100 more where a kernel's waves
-	  run on.
+	  run on. A reset of the whole block waits for the DMA engine, 200 ms
+	  at most, for the power manager's reset, 2 s at most, and for the
+	  block's start and its queues', each as its own call waits.
 	- Interrupts: no.
-	- Locks: takes the queue's lock.
+	- Locks: takes the queue's lock; a reset of the whole block takes the
+	  DMA engine's queue's, the security processor's, the page table's and
+	  the mailbox's locks inside it, in that order.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1083,13 +1134,21 @@ amdgpu.resource/WaitGPUDMA
 	false at once for a job a reset
 	gave up, while fewer than 64 jobs have been sent after it. A job
 	written again runs from its start. The queue's scratch, its slots of
-	arguments and its interrupt are kept as they are.
+	arguments and its interrupt are kept as they are, through a reset of
+	the whole block too. A job of the DMA engine's that such a reset gives
+	up may have been done in part. On the NucBox the block runs again 65
+	to 74 ms after a reset of it begins - 1 to 10 waiting for the DMA
+	engine, 40 the power manager's reset, 24 the start - and 174 ms where
+	the DMA engine is held and given its 100; the display counts its
+	frames through it.
 
    BUGS
 	A job whose kernels the engine had begun but whose end it had not got
 	to is written again whole: its kernels write again what they wrote. A
-	queue that cannot be reset is not started again: nothing resets the
-	whole graphics block.
+	block that does not come back from its reset is not reset again: its
+	queues stay stopped. Where the DMA engine does not finish in time, the
+	block's caches are lost unrinsed, and what the compute engine's waves
+	wrote through them may be lost with them.
 
    SEE ALSO
 	`WaitGPUCompute`, `SendGPUKernel`, `SendGPUCompute`,
@@ -1195,7 +1254,9 @@ amdgpu.resource/WaitGPUDMA
 	the last job's, past 0 to 1. 0 where the queue does not run
 	(StartGPUDMA), where the job with its fence and trap would take the
 	whole ring (some 16 thousand words), or where the engine has not
-	read enough of the ring to make room for it within a second.
+	read enough of the ring to make room for it within a second. While
+	ResetGPUCompute resets the whole block the job waits for the queue to
+	run again (since 1.24), and is 0 where it does not.
 
    BEHAVIOR
 	Under the queue's lock the job waits for room in the ring - the engine
@@ -1454,7 +1515,9 @@ amdgpu.resource/WaitGPUDMA
 	version that maps the system's own queues (0x47), or the scheduler,
 	its mapper or the queue does not answer in time; after any of these
 	but the first three every later call answers false at once. On a
-	machine without the device, false.
+	machine without the device, false. Called again once ResetGPUCompute
+	has reset the whole block, which stops the queue, it starts the queue
+	again (since 1.24).
 
    BEHAVIOR
 	The block is kept powered first (SetGPUPower with GPUPOWER_GRAPHICS).
@@ -1468,7 +1531,8 @@ amdgpu.resource/WaitGPUDMA
 	at most - as the vendor's driver does, it goes on where it is not.
 	The scheduler's two pipes are reset, each pointed at the first
 	instruction its file's header names, and let run (mes_v11_0_enable);
-	their firmware's versions are read; the second pipe, the mapper, is
+	their firmware's versions are read once each pipe has written its own,
+	500 us on and then every millisecond, 1 s at most (since 1.24); the second pipe, the mapper, is
 	told it maps queues (kiq_setting) and its own queue set through its
 	registers. Where the scheduler is 0x47 or later, its own queue is
 	mapped by the mapper (MAP_QUEUES) and the mapper's ring tried with a
@@ -1482,9 +1546,17 @@ amdgpu.resource/WaitGPUDMA
 	on. Where any of it fails the scheduler's pipes are halted, and the
 	engines halted again.
 
+	Started again after a reset of the whole block, the queues take the
+	piece they had, cleared, and the queue's jobs' numbers go on from the
+	last one sent, which the piece is given as the last done - so a job
+	the reset gave up reads done, and WaitGPUCompute, which finds it
+	marked given up, answers it false - and the end-of-pipe interrupt's
+	server, still the queue's, is not handed over again.
+
    CONTEXT
 	- Waits: yes, for the power manager, a millisecond or so; for the
-	  command processor and each ring's test, at most 100 ms; for each call
+	  command processor and each ring's test, at most 100 ms each; for the
+	  scheduler's versions, at most 1 s; for each call
 	  of the scheduler, at most 2.1 s - a few milliseconds in all where
 	  all goes well.
 	- Interrupts: no.
@@ -1495,7 +1567,8 @@ amdgpu.resource/WaitGPUDMA
    OWNERSHIP
 	The rings, their descriptions, the engines' buffers and the slots of
 	arguments, 136 KiB of the device's memory, are taken and kept for as
-	long as the system runs.
+	long as the system runs; a start after a reset of the block takes them
+	again.
 
    NOTES
 	The queue runs in the graphics hub's first context, as the DMA
@@ -1536,7 +1609,9 @@ amdgpu.resource/WaitGPUDMA
 	powered, the device's memory has no room for the ring, the engine
 	does not do the write within 100 ms, or its interrupt cannot be had;
 	after the write fails or the interrupt cannot be had, every later call
-	answers false at once. On a machine without the device, false.
+	answers false at once. On a machine without the device, false. Called
+	again once ResetGPUCompute has reset the whole block, which stops the
+	queue, it starts the queue again (since 1.24).
 
    BEHAVIOR
 	The block is kept powered first (SetGPUPower with GPUPOWER_GRAPHICS),
@@ -1554,6 +1629,12 @@ amdgpu.resource/WaitGPUDMA
 	server (AddGPUIntServer) and switched on, so that each job's end
 	wakes whoever waits for it.
 
+	Started again after a reset of the whole block, the queue takes the
+	ring and page it had, cleared, and its jobs' numbers go on from the
+	last one sent, which the page is given as the last done - so a job the
+	reset gave up reads done, and WaitGPUDMA answers it false - and the
+	trap's server, still the queue's, is not handed over again.
+
    CONTEXT
 	- Waits: yes, for the power manager, a millisecond or so, and for the
 	  write, at most 100 ms.
@@ -1564,7 +1645,8 @@ amdgpu.resource/WaitGPUDMA
 
    OWNERSHIP
 	The ring, 64 KiB, and its page, 4 KiB, are taken from the device's
-	memory and kept for as long as the system runs.
+	memory and kept for as long as the system runs; a start after a reset
+	of the block takes them again.
 
    NOTES
 	The queue runs in the graphics hub's first context, so its packets
@@ -1910,7 +1992,9 @@ amdgpu.resource/WaitGPUDMA
    RESULT
 	True once the engine has done the job and every one before it, at once
 	where it already has. False where it has not within `most_ms`, where
-	`job` is 0 or the queue does not run.
+	`job` is 0 or the queue does not run, and at once for a job a reset of
+	the whole block gave up (since 1.24) - the reset ResetGPUCompute makes
+	where nothing less brings its own queue back.
 
    BEHAVIOR
 	The engine writes each job's number into the queue's page as it ends
@@ -1919,7 +2003,10 @@ amdgpu.resource/WaitGPUDMA
 	waitable until the job is done or the time is up - looking again at
 	least every 10 ms, whatever wakes it. Numbers are compared modulo
 	2^32, so a job more than two thousand million jobs old is taken as one
-	not sent yet.
+	not sent yet. A reset of the whole block lets the engine finish its
+	jobs first, 100 ms at most; those it has not done by then it gives
+	up, and the queue, started again, reads them done. While the reset is
+	under way the wait goes on as before.
 
    CONTEXT
 	- Waits: yes, until the job is done, `most_ms` at most.
@@ -1937,7 +2024,9 @@ amdgpu.resource/WaitGPUDMA
 
    BUGS
 	A job the engine never ends - a packet it hangs on - holds every job
-	after it: there is no reset of the queue.
+	after it: the queue has no reset of its own, and only a reset of the
+	whole block, which ResetGPUCompute makes for the compute engine's
+	queue, gives its jobs up.
 
    SEE ALSO
 	`SendGPUDMA`, `GetGPUDMAState`, `WaitForAny`

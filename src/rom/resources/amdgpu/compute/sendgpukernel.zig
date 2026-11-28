@@ -133,7 +133,7 @@ const _compute = @import("_compute.zig");
 /// if (job == 0 or !ab.WaitGPUCompute(job, 1000)) return error.NoCompute;
 /// ```
 pub fn SendGPUKernel(ab: *AMDGPUBase, kernel: *const amdgpu.GPUKernel, dispatch: *const amdgpu.GPUDispatch) u32 {
-    if (ab.device == null or !ab.compute_running) return 0;
+    if (ab.device == null or !_compute.runs(ab)) return 0;
     const sys = ab.sys_base;
     const owner = amdgpu.AMDGPUNAME;
     if (_compute.refusal(kernel, dispatch.groups, dispatch.threads, dispatch.argument_bytes, dispatch.stack_bytes)) |why| {
@@ -144,6 +144,9 @@ pub fn SendGPUKernel(ab: *AMDGPUBase, kernel: *const amdgpu.GPUKernel, dispatch:
     if (dispatch.argument_bytes != 0 and given == null) return 0;
     sys.ObtainSemaphore(&ab.compute_lock);
     defer sys.ReleaseSemaphore(&ab.compute_lock);
+    // A reset of the whole block, which holds the lock, may leave it
+    // stopped.
+    if (!ab.compute_running) return 0;
 
     const slot = ab.compute_slot;
     if (!waitFor(ab, ab.compute_slot_jobs[slot], "a kernel's arguments' slot")) return 0;

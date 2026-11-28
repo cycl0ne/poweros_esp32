@@ -1225,6 +1225,26 @@ the empty jobs after it are done right; the spin gives up all five jobs
 the engine had got to - the fill after it, which had run, with them -
 and the kernels after the resets are right.
 
+Where the queue cannot be reset - the scheduler does not take it off
+or map it again, or it does not answer once mapped - or where the
+program asks for it (`GPURESET_BLOCK`), the whole graphics block is
+reset. Every job not done on the compute engine is given up; the DMA
+engine is given 100 ms to finish its jobs and then rinses the block's
+caches, so that what the kernels wrote is in memory, and where it does
+not finish its jobs not done are given up too; the power manager
+resets the block alone, and the block and both queues start again
+where they were, their jobs' numbers going on. `WaitGPUCompute` and
+`WaitGPUDMA` answer false for a job given up, and `GetGPUComputeState`
+and `GetGPUDMAState` count the block's resets. The reset shuts the
+memory window, which is let through again once the power manager
+answers. `C:test/Gpu COMPUTE RESET WHOLE` holds the DMA engine on the
+same word as the spinning waves and resets the block: on the NucBox it
+runs again 174 ms on - 110 of them the DMA engine's time to finish, 40
+the power manager's reset and 24 the start - the three compute jobs and
+both DMA jobs are given up, the display counts its frames through it,
+the DMA engine's fill after it is right and the window holds; with the
+DMA engine idle the block runs again 65 to 74 ms on.
+
 ```zig
 const job = ab.SendGPUKernel(&kernel, &dispatch);
 if (job == 0) return error.NoCompute;

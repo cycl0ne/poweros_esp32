@@ -547,7 +547,35 @@ pub fn turnOnHub(ab: *AMDGPUBase) bool {
     clear(table.cpu, table_bytes);
     clear(scratch.cpu, page_bytes);
     fence();
+    if (!programHub(ab, table, scratch)) {
+        gpu.FreeGPUMemory(&scratch);
+        gpu.FreeGPUMemory(&table);
+        return false;
+    }
+    ab.gart = table;
+    ab.graphics_scratch = scratch;
+    ab.gart_start = gart_start;
+    ab.gart_bytes = gart_bytes;
+    ab.gart_arena = .{ .start = 0, .end = gart_bytes };
+    exec.kprintf(sys, "%s: the graphics hub is on: the device's memory 0x%lx-0x%lx through its aperture, its page table of %ldK at 0x%lx for 0x%lx-0x%lx\n", .{
+        owner, ab.memory_device, ab.memory_device + ab.memory_bytes - 1, table_bytes / 1024, table.device, gart_start, gart_start + gart_bytes - 1,
+    });
+    return true;
+}
 
+/// The hub turned on again once the whole block has been reset, over the
+/// page table and scratch page it had - every mapping in it kept - under
+/// the table's lock, which the caller holds.
+pub fn hubAgain(ab: *AMDGPUBase) bool {
+    return programHub(ab, ab.gart, ab.graphics_scratch);
+}
+
+/// Every register of the hub written for the page table `table` and the
+/// scratch page `scratch`, as the vendor's driver writes them
+/// (gmc_v11_0_gart_enable, gfxhub_v3_0_gart_enable), its faults sent to
+/// the scratch page and its TLB dropped: false, said on the raw port,
+/// where the TLB is not dropped in time.
+fn programHub(ab: *AMDGPUBase, table: amdgpu.GPUMemory, scratch: amdgpu.GPUMemory) bool {
     // The first context's table and range (init_gart_aperture_regs).
     const table_base = machineOf(ab, table) | valid;
     hub(ab, CONTEXT0_PAGE_TABLE_BASE_ADDR_LO32).* = @truncate(table_base);
@@ -616,20 +644,7 @@ pub fn turnOnHub(ab: *AMDGPUBase) bool {
     var faults = hub(ab, L2_PROTECTION_FAULT_CNTL).*;
     faults &= ~CRASH_ON_FAULTS;
     hub(ab, L2_PROTECTION_FAULT_CNTL).* = faults | FAULT_ENABLE_DEFAULTS;
-    if (!dropTlb(ab)) {
-        gpu.FreeGPUMemory(&scratch);
-        gpu.FreeGPUMemory(&table);
-        return false;
-    }
-    ab.gart = table;
-    ab.graphics_scratch = scratch;
-    ab.gart_start = gart_start;
-    ab.gart_bytes = gart_bytes;
-    ab.gart_arena = .{ .start = 0, .end = gart_bytes };
-    exec.kprintf(sys, "%s: the graphics hub is on: the device's memory 0x%lx-0x%lx through its aperture, its page table of %ldK at 0x%lx for 0x%lx-0x%lx\n", .{
-        owner, ab.memory_device, memory_end, table_bytes / 1024, table.device, gart_start, gart_end,
-    });
-    return true;
+    return dropTlb(ab);
 }
 
 /// The first context's TLB and L2 entries dropped through the hub's

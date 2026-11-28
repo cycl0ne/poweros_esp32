@@ -191,7 +191,8 @@ pub const AMDGPUBase = opaque {
     }
 
     /// Waits until the DMA engine has done job `job`, `most_ms` milliseconds
-    /// at most; true once it has, false where it has not by then.
+    /// at most; true once it has, false where it has not by then or a reset
+    /// of the whole graphics block gave it up.
     pub fn WaitGPUDMA(self: *AMDGPUBase, job: u32, most_ms: u32) bool {
         return libraries.call(self, LVO.WaitGPUDMA, Fn.WaitGPUDMA, .{ job, most_ms });
     }
@@ -283,9 +284,11 @@ pub const AMDGPUBase = opaque {
     /// The compute engine's queue reset where job `job` is not done: the
     /// first job not done given up, the queue reset - its pipe with it where
     /// `flags` has GPURESET_PIPE - and mapped again, and the jobs not done
-    /// written to it again. The number of the last job given up; 0 where none
-    /// was: `job` done, the queue not running, or not reset - then it stays
-    /// stopped.
+    /// written to it again; where that does not bring it back, or `flags` has
+    /// GPURESET_BLOCK, the whole graphics block reset and its queues started
+    /// again, every job not done on either given up. The number of the last
+    /// job given up; 0 where none was: `job` done, the queue not running, or
+    /// not reset - then it stays stopped.
     pub fn ResetGPUCompute(self: *AMDGPUBase, job: u32, flags: u32) u32 {
         return libraries.call(self, LVO.ResetGPUCompute, Fn.ResetGPUCompute, .{ job, flags });
     }

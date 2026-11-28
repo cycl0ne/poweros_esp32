@@ -8,7 +8,10 @@
 //! up, or the first job not done where
 //! none comes, the queue removed by the scheduler, made new, mapped again
 //! and tried, and the jobs after those written to it again - where none
-//! came, the given-up one with its own packets made NOPs.
+//! came, the given-up one with its own packets made NOPs. Where that does
+//! not bring the queue back, or the caller asks for it, the whole graphics
+//! block is reset, as the vendor's driver resets this block
+//! (soc21_asic_reset_method: MODE2), and started again with its queues.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -16,10 +19,18 @@ const amdgpu = sdk.resources.amdgpu;
 const AMDGPUBase = @import("../amdgpu.zig").AMDGPUBase;
 const _compute = @import("_compute.zig");
 const _graphics = @import("../graphics/_graphics.zig");
+const _dma = @import("../dma/_dma.zig");
+const _power = @import("../power/_power.zig");
+const _memory = @import("../memory/_memory.zig");
+
+/// How long the DMA engine is given to finish its jobs before a reset of
+/// the whole block, and then to rinse the block's caches.
+const finish_most_us: u64 = 100_000;
 
 /// The compute engine's queue reset where job `job` is not done: the jobs
 /// the reset ends given up, and the jobs after them written to the queue
-/// again.
+/// again; where that does not bring it back, the whole graphics block
+/// reset and its queues started again.
 ///
 /// SYNOPSIS:
 /// ```zig
@@ -33,15 +44,19 @@ const _graphics = @import("../graphics/_graphics.zig");
 ///   it, that WaitGPUCompute found not done in time.
 /// - `flags` - GPURESET_PIPE resets the compute engine's pipe, every
 ///   queue on it, rather than the queue alone; with 0 the pipe is reset
-///   only where the queue's own reset does not take.
+///   only where the queue's own reset does not take. GPURESET_BLOCK
+///   (since 1.24) resets the whole block at once, the queue's waves let
+///   finish first.
 ///
 /// RESULT:
 /// The number of the last job the reset gave up, once the queue runs
-/// again: every job from the first not done to it is given up. 0 where
-/// nothing was: where `job` is 0, not sent or done - WaitGPUCompute says
-/// which - or where the queue does not run; and where the queue could not
-/// be reset: every job not done is given up then, the queue is stopped,
-/// and every call that sends a job answers 0 from then on.
+/// again: every job from the first not done to it is given up - after a
+/// reset of the whole block, every job not done, the last one sent. 0
+/// where nothing was: where `job` is 0, not sent or done - WaitGPUCompute
+/// says which - or where the queue does not run; and where neither the
+/// queue nor the block could be reset: every job not done on the block's
+/// queues is given up then, the queues are stopped, and every call that
+/// sends a job answers 0 from then on.
 ///
 /// BEHAVIOR:
 /// Under the queue's lock, as the vendor's driver resets a kernel compute
@@ -89,14 +104,57 @@ const _graphics = @import("../graphics/_graphics.zig");
 /// the queue could not be reset. The tasks waiting for jobs are woken to
 /// look again.
 ///
+/// Where the scheduler does not remove the queue or map it again, or the
+/// queue does not set the register it is tried with, the whole graphics
+/// block is reset, since 1.24 - as the vendor's driver resets this block,
+/// the power manager's 13.0.4 (soc21_asic_reset_method: MODE2,
+/// smu_v13_0_4_mode2_reset), and resumes it (amdgpu_device_ip_resume) -
+/// and at once with GPURESET_BLOCK, the queue's waves let finish first,
+/// 100 ms at most. Under the DMA engine's queue's lock, the security
+/// processor's, the page table's and the mailbox's, taken after the
+/// compute queue's in that order, every job not done on the compute
+/// engine is marked given up; the DMA engine is given 100 ms to finish
+/// its jobs, then one more job of its own rinses the block's caches
+/// (SDMA_OP_GCR_REQ: the second level written back and dropped), so that
+/// what the compute engine's waves wrote through the cache is in memory
+/// before the cache is lost; where the engine has not done both in time,
+/// its jobs not done are given up. The engines are halted - the DMA
+/// engine, the command processor's micro engines and the scheduler's
+/// pipes - and the power manager resets the block alone
+/// (GfxDeviceDriverReset with SMU_RESET_MODE_2), waited for 2 s at most.
+/// The reset shuts the memory window: the bus block lets none of the
+/// CPU's reads and writes there through (BIF_BX0_BIF_FB_EN), a read
+/// answering all ones and a write going nowhere. So what the window let
+/// through is read before the reset and set again once the power manager
+/// answers, whatever its answer - the firmware's framebuffer is drawn
+/// through the window. The security processor and its region are left as they are, as the
+/// vendor's driver leaves them in a reset of a block with an IMU
+/// (amdgpu_device_ip_suspend_phase2): it loads the IMU and the RLC again
+/// from there, and the RLC the engines' code. Then the block is started
+/// again as StartGPUGraphics starts it, the loading left out: kept
+/// powered (SetGPUPower), its engines' code waited for, the hub turned on
+/// over the page table it had - every mapping kept - its values set, the
+/// RLC resumed and its clocks let gate. Last StartGPUDMA and
+/// StartGPUCompute start both queues again in the memory they had, their
+/// jobs' numbers going on and every job before read done, so that one
+/// given up is answered false (WaitGPUDMA, WaitGPUCompute). Meanwhile the
+/// queues' calls wait for the reset rather than take the queues as
+/// stopped. The log says why the block was reset, the jobs given up, and
+/// how long it took. The display engine and the video decoders are not
+/// part of the block and run on.
+///
 /// CONTEXT:
 /// - Waits: for the queue's waves to finish, 100 ms at most, and then for
 ///   it to be inactive, 100 ms at most; for each of the scheduler's two
 ///   calls, 2.1 s at most; for the ring's test, 100 ms at most - a few
 ///   milliseconds where all goes well, 100 more where a kernel's waves
-///   run on.
+///   run on. A reset of the whole block waits for the DMA engine, 200 ms
+///   at most, for the power manager's reset, 2 s at most, and for the
+///   block's start and its queues', each as its own call waits.
 /// - Interrupts: no.
-/// - Locks: takes the queue's lock.
+/// - Locks: takes the queue's lock; a reset of the whole block takes the
+///   DMA engine's queue's, the security processor's, the page table's and
+///   the mailbox's locks inside it, in that order.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -114,13 +172,21 @@ const _graphics = @import("../graphics/_graphics.zig");
 /// false at once for a job a reset
 /// gave up, while fewer than 64 jobs have been sent after it. A job
 /// written again runs from its start. The queue's scratch, its slots of
-/// arguments and its interrupt are kept as they are.
+/// arguments and its interrupt are kept as they are, through a reset of
+/// the whole block too. A job of the DMA engine's that such a reset gives
+/// up may have been done in part. On the NucBox the block runs again 65
+/// to 74 ms after a reset of it begins - 1 to 10 waiting for the DMA
+/// engine, 40 the power manager's reset, 24 the start - and 174 ms where
+/// the DMA engine is held and given its 100; the display counts its
+/// frames through it.
 ///
 /// BUGS:
 /// A job whose kernels the engine had begun but whose end it had not got
 /// to is written again whole: its kernels write again what they wrote. A
-/// queue that cannot be reset is not started again: nothing resets the
-/// whole graphics block.
+/// block that does not come back from its reset is not reset again: its
+/// queues stay stopped. Where the DMA engine does not finish in time, the
+/// block's caches are lost unrinsed, and what the compute engine's waves
+/// wrote through them may be lost with them.
 ///
 /// SEE ALSO:
 /// `WaitGPUCompute`, `SendGPUKernel`, `SendGPUCompute`,
@@ -145,6 +211,10 @@ pub fn ResetGPUCompute(ab: *AMDGPUBase, job: u32, flags: u32) u32 {
     defer sys.ReleaseSemaphore(&ab.compute_lock);
     if (!ab.compute_running) return 0;
     if (_compute.passed(_compute.done(ab), job) or !_compute.passed(ab.compute_sent, job)) return 0;
+    if (flags & amdgpu.GPURESET_BLOCK != 0) {
+        const drained = drainQueue(ab);
+        return resetBlock(ab, if (drained) "as asked, its waves finished" else "as asked, its waves running on after 100 ms");
+    }
 
     const stopped = stopQueue(ab, flags & amdgpu.GPURESET_PIPE != 0);
 
@@ -177,10 +247,10 @@ pub fn ResetGPUCompute(ab: *AMDGPUBase, job: u32, flags: u32) u32 {
     // Removed by the scheduler, made new, mapped again and tried.
     const version = ab.scheduler_version & _compute.scheduler_version_mask;
     var frame = _compute.removeFrame(_compute.compute_queue, _compute.compute_doorbell, version >= _compute.scheduler_removes_after_reset_from);
-    if (!_compute.call(ab, &frame, _compute.remove_queue_status_at)) return failed(ab, "the scheduler does not remove it");
+    if (!_compute.call(ab, &frame, _compute.remove_queue_status_at)) return resetBlock(ab, "the scheduler does not remove the queue");
     _compute.renewQueue(ab);
     frame = _compute.mapFrame(_compute.compute_queue, _compute.compute_doorbell, ab.compute.device + _compute.compute_mqd_at, ab.compute.device + _compute.compute_write_at);
-    if (!_compute.call(ab, &frame, _compute.add_queue_status_at)) return failed(ab, "the scheduler does not map it again");
+    if (!_compute.call(ab, &frame, _compute.add_queue_status_at)) return resetBlock(ab, "the scheduler does not map the queue again");
     if (!_compute.tryRing(ab, .compute)) {
         const at = _graphics.at;
         _compute.select(ab, _compute.compute_queue, 0);
@@ -191,7 +261,7 @@ pub fn ResetGPUCompute(ab: *AMDGPUBase, job: u32, flags: u32) u32 {
         exec.kprintf(sys, "%s: the compute engine's queue after its reset: active %x, read %x, written %x, CP_CPC_STATUS %x\n", .{
             owner, active, queue_read, queue_written, at(ab, _compute.CP_CPC_STATUS).*,
         });
-        return failed(ab, "it does not set a register");
+        return resetBlock(ab, "the queue does not set a register");
     }
 
     // The jobs after those given up written again - no longer given up -
@@ -291,6 +361,186 @@ fn stopQueue(ab: *AMDGPUBase, pipe_at_once: bool) Stopped {
         exec.kprintf(sys, "%s: the compute engine's pipe %u was reset: CP_MEC1_INSTR_PNTR %x\n", .{ owner, queue.pipe, pointer });
     }
     return stopped;
+}
+
+/// The queue's waves let finish and no group of its dispatches started any
+/// more, before a reset of the whole block asked for at once: its dequeue
+/// asked in the RLC's safe mode (CP_HQD_DEQUEUE_REQUEST 1) and the queue
+/// waited for to be inactive, 100 ms at most - the block is reset after,
+/// whatever comes of it. Whether it was.
+fn drainQueue(ab: *AMDGPUBase) bool {
+    const safe = _graphics.enterSafeMode(ab);
+    _compute.select(ab, _compute.compute_queue, 0);
+    _graphics.at(ab, _compute.CP_HQD_DEQUEUE_REQUEST).* = _compute.DEQUEUE_DRAIN_PIPE;
+    const inactive = inactiveWithin(ab, _compute.drain_most_us);
+    _compute.select(ab, _compute.no_queue, 0);
+    _graphics.leaveSafeMode(ab, safe);
+    return inactive;
+}
+
+/// The whole graphics block reset and started again, its queues with it,
+/// said with `why` - under the compute queue's lock, which the caller
+/// holds, and the DMA queue's, the security processor's, the page table's
+/// and the mailbox's, taken in that order: the number of the last job
+/// given up, every one of the compute engine's not done; 0 where the
+/// block does not come back, every queue stopped then
+/// (`blockFailed`). The calls of the queues wait meanwhile rather than
+/// take them as stopped (`resetting_block`).
+fn resetBlock(ab: *AMDGPUBase, why: [*:0]const u8) u32 {
+    const sys = ab.sys_base;
+    const owner = amdgpu.AMDGPUNAME;
+    const gpu: *sdk.interface.amdgpu.AMDGPUBase = @ptrCast(&ab.lib);
+    const at = _graphics.at;
+    const began = sys.UptimeUs();
+    @atomicStore(bool, &ab.resetting_block, true, .release);
+    defer @atomicStore(bool, &ab.resetting_block, false, .release);
+
+    // Every job of the compute engine's not done given up: its queue is
+    // made new.
+    const sent = ab.compute_sent;
+    const first = _compute.nextJob(_compute.done(ab));
+    if (!_compute.passed(_compute.done(ab), sent)) _ = _compute.markGivenUp(ab, first, sent, true);
+
+    // The DMA engine's jobs let finish and the block's caches rinsed by a
+    // job of its own, so that what the compute engine's waves wrote
+    // through the second level - the board's marks - is in memory before
+    // the reset; where it does not do both in time, its jobs not done are
+    // given up.
+    sys.ObtainSemaphore(&ab.dma_lock);
+    defer sys.ReleaseSemaphore(&ab.dma_lock);
+    const dma = ab.dma_running;
+    const dma_first = _dma.nextJob(_dma.done(ab));
+    const rinsed = dma and finishDma(ab);
+    if (dma and !rinsed) giveUpDma(ab);
+
+    sys.ObtainSemaphore(&ab.security_lock);
+    defer sys.ReleaseSemaphore(&ab.security_lock);
+    sys.ObtainSemaphore(&ab.gart_lock);
+    defer sys.ReleaseSemaphore(&ab.gart_lock);
+
+    // The engines halted, as the vendor's driver halts them before the
+    // reset (sdma_v6_0_hw_fini, gfx_v11_0_cp_enable, mes_v11_0_enable).
+    if (dma) {
+        at(ab, _dma.RB_CNTL).* &= ~_dma.RB_ENABLE;
+        at(ab, _dma.F32_CNTL).* |= _dma.HALT;
+    }
+    at(ab, _compute.CP_MES_CNTL).* = at(ab, _compute.CP_MES_CNTL).* & ~(_compute.MES_PIPE0_ACTIVE | _compute.MES_PIPE1_ACTIVE) |
+        _compute.MES_INVALIDATE_ICACHE | _compute.MES_PIPE0_RESET | _compute.MES_PIPE1_RESET | _compute.MES_HALT;
+    at(ab, _compute.CP_ME_CNTL).* |= _compute.ME_HALT | _compute.PFP_HALT;
+    at(ab, _compute.CP_MEC_CNTL).* |= _compute.MEC_ME1_HALT | _compute.MEC_ME2_HALT;
+
+    // The block alone reset by the power manager (smu_v13_0_4_mode2_reset),
+    // the security processor and its region left as they are: it loads the
+    // IMU and the RLC again from there itself. The reset shuts the memory
+    // window - the CPU's reads there answer all ones, its writes go
+    // nowhere - which is let through again as it was once it answers,
+    // whatever the answer.
+    const window = _memory.windowOpen(ab);
+    const reset_from = sys.UptimeUs();
+    const finish_us = reset_from - began;
+    const answer = blk: {
+        sys.ObtainSemaphore(&ab.mailbox_lock);
+        defer sys.ReleaseSemaphore(&ab.mailbox_lock);
+        break :blk _power.sendWithin(ab, ab.power, _power.MESSAGE_RESET_GRAPHICS, _power.RESET_BLOCK_ALONE, _power.reset_most_us);
+    };
+    const reset_us = sys.UptimeUs() - reset_from;
+    const window_shut = _memory.openWindow(ab, window);
+    const done_right = if (answer) |given| given.answer == _power.ANSWER_DONE else false;
+    if (!done_right) return blockFailed(ab, why, "the power manager does not reset it", dma, began);
+
+    // The block started again as the vendor's driver resumes it after the
+    // reset, the security processor's part left out (gfx_v11_0_hw_init):
+    // kept powered, its engines' code waited for, the hub on over its page
+    // table, the block's values, the RLC resumed and its clocks let gate.
+    if (!gpu.SetGPUPower(amdgpu.GPUPOWER_GRAPHICS, 0, true)) return blockFailed(ab, why, "the power manager does not keep it powered", dma, began);
+    if (!_graphics.waitForEngines(ab)) return blockFailed(ab, why, "its engines do not have their code again", dma, began);
+    if (!_graphics.hubAgain(ab)) return blockFailed(ab, why, "its hub does not drop its TLB", dma, began);
+    _graphics.tune(ab);
+    if (!_graphics.resumeRlc(ab)) return blockFailed(ab, why, "its RLC is not resumed", dma, began);
+    _graphics.gateClocks(ab);
+
+    // Its queues started again, the DMA engine's first, each in the
+    // memory it had, its jobs' numbers going on.
+    if (dma) {
+        ab.dma_running = false;
+        if (!gpu.StartGPUDMA()) return blockFailed(ab, why, "the DMA engine's queue does not start again", true, began);
+    }
+    ab.compute_running = false;
+    if (!gpu.StartGPUCompute()) return blockFailed(ab, why, "the compute engine's queue does not start again", dma, began);
+
+    ab.block_resets +%= 1;
+    ab.compute_resets +%= 1;
+    ab.compute_given_up = sent;
+    const back_us = sys.UptimeUs() - began;
+    const start_us = back_us - finish_us - reset_us;
+    const window_said: [*:0]const u8 = if (window_shut) "; the memory window, shut by the reset, let through again" else "";
+    if (dma and !rinsed) {
+        exec.kprintf(sys, "%s: the graphics block was reset whole (%s): the compute engine's jobs %u to %u given up, and the DMA engine's %u to %u, which it had not done within 100 ms, its caches not rinsed; it ran again %lu us on - %lu waiting for the DMA engine, %lu the power manager's reset, %lu starting the block and its queues again%s\n", .{
+            owner, why, first, sent, dma_first, ab.dma_sent, back_us, finish_us, reset_us, start_us, window_said,
+        });
+    } else {
+        const before: [*:0]const u8 = if (dma) "the DMA engine's jobs done and its caches rinsed first" else "no DMA queue to rinse its caches";
+        exec.kprintf(sys, "%s: the graphics block was reset whole (%s): the compute engine's jobs %u to %u given up, %s; it ran again %lu us on - %lu waiting for the DMA engine, %lu the power manager's reset, %lu starting the block and its queues again%s\n", .{
+            owner, why, first, sent, before, back_us, finish_us, reset_us, start_us, window_said,
+        });
+    }
+    sys.SignalWaitable(&ab.compute_end);
+    if (dma) sys.SignalWaitable(&ab.dma_trap);
+    return sent;
+}
+
+/// The DMA engine's jobs let finish, then one more job of its own that
+/// rinses the block's caches (`_dma.rinse`), each waited for 100 ms at
+/// most, under the DMA queue's lock: whether the engine did both.
+fn finishDma(ab: *AMDGPUBase) bool {
+    if (!dmaDone(ab, ab.dma_sent)) return false;
+    const number = _dma.nextJob(ab.dma_sent);
+    _dma.putJob(ab, &_dma.rinse(), number);
+    _dma.tell(ab);
+    ab.dma_sent = number;
+    return dmaDone(ab, number);
+}
+
+/// Whether the DMA engine has done job `job` within `finish_most_us`.
+fn dmaDone(ab: *AMDGPUBase, job: u32) bool {
+    const sys = ab.sys_base;
+    const until = sys.UptimeUs() + finish_most_us;
+    while (!_dma.passed(_dma.done(ab), job)) {
+        if (sys.UptimeUs() > until) return false;
+        _compute.pause(ab, 100);
+    }
+    return true;
+}
+
+/// The DMA engine's jobs not done given up: those after the last done up
+/// to the last sent, which WaitGPUDMA answers false once their numbers
+/// read done.
+fn giveUpDma(ab: *AMDGPUBase) void {
+    const last = _dma.done(ab);
+    if (_dma.passed(last, ab.dma_sent)) return;
+    @atomicStore(u32, &ab.dma_lost_after, last, .release);
+    @atomicStore(u32, &ab.dma_given_up, ab.dma_sent, .release);
+}
+
+/// A reset of the whole block begun at `began` that did not bring it
+/// back, said with `why` it was reset and `what` failed: the DMA engine's
+/// queue, where `dma` says it ran, stopped with every job not done given
+/// up and read done, the block taken as failed, and the compute engine's
+/// queue stopped as `failed` stops it. 0, for the caller to answer.
+fn blockFailed(ab: *AMDGPUBase, why: [*:0]const u8, what: [*:0]const u8, dma: bool, began: u64) u32 {
+    const sys = ab.sys_base;
+    exec.kprintf(sys, "%s: the graphics block is not reset whole (%s) - %s, %lu us on: its queues are stopped\n", .{ amdgpu.AMDGPUNAME, why, what, sys.UptimeUs() - began });
+    if (dma) {
+        giveUpDma(ab);
+        _dma.word(ab, _dma.fence_at).* = ab.dma_sent;
+        _dma.fence();
+        ab.dma_running = false;
+        ab.dma_failed = true;
+        sys.SignalWaitable(&ab.dma_trap);
+    }
+    ab.graphics_started = false;
+    ab.graphics_failed = true;
+    return failed(ab, "the block is not reset whole");
 }
 
 /// Whether the queue selected is inactive within `most_us`.

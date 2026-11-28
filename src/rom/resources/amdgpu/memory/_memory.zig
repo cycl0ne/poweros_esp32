@@ -99,19 +99,45 @@ pub fn take(ab: *AMDGPUBase, hub: amdgpu.GPUBlock) void {
 /// The bus block's registers of the device's host data path - the way
 /// the CPU's reads and writes in the memory window go - counted from its
 /// third address, as the bus block 7.7 has them: the flush
-/// (BIF_BX_PF0_HDP_MEM_COHERENCY_FLUSH_CNTL) and the register read after
-/// it (RCC_DEV0_EPF0_0_RCC_CONFIG_MEMSIZE).
+/// (BIF_BX_PF0_HDP_MEM_COHERENCY_FLUSH_CNTL), the register read after
+/// it (RCC_DEV0_EPF0_0_RCC_CONFIG_MEMSIZE), and the one that lets the
+/// window's reads and writes through (BIF_BX0_BIF_FB_EN: FB_READ_EN,
+/// FB_WRITE_EN). Where the window lets neither through, a read there
+/// answers all ones and a write goes nowhere.
 const bus_segment = 2;
 const host_flush_cntl = 0x00f7;
 const config_memsize = 0x00c3;
+const fb_enable = 0x0100;
+const window_reads = 1 << 0;
+const window_writes = 1 << 1;
 
-/// Where the host data path is flushed, kept in the base; nothing where
-/// the bus block is not one whose registers are known.
+/// Where the host data path is flushed and the window let through, kept
+/// in the base; nothing where the bus block is not one whose registers
+/// are known.
 pub fn takeBus(ab: *AMDGPUBase, bus: amdgpu.GPUBlock) void {
     if (bus.major != 7 or bus.minor != 7 or bus.count <= bus_segment) return;
     const at = @as(usize, @intCast(ab.info.registers)) + @as(usize, bus.addresses[bus_segment]) * 4;
     ab.host_flush = at + host_flush_cntl * 4;
     ab.host_posted = at + config_memsize * 4;
+    ab.window_enable = at + fb_enable * 4;
+}
+
+/// What of the CPU's reads and writes the memory window lets through now,
+/// a bit each; 0 where the bus block's registers are not known.
+pub fn windowOpen(ab: *const AMDGPUBase) u32 {
+    if (ab.window_enable == 0) return 0;
+    return reg(ab.window_enable).* & (window_reads | window_writes);
+}
+
+/// The memory window let through again as `open` (`windowOpen`) had it,
+/// where something since shut it - the graphics block's reset does - and
+/// the write posted: whether it had to be.
+pub fn openWindow(ab: *const AMDGPUBase, open: u32) bool {
+    if (ab.window_enable == 0 or windowOpen(ab) == open) return false;
+    const now = reg(ab.window_enable).*;
+    reg(ab.window_enable).* = now & ~@as(u32, window_reads | window_writes) | open;
+    _ = reg(ab.window_enable).*;
+    return true;
 }
 
 /// What the CPU wrote in the memory window passed on to the device's
@@ -183,4 +209,23 @@ pub fn tell(ab: *AMDGPUBase, hub: amdgpu.GPUBlock) void {
             @as([*:0]const u8, if (ab.memory_gathered) "written gathered" else "uncached: the map would not gather it"),
         });
     }
+}
+
+const testing = @import("std").testing;
+
+test "the memory window let through again as it was, the register's other bits kept" {
+    var register: u32 = 0xA5A5_A5A0 | window_reads | window_writes;
+    var ab: AMDGPUBase = undefined;
+    ab.window_enable = 0;
+    try testing.expectEqual(@as(u32, 0), windowOpen(&ab));
+    try testing.expect(!openWindow(&ab, window_reads | window_writes));
+    ab.window_enable = @intFromPtr(&register);
+    const open = windowOpen(&ab);
+    try testing.expectEqual(@as(u32, window_reads | window_writes), open);
+    try testing.expect(!openWindow(&ab, open));
+    // Shut, as the graphics block's reset leaves it.
+    register = 0xA5A5_A5A0;
+    try testing.expectEqual(@as(u32, 0), windowOpen(&ab));
+    try testing.expect(openWindow(&ab, open));
+    try testing.expectEqual(@as(u32, 0xA5A5_A5A3), register);
 }

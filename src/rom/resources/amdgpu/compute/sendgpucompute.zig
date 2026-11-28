@@ -78,10 +78,13 @@ const _compute = @import("_compute.zig");
 /// if (job == 0 or !ab.WaitGPUCompute(job, 1000)) return error.NoCompute;
 /// ```
 pub fn SendGPUCompute(ab: *AMDGPUBase, packets: [*]const u32, words: u32) u32 {
-    if (ab.device == null or !ab.compute_running) return 0;
+    if (ab.device == null or !_compute.runs(ab)) return 0;
     if (_compute.jobWords(words) >= _compute.compute_ring_words) return 0;
     const sys = ab.sys_base;
     sys.ObtainSemaphore(&ab.compute_lock);
     defer sys.ReleaseSemaphore(&ab.compute_lock);
+    // A reset of the whole block, which holds the lock, may leave it
+    // stopped.
+    if (!ab.compute_running) return 0;
     return _compute.send(ab, packets[0..words]);
 }

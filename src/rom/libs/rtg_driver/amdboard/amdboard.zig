@@ -239,8 +239,8 @@ const engine_code = @embedFile("gpu_code");
 const MODULE_NAME = "rtg-amd";
 const DRIVER_NAME = "amd";
 const VERSION = 1;
-const REVISION = 32;
-const BUILD_DATE = "27.11.2026";
+const REVISION = 33;
+const BUILD_DATE = "28.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ VERSION, REVISION }) ++

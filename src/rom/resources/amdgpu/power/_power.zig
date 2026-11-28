@@ -41,7 +41,10 @@ pub const ANSWER_DONE: u32 = 0x01;
 /// idle and kept powered, its power controller (IMU) started, with the
 /// controller's own switching off of the block allowed (1), once its
 /// firmware is in the security processor's region, and the graphics
-/// block's clock and the data fabric's asked for, with 0.
+/// block's clock and the data fabric's asked for, with 0; and the whole
+/// graphics block reset (GfxDeviceDriverReset), with the reset of the
+/// block alone (SMU_RESET_MODE_2), which leaves the security processor
+/// and the display engine running.
 pub const MESSAGE_FIRMWARE_VERSION: u32 = 0x02;
 pub const MESSAGE_POWER_DOWN_VIDEO: u32 = 0x06;
 pub const MESSAGE_POWER_UP_VIDEO: u32 = 0x07;
@@ -52,7 +55,9 @@ pub const MESSAGE_ALLOW_GRAPHICS_OFF: u32 = 0x19;
 pub const MESSAGE_DISALLOW_GRAPHICS_OFF: u32 = 0x1A;
 pub const MESSAGE_POWER_DOWN_JPEG: u32 = 0x21;
 pub const MESSAGE_POWER_UP_JPEG: u32 = 0x22;
+pub const MESSAGE_RESET_GRAPHICS: u32 = 0x11;
 pub const GRAPHICS_CONTROLLER_MAY_SWITCH_OFF: u32 = 1;
+pub const RESET_BLOCK_ALONE: u32 = 2;
 
 /// The manager whose messages are numbered so. Another numbers them
 /// otherwise and is sent none of them but the version's, which every
@@ -67,10 +72,13 @@ pub fn take(ab: *AMDGPUBase, manager: amdgpu.GPUBlock) void {
     ab.power_known = true;
 }
 
-/// How long an answer is waited for; for how long of that the answer is
+/// How long an answer is waited for, and the block's reset's - 2 s, as
+/// long as the vendor's driver waits for any answer (smu_cmn_poll_stat:
+/// 2000000 reads a microsecond apart); for how long of that the answer is
 /// read over and over, one tick of the system's at its 100 a second; and
 /// how often it is looked at after.
 const answer_most_us: u64 = 1_000_000;
+pub const reset_most_us: u64 = 2_000_000;
 const answer_spin_us: u64 = 10_000;
 const answer_step_us: u32 = 100;
 
@@ -81,33 +89,38 @@ pub const Answer = struct { answer: u32, value: u32 };
 /// `message` sent with `argument`: what the manager answered, or null
 /// where it did not take the last message, or this one, in time.
 pub fn send(ab: *AMDGPUBase, manager: amdgpu.GPUBlock, message: u32, argument: u32) ?Answer {
+    return sendWithin(ab, manager, message, argument, answer_most_us);
+}
+
+/// `message` sent with `argument` as `send` sends it, its own answer
+/// waited for `most_us`.
+pub fn sendWithin(ab: *AMDGPUBase, manager: amdgpu.GPUBlock, message: u32, argument: u32, most_us: u64) ?Answer {
     if (manager.count <= segment) return null;
     const at = @as(usize, @intCast(ab.info.registers)) + @as(usize, manager.addresses[segment]) * 4;
-    if (!answered(ab, at)) return null;
+    if (!answered(ab, at, answer_most_us)) return null;
     reg(at + mailbox_answer * 4).* = 0;
     reg(at + mailbox_argument * 4).* = argument;
     reg(at + mailbox_message * 4).* = message;
-    if (!answered(ab, at)) return null;
+    if (!answered(ab, at, most_us)) return null;
     return .{
         .answer = reg(at + mailbox_answer * 4).*,
         .value = reg(at + mailbox_argument * 4).*,
     };
 }
 
-/// Whether the answer register reads nonzero within the time an answer
-/// is waited for: read over and over for `answer_spin_us`, then once
-/// each step.
+/// Whether the answer register reads nonzero within `most_us`: read over
+/// and over for `answer_spin_us`, then once each step.
 ///
 /// The time is the machine's clock, not the steps counted: a wait is
 /// woken by the system's tick, so a step lasts longer than it asks for -
 /// a whole tick where it begins just after one, which is why the answer
 /// is read without waiting first.
-fn answered(ab: *AMDGPUBase, at: usize) bool {
+fn answered(ab: *AMDGPUBase, at: usize, most_us: u64) bool {
     const sys = ab.sys_base;
     const began = sys.UptimeUs();
     while (reg(at + mailbox_answer * 4).* == 0) {
         const waited = sys.UptimeUs() -% began;
-        if (waited > answer_most_us) return false;
+        if (waited > most_us) return false;
         if (waited > answer_spin_us) pause(ab, answer_step_us);
     }
     return true;

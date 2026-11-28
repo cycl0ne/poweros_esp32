@@ -326,6 +326,10 @@ pub const room_most_us: u64 = 1_000_000;
 /// The oldest scheduler firmware that maps the system's own queues, and
 /// the oldest that takes the second call of resources.
 pub const scheduler_maps_from: u32 = 0x47;
+/// How long the scheduler's pipes are given to write their firmware's
+/// versions once they are let run: after a reset of the whole block they
+/// have taken more than 100 ms.
+pub const version_most_us: u64 = 1_000_000;
 pub const scheduler_resources_1_from: u32 = 0x52;
 /// The oldest scheduler firmware that is told a queue is removed after
 /// its reset.
@@ -1016,6 +1020,12 @@ pub fn jobWords(count: u32) u32 {
 /// it last wrote that back.
 pub fn readBack(ab: *AMDGPUBase) u32 {
     return word(ab, compute_read_at).*;
+}
+
+/// Whether the queue runs, or is being started again by a reset of the
+/// whole block - which its calls wait for rather than take it as stopped.
+pub fn runs(ab: *AMDGPUBase) bool {
+    return ab.compute_running or @atomicLoad(bool, &ab.resetting_block, .acquire);
 }
 
 /// The number of the last job the engine has done.

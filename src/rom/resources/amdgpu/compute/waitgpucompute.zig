@@ -78,7 +78,7 @@ const look_us: u64 = 10_000;
 /// if (job == 0 or !ab.WaitGPUCompute(job, 1000)) return error.NoCompute;
 /// ```
 pub fn WaitGPUCompute(ab: *AMDGPUBase, job: u32, most_ms: u32) bool {
-    if (ab.device == null or !ab.compute_running or job == 0) return false;
+    if (ab.device == null or !_compute.runs(ab) or job == 0) return false;
     if (!ended(ab, job, most_ms)) return false;
     giveBack(ab);
     return !_compute.givenUp(ab, job);

@@ -25,6 +25,13 @@
 //! write-combining, so a fence comes before the write pointer; what the
 //! engine writes goes past the block's caches (its writes bypass the L2,
 //! the fence is uncached), so the CPU reads it from the memory.
+//!
+//! **A reset of the whole block** (ResetGPUCompute) lets the engine
+//! finish its jobs first and has it rinse the block's caches with one job
+//! of its own (`rinse`); the jobs it has not done by then are given up -
+//! those after `dma_lost_after` up to `dma_given_up`, which WaitGPUDMA
+//! answers false once the queue, started again, reads them done (`lost`).
+//! A quarter of the numbers' round later they are forgotten (`longPast`).
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -93,6 +100,27 @@ pub const OP_FENCE: u32 = 5;
 pub const OP_TRAP: u32 = 6;
 pub const FENCE_UNCACHED: u32 = 3 << 16;
 
+/// The graphics block's caches rinsed, five words (SDMA_OP_GCR_REQ): the
+/// header, the range's start and end - 0 and 0, every address - and the
+/// control at bit 16 of the third word and in the fourth's low three
+/// bits, the vendor's (sdma_v6_0_ring_emit_mem_sync): the second level
+/// written back and dropped, and the first levels, the vertex, scalar and
+/// instruction caches and the metadata's dropped.
+pub const OP_GCR_REQ: u32 = 17;
+pub const GCR_GLI_INV: u32 = 1 << 0;
+pub const GCR_GLM_INV: u32 = 1 << 5;
+pub const GCR_GLK_INV: u32 = 1 << 7;
+pub const GCR_GLV_INV: u32 = 1 << 8;
+pub const GCR_GL1_INV: u32 = 1 << 9;
+pub const GCR_GL2_INV: u32 = 1 << 14;
+pub const GCR_GL2_WB: u32 = 1 << 15;
+pub const rinse_control = GCR_GL2_INV | GCR_GL2_WB | GCR_GLM_INV | GCR_GL1_INV | GCR_GLV_INV | GCR_GLK_INV | GCR_GLI_INV;
+
+/// The packet that rinses the block's caches.
+pub fn rinse() [5]u32 {
+    return .{ OP_GCR_REQ, 0, rinse_control << 16, rinse_control >> 16, 0 };
+}
+
 /// The ring: 64 KiB, the size code its register takes - the power of two
 /// its words are - and the alignment every job is padded to, in words.
 pub const ring_bytes: u32 = 64 * 1024;
@@ -144,6 +172,40 @@ pub fn done(ab: *AMDGPUBase) u32 {
 /// Whether job `job` is done by the job `last` that is.
 pub fn passed(last: u32, job: u32) bool {
     return @as(i32, @bitCast(last -% job)) >= 0;
+}
+
+/// The number of the job after `job`: numbers go round past 0, which no
+/// job has.
+pub fn nextJob(job: u32) u32 {
+    const next = job +% 1;
+    return if (next == 0) 1 else next;
+}
+
+/// Whether the queue runs, or is being started again by a reset of the
+/// whole block - which its calls wait for rather than take it as stopped.
+pub fn runs(ab: *AMDGPUBase) bool {
+    return ab.dma_running or @atomicLoad(bool, &ab.resetting_block, .acquire);
+}
+
+/// Whether a reset of the whole block gave job `job` up, as the base keeps
+/// the jobs it did: read without the queue's lock.
+pub fn givenUp(ab: *AMDGPUBase, job: u32) bool {
+    return lost(@atomicLoad(u32, &ab.dma_lost_after, .acquire), @atomicLoad(u32, &ab.dma_given_up, .acquire), job);
+}
+
+/// Whether a reset of the whole block gave job `job` up: one after
+/// `lost_after` and not after `given_up`, the jobs that reset found not
+/// done.
+pub fn lost(lost_after: u32, given_up: u32, job: u32) bool {
+    return passed(given_up, job) and !passed(lost_after, job);
+}
+
+/// Whether job `number` is a quarter of the numbers' round past
+/// `given_up`, the last job a reset gave up: by then no task waits for
+/// those, and they are forgotten, so that numbers come round again are
+/// not taken as theirs.
+pub fn longPast(given_up: u32, number: u32) bool {
+    return passed(number, given_up +% (1 << 30));
 }
 
 /// The words a job of `words` takes in the ring with its tail and the
@@ -229,6 +291,37 @@ test "job numbers compared past their wrap" {
     try testing.expect(!passed(1, 2));
     try testing.expect(passed(3, 0xffff_fffe));
     try testing.expect(!passed(0xffff_fffe, 3));
+    try testing.expectEqual(@as(u32, 2), nextJob(1));
+    try testing.expectEqual(@as(u32, 1), nextJob(0xffff_ffff));
+}
+
+test "the jobs a reset of the block gave up, past the wrap" {
+    // None before any reset.
+    try testing.expect(!lost(0, 0, 1));
+    try testing.expect(!lost(0, 0, 0x8000_0001));
+    // Jobs 6 to 9 given up: 5 was done, 10 is sent after.
+    try testing.expect(!lost(5, 9, 5));
+    try testing.expect(lost(5, 9, 6));
+    try testing.expect(lost(5, 9, 9));
+    try testing.expect(!lost(5, 9, 10));
+    // Across the wrap: 0xffff_fffe done, up to 2 given up.
+    try testing.expect(lost(0xffff_fffe, 2, 0xffff_ffff));
+    try testing.expect(lost(0xffff_fffe, 2, 1));
+    try testing.expect(!lost(0xffff_fffe, 2, 3));
+    // Forgotten a quarter of the round on, past the wrap too.
+    try testing.expect(!longPast(9, 10));
+    try testing.expect(!longPast(9, 8 + (1 << 30)));
+    try testing.expect(longPast(9, 9 + (1 << 30)));
+    try testing.expect(longPast(0xffff_fff0, 0x3fff_fff0));
+    try testing.expect(!longPast(0xffff_fff0, 5));
+}
+
+test "the cache rinse, as the vendor's driver writes it" {
+    // sdma_v6_0_ring_emit_mem_sync: GL2_INV | GL2_WB | GLM_INV | GL1_INV |
+    // GLV_INV | GLK_INV | GLI_INV(1) = 0xc3a1.
+    try testing.expectEqual(@as(u32, 0xc3a1), rinse_control);
+    try testing.expectEqualSlices(u32, &.{ 17, 0, 0xc3a1_0000, 0, 0 }, &rinse());
+    try testing.expectEqual(@as(u32, 16), jobWords(rinse().len));
 }
 
 test "what the engine has yet to read, its read pointer counted either way" {

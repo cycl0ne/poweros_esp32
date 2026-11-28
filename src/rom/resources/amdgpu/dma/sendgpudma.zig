@@ -28,7 +28,9 @@ const _dma = @import("_dma.zig");
 /// the last job's, past 0 to 1. 0 where the queue does not run
 /// (StartGPUDMA), where the job with its fence and trap would take the
 /// whole ring (some 16 thousand words), or where the engine has not
-/// read enough of the ring to make room for it within a second.
+/// read enough of the ring to make room for it within a second. While
+/// ResetGPUCompute resets the whole block the job waits for the queue to
+/// run again (since 1.24), and is 0 where it does not.
 ///
 /// BEHAVIOR:
 /// Under the queue's lock the job waits for room in the ring - the engine
@@ -75,12 +77,15 @@ const _dma = @import("_dma.zig");
 /// if (job == 0 or !ab.WaitGPUDMA(job, 1000)) return error.NoDma;
 /// ```
 pub fn SendGPUDMA(ab: *AMDGPUBase, packets: [*]const u32, words: u32) u32 {
-    if (ab.device == null or !ab.dma_running) return 0;
+    if (ab.device == null or !_dma.runs(ab)) return 0;
     const sys = ab.sys_base;
     const bytes = @as(u64, _dma.jobWords(words)) * 4;
     if (bytes >= _dma.ring_bytes) return 0;
     sys.ObtainSemaphore(&ab.dma_lock);
     defer sys.ReleaseSemaphore(&ab.dma_lock);
+    // A reset of the whole block, which holds the lock, may leave it
+    // stopped.
+    if (!ab.dma_running) return 0;
     const until = sys.UptimeUs() + _dma.room_most_us;
     while (_dma.pending(ab.dma_written, _dma.readBack(ab)) + bytes >= _dma.ring_bytes) {
         if (sys.UptimeUs() > until) {
@@ -91,8 +96,10 @@ pub fn SendGPUDMA(ab: *AMDGPUBase, packets: [*]const u32, words: u32) u32 {
         }
         pause(ab, 100);
     }
-    var number = ab.dma_sent +% 1;
-    if (number == 0) number = 1;
+    const number = _dma.nextJob(ab.dma_sent);
+    if (ab.dma_given_up != ab.dma_lost_after and _dma.longPast(ab.dma_given_up, number)) {
+        @atomicStore(u32, &ab.dma_lost_after, ab.dma_given_up, .release);
+    }
     _dma.putJob(ab, packets[0..words], number);
     _dma.tell(ab);
     ab.dma_sent = number;

@@ -30,7 +30,9 @@ const look_us: u64 = 10_000;
 /// RESULT:
 /// True once the engine has done the job and every one before it, at once
 /// where it already has. False where it has not within `most_ms`, where
-/// `job` is 0 or the queue does not run.
+/// `job` is 0 or the queue does not run, and at once for a job a reset of
+/// the whole block gave up (since 1.24) - the reset ResetGPUCompute makes
+/// where nothing less brings its own queue back.
 ///
 /// BEHAVIOR:
 /// The engine writes each job's number into the queue's page as it ends
@@ -39,7 +41,10 @@ const look_us: u64 = 10_000;
 /// waitable until the job is done or the time is up - looking again at
 /// least every 10 ms, whatever wakes it. Numbers are compared modulo
 /// 2^32, so a job more than two thousand million jobs old is taken as one
-/// not sent yet.
+/// not sent yet. A reset of the whole block lets the engine finish its
+/// jobs first, 100 ms at most; those it has not done by then it gives
+/// up, and the queue, started again, reads them done. While the reset is
+/// under way the wait goes on as before.
 ///
 /// CONTEXT:
 /// - Waits: yes, until the job is done, `most_ms` at most.
@@ -57,7 +62,9 @@ const look_us: u64 = 10_000;
 ///
 /// BUGS:
 /// A job the engine never ends - a packet it hangs on - holds every job
-/// after it: there is no reset of the queue.
+/// after it: the queue has no reset of its own, and only a reset of the
+/// whole block, which ResetGPUCompute makes for the compute engine's
+/// queue, gives its jobs up.
 ///
 /// SEE ALSO:
 /// `SendGPUDMA`, `GetGPUDMAState`, `WaitForAny`
@@ -68,8 +75,8 @@ const look_us: u64 = 10_000;
 /// if (job == 0 or !ab.WaitGPUDMA(job, 1000)) return error.NoDma;
 /// ```
 pub fn WaitGPUDMA(ab: *AMDGPUBase, job: u32, most_ms: u32) bool {
-    if (ab.device == null or !ab.dma_running or job == 0) return false;
-    if (_dma.passed(_dma.done(ab), job)) return true;
+    if (ab.device == null or !_dma.runs(ab) or job == 0) return false;
+    if (_dma.passed(_dma.done(ab), job)) return !_dma.givenUp(ab, job);
     const sys = ab.sys_base;
     const until = sys.UptimeUs() + @as(u64, most_ms) * 1000;
     sys.ObtainSemaphore(&ab.dma_wait_lock);
@@ -77,7 +84,7 @@ pub fn WaitGPUDMA(ab: *AMDGPUBase, job: u32, most_ms: u32) bool {
     const list = [_]*exec.Waitable{&ab.dma_trap};
     while (true) {
         sys.ResetWaitable(&ab.dma_trap);
-        if (_dma.passed(_dma.done(ab), job)) return true;
+        if (_dma.passed(_dma.done(ab), job)) return !_dma.givenUp(ab, job);
         const now = sys.UptimeUs();
         if (now >= until) return false;
         _ = sys.WaitForAny(&list, 1, @min(until - now, look_us));

@@ -1980,7 +1980,16 @@ board sends it again for the rest; every pixel is the library's single
 job. Only waves still running after 100 ms - a kernel's that spins -
 are reset then, by when the board's, of some microseconds each, have
 finished; a job the library draws after its second give-up is laid
-over what the kernels had laid; where the queue cannot be reset, the kernels are not
+over what the kernels had laid. Where the queue cannot be reset, the
+whole graphics block is (`GPURESET_BLOCK`): the board's job given up
+with it is sent again once the block runs, and a copy or a fill of
+the DMA engine's that it gives up is the library's.
+`C:test/Gpu KERNELS RESET WHOLE` resets the block in the middle of
+each job instead of the queue: on the NucBox the block runs again 65
+to 74 ms on, each job is given up with 3 to 65 per cent of its waves
+done and sent again for the rest, and every pixel is the library's
+single job, on the device's memory, the machine's and through the
+window. Where the block does not come back either, the kernels are not
 used again. A fill or a
 copy is the engine's where what it reads and writes is more than the
 CPU's caches below the memory hold together, as the cores' cache leaves

@@ -68,6 +68,10 @@ pub const AMDGPUBase = extern struct {
     /// block is not one whose registers are known.
     host_flush: usize = 0,
     host_posted: usize = 0,
+    /// The bus block's register that lets the CPU's reads and writes in
+    /// the memory window through to the device's memory, each its own
+    /// bit: 0 where the bus block is not one whose registers are known.
+    window_enable: usize = 0,
     arena: Arena = .{},
     arena_lock: exec.SignalSemaphore,
     /// The security processor, where it is one whose ring and commands
@@ -86,6 +90,11 @@ pub const AMDGPUBase = extern struct {
     security_ready: bool = false,
     security_dead: bool = false,
     graphics_started: bool = false,
+    /// Set while ResetGPUCompute resets the whole block: the queues' calls
+    /// wait for it rather than take a queue as stopped.
+    resetting_block: bool = false,
+    /// How many times the whole block has been reset.
+    block_resets: u32 = 0,
     protected: amdgpu.GPUMemory = .{},
     security_lock: exec.SignalSemaphore,
     /// The interrupt block, where it is one whose ring is known; the piece
@@ -131,11 +140,15 @@ pub const AMDGPUBase = extern struct {
     /// put on it, the interrupts the engine raised at the ends of jobs,
     /// the waitable those interrupts signal and their server; the lock
     /// jobs are put on the queue under, and the one a task waits under.
+    /// The jobs a reset of the whole block gave up: those after
+    /// `dma_lost_after` up to `dma_given_up`.
     dma_ring: amdgpu.GPUMemory = .{},
     dma_running: bool = false,
     dma_failed: bool = false,
     dma_written: u64 = 0,
     dma_sent: u32 = 0,
+    dma_lost_after: u32 = 0,
+    dma_given_up: u32 = 0,
     dma_traps: u32 = 0,
     dma_trap: exec.Waitable = .{},
     dma_trap_int: exec.Interrupt = .{},
