@@ -38,6 +38,10 @@
 //! once in a later subpass, which the V3D fetches through the TMU, and
 //! once in the subpass of four samples that draws into it, which the V3D
 //! reads out of the tile buffer a sample at a time (facet 1.238).
+//! The shipped fine texels (since 1.87) are the texture's texel times 61,
+//! its fractions, whole levels where the texel is read as 32-bit floats:
+//! the V3D reads them so where the sampler is not mediump, and as
+//! half-floats, up to four levels off, where it is (facet 1.239).
 //! The texture stored by a function (since 1.76) is written by a compute
 //! function of the program's, each group a texel, and drawn: on the V3D
 //! the function runs on the cores, which write each texel where its TMU
@@ -191,7 +195,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.86 (28.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.87 (28.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -794,6 +798,15 @@ const Shipped = struct {
     const Modulated = ir.Fragment(struct {
         pub fn body(b: *ir.Build) void {
             b.color(b.mul(b.sample(0, 0, b.input(0, .f32x2)), b.input(1, .f32x4)));
+        }
+    });
+    /// The texture's texel times 61, its fractions: a texel of 8 bits is
+    /// n/255, and the fraction of 61n/255 times 255 is 61n mod 255, a
+    /// whole level, which a texel read as a 32-bit float lands on and one
+    /// read as a half-float misses by up to four (since 1.87).
+    const Fine = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            b.color(b.fract(b.scale(b.sample(0, 0, b.input(0, .f32x2)), b.scalar(61))));
         }
     });
     /// The push constants (`Side.push_layout`): a colour at 0, and a
@@ -3000,6 +3013,10 @@ const shipped_entries = [_]shader.Entry{
     // An input attachment of four samples, read at the sample the pixel's
     // x picks (since 1.86).
     shader.fragment("shipped subpass of four", &subpassFourFragment, 4),
+    // A texel's fractions, of a sampler not mediump and of one mediump,
+    // the cores' one function for both (since 1.87).
+    Shipped.Fine.entry("shipped fine texel"),
+    shader.fragment("shipped fine texel mediump", Shipped.Fine.function, Shipped.Fine.varyings),
 };
 const shipped_words = [_]shader.Spirv{
     .{},                                            .{},                                        .{},                                           .{},
@@ -3031,6 +3048,7 @@ const shipped_words = [_]shader.Spirv{
     shader.Spirv.of(&shipped_outputs),              shader.Spirv.of(&shipped_vertex_outputs),   Shipped.NestedKept.spirv,                      Shipped.SelectsKept.spirv,
     Shipped.CollapsedKept.spirv,                    shader.Spirv.of(&shipped_fetch_four),       shader.Spirv.of(&shipped_subpass),             shader.Spirv.of(&shipped_stored),
     shader.Spirv.of(&shipped_drawn_stored),         shader.Spirv.of(&shipped_two_colours),      shader.Spirv.of(&shipped_cubes),               shader.Spirv.of(&shipped_subpass_four),
+    Shipped.Fine.spirv,                             shader.Spirv.of(&shipped_fine_mediump),
 };
 
 /// glslc's own output, at -O, for a sample of an image of four at the
@@ -3207,6 +3225,53 @@ const shipped_subpass_four = [_]u32{
     0x00000007, 0x00000023, 0x00000021, 0x00000022, 0x00050081, 0x00000007,
     0x00000024, 0x0000001F, 0x00000023, 0x0003003E, 0x00000009, 0x00000024,
     0x000100FD, 0x00010038,
+};
+
+/// glslc's own output, at -O, for `Shipped.Fine` with its sampler
+/// mediump: decorated RelaxedPrecision, so the V3D's TMU hands its texels
+/// back as half-floats (lower_tex_src, v3dv_pipeline.c:771-787), where
+/// `Shipped.Fine`'s come back as 32-bit floats (since 1.87).
+///
+/// ```glsl
+/// #version 450
+/// layout(set = 0, binding = 0) uniform mediump sampler2D tex;
+/// layout(location = 0) in vec2 at;
+/// layout(location = 0) out vec4 outColor;
+/// void main() {
+///     outColor = fract(texture(tex, at) * 61.0);
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=frag fine_mediump.frag -o fine_mediump.spv   # 149 words
+/// spirv-val --target-env vulkan1.0 fine_mediump.spv                     # no output, and 0
+/// ```
+const shipped_fine_mediump = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000017, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00000009, 0x00000011, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x00000009, 0x0000001E, 0x00000000,
+    0x00030047, 0x0000000D, 0x00000000, 0x00040047, 0x0000000D, 0x00000021,
+    0x00000000, 0x00040047, 0x0000000D, 0x00000022, 0x00000000, 0x00030047,
+    0x0000000E, 0x00000000, 0x00040047, 0x00000011, 0x0000001E, 0x00000000,
+    0x00030047, 0x00000013, 0x00000000, 0x00030047, 0x00000015, 0x00000000,
+    0x00030047, 0x00000016, 0x00000000, 0x00020013, 0x00000002, 0x00030021,
+    0x00000003, 0x00000002, 0x00030016, 0x00000006, 0x00000020, 0x00040017,
+    0x00000007, 0x00000006, 0x00000004, 0x00040020, 0x00000008, 0x00000003,
+    0x00000007, 0x0004003B, 0x00000008, 0x00000009, 0x00000003, 0x00090019,
+    0x0000000A, 0x00000006, 0x00000001, 0x00000000, 0x00000000, 0x00000000,
+    0x00000001, 0x00000000, 0x0003001B, 0x0000000B, 0x0000000A, 0x00040020,
+    0x0000000C, 0x00000000, 0x0000000B, 0x0004003B, 0x0000000C, 0x0000000D,
+    0x00000000, 0x00040017, 0x0000000F, 0x00000006, 0x00000002, 0x00040020,
+    0x00000010, 0x00000001, 0x0000000F, 0x0004003B, 0x00000010, 0x00000011,
+    0x00000001, 0x0004002B, 0x00000006, 0x00000014, 0x42740000, 0x00050036,
+    0x00000002, 0x00000004, 0x00000000, 0x00000003, 0x000200F8, 0x00000005,
+    0x0004003D, 0x0000000B, 0x0000000E, 0x0000000D, 0x0004003D, 0x0000000F,
+    0x00000012, 0x00000011, 0x00050057, 0x00000007, 0x00000013, 0x0000000E,
+    0x00000012, 0x0005008E, 0x00000007, 0x00000015, 0x00000013, 0x00000014,
+    0x0006000C, 0x00000007, 0x00000016, 0x00000001, 0x0000000A, 0x00000015,
+    0x0003003E, 0x00000009, 0x00000016, 0x000100FD, 0x00010038,
 };
 
 /// glslc's own output, at -O: `shippedStored`, "stored"'s texels written
@@ -13568,6 +13633,13 @@ const cases = [_]Case{
     .{ .name = "drawn in 565", .target = .rgb565, .run = Cases.onTarget(.rgb565) },
     .{ .name = "mixed by their alpha in rgba", .target = .rgba, .run = Cases.onTargetMixed(.rgba) },
     .{ .name = "mixed by their alpha in 565", .target = .rgb565, .run = Cases.onTargetMixed(.rgb565) },
+    // 1.87: a texel's fractions, which tell a texel read as 32-bit floats
+    // from one read as half-floats: the V3D reads it as v3dv does, of 32
+    // bits where the sampler is not mediump, since facet 1.239. Before
+    // the texture is blitted into, whose texels the two devices' linear
+    // filters may make a level apart, and the fractions 61 levels.
+    .{ .name = "shipped fine texel", .run = Cases.shipped("texture", "shipped fine texel", true, quad_at) },
+    .{ .name = "shipped fine texel mediump", .run = Cases.shipped("texture", "shipped fine texel mediump", true, quad_at) },
     .{ .name = "blit: into a texture, then drawn", .run = &Cases.intoTexture },
     .{ .name = "indirect: two draws", .run = &Cases.indirect },
     .{ .name = "indirect: indexed, instanced", .run = &Cases.indirectIndexed },

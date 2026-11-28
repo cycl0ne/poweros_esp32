@@ -8020,4 +8020,53 @@ pub const LIBRARY_VERSION = 1;
 /// programs, as the scheduler moves TMUB past T (can_reorder_tmu_write,
 /// qpu_schedule.c:226-235), and the driver's `msaa` key is no host
 /// test's.
-pub const LIBRARY_REVISION = 238;
+/// 239: **A texel read as four 32-bit floats on the V3D where its
+/// variable is not RelaxedPrecision (docs/facet-vulkan10.md item 56, the
+/// entry it left out facet-wide).** The TMU handed back every texel as
+/// half-floats, two words of two, which is a mediump sampler's. Ported
+/// from v3dv:
+/// - **The decoration.** OpDecorate RelaxedPrecision of a variable is
+///   vtn's GLSL_PRECISION_MEDIUM (apply_var_decoration,
+///   vtn_variables.c:1367-1369), which a sampler's variable keeps
+///   (`Sampler.relaxed`). Of anything else, a struct's member among them
+///   (struct_member_decoration_cb, spirv_to_nir.c:1622-1626), it is
+///   nothing to the V3D.
+/// - **The width.** lower_tex_src's sampler_is_32b is the variable's
+///   precision not medium (v3dv_pipeline.c:775-787). A sample takes its
+///   sampler's entry in the map, which descriptor_map_add makes 32-bit
+///   where any variable of that set and binding is (:516-556), and the
+///   key carries (:1086-1093); a fetch, which has no sampler, takes its
+///   own variable's (`compile.wideOf`).
+/// - **The TMU's words.** P0 asks for the four words of a 32-bit return,
+///   0xF, and P1 sets its output type of 32 bits (v3d_tex.c:240-331); a
+///   comparison asks for its one word at either width, as Mesa's reads
+///   one. A fetch writes P1 as a constant where it is 32-bit, as v3d
+///   writes the sampler's parameter for it (:240-243, :313). The four
+///   floats are the def as they come, packing_none (nir_lower_tex.c:
+///   1179-1180), with no FMOV. The program's stream says the words
+///   (`compile.Word.texture`'s bits), which the draw puts in P0 over the
+///   texture state's (`_play`).
+/// - **The fixed forms** stay 16-bit, as a mediump sampler is
+///   (`tiling.parameter0`).
+///
+/// Mesa asks for the words a program reads (nir_def_components_read,
+/// v3d_tex.c:253-255); facet still asks for them all.
+///
+/// Four host tests are new: of five glslc modules, a sampler
+/// RelaxedPrecision compiling to the listing of before 1.239 word for
+/// word, and the decoration moved onto the sample's result leaving it
+/// four LDTMU, P0 0xF and P1's output bit; two variables of one set and
+/// binding, one RelaxedPrecision, sampling as one unit of 32 bits, and a
+/// fetch through the RelaxedPrecision one keeping its half-floats; a
+/// RelaxedPrecision input attachment the fetch of half-floats it was,
+/// and a member's decoration nothing; and P0 as a program's stream has
+/// it (`tiling.parameter0Of`). 41 old compile tests are turned round to
+/// four LDTMU, glslc's modules having no RelaxedPrecision. 4588 of the
+/// 4591 pass, 3 skipped; of 12 mutants, all fail a test. FacetBoth
+/// 1.87's "shipped fine texel" and "... mediump" read the texture's
+/// texel times 61, its fractions, whole levels of a 32-bit float. On the
+/// board FacetProbe passes 1088 of 1088; the first case is 0 of 230400
+/// apart, the mediump one 62236, 4 at worst; five cases of filtered
+/// samples come closer to the cores, "shipped bias, -1 to 1, levels
+/// mixed" 3576 apart where it was 3660; the other 329 are as in 1.238.
+pub const LIBRARY_REVISION = 239;

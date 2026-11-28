@@ -18,8 +18,11 @@
 //! puts the unpacking; the unpacking is an fmov of each half, which is the
 //! VIR Mesa makes of a pair of half-floats it reads from the tile buffer
 //! (vir_emit_tlb_color_read, nir_to_vir.c:2731) and what vir_opt_alu
-//! leaves of NIR's f2f32 of a texel's half (vir_opt_alu.c:51). Then the
-//! VIR is optimized as Mesa's is (opt.zig), before it is given registers.
+//! leaves of NIR's f2f32 of a texel's half (vir_opt_alu.c:51). That is a
+//! RelaxedPrecision sampler's texel; any other's is four 32-bit floats, a
+//! word each, which packing_none leaves as they come (since 1.239). Then
+//! the VIR is optimized as Mesa's is (opt.zig), before it is given
+//! registers.
 //!
 //! Where it is not Mesa's:
 //! - Every varying the draw carries is read, in order: the vertex record
@@ -27,9 +30,11 @@
 //!   drops what the fragment program does not read.
 //! - interpolateAt is not in the profile, so emit_fragment_varying's copy
 //!   of the C coefficient for it is left out.
-//! - The TMU hands back both of its words whatever the program reads of a
-//!   texel: the draw writes P0 asking for both (`tiling.parameter0`),
-//!   where Mesa asks for the words read (v3d_tex.c:257).
+//! - The TMU hands back every word of a texel whatever the program reads
+//!   of it: both of half-floats, or the four of 32-bit floats (since
+//!   1.239), where Mesa asks for the words read (nir_def_components_read,
+//!   v3d_tex.c:253-255). A comparison's one float is its one word, as
+//!   Mesa's is.
 //! - The colour is moved out where the body ends and not at its OpStore,
 //!   which the steps do not keep: what comes after the store is not
 //!   handed on.
@@ -107,9 +112,20 @@ const tlb_v42_depth_type_invariant: u32 = 0 << 3;
 
 /// What the TMU is to hand back: both words of a texel, each two
 /// half-floats, which is what `tiling.parameter0` writes beside the
-/// texture's state. TMU Config Parameter 0's return words are its bits
-/// 0 to 3 (cle/v3d_packet.xml:1537).
+/// texture's state for a fixed form, and what a RelaxedPrecision
+/// sampler's texel is (since 1.239). TMU Config Parameter 0's return
+/// words are its bits 0 to 3 (cle/v3d_packet.xml:1537).
 pub const texel_words: u32 = 0b11;
+
+/// What it hands back of a texel of 32-bit floats: its four words, a
+/// float each (v3d_tex.c:253-255; since 1.239).
+pub const wide_texel_words: u32 = 0b1111;
+
+/// What it hands back of a comparison, which answers one float: the first
+/// word alone, of either width, as nir_def_components_read finds of the
+/// one component a shadow sample's def has, and of the half packing_16
+/// reads of it (nir_lower_tex.c:1186-1194; since 1.239).
+pub const compared_words: u32 = 0b1;
 
 /// A compile strategy, of the fields that change anything here (struct
 /// v3d_compiler_strategy, v3d_compiler.h).
@@ -757,10 +773,7 @@ fn emitStep(e: *Emit, each: Step, at: u16) Error!void {
             };
             try storeDef(e, at, k, try c.add(op, .{try getSrc(e, each.a, k)}));
         },
-        .sample => {
-            try emitTex(e, each, at);
-            try unpackTexel(e, at);
-        },
+        .sample => try unpackTexel(e, at, try emitTex(e, each, at)),
         // A storage image's texel read, its two words the steps after it
         // make floats, which the flush defines, and one written (since
         // 1.218).
@@ -779,12 +792,16 @@ fn emitStep(e: *Emit, each: Step, at: u16) Error!void {
         },
         // What passed is where a depth is read, the first half of the
         // first word: one float out, as nir_lower_tex's packing_16 leaves
-        // the one component a shadow sample's def has.
+        // the one component a shadow sample's def has; or the first word
+        // whole, where the TMU hands back 32-bit floats (since 1.239).
         .sample_compared => {
-            try emitTex(e, each, at);
-            const float = try c.mul(.fmov, .{try getWord(e, at, 0)});
-            vir.setUnpack(c.defs[float.index].?, 0, .l);
-            e.defs[at][0] = float;
+            if (try emitTex(e, each, at)) {
+                e.defs[at][0] = try getWord(e, at, 0);
+            } else {
+                const float = try c.mul(.fmov, .{try getWord(e, at, 0)});
+                vir.setUnpack(c.defs[float.index].?, 0, .l);
+                e.defs[at][0] = float;
+            }
         },
         // ntq_emit_txs (nir_to_vir.c:914-960): the level first, then each
         // size the draw writes of the view as a uniform of its own,
@@ -1907,9 +1924,16 @@ fn getWord(e: *Emit, step: u16, i: usize) Error!Reg {
 
 /// The texel's two words read out as four floats, red and green from the
 /// first, blue and alpha from the second, each low half first
-/// (vir_emit_tlb_color_read's unpacking, nir_to_vir.c:2731).
-fn unpackTexel(e: *Emit, at: u16) Error!void {
+/// (vir_emit_tlb_color_read's unpacking, nir_to_vir.c:2731). Where the
+/// TMU hands back 32-bit floats, `wide`, its four words are the floats,
+/// as packing_none leaves the def (lower_tex_packing, nir_lower_tex.c:
+/// 1179-1180; since 1.239).
+fn unpackTexel(e: *Emit, at: u16, wide: bool) Error!void {
     const c = e.c;
+    if (wide) {
+        for (0..4) |k| e.defs[at][k] = try getWord(e, at, k);
+        return;
+    }
     for (0..2) |word| {
         const pair = try getWord(e, at, word);
         for ([_]instr.InputUnpack{ .l, .h }, 0..) |half, k| {
@@ -2021,14 +2045,19 @@ fn wrtmuc(c: *Compile, contents: vir.Uniform, data: u32) Error!void {
 /// v3d_vir_emit_tex (v3d_tex.c:230), for what the profile samples: a 2D
 /// texture, a layer of an array, a 3D texture or a cube (since 1.179), at
 /// the coordinate its `SamplerDim` names, with an implicit level of detail,
-/// its texels in 16-bit floats; a `sample_compared` writes the reference
-/// too (since 1.143).
-fn emitTex(e: *Emit, each: Step, at: u16) Error!void {
+/// its texels in 16-bit floats, or in 32-bit ones where the sampler's
+/// variable is not RelaxedPrecision (`compile.wideOf`; since 1.239),
+/// which it answers; a `sample_compared` writes the reference too (since
+/// 1.143).
+fn emitTex(e: *Emit, each: Step, at: u16) Error!bool {
     const c = e.c;
     const compared = each.tag == .sample_compared;
     const dim = e.work.samplers[each.at].dim;
-    // P0: the words to hand back; P2, the default, regular lookup.
-    const return_words = texel_words;
+    const wide = compile.wideOf(e.work, each.at, each.lookup.fetches());
+    // P0: the words to hand back, of 16-bit floats two to a word or of
+    // 32-bit ones a word each (v3d_tex.c:253-255): all of a texel's, and a
+    // comparison's one (since 1.239); P2, the default, regular lookup.
+    const return_words: u32 = if (compared) compared_words else if (wide) wide_texel_words else texel_words;
 
     // get_required_tex_tmu_writes (v3d_tex.c:222): S and T, R or I where
     // the image has a third float, I as well for a cube of an array
@@ -2082,12 +2111,12 @@ fn emitTex(e: *Emit, each: Step, at: u16) Error!void {
     try wrtmuc(c, .tmu_config_p0, p0_packed);
 
     // P1 is needed: a sample needs a sampler (v3d_tex.c:311-321). Its
-    // output 16-bit, the coordinates normalized, and the per-pixel mask
-    // on where the sample skips its helper pixels or the program is not
-    // a fragment program's (since 1.167): that bit alone, and the
-    // sampler's number above it. P2 is the default, so neither it nor
-    // the P1 a P2 would need is written.
-    const p1_packed: u32 = if (c.stage != .fragment or e.work.skip_helpers[at]) compile.per_pixel_mask else 0;
+    // output 16-bit or 32-bit (since 1.239), the coordinates normalized,
+    // and the per-pixel mask on where the sample skips its helper pixels
+    // or the program is not a fragment program's (since 1.167): those
+    // bits alone, and the sampler's number above them. P2 is the default,
+    // so neither it nor the P1 a P2 would need is written.
+    const p1_packed: u32 = (if (c.stage != .fragment or e.work.skip_helpers[at]) compile.per_pixel_mask else 0) | if (wide) compile.output_type_32_bit else 0;
     // P2 after it where it is not the default (v3d_tex.c:349-352, :372-
     // 373), a constant the uniform stream carries: a ConstOffset's texels
     // in its offset fields, as many as the image's coordinate names but
@@ -2097,12 +2126,13 @@ fn emitTex(e: *Emit, each: Step, at: u16) Error!void {
     const needs_p2 = p2_packed != p2_default;
     if (!each.lookup.fetches()) {
         try wrtmuc(c, .tmu_config_p1, p1_packed | @as(u32, each.at) << 24);
-    } else if (c.stage == .fragment and !e.work.skip_helpers[at]) {
+    } else if (wide or (c.stage == .fragment and !e.work.skip_helpers[at])) {
         // A fetch needs no sampler, so its P1 is the constant of its own
         // bits where they are not the default, a fragment program's
         // fetch that reads its helper pixels: the per-pixel mask off
-        // (v3d_tex.c:312-354) - or, where P2 is written, the default's,
-        // which a P2 needs before it (:355-368; since 1.182).
+        // (v3d_tex.c:312-354), or one of 32-bit floats (:313; since
+        // 1.239) - or, where P2 is written, the default's, which a P2
+        // needs before it (:355-368; since 1.182).
         try wrtmuc(c, .constant, p1_packed);
     } else if (needs_p2) {
         try wrtmuc(c, .constant, compile.per_pixel_mask);
@@ -2119,6 +2149,7 @@ fn emitTex(e: *Emit, each: Step, at: u16) Error!void {
     // many: the scheduler only holds a lookup back for it.
     retiring.ldtmu_count = return_words;
     try addPendingTmuFlush(e, at, return_words);
+    return wide;
 }
 
 /// v3d_vir_emit_image_load_store (v3d_tex.c:564-655), for a compute

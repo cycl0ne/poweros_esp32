@@ -588,9 +588,37 @@ fn anisotropyOf(taps: f32) ?u2 {
 }
 
 /// Configuration parameter 0: the state's address, and the two words of two
-/// half-floats each that come back.
+/// half-floats each that come back, as a fixed form reads them. A
+/// compiled program's stream says its own words (`compile.Word.texture`;
+/// since 1.239), which the draw puts in place of these.
 pub fn parameter0(state: u32) u32 {
     return state | 0b11;
+}
+
+/// TMU Config Parameter 0's return words, its bits 0 to 3
+/// (cle/v3d_packet.xml:1537), below the state's address, which is aligned
+/// to 16 (`texture_state_alignment`).
+pub const return_words_mask: u32 = 0xF;
+
+comptime {
+    std.debug.assert(texture_state_alignment > return_words_mask);
+}
+
+/// Configuration parameter 0 as a compiled program's stream has it: the
+/// address `parameter0` wrote, with the words the TMU hands back the
+/// program's own (`compile.Word.texture`'s and `.image`'s bits) - two of
+/// half-floats, four of 32-bit floats (since 1.239), one of a
+/// comparison - as v3d packs them beside the state's address
+/// (v3d_tex.c:253-279).
+pub fn parameter0Of(configured: u32, words: u32) u32 {
+    return configured & ~return_words_mask | words;
+}
+
+test "a program's P0 keeps the texture state's address and takes its own words: two of half-floats, four of 32-bit floats, one of a comparison (since 1.239)" {
+    const configured = parameter0(0x0012_3440);
+    try std.testing.expectEqual(@as(u32, 0x0012_3443), parameter0Of(configured, 0b11));
+    try std.testing.expectEqual(@as(u32, 0x0012_344F), parameter0Of(configured, 0b1111));
+    try std.testing.expectEqual(@as(u32, 0x0012_3441), parameter0Of(configured, 0b1));
 }
 
 /// Configuration parameter 1: the sampler's address, and whether the

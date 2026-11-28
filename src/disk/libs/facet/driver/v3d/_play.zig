@@ -1436,7 +1436,9 @@ fn streamOf(queue: *Queue, stream: []const compile.Word, tmus: []const Configura
         .float => |each| @bitCast(each),
         // `Code.sampled` names every unit these do, and the draw found
         // each before it came here.
-        .texture => |unit| if (unit < tmus.len) tmus[unit].texture else 0,
+        // The words the TMU hands back are the program's, in the low
+        // bits (since 1.239), as a storage image's are.
+        .texture => |each| if (each.unit < tmus.len) tiling.parameter0Of(tmus[each.unit].texture, each.bits) else 0,
         // The sampler's address, with the bits the program sets of it
         // (since 1.167).
         .sampler => |each| if (each.unit < tmus.len) tmus[each.unit].sampler | each.bits else 0,
@@ -1470,7 +1472,7 @@ fn streamOf(queue: *Queue, stream: []const compile.Word, tmus: []const Configura
         // A storage image's state, with the words a load hands back in
         // the low bits P0 has for them, where a sample's has its two
         // (write_tmu_p0, v3dv_uniforms.c:139-185; since 1.218).
-        .image => |each| if (each.unit < tmus.len) tmus[each.unit].texture & ~return_words_mask | each.bits else 0,
+        .image => |each| if (each.unit < tmus.len) tiling.parameter0Of(tmus[each.unit].texture, each.bits) else 0,
     };
     return place.address;
 }
@@ -1685,15 +1687,6 @@ fn sendCompiledVertices(queue: *Queue, inputs: u32, locations: u32, stage: *cons
 /// What the shader record says a program reads of the VPM's values.
 fn idsOf(values: compile.SystemValues) cl.Ids {
     return .{ .vertex_id = values.vertex_id, .instance_id = values.instance_id, .base_instance = values.base_instance };
-}
-
-/// TMU Config Parameter 0's return words, its bits 0 to 3
-/// (cle/v3d_packet.xml:1537), below the state's address, which is aligned
-/// to 16 (`tiling.texture_state_alignment`).
-const return_words_mask: u32 = 0xF;
-
-comptime {
-    std.debug.assert(tiling.texture_state_alignment > return_words_mask);
 }
 
 /// The two words a program that samples reads as the TMU's
