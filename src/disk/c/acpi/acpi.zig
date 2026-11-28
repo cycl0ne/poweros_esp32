@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT
 //! Acpi: the firmware's description tables - every one the root lists,
-//! and the two the fixed description points at - listed, and saved as
-//! the files a disassembler reads as they are. Built against the SDK only.
+//! and the two the fixed description points at - listed, saved as the
+//! files a disassembler reads as they are, and the fixed description read
+//! whole. Built against the SDK only.
 //!
-//!   Acpi [TO <drawer>] [ROOT <address>]
+//!   Acpi [TO <drawer>] [ROOT <address>] [FIXED]
 //!
 //!   Acpi                   every table: its signature, its revision, its
 //!                          maker and the maker's name for it, its length,
@@ -21,6 +22,16 @@
 //!                          boot's lines give ("firmware tables at 0x...",
 //!                          `C:Log`), for a kernel that writes no such part.
 //!                          An address outside the machine's memory faults
+//!   Acpi FIXED             the fixed description read whole rather than
+//!                          the list: each register block with its space,
+//!                          address and width, the line the hardware raises
+//!                          and the port it is put into its mode on, the
+//!                          clock's alarm registers, the reset register,
+//!                          the flags and the boot architecture's by their
+//!                          names; then the control structure, the shared
+//!                          lock as it stands, and the embedded
+//!                          controller's table where there is one - each
+//!                          field under the name the tables give it
 //!
 //! The tables are in the firmware's own memory, which the system keeps
 //! and maps where it is, so they are read in place; each is copied out
@@ -39,14 +50,16 @@ const st_expansion = sdk.expansion;
 const st = st_expansion.systemtags;
 const Printf = dos.stdio.Printf;
 const names = @import("names.zig");
+const fixed = @import("fixed.zig");
 
 pub const COMMAND_NAME = "Acpi";
-const VERSION_STRING = "\x00$VER: Acpi 1.0 (28.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Acpi 1.1 (28.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "TO/K,ROOT/K";
+const template = "TO/K,ROOT/K,FIXED/S";
 const arg_to = 0;
 const arg_root = 1;
+const arg_fixed = 2;
 
 /// Room for a saved file's path: the drawer as given, then a table's name.
 const PATH_ROOM = 512;
@@ -58,7 +71,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer sys.CloseLibrary(lib);
     const dl: *DosBase = @ptrCast(lib);
 
-    var argv: [2]usize = @splat(0);
+    var argv: [3]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
         return dos.RETURN_FAIL;
@@ -82,7 +95,9 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         _ = Printf(dl, "no firmware tables at 0x%lx: no root there, or its checksums do not hold\n", .{@as(u64, address)});
         return dos.RETURN_FAIL;
     };
-    if (!list(dl, &root)) return dos.RETURN_WARN;
+    if (argv[arg_fixed] != 0) {
+        if (!fixed.show(dl, &root)) return dos.RETURN_WARN;
+    } else if (!list(dl, &root)) return dos.RETURN_WARN;
     if (argv[arg_to] != 0) {
         const drawer: [*:0]const u8 = @ptrFromInt(argv[arg_to]);
         return save(sys, dl, &root, drawer);

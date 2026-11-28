@@ -311,7 +311,8 @@ const part = eb.FindBoardPart(null, st.PARTKIND_CRYPTO, st.CHIP_JH7110_CRYPTO) o
   PCI host (`CHIP_PCI_ECAM`), the table of its display devices' video
   BIOS images (`CHIP_ACPI_VFCT`), which `amdgpu.resource` finds its
   device's image in, and the root of the tables themselves (`CHIP_ACPI`),
-  from which `C:Acpi` lists and saves them. The module above cannot tell
+  from which `C:Acpi` lists them, saves them and reads the fixed
+  description whole. The module above cannot tell
   the difference, and that is the point.
 - **A part nobody lists does not exist.** Every driver of a part answers
   null and goes away quietly, so a new machine starts with none of them
