@@ -1452,7 +1452,8 @@ Still left out. Each is marked *facet-wide* or *V3D-only*:
   the format says no SAMPLED_IMAGE. v3dv samples its depth aspect as
   DEPTH24_X8 (v3dvx_formats.c:209) and its stencil aspect as the word
   read as RGBA8UI (v3dv_image.c:781-790). X8_D24_UNORM_PACK32 is sampled
-  on both. *V3D-only*.
+  on both. *V3D-only*. **Done in 1.240** (item 56): both planes sampled
+  and read as input attachments, as v3dv reads them.
 - **D32_SFLOAT is not here**, which Vulkan has sampled and blitted
   unconditionally, and neither is D32_SFLOAT_S8_UINT; lavapipe has both,
   v3dv D32_SFLOAT alone (v3dvx_formats.c:205). *Facet-wide*.
@@ -2495,7 +2496,7 @@ Still left out. Each is marked *facet-wide* or *V3D-only*:
 
 ### 56. V3D: input attachments, through SubpassData in the compiler's profile **[critical path]**
 
-*V3D compiler* &mdash; conformance-blocking, large &mdash; **done in 1.214 to 1.216, the read of an attachment the subpass draws into in 1.237, SubpassDataMS in 1.238, and the 32-bit return in 1.239**; one entry left out, V3D-only
+*V3D compiler* &mdash; conformance-blocking, large &mdash; **done in 1.214 to 1.216, the read of an attachment the subpass draws into in 1.237, SubpassDataMS in 1.238, the 32-bit return in 1.239, and a stencil read as an input attachment in 1.240**; each of its four entries left out is done
 
 After: SubpassData in the compiler's profile
 
@@ -2518,7 +2519,7 @@ Found independently by: features, semantics (both conformance-blocking).
 Still left out. Each is marked *facet-wide* or *V3D-only*:
 - **A subpass that reads an attachment it draws into**, refused at CreateRenderPass with `error_feature_not_present` on a device without `can.tile_inputs`, which the V3D lacked. *V3D-only*. **Done in 1.237**, below.
 - **SubpassDataMS**, from step 2: an input attachment of four is made and stored, and a pipeline that reads it is refused. *V3D-only*. **Done in 1.238**, below.
-- **A stencil read as an input attachment**, refused as a sampled stencil is (`can.sampled_stencil`, item 58). *V3D-only*.
+- **A stencil read as an input attachment**, refused as a sampled stencil is (`can.sampled_stencil`, item 58). *V3D-only*. **Done in 1.240**, below.
 - **The 32-bit return** for a variable not RelaxedPrecision, from step 2. *Facet-wide* on the V3D. **Done in 1.239**, below.
 
 The three *V3D-only* entries are the V3D port's own gaps, so the list for the Radeon's has nothing new from them.
@@ -2612,6 +2613,40 @@ The tests:
 Left out, *V3D-only*:
 - **The words a sample asks for**: all four of a 32-bit return, both of half-floats. Mesa asks only for the channels read (nir_def_components_read, v3d_tex.c:253-255).
 
+**Then the last, in 1.240: a D24_UNORM_S8_UINT's stencil read as an input attachment on the V3D, and sampled.** v3dv's one format of a stencil is D24_UNORM_S8_UINT (v3dvx_formats.c:209). It reads the depth aspect as DEPTH24_X8 and the stencil aspect as the word re-read as R8G8B8A8_UINT under SWIZ_X001, the byte below the depth its red (v3dv_image.c:781-800). A usubpassInput's read is a txf of whole numbers, so the compiler takes those first. Ported:
+
+- **The compiler.** OpTypeInt keeps its signedness, and OpTypeImage takes a sampled type of int as well as float (`Sampler.whole`: none, unsigned or signed).
+  - The result must be a vector of the image's base type, as vtn asks (spirv_to_nir.c:3566-3578): a float result of a whole image, a signed one of an unsigned image and the reverse are `Error.Type`, and so is a comparison of whole numbers.
+  - An integer storage image is refused (`Error.Refused`): item 57's.
+- **The back end.** At 32 bits the four words are the integers as they are, packing_none (vir.c:632-641). At 16 bits, a mediump sampler's, each word holds two halves, which nir_lower_tex's packing_16 unpacks with nir_format_unpack_uint and _sint (nir_lower_tex.c:1182-1205; nir_format_convert.c:57-96): the low half shifted up 16 and back down, the high half down 16, `shr` for unsigned and `asr` for signed (`to_vir.unpackTexel`). 16 is no small immediate, so it is a uniform; v3dv sets lower_extract_word (v3dv_pipeline.c:168-173), so no extract is left to fold.
+- **The texture.** `tiling.Texels.stencil` is the word read as R8G8B8A8_UINT, texture type 101 (v3d_packet.xml:407), its channels (red, 0, 0, 1), as `.d24` reads (D, 0, 0, 1).
+- **The view.** One of a depth image's IMAGE_ASPECT_STENCIL alone says so (`ImageView.stencil`), and the draw hands the TMU the stencil's texture state for it and DEPTH24_X8's for one of the depth (`_play.tmuConfiguration`).
+- **The capability.** `can.sampled_word_stencil` is the stencil of D24_UNORM_S8_UINT sampled and read as an input attachment where a depth is sampled: true on the V3D. The format says SAMPLED_IMAGE, unfiltered as v3dv has it (v3dv_formats.c:273-276), and CreateImage takes SAMPLED and INPUT_ATTACHMENT on it. S8_UINT and D16_UNORM_S8_UINT, neither of which v3dv has, stay refused there; `sampled_stencil`, every format's, stays the cores'.
+
+The pass needed nothing new: a subpass with a depth attachment of its own is a frame of its own, which stores the stencil where the next subpass reads it.
+
+The tests:
+
+- Six host tests are new, and one grows:
+  - Three in `compile.zig`, of five glslc modules. glslc's usubpassInput of the stencil compiles to the fetch of 32 bits: P1's output bit and four LDTMU. Whole fetches through a usampler2D are the words as they are where it is not mediump, and two `shl` and four `shr` where it is, `asr` for an isampler2D. Of the refusals: a signed result of an unsigned image, a float image read into whole numbers, a sampled type not yet declared, a comparison of whole numbers (`glslc_counted_shadow`, whose int comes before its image), and a whole tile input.
+  - One in `tiling.zig`: the stencil's texture type and channels.
+  - One in `_format.zig`: D24_UNORM_S8_UINT says SAMPLED_IMAGE where the device samples its stencil alone, S8_UINT and D16_UNORM_S8_UINT nothing.
+  - In `tests/facet.zig`, the test of depth formats made: such a device makes the image and a view of each plane and of both, only the stencil's saying so, and refuses the other two formats.
+  - One in `tests/draw.zig`: a device of a layout of its own, which reads an input attachment through its texture unit, makes D24_UNORM_S8_UINT one and refuses S8_UINT and D16_UNORM_S8_UINT. A SAMPLED one the format query refuses first, so this is where `_image.stencilSampled` shows.
+- 4597 of the 4600 pass, 3 skipped. Of 14 mutants, all fail a test. Four passed the first round, each now caught:
+  - The sign of the result. The refusal of "a signed image" patched the image's SampledType to an int declared after it, which was refused as no type yet.
+  - A comparison of whole numbers.
+  - S8_UINT and D16_UNORM_S8_UINT read as input attachments on such a device.
+  - A view of both planes taken for the stencil's.
+- FacetProbe 1.63 checks D24_UNORM_S8_UINT says SAMPLED_IMAGE wherever a depth is sampled, and that the image is made sampled and read as an input attachment, with a view of each plane.
+- FacetBoth 1.88's "shipped stencil input attachment" marks the stencil in a first subpass: cleared to 2, the clockwise quad replaced by 5, the far triangle incremented and the near one's low four bits inverted. The second reads it through glslc's usubpassInput, its bits the colour, mixed three to one with the rectangle's.
+  - It reads the colour because a subpassLoad needs the layer, which the vertex program writes and a vertex function run on the CPU does not (`driver.zig`, since 1.215). Without it, the module would be one of no varyings, and the only vertex function of none, "place", is one run on the CPU.
+- On the board (f254, f257): FacetProbe 1096 of 1096, the four new checks passing on both devices. "shipped stencil input attachment" is 17 of 230400 apart, 192 at worst: bit 0 of the stencil at the triangles' edges, where the plain cases are apart too ("depth, far first" is apart from the same pixel on). The other 336 are as in 1.239.
+
+Left out. Each is marked *facet-wide* or *V3D-only*:
+- **Textures of whole numbers** other than the stencil: the compiler and back end take them now, and the V3D's formats of them are refused (`whole_textures`). *V3D-only*.
+- **Whole numbers out of the tile buffer**: a subpass that reads an attachment of whole numbers it draws into is refused (`Error.Refused`). v3dv's tile load takes the format's type (load_tlb_color_brcm, v3d_nir_lower_load_output.c:26-98); facet's reads floats. *V3D-only*.
+
 ### 57. V3D: storage images, in the layout the TMU reads **[critical path]**
 
 *V3D* &mdash; conformance-blocking, large
@@ -2695,6 +2730,8 @@ Found independently by: features, formats.
 Item 58 is done for what facet takes: a 2D depth, compared at an implicit level of detail. OpImageSampleDrefExplicitLod is named but not taken, since the IR has no explicit lod for any sample. On the board, FacetBoth 1.15's three shadow-map cases through the generated shader are as far from the cores as through the fixed form (3, 3 and 5 pixels of 230,400, at the same triangle edges), and its other 188 cases are as they were.
 
 On the board: FacetProbe 1.46 passes its 888 checks, 386 of them on the V3D (362 at 1.141). The V3D runs the whole of the sampled-depth part now: 16 bits compared, layers and levels. FacetBoth 1.14's three shadow-map cases are 3, 3 and 5 pixels of 230,400 from the cores, all at triangle edges, as its plain depth cases are.
+
+**1.240: D24_UNORM_S8_UINT sampled on the V3D**, both planes, as v3dv samples them (item 56).
 
 ### 59. Grow the compiler's profile: integers, branches, uniform buffers, push constants, arrays, cubes and 3D, and a register allocator **[critical path]**
 

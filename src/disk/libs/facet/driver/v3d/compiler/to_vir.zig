@@ -1928,10 +1928,31 @@ fn getWord(e: *Emit, step: u16, i: usize) Error!Reg {
 /// TMU hands back 32-bit floats, `wide`, its four words are the floats,
 /// as packing_none leaves the def (lower_tex_packing, nir_lower_tex.c:
 /// 1179-1180; since 1.239).
+///
+/// Of whole numbers (`compile.Sampler.whole`), the two words are four
+/// halves of 16 bits, which packing_16's nir_format_unpack_uint, or
+/// _sint where they are signed, takes out by shifts: the low half moved
+/// up 16 and down again, the high one moved down, down a shift of the
+/// sign for a signed one (nir_lower_tex.c:1182-1205;
+/// nir_format_unpack_int, nir_format_convert.c:57-96, its ishl by 0 of
+/// the high half folded away). v3dv lowers no extract_u16 (lower_extract_word,
+/// v3dv_pipeline.c:169), so none of the shifts is made one; the 16 is a
+/// uniform, which no small immediate holds (since 1.240).
 fn unpackTexel(e: *Emit, at: u16, wide: bool) Error!void {
     const c = e.c;
     if (wide) {
         for (0..4) |k| e.defs[at][k] = try getWord(e, at, k);
+        return;
+    }
+    const whole = e.work.samplers[e.work.steps[at].at].whole;
+    if (whole != .none) {
+        const sixteen = try c.uniformUi(16);
+        const down: vir.AddOp = if (whole == .signed) .asr else .shr;
+        for (0..2) |word| {
+            const pair = try getWord(e, at, word);
+            e.defs[at][word * 2] = try c.add(down, .{ try c.add(.shl, .{ pair, sixteen }), sixteen });
+            e.defs[at][word * 2 + 1] = try c.add(down, .{ pair, sixteen });
+        }
         return;
     }
     for (0..2) |word| {

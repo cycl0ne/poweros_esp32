@@ -1736,6 +1736,10 @@ fn tmuConfiguration(queue: *Queue, set: u32, binding: u32, how: tiling.Sampled, 
         // And X8_D24_UNORM_PACK32 as DEPTH24_X8 (v3dvx_formats.c:206;
         // since 1.222).
         .x8_d24_unorm_pack32 => .d24,
+        // D24_UNORM_S8_UINT's depth the same way, and its stencil as the
+        // word's R8G8B8A8_UINT, the byte below the depth its red
+        // (v3dvx_formats.c:209; v3dv_image.c:781-800; since 1.240).
+        .d24_unorm_s8_uint => if (view.stencil) .stencil else .d24,
         else => return null,
     };
     if (compared and texels != .d16 and texels != .d24) return null;

@@ -78,6 +78,11 @@ fn describe(can: *const _instance.Capabilities, format: facet.Format) facet.Form
     // too (`Capabilities.sampled_stencil`, since 1.142): the V3D samples a
     // depth and no stencil, and a device that samples no depth neither.
     const stencil_sampled = can.sampled_depth and can.sampled_stencil;
+    // D24_UNORM_S8_UINT's stencil beside it where the device samples that
+    // one's alone (`Capabilities.sampled_word_stencil`; since 1.240), as
+    // v3dv says SAMPLED_IMAGE of it (v3dvx_formats.c:209, filtering
+    // false; v3dv_formats.c:273-276).
+    const word_stencil_sampled = stencil_sampled or can.sampled_depth and can.sampled_word_stencil;
     // A BufferView of these reads a buffer's bytes as texels, and a
     // storage one is written through as well (CreateBufferView).
     const texels = facet.FORMAT_FEATURE_UNIFORM_TEXEL_BUFFER | facet.FORMAT_FEATURE_STORAGE_TEXEL_BUFFER;
@@ -224,7 +229,7 @@ fn describe(can: *const _instance.Capabilities, format: facet.Format) facet.Form
             .linear_tiling_features = 0,
             .optimal_tiling_features = transfer |
                 (if (can.depth24) facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT else 0) |
-                (if (stencil_sampled) depth_sampled else 0),
+                (if (word_stencil_sampled) depth_sampled else 0),
             .buffer_features = 0,
         },
         // Compressed: sampled and written, and read back as well where the
@@ -490,6 +495,24 @@ test "a depth format says it is sampled only where the device samples one" {
     try testing.expectEqual(facet.FORMAT_FEATURE_SAMPLED_IMAGE, d16 & sampled);
     try testing.expectEqual(@as(u32, 0), describe(&depth_alone, .s8_uint).optimal_tiling_features & sampled);
     try testing.expectEqual(@as(u32, 0), describe(&depth_alone, .d16_unorm_s8_uint).optimal_tiling_features & sampled);
+}
+
+test "D24_UNORM_S8_UINT says SAMPLED_IMAGE where the device samples its stencil alone, unfiltered as v3dv has it, and S8_UINT and D16_UNORM_S8_UINT still say nothing of sampling (since 1.240)" {
+    const sampled = facet.FORMAT_FEATURE_SAMPLED_IMAGE | facet.FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR;
+    // The V3D since 1.240: v3dv's D24S8, its filtering false
+    // (v3dvx_formats.c:209).
+    var word = depth_alone;
+    word.depth24 = true;
+    word.sampled_word_stencil = true;
+    try testing.expectEqual(facet.FORMAT_FEATURE_SAMPLED_IMAGE, describe(&word, .d24_unorm_s8_uint).optimal_tiling_features & sampled);
+    try testing.expectEqual(@as(u32, 0), describe(&word, .s8_uint).optimal_tiling_features & sampled);
+    try testing.expectEqual(@as(u32, 0), describe(&word, .d16_unorm_s8_uint).optimal_tiling_features & sampled);
+    // Without it, or without a depth sampled, D24S8 says nothing of it.
+    try testing.expectEqual(@as(u32, 0), describe(&depth_alone, .d24_unorm_s8_uint).optimal_tiling_features & sampled);
+    word.sampled_depth = false;
+    try testing.expectEqual(@as(u32, 0), describe(&word, .d24_unorm_s8_uint).optimal_tiling_features & sampled);
+    // The cores sample every stencil, and filter the depth beside it.
+    try testing.expectEqual(sampled, describe(&keeping, .d24_unorm_s8_uint).optimal_tiling_features & sampled);
 }
 
 test "a stencil format says it is an attachment only where the device stores that plane" {

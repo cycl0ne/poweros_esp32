@@ -919,6 +919,37 @@ test "an image: a texture, rows or a depth, by what it is for" {
         try testing.expectEqual(facet.Result.success, rig.fb.CreateImage(device, &.{ .format = format, .extent = .{ .width = 64, .height = 64 }, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT }, &image));
         rig.fb.DestroyImage(device, image);
     }
+    // A device that samples D24_UNORM_S8_UINT's stencil and no other, as
+    // the V3D since 1.240: that image made sampled, and S8_UINT and
+    // D16_UNORM_S8_UINT refused, v3dv having neither. A view of its
+    // stencil alone says so, which the V3D's TMU reads as R8G8B8A8_UINT.
+    {
+        const held = _objects.of(_instance.PhysicalDevice, physical);
+        held.can.sampled_stencil = false;
+        defer held.can.sampled_stencil = true;
+        held.can.sampled_word_stencil = true;
+        defer held.can.sampled_word_stencil = false;
+        const stencil_sampled = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_SAMPLED;
+        try testing.expectEqual(facet.Result.success, rig.fb.CreateImage(device, &.{ .format = .d24_unorm_s8_uint, .extent = .{ .width = 64, .height = 64 }, .usage = stencil_sampled }, &image));
+        rig.fb.GetImageMemoryRequirements(device, image.?, &needs);
+        var block: ?*facet.DeviceMemory = null;
+        try testing.expectEqual(facet.Result.success, rig.fb.AllocateMemory(device, &.{ .allocation_size = needs.size, .memory_type_index = 0 }, &block));
+        try testing.expectEqual(facet.Result.success, rig.fb.BindImageMemory(device, image.?, block.?, 0));
+        for ([_]u32{ facet.IMAGE_ASPECT_STENCIL, facet.IMAGE_ASPECT_DEPTH, facet.IMAGE_ASPECT_DEPTH | facet.IMAGE_ASPECT_STENCIL }) |aspect| {
+            var plane: ?*facet.ImageView = null;
+            try testing.expectEqual(facet.Result.success, rig.fb.CreateImageView(device, &.{ .image = image.?, .format = .d24_unorm_s8_uint, .subresource_range = .{ .aspect_mask = aspect } }, &plane));
+            try testing.expectEqual(aspect == facet.IMAGE_ASPECT_STENCIL, _objects.of(_image.ImageView, plane.?).stencil);
+            rig.fb.DestroyImageView(device, plane);
+        }
+        rig.fb.DestroyImage(device, image);
+        rig.fb.FreeMemory(device, block);
+        for ([_]facet.Format{ .s8_uint, .d16_unorm_s8_uint }) |format| {
+            try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.CreateImage(device, &.{ .format = format, .extent = .{ .width = 64, .height = 64 }, .usage = stencil_sampled }, &image));
+            try testing.expect(image == null);
+        }
+        held.can.sampled_word_stencil = false;
+        try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.CreateImage(device, &.{ .format = .d24_unorm_s8_uint, .extent = .{ .width = 64, .height = 64 }, .usage = stencil_sampled }, &image));
+    }
 }
 
 test "a compressed image down to its last level, and no compressed image of one dimension" {

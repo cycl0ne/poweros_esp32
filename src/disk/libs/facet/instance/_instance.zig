@@ -279,6 +279,15 @@ pub const Capabilities = extern struct {
     /// plane through a view of its aspect: the cores (since 1.58). The V3D
     /// samples a depth of its own alone (since 1.142).
     sampled_stencil: bool = false,
+    /// And the stencil of `d24_unorm_s8_uint`, the byte below the depth in
+    /// the word the device keeps both in (`depth24`), sampled and read as
+    /// an input attachment through a view of that aspect, where the
+    /// device samples a depth: the V3D since 1.240, which reads the word
+    /// as R8G8B8A8_UINT, its red the stencil, as v3dv does
+    /// (v3dv_image.c:781-800). That is v3dv's one format of a stencil
+    /// (v3dvx_formats.c:209), so the V3D's `sampled_stencil`, every
+    /// format's, stays false; the cores have that.
+    sampled_word_stencil: bool = false,
     /// A sampled depth is filtered as well: FORMAT_FEATURE_SAMPLED_IMAGE_
     /// FILTER_LINEAR on it, a shadow sample mixing the four texels round
     /// the point. The cores; v3dv leaves it off D16_UNORM on this GPU

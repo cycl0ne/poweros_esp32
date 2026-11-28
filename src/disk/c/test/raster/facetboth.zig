@@ -42,6 +42,11 @@
 //! its fractions, whole levels where the texel is read as 32-bit floats:
 //! the V3D reads them so where the sampler is not mediump, and as
 //! half-floats, up to four levels off, where it is (facet 1.239).
+//! The shipped stencil input attachment (since 1.88) is a
+//! D24_UNORM_S8_UINT's stencil, marked in a first subpass and read in a
+//! second through glslc's usubpassInput, its bits the colour mixed with
+//! the rectangle's: the V3D fetches the word through the TMU as
+//! R8G8B8A8_UINT, its red the stencil (facet 1.240).
 //! The texture stored by a function (since 1.76) is written by a compute
 //! function of the program's, each group a texel, and drawn: on the V3D
 //! the function runs on the cores, which write each texel where its TMU
@@ -195,7 +200,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.87 (28.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.88 (28.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -1831,6 +1836,35 @@ fn subpassFragment(fragments: *const shader.Fragments) callconv(.c) void {
     }
 }
 
+/// What `shipped_stencil_input` computes, for the cores: the stencil the
+/// input attachment holds at the pixel, the whole number of the plane a
+/// view of that aspect reads (`shader.Attachment.intAt`), its bit 0 as
+/// red, bit 1 as green, the rest a quarter each as blue and 1 as alpha,
+/// three to one with the colour as `subpassFragment` mixes (since 1.88).
+fn stencilInputFragment(fragments: *const shader.Fragments) callconv(.c) void {
+    const from = fragments.input(0, 0, 0) orelse return shader.fill(fragments, shader.missing);
+    @setRuntimeSafety(false);
+    var rows = shader.Rows(5).of(fragments);
+    for (fragments.quads[0..fragments.count], fragments.colors[0..fragments.count]) |quad, *out| {
+        const planes = rows.at(quad);
+        const over = @as(shader.Pixels, @splat(1)) / planes[0];
+        var made: [4]shader.Pixels = undefined;
+        inline for (&made, 0..) |*each, c| each.* = planes[1 + c] * over * @as(shader.Pixels, @splat(0.25));
+        made[3] += @splat(0.75);
+        inline for (0..4) |i| {
+            const x = fragments.x + @as(u32, quad.x) + @as(u32, i & 1);
+            const y = fragments.y + @as(u32, quad.y) + @as(u32, i >> 1);
+            const marked: u32 = @intCast(from.intAt(x, y)[0]);
+            made[0][i] += @as(f32, @floatFromInt(marked & 1)) * 0.75;
+            made[1][i] += @as(f32, @floatFromInt(marked >> 1 & 1)) * 0.75;
+            made[2][i] += @as(f32, @floatFromInt(marked >> 2)) * 0.25 * 0.75;
+        }
+        var bytes: [4]@Vector(4, u32) = undefined;
+        inline for (&bytes, 0..) |*channel, c| channel.* = channelOf(made[c]);
+        out.* = bytes[3] << @splat(24) | bytes[0] << @splat(16) | bytes[1] << @splat(8) | bytes[2];
+    }
+}
+
 /// What `shipped_subpass_four` computes, for the cores: `subpassFragment`
 /// of an input attachment of four samples, the sample read the one the
 /// two lowest bits of the pixel's x pick (`Attachment.sampleOf`; since
@@ -3017,6 +3051,9 @@ const shipped_entries = [_]shader.Entry{
     // the cores' one function for both (since 1.87).
     Shipped.Fine.entry("shipped fine texel"),
     shader.fragment("shipped fine texel mediump", Shipped.Fine.function, Shipped.Fine.varyings),
+    // A D24_UNORM_S8_UINT's stencil read as an input attachment, its bits
+    // the colour mixed with the vertices' (since 1.88).
+    shader.fragment("shipped stencil input", &stencilInputFragment, 4),
 };
 const shipped_words = [_]shader.Spirv{
     .{},                                            .{},                                        .{},                                           .{},
@@ -3048,7 +3085,7 @@ const shipped_words = [_]shader.Spirv{
     shader.Spirv.of(&shipped_outputs),              shader.Spirv.of(&shipped_vertex_outputs),   Shipped.NestedKept.spirv,                      Shipped.SelectsKept.spirv,
     Shipped.CollapsedKept.spirv,                    shader.Spirv.of(&shipped_fetch_four),       shader.Spirv.of(&shipped_subpass),             shader.Spirv.of(&shipped_stored),
     shader.Spirv.of(&shipped_drawn_stored),         shader.Spirv.of(&shipped_two_colours),      shader.Spirv.of(&shipped_cubes),               shader.Spirv.of(&shipped_subpass_four),
-    Shipped.Fine.spirv,                             shader.Spirv.of(&shipped_fine_mediump),
+    Shipped.Fine.spirv,                             shader.Spirv.of(&shipped_fine_mediump),     shader.Spirv.of(&shipped_stencil_input),
 };
 
 /// glslc's own output, at -O, for a sample of an image of four at the
@@ -3272,6 +3309,75 @@ const shipped_fine_mediump = [_]u32{
     0x00000012, 0x0005008E, 0x00000007, 0x00000015, 0x00000013, 0x00000014,
     0x0006000C, 0x00000007, 0x00000016, 0x00000001, 0x0000000A, 0x00000015,
     0x0003003E, 0x00000009, 0x00000016, 0x000100FD, 0x00010038,
+};
+
+/// glslc's own output, at -O, for a D24_UNORM_S8_UINT's stencil read as
+/// an input attachment by a later subpass, its bits the colour, mixed
+/// three to one with the vertices' colour as `shipped_subpass` mixes:
+/// subpassLoad of a usubpassInput, its red the stencil, which
+/// spirv_to_nir makes a txf of a whole number, at 32 bits where the
+/// variable is not RelaxedPrecision (v3dv_pipeline.c:775-787), and the
+/// V3D fetches through the TMU as the word's R8G8B8A8_UINT, the byte
+/// below the depth its red (v3dv_image.c:781-800; since 1.88, facet
+/// 1.240). It reads the colour for the vertex program to write the
+/// layer the read is of: a vertex function run on the CPU does not
+/// (`driver.zig`, since facet 1.215).
+///
+/// ```glsl
+/// #version 450
+/// layout(input_attachment_index = 0, set = 0, binding = 0) uniform usubpassInput marks;
+/// layout(location = 0) in vec4 color;
+/// layout(location = 0) out vec4 outColor;
+/// void main() {
+///     uint s = subpassLoad(marks).r;
+///     outColor = vec4(float(s & 1u), float((s >> 1) & 1u), float(s >> 2) * 0.25, 1.0) * 0.75 + color * 0.25;
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=frag stencil_input.frag -o stencil_input.spv   # 231 words
+/// spirv-val --target-env vulkan1.0 stencil_input.spv                      # no output, and 0
+/// ```
+const shipped_stencil_input = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000031, 0x00000000, 0x00020011,
+    0x00000001, 0x00020011, 0x00000028, 0x0006000B, 0x00000001, 0x4C534C47,
+    0x6474732E, 0x3035342E, 0x00000000, 0x0003000E, 0x00000000, 0x00000001,
+    0x0007000F, 0x00000004, 0x00000004, 0x6E69616D, 0x00000000, 0x00000018,
+    0x0000002D, 0x00030010, 0x00000004, 0x00000007, 0x00040047, 0x0000000B,
+    0x00000021, 0x00000000, 0x00040047, 0x0000000B, 0x00000022, 0x00000000,
+    0x00040047, 0x0000000B, 0x0000002B, 0x00000000, 0x00040047, 0x00000018,
+    0x0000001E, 0x00000000, 0x00040047, 0x0000002D, 0x0000001E, 0x00000000,
+    0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00040015,
+    0x00000006, 0x00000020, 0x00000000, 0x00090019, 0x00000009, 0x00000006,
+    0x00000006, 0x00000000, 0x00000000, 0x00000000, 0x00000002, 0x00000000,
+    0x00040020, 0x0000000A, 0x00000000, 0x00000009, 0x0004003B, 0x0000000A,
+    0x0000000B, 0x00000000, 0x00040015, 0x0000000D, 0x00000020, 0x00000001,
+    0x0004002B, 0x0000000D, 0x0000000E, 0x00000000, 0x00040017, 0x0000000F,
+    0x0000000D, 0x00000002, 0x0005002C, 0x0000000F, 0x00000010, 0x0000000E,
+    0x0000000E, 0x00040017, 0x00000011, 0x00000006, 0x00000004, 0x00030016,
+    0x00000015, 0x00000020, 0x00040017, 0x00000016, 0x00000015, 0x00000004,
+    0x00040020, 0x00000017, 0x00000003, 0x00000016, 0x0004003B, 0x00000017,
+    0x00000018, 0x00000003, 0x0004002B, 0x00000006, 0x0000001A, 0x00000001,
+    0x0004002B, 0x0000000D, 0x0000001E, 0x00000001, 0x0004002B, 0x0000000D,
+    0x00000023, 0x00000002, 0x0004002B, 0x00000015, 0x00000026, 0x3E800000,
+    0x0004002B, 0x00000015, 0x00000028, 0x3F800000, 0x0004002B, 0x00000015,
+    0x0000002A, 0x3F400000, 0x00040020, 0x0000002C, 0x00000001, 0x00000016,
+    0x0004003B, 0x0000002C, 0x0000002D, 0x00000001, 0x00050036, 0x00000002,
+    0x00000004, 0x00000000, 0x00000003, 0x000200F8, 0x00000005, 0x0004003D,
+    0x00000009, 0x0000000C, 0x0000000B, 0x00050062, 0x00000011, 0x00000012,
+    0x0000000C, 0x00000010, 0x00050051, 0x00000006, 0x00000014, 0x00000012,
+    0x00000000, 0x000500C7, 0x00000006, 0x0000001B, 0x00000014, 0x0000001A,
+    0x00040070, 0x00000015, 0x0000001C, 0x0000001B, 0x000500C2, 0x00000006,
+    0x0000001F, 0x00000014, 0x0000001E, 0x000500C7, 0x00000006, 0x00000020,
+    0x0000001F, 0x0000001A, 0x00040070, 0x00000015, 0x00000021, 0x00000020,
+    0x000500C2, 0x00000006, 0x00000024, 0x00000014, 0x00000023, 0x00040070,
+    0x00000015, 0x00000025, 0x00000024, 0x00050085, 0x00000015, 0x00000027,
+    0x00000025, 0x00000026, 0x00070050, 0x00000016, 0x00000029, 0x0000001C,
+    0x00000021, 0x00000027, 0x00000028, 0x0005008E, 0x00000016, 0x0000002B,
+    0x00000029, 0x0000002A, 0x0004003D, 0x00000016, 0x0000002E, 0x0000002D,
+    0x0005008E, 0x00000016, 0x0000002F, 0x0000002E, 0x00000026, 0x00050081,
+    0x00000016, 0x00000030, 0x0000002B, 0x0000002F, 0x0003003E, 0x00000018,
+    0x00000030, 0x000100FD, 0x00010038,
 };
 
 /// glslc's own output, at -O: `shippedStored`, "stored"'s texels written
@@ -10565,6 +10671,17 @@ const Side = struct {
     four_own_pass: ?*facet.RenderPass = null,
     four_own_frame: ?*facet.Framebuffer = null,
     four_own_set: ?*facet.DescriptorSet = null,
+    /// A D24_UNORM_S8_UINT whose stencil a first subpass marks and a
+    /// second reads as an input attachment, a view of both its planes for
+    /// the framebuffer and one of its stencil for the set, the pass over
+    /// it and the first picture, its framebuffer and the set (since
+    /// 1.88).
+    marks: ?*facet.Image = null,
+    marks_view: ?*facet.ImageView = null,
+    marks_stencil: ?*facet.ImageView = null,
+    marks_pass: ?*facet.RenderPass = null,
+    marks_frame: ?*facet.Framebuffer = null,
+    marks_set: ?*facet.DescriptorSet = null,
     /// The texture a compute function writes, its view, the set layout,
     /// layout, pipeline and set it writes it through, and the set a draw
     /// samples it through (since 1.76).
@@ -10714,7 +10831,7 @@ const Side = struct {
         const binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .sampled_image, .stage_flags = facet.SHADER_STAGE_FRAGMENT };
         try expect(fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&binding) }, &side.set_layout), error.Refused);
         // The last two are "shipped stored"'s (since 1.77).
-        try expect(fb.CreateDescriptorPool(device, &.{ .max_sets = formats.len + 10 + layered_count + throughs.len + shadow_ops.len + formats.len * 2 + 4 + 2 + 1 + 2 }, &side.descriptor_pool), error.Refused);
+        try expect(fb.CreateDescriptorPool(device, &.{ .max_sets = formats.len + 10 + layered_count + throughs.len + shadow_ops.len + formats.len * 2 + 4 + 2 + 1 + 2 + 1 }, &side.descriptor_pool), error.Refused);
         const layouts: [formats.len]?*facet.DescriptorSetLayout = @splat(side.set_layout);
         try expect(fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = side.descriptor_pool.?, .descriptor_set_count = formats.len, .set_layouts = @ptrCast(&layouts) }, &side.sets), error.Refused);
         for (side.sets, side.texture_views) |set, texture_view| {
@@ -10800,6 +10917,7 @@ const Side = struct {
         try side.upDrawn();
         try side.upInput();
         try side.upFourInput();
+        try side.upMarks();
         try side.upStored();
     }
 
@@ -11087,6 +11205,47 @@ const Side = struct {
 
     /// A set of `input_set_layout` of `input_view` in `layout` (since
     /// 1.86).
+    /// `marks` and all that reads it (since 1.88): the first subpass
+    /// marks its stencil and draws no colour, and the second reads the
+    /// stencil at each pixel's own place through a view of that aspect
+    /// and draws into the first picture. The pass keeps neither plane:
+    /// the V3D's first subpass is a frame of its own, which stores the
+    /// word where its TMU fetches it all the same.
+    fn upMarks(side: *Side) Failure!void {
+        const fb = side.fb;
+        const device = side.device.?;
+        const extent = facet.Extent3D{ .width = side.width, .height = side.height };
+        try side.image(.{ .format = .d24_unorm_s8_uint, .extent = extent, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_INPUT_ATTACHMENT }, 0, &side.marks);
+        side.marks_view = try side.view(side.marks.?, .d24_unorm_s8_uint, facet.IMAGE_ASPECT_DEPTH | facet.IMAGE_ASPECT_STENCIL, 1);
+        side.marks_stencil = try side.view(side.marks.?, .d24_unorm_s8_uint, facet.IMAGE_ASPECT_STENCIL, 1);
+        const attachments = [2]facet.AttachmentDescription{
+            .{ .format = .d24_unorm_s8_uint, .load_op = .clear, .store_op = .dont_care, .stencil_load_op = .clear, .stencil_store_op = .dont_care, .final_layout = .shader_read_only_optimal },
+            .{ .format = formats[0], .load_op = .clear, .store_op = .store, .final_layout = .general },
+        };
+        const marked = facet.AttachmentReference{ .attachment = 0, .layout = .depth_stencil_attachment_optimal };
+        const read = facet.AttachmentReference{ .attachment = 0, .layout = .shader_read_only_optimal };
+        const picture = facet.AttachmentReference{ .attachment = 1, .layout = .color_attachment_optimal };
+        const subpasses = [2]facet.SubpassDescription{
+            .{ .color_attachment_count = 1, .color_attachments = @ptrCast(&picture), .depth_stencil_attachment = &marked },
+            .{ .input_attachment_count = 1, .input_attachments = @ptrCast(&read), .color_attachment_count = 1, .color_attachments = @ptrCast(&picture) },
+        };
+        // The read waits for the stencil the first subpass wrote at the
+        // same pixel.
+        const written = facet.SubpassDependency{
+            .src_subpass = 0,
+            .dst_subpass = 1,
+            .src_stage_mask = facet.PIPELINE_STAGE_EARLY_FRAGMENT_TESTS | facet.PIPELINE_STAGE_LATE_FRAGMENT_TESTS,
+            .dst_stage_mask = facet.PIPELINE_STAGE_FRAGMENT_SHADER,
+            .src_access_mask = facet.ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE,
+            .dst_access_mask = facet.ACCESS_INPUT_ATTACHMENT_READ,
+            .dependency_flags = facet.DEPENDENCY_BY_REGION,
+        };
+        try expect(fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &attachments, .subpass_count = 2, .subpasses = &subpasses, .dependency_count = 1, .dependencies = @ptrCast(&written) }, &side.marks_pass), error.Refused);
+        const views = [2]*facet.ImageView{ side.marks_view.?, side.picture_views[0].? };
+        try expect(fb.CreateFramebuffer(device, &.{ .render_pass = side.marks_pass.?, .attachment_count = 2, .attachments = &views, .width = side.width, .height = side.height }, &side.marks_frame), error.Refused);
+        side.marks_set = try side.inputSet(side.marks_stencil.?, .shader_read_only_optimal);
+    }
+
     fn inputSet(side: *Side, input_view: *facet.ImageView, layout: facet.ImageLayout) Failure!*facet.DescriptorSet {
         const fb = side.fb;
         const device = side.device.?;
@@ -11567,6 +11726,11 @@ const Side = struct {
         fb.DestroyBuffer(device, side.computed);
         fb.DestroyBuffer(device, side.numbers);
         fb.DestroyFence(device, side.fence);
+        fb.DestroyFramebuffer(device, side.marks_frame);
+        fb.DestroyRenderPass(device, side.marks_pass);
+        fb.DestroyImageView(device, side.marks_stencil);
+        fb.DestroyImageView(device, side.marks_view);
+        fb.DestroyImage(device, side.marks);
         fb.DestroyFramebuffer(device, side.four_own_frame);
         fb.DestroyRenderPass(device, side.four_own_pass);
         fb.DestroyFramebuffer(device, side.four_input_frame);
@@ -13374,6 +13538,39 @@ const Cases = struct {
         side.draw(quad_at, 6);
         side.end();
     }
+    /// A D24_UNORM_S8_UINT's stencil marked in the first subpass and read
+    /// in the second through glslc's subpassLoad of a usubpassInput at
+    /// each pixel's own place, its bits the colour mixed three to one
+    /// with the rectangle's (since 1.88): cleared
+    /// to 2, the clockwise quad replaced by 5, the far triangle
+    /// incremented and the near one's low four bits inverted, so that
+    /// every region has a value of its own. The V3D's first subpass is a
+    /// frame of its own, which stores the word, and the second fetches it
+    /// through the TMU as R8G8B8A8_UINT, its red the stencil
+    /// (docs/facet-vulkan10.md item 56; facet 1.240); the cores read the
+    /// stencil plane.
+    fn stencilInput(side: *Side) Failure!void {
+        const fb = side.fb;
+        const commands = side.commands.?;
+        const clears = [2]facet.ClearValue{ .{ .depth_stencil = .{ .depth = 1, .stencil = 2 } }, .{ .color = .{ .float32 = .{ 0.05, 0.1, 0.3, 1 } } } };
+        fb.CmdBeginRenderPass(commands, &.{ .render_pass = side.marks_pass.?, .framebuffer = side.marks_frame.?, .render_area = side.areaOf(null), .clear_value_count = 2, .clear_values = &clears }, .@"inline");
+        side.state();
+        const steps = [3]struct { first: u32, count: u32, op: facet.StencilOp, reference: u32, write_mask: u32 }{
+            .{ .first = clockwise_at, .count = 6, .op = .replace, .reference = 5, .write_mask = 0xFF },
+            .{ .first = far_at, .count = 3, .op = .increment_and_clamp, .reference = 0, .write_mask = 0xFF },
+            .{ .first = near_at, .count = 3, .op = .invert, .reference = 0, .write_mask = 0x0F },
+        };
+        for (steps) |step| {
+            const mark = facet.StencilOpState{ .pass_op = step.op, .compare_op = .always, .write_mask = step.write_mask, .reference = step.reference };
+            try side.use(.{ .pass = side.marks_pass.?, .stencil_test = true, .front = mark, .back = mark, .mixing = .{ .color_write_mask = 0 } });
+            side.draw(step.first, step.count);
+        }
+        fb.CmdNextSubpass(commands, .@"inline");
+        fb.CmdBindDescriptorSets(commands, .graphics, side.input_layout.?, 0, 1, @ptrCast(&side.marks_set), 0, null);
+        try side.use(.{ .pass = side.marks_pass.?, .subpass = 1, .vertex = "shipped as it is", .fragment = "shipped stencil input", .layout = side.input_layout.? });
+        side.draw(quad_at, 6);
+        side.end();
+    }
     /// A texture written by the compute function "stored", a group a
     /// texel, then drawn over the quad, nearest. On the V3D the function
     /// runs on the cores, which write each texel where its TMU reads it,
@@ -13750,6 +13947,7 @@ const cases = [_]Case{
     .{ .name = "shipped input attachment of its own", .run = &Cases.inputOwn },
     .{ .name = "shipped input attachment of four samples", .run = &Cases.inputFour },
     .{ .name = "shipped input attachment of four samples of its own", .run = &Cases.inputFourOwn },
+    .{ .name = "shipped stencil input attachment", .run = &Cases.stencilInput },
     .{ .name = "stored by a function", .run = &Cases.storedByFunction },
     // 1.77: the same texels by glslc's imageStore, which the V3D compiles
     // since facet 1.218 (item 57 step 2).
