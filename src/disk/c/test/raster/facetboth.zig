@@ -47,6 +47,12 @@
 //! second through glslc's usubpassInput, its bits the colour mixed with
 //! the rectangle's: the V3D fetches the word through the TMU as
 //! R8G8B8A8_UINT, its red the stencil (facet 1.240).
+//! The shipped float stored texture (since 1.89) is "stored"'s colours
+//! written by glslc's imageStore as floats into an Rgba16f storage image
+//! and an R32f one, read back by a second program's imageLoad and written
+//! again into an Rgba32f one, which the draw samples: the V3D reads and
+//! writes each through its TMU in the format's own bytes, halves or 32-bit
+//! floats, and samples the last as RGBA32F (facet 1.241).
 //! The texture stored by a function (since 1.76) is written by a compute
 //! function of the program's, each group a texel, and drawn: on the V3D
 //! the function runs on the cores, which write each texel where its TMU
@@ -200,7 +206,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.88 (28.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.89 (28.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -3054,6 +3060,10 @@ const shipped_entries = [_]shader.Entry{
     // A D24_UNORM_S8_UINT's stencil read as an input attachment, its bits
     // the colour mixed with the vertices' (since 1.88).
     shader.fragment("shipped stencil input", &stencilInputFragment, 4),
+    // "stored"'s colours as floats through storage images of halves, of
+    // one float and of four, a group 8x8 (since 1.89).
+    shader.computeGroup("shipped half stored", &halfStored, .{ stored_group, stored_group, 1 }, 0),
+    shader.computeGroup("shipped float halved", &floatHalved, .{ stored_group, stored_group, 1 }, 0),
 };
 const shipped_words = [_]shader.Spirv{
     .{},                                            .{},                                        .{},                                           .{},
@@ -3085,7 +3095,8 @@ const shipped_words = [_]shader.Spirv{
     shader.Spirv.of(&shipped_outputs),              shader.Spirv.of(&shipped_vertex_outputs),   Shipped.NestedKept.spirv,                      Shipped.SelectsKept.spirv,
     Shipped.CollapsedKept.spirv,                    shader.Spirv.of(&shipped_fetch_four),       shader.Spirv.of(&shipped_subpass),             shader.Spirv.of(&shipped_stored),
     shader.Spirv.of(&shipped_drawn_stored),         shader.Spirv.of(&shipped_two_colours),      shader.Spirv.of(&shipped_cubes),               shader.Spirv.of(&shipped_subpass_four),
-    Shipped.Fine.spirv,                             shader.Spirv.of(&shipped_fine_mediump),     shader.Spirv.of(&shipped_stencil_input),
+    Shipped.Fine.spirv,                             shader.Spirv.of(&shipped_fine_mediump),     shader.Spirv.of(&shipped_stencil_input),       shader.Spirv.of(&shipped_half_stored),
+    shader.Spirv.of(&shipped_float_halved),
 };
 
 /// glslc's own output, at -O, for a sample of an image of four at the
@@ -3378,6 +3389,186 @@ const shipped_stencil_input = [_]u32{
     0x0005008E, 0x00000016, 0x0000002F, 0x0000002E, 0x00000026, 0x00050081,
     0x00000016, 0x00000030, 0x0000002B, 0x0000002F, 0x0003003E, 0x00000018,
     0x00000030, 0x000100FD, 0x00010038,
+};
+
+/// glslc's own output, at -O, for "stored"'s colours, a workgroup of 8x8
+/// of them, written as floats through two storage images at a time:
+/// OpImageWrite of an Rgba16f image, its red, green and blue doubled, above
+/// 1, and its alpha -1, which the V3D packs into two words of halves
+/// (VFPACK), and of an R32f one, the red four times, one 32-bit word, each
+/// written through its TMU in the format's own bytes
+/// (v3d71_nir_lower_image_store, v3d_nir_lower_image_load_store.c:354-394;
+/// since 1.89, facet 1.241).
+///
+/// ```glsl
+/// #version 450
+/// // FacetBoth's "shipped float stored" (facet 1.241), its first program:
+/// // "stored"'s texels, a workgroup of 8x8 of them, written as floats through
+/// // an Rgba16f storage image, red, green and blue doubled and alpha -1, and
+/// // the red four times through an R32f one.
+/// layout(local_size_x = 8, local_size_y = 8) in;
+/// layout(set = 0, binding = 0, rgba16f) uniform writeonly image2D halves;
+/// layout(set = 1, binding = 0, r32f) uniform writeonly image2D reds;
+/// void main() {
+///     uvec2 at = gl_GlobalInvocationID.xy;
+///     bool check = (((at.x >> 3) ^ (at.y >> 3)) & 1u) != 0u;
+///     float red = check ? 224.0 : float(at.x * 4u);
+///     vec4 c = vec4(red, float(at.y * 4u), 128.0, 255.0) / 255.0;
+///     imageStore(halves, ivec2(at), vec4(c.rgb * 2.0, -1.0));
+///     imageStore(reds, ivec2(at), vec4(c.r * 4.0));
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=comp shipped_half_stored.comp -o shipped_half_stored.spv   # 380 words
+/// spirv-val --target-env vulkan1.0 shipped_half_stored.spv   # no output, and 0
+/// ```
+const shipped_half_stored = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000063, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0006000F, 0x00000005,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000C, 0x00060010, 0x00000004,
+    0x00000011, 0x00000008, 0x00000008, 0x00000001, 0x00040047, 0x0000000C,
+    0x0000000B, 0x0000001C, 0x00030047, 0x0000003E, 0x00000019, 0x00040047,
+    0x0000003E, 0x00000021, 0x00000000, 0x00040047, 0x0000003E, 0x00000022,
+    0x00000000, 0x00030047, 0x0000004F, 0x00000019, 0x00040047, 0x0000004F,
+    0x00000021, 0x00000000, 0x00040047, 0x0000004F, 0x00000022, 0x00000001,
+    0x00040047, 0x00000059, 0x0000000B, 0x00000019, 0x00020013, 0x00000002,
+    0x00030021, 0x00000003, 0x00000002, 0x00040015, 0x00000006, 0x00000020,
+    0x00000000, 0x00040017, 0x00000007, 0x00000006, 0x00000002, 0x00040017,
+    0x0000000A, 0x00000006, 0x00000003, 0x00040020, 0x0000000B, 0x00000001,
+    0x0000000A, 0x0004003B, 0x0000000B, 0x0000000C, 0x00000001, 0x00020014,
+    0x0000000F, 0x0004002B, 0x00000006, 0x00000012, 0x00000000, 0x00040015,
+    0x00000016, 0x00000020, 0x00000001, 0x0004002B, 0x00000016, 0x00000017,
+    0x00000003, 0x0004002B, 0x00000006, 0x00000019, 0x00000001, 0x00030016,
+    0x00000020, 0x00000020, 0x0004002B, 0x00000020, 0x00000027, 0x43600000,
+    0x0004002B, 0x00000006, 0x0000002B, 0x00000004, 0x00040017, 0x0000002F,
+    0x00000020, 0x00000004, 0x0004002B, 0x00000020, 0x00000037, 0x43000000,
+    0x0004002B, 0x00000020, 0x00000038, 0x437F0000, 0x00090019, 0x0000003C,
+    0x00000020, 0x00000001, 0x00000000, 0x00000000, 0x00000000, 0x00000002,
+    0x00000002, 0x00040020, 0x0000003D, 0x00000000, 0x0000003C, 0x0004003B,
+    0x0000003D, 0x0000003E, 0x00000000, 0x00040017, 0x00000041, 0x00000016,
+    0x00000002, 0x00040017, 0x00000043, 0x00000020, 0x00000003, 0x0004002B,
+    0x00000020, 0x00000046, 0x40000000, 0x0004002B, 0x00000020, 0x00000048,
+    0xBF800000, 0x00090019, 0x0000004D, 0x00000020, 0x00000001, 0x00000000,
+    0x00000000, 0x00000000, 0x00000002, 0x00000003, 0x00040020, 0x0000004E,
+    0x00000000, 0x0000004D, 0x0004003B, 0x0000004E, 0x0000004F, 0x00000000,
+    0x0004002B, 0x00000020, 0x00000055, 0x40800000, 0x0004002B, 0x00000006,
+    0x00000058, 0x00000008, 0x0006002C, 0x0000000A, 0x00000059, 0x00000058,
+    0x00000058, 0x00000019, 0x0004002B, 0x00000020, 0x00000061, 0x3B808081,
+    0x0007002C, 0x0000002F, 0x00000062, 0x00000061, 0x00000061, 0x00000061,
+    0x00000061, 0x00050036, 0x00000002, 0x00000004, 0x00000000, 0x00000003,
+    0x000200F8, 0x00000005, 0x0004003D, 0x0000000A, 0x0000000D, 0x0000000C,
+    0x0007004F, 0x00000007, 0x0000000E, 0x0000000D, 0x0000000D, 0x00000000,
+    0x00000001, 0x00050051, 0x00000006, 0x00000015, 0x0000000D, 0x00000000,
+    0x000500C2, 0x00000006, 0x00000018, 0x00000015, 0x00000017, 0x00050051,
+    0x00000006, 0x0000001B, 0x0000000D, 0x00000001, 0x000500C2, 0x00000006,
+    0x0000001C, 0x0000001B, 0x00000017, 0x000500C6, 0x00000006, 0x0000001D,
+    0x00000018, 0x0000001C, 0x000500C7, 0x00000006, 0x0000001E, 0x0000001D,
+    0x00000019, 0x000500AB, 0x0000000F, 0x0000001F, 0x0000001E, 0x00000012,
+    0x000300F7, 0x00000026, 0x00000000, 0x000400FA, 0x0000001F, 0x00000025,
+    0x00000028, 0x000200F8, 0x00000025, 0x000200F9, 0x00000026, 0x000200F8,
+    0x00000028, 0x00050084, 0x00000006, 0x0000002C, 0x00000015, 0x0000002B,
+    0x00040070, 0x00000020, 0x0000002D, 0x0000002C, 0x000200F9, 0x00000026,
+    0x000200F8, 0x00000026, 0x000700F5, 0x00000020, 0x0000005F, 0x00000027,
+    0x00000025, 0x0000002D, 0x00000028, 0x00050084, 0x00000006, 0x00000035,
+    0x0000001B, 0x0000002B, 0x00040070, 0x00000020, 0x00000036, 0x00000035,
+    0x00070050, 0x0000002F, 0x00000039, 0x0000005F, 0x00000036, 0x00000037,
+    0x00000038, 0x00050085, 0x0000002F, 0x0000003B, 0x00000039, 0x00000062,
+    0x0004003D, 0x0000003C, 0x0000003F, 0x0000003E, 0x0004007C, 0x00000041,
+    0x00000042, 0x0000000E, 0x0008004F, 0x00000043, 0x00000045, 0x0000003B,
+    0x0000003B, 0x00000000, 0x00000001, 0x00000002, 0x0005008E, 0x00000043,
+    0x00000047, 0x00000045, 0x00000046, 0x00050051, 0x00000020, 0x00000049,
+    0x00000047, 0x00000000, 0x00050051, 0x00000020, 0x0000004A, 0x00000047,
+    0x00000001, 0x00050051, 0x00000020, 0x0000004B, 0x00000047, 0x00000002,
+    0x00070050, 0x0000002F, 0x0000004C, 0x00000049, 0x0000004A, 0x0000004B,
+    0x00000048, 0x00040063, 0x0000003F, 0x00000042, 0x0000004C, 0x0004003D,
+    0x0000004D, 0x00000050, 0x0000004F, 0x00050051, 0x00000020, 0x00000054,
+    0x0000003B, 0x00000000, 0x00050085, 0x00000020, 0x00000056, 0x00000054,
+    0x00000055, 0x00070050, 0x0000002F, 0x00000057, 0x00000056, 0x00000056,
+    0x00000056, 0x00000056, 0x00040063, 0x00000050, 0x00000042, 0x00000057,
+    0x000100FD, 0x00010038,
+};
+
+/// glslc's own output, at -O, for the second of "shipped float stored"'s
+/// programs: the Rgba16f and R32f images the first wrote read back,
+/// OpImageRead of two words of halves and of four 32-bit words, and the
+/// colours they were made of written again through an Rgba32f storage
+/// image, four 32-bit words, the red the R32f one's quarter and the rest
+/// the Rgba16f one's halves, its alpha negated: what the draw then samples
+/// of 32-bit floats (v3d_vir_emit_image_load_store, v3d_tex.c:564-655;
+/// since 1.89, facet 1.241).
+///
+/// ```glsl
+/// #version 450
+/// // FacetBoth's "shipped float stored" (facet 1.241), its second program:
+/// // the two images the first wrote read back, and "stored"'s texels written
+/// // again from them through an Rgba32f storage image, the red the R32f
+/// // one's quarter and the rest the Rgba16f one's halves, its alpha negated.
+/// layout(local_size_x = 8, local_size_y = 8) in;
+/// layout(set = 0, binding = 0, rgba16f) uniform readonly image2D halves;
+/// layout(set = 1, binding = 0, r32f) uniform readonly image2D reds;
+/// layout(set = 2, binding = 0, rgba32f) uniform writeonly image2D floats;
+/// void main() {
+///     ivec2 at = ivec2(gl_GlobalInvocationID.xy);
+///     vec4 h = imageLoad(halves, at);
+///     float r = imageLoad(reds, at).r;
+///     imageStore(floats, at, vec4(r * 0.25, h.g * 0.5, h.b * 0.5, -h.a));
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=comp shipped_float_halved.comp -o shipped_float_halved.spv   # 278 words
+/// spirv-val --target-env vulkan1.0 shipped_float_halved.spv   # no output, and 0
+/// ```
+const shipped_float_halved = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x0000003E, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0006000F, 0x00000005,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000D, 0x00060010, 0x00000004,
+    0x00000011, 0x00000008, 0x00000008, 0x00000001, 0x00040047, 0x0000000D,
+    0x0000000B, 0x0000001C, 0x00030047, 0x00000018, 0x00000018, 0x00040047,
+    0x00000018, 0x00000021, 0x00000000, 0x00040047, 0x00000018, 0x00000022,
+    0x00000000, 0x00030047, 0x00000020, 0x00000018, 0x00040047, 0x00000020,
+    0x00000021, 0x00000000, 0x00040047, 0x00000020, 0x00000022, 0x00000001,
+    0x00030047, 0x00000028, 0x00000019, 0x00040047, 0x00000028, 0x00000021,
+    0x00000000, 0x00040047, 0x00000028, 0x00000022, 0x00000002, 0x00040047,
+    0x0000003D, 0x0000000B, 0x00000019, 0x00020013, 0x00000002, 0x00030021,
+    0x00000003, 0x00000002, 0x00040015, 0x00000006, 0x00000020, 0x00000001,
+    0x00040017, 0x00000007, 0x00000006, 0x00000002, 0x00040015, 0x0000000A,
+    0x00000020, 0x00000000, 0x00040017, 0x0000000B, 0x0000000A, 0x00000003,
+    0x00040020, 0x0000000C, 0x00000001, 0x0000000B, 0x0004003B, 0x0000000C,
+    0x0000000D, 0x00000001, 0x00040017, 0x0000000E, 0x0000000A, 0x00000002,
+    0x00030016, 0x00000012, 0x00000020, 0x00040017, 0x00000013, 0x00000012,
+    0x00000004, 0x00090019, 0x00000016, 0x00000012, 0x00000001, 0x00000000,
+    0x00000000, 0x00000000, 0x00000002, 0x00000002, 0x00040020, 0x00000017,
+    0x00000000, 0x00000016, 0x0004003B, 0x00000017, 0x00000018, 0x00000000,
+    0x00090019, 0x0000001E, 0x00000012, 0x00000001, 0x00000000, 0x00000000,
+    0x00000000, 0x00000002, 0x00000003, 0x00040020, 0x0000001F, 0x00000000,
+    0x0000001E, 0x0004003B, 0x0000001F, 0x00000020, 0x00000000, 0x00090019,
+    0x00000026, 0x00000012, 0x00000001, 0x00000000, 0x00000000, 0x00000000,
+    0x00000002, 0x00000001, 0x00040020, 0x00000027, 0x00000000, 0x00000026,
+    0x0004003B, 0x00000027, 0x00000028, 0x00000000, 0x0004002B, 0x00000012,
+    0x0000002C, 0x3E800000, 0x0004002B, 0x0000000A, 0x0000002E, 0x00000001,
+    0x0004002B, 0x00000012, 0x00000031, 0x3F000000, 0x0004002B, 0x0000000A,
+    0x0000003C, 0x00000008, 0x0006002C, 0x0000000B, 0x0000003D, 0x0000003C,
+    0x0000003C, 0x0000002E, 0x00050036, 0x00000002, 0x00000004, 0x00000000,
+    0x00000003, 0x000200F8, 0x00000005, 0x0004003D, 0x0000000B, 0x0000000F,
+    0x0000000D, 0x0007004F, 0x0000000E, 0x00000010, 0x0000000F, 0x0000000F,
+    0x00000000, 0x00000001, 0x0004007C, 0x00000007, 0x00000011, 0x00000010,
+    0x0004003D, 0x00000016, 0x00000019, 0x00000018, 0x00050062, 0x00000013,
+    0x0000001B, 0x00000019, 0x00000011, 0x0004003D, 0x0000001E, 0x00000021,
+    0x00000020, 0x00050062, 0x00000013, 0x00000023, 0x00000021, 0x00000011,
+    0x00050051, 0x00000012, 0x00000025, 0x00000023, 0x00000000, 0x0004003D,
+    0x00000026, 0x00000029, 0x00000028, 0x00050085, 0x00000012, 0x0000002D,
+    0x00000025, 0x0000002C, 0x00050051, 0x00000012, 0x00000030, 0x0000001B,
+    0x00000001, 0x00050085, 0x00000012, 0x00000032, 0x00000030, 0x00000031,
+    0x00050051, 0x00000012, 0x00000035, 0x0000001B, 0x00000002, 0x00050085,
+    0x00000012, 0x00000036, 0x00000035, 0x00000031, 0x00050051, 0x00000012,
+    0x00000039, 0x0000001B, 0x00000003, 0x0004007F, 0x00000012, 0x0000003A,
+    0x00000039, 0x00070050, 0x00000013, 0x0000003B, 0x0000002D, 0x00000032,
+    0x00000036, 0x0000003A, 0x00040063, 0x00000029, 0x00000011, 0x0000003B,
+    0x000100FD, 0x00010038,
 };
 
 /// glslc's own output, at -O: `shippedStored`, "stored"'s texels written
@@ -9855,6 +10046,50 @@ fn shippedStored(groups: *const shader.Groups) callconv(.c) void {
     };
 }
 
+/// "stored"'s colour at `x`, `y` as `shipped_half_stored` makes it: each
+/// channel's 0 to 255 over 255, which the V3D's compiler makes a product
+/// with 1/255 as a float, and so does this (since 1.89).
+fn storedColour(x: u32, y: u32) [4]f32 {
+    const check = ((x >> 3) ^ (y >> 3)) & 1;
+    const high: f32 = if (check != 0) 224 else @floatFromInt(x * 4);
+    const scale: f32 = 1.0 / 255.0;
+    return .{ high * scale, @as(f32, @floatFromInt(y * 4)) * scale, 128 * scale, 255 * scale };
+}
+
+/// `shipped_half_stored`'s function, which the cores run: of each place
+/// of a group of 8x8, "stored"'s colour into the Rgba16f image at set 0,
+/// its red, green and blue doubled and its alpha -1, and its red four
+/// times into the R32f one at set 1 (since 1.89).
+fn halfStored(groups: *const shader.Groups) callconv(.c) void {
+    const halves = groups.resources.written(0, 0, 0) orelse return;
+    const reds = groups.resources.written(1, 0, 0) orelse return;
+    for (0..stored_group) |j| for (0..stored_group) |i| {
+        const x = groups.group[0] * stored_group + @as(u32, @intCast(i));
+        const y = groups.group[1] * stored_group + @as(u32, @intCast(j));
+        const colour = storedColour(x, y);
+        halves.setParts(0, 0, x, y, .{ colour[0] * 2, colour[1] * 2, colour[2] * 2, -1 });
+        reds.setParts(0, 0, x, y, @splat(colour[0] * 4));
+    };
+}
+
+/// `shipped_float_halved`'s function, which the cores run: the two images
+/// `halfStored` wrote read back at each place of a group of 8x8, and the
+/// colour they were made of into the Rgba32f image at set 2, the red the
+/// R32f one's quarter, green and blue the Rgba16f one's halves, and its
+/// alpha negated (since 1.89).
+fn floatHalved(groups: *const shader.Groups) callconv(.c) void {
+    const halves = groups.resources.written(0, 0, 0) orelse return;
+    const reds = groups.resources.written(1, 0, 0) orelse return;
+    const floats = groups.resources.written(2, 0, 0) orelse return;
+    for (0..stored_group) |j| for (0..stored_group) |i| {
+        const x = groups.group[0] * stored_group + @as(u32, @intCast(i));
+        const y = groups.group[1] * stored_group + @as(u32, @intCast(j));
+        const half = halves.partsAt(0, 0, x, y);
+        const four_reds = reds.partsAt(0, 0, x, y)[0];
+        floats.setParts(0, 0, x, y, .{ four_reds * 0.25, half[1] * 0.5, half[2] * 0.5, -half[3] });
+    };
+}
+
 /// What `shipped_two_colours` computes, for the cores: its first colour,
 /// (0.25, 0.5, 0.75, 1), at location 0, and its second, (1, 0, 0.5, 1),
 /// at location 1, each a channel's float times 255 to the nearest
@@ -10697,6 +10932,16 @@ const Side = struct {
     rgba_stored: ?*facet.Image = null,
     rgba_stored_view: ?*facet.ImageView = null,
     rgba_stored_pipeline: ?*facet.Pipeline = null,
+    /// "shipped float stored"'s images, of halves, of one float and of
+    /// four, and their views, the layout of a set of `stored_set_layout`
+    /// for each, the two programs, each image's set and the last's sampled
+    /// one (since 1.89).
+    float_stored: [3]?*facet.Image = @splat(null),
+    float_stored_views: [3]?*facet.ImageView = @splat(null),
+    float_layout: ?*facet.PipelineLayout = null,
+    float_pipelines: [2]?*facet.Pipeline = @splat(null),
+    float_sets: [3]?*facet.DescriptorSet = @splat(null),
+    float_sampled: ?*facet.DescriptorSet = null,
     rgba_stored_set: ?*facet.DescriptorSet = null,
     rgba_stored_sampled: ?*facet.DescriptorSet = null,
     drawn_resolving: ?*facet.RenderPass = null,
@@ -10831,7 +11076,7 @@ const Side = struct {
         const binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .sampled_image, .stage_flags = facet.SHADER_STAGE_FRAGMENT };
         try expect(fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&binding) }, &side.set_layout), error.Refused);
         // The last two are "shipped stored"'s (since 1.77).
-        try expect(fb.CreateDescriptorPool(device, &.{ .max_sets = formats.len + 10 + layered_count + throughs.len + shadow_ops.len + formats.len * 2 + 4 + 2 + 1 + 2 + 1 }, &side.descriptor_pool), error.Refused);
+        try expect(fb.CreateDescriptorPool(device, &.{ .max_sets = formats.len + 10 + layered_count + throughs.len + shadow_ops.len + formats.len * 2 + 4 + 2 + 1 + 2 + 1 + 4 }, &side.descriptor_pool), error.Refused);
         const layouts: [formats.len]?*facet.DescriptorSetLayout = @splat(side.set_layout);
         try expect(fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = side.descriptor_pool.?, .descriptor_set_count = formats.len, .set_layouts = @ptrCast(&layouts) }, &side.sets), error.Refused);
         for (side.sets, side.texture_views) |set, texture_view| {
@@ -11046,6 +11291,42 @@ const Side = struct {
         };
         fb.UpdateDescriptorSets(device, 2, &writes, 0, null);
         try side.upRgbaStored();
+        try side.upFloatStored();
+    }
+
+    /// "shipped float stored"'s three images, R16G16B16A16_SFLOAT,
+    /// R32_SFLOAT and R32G32B32A32_SFLOAT, the formats the words' Rgba16f,
+    /// R32f and Rgba32f name, each written through a set of
+    /// `stored_set_layout` of its own, set 0, 1 and 2 of one layout, and
+    /// the last sampled through the draws' (since 1.89).
+    fn upFloatStored(side: *Side) Failure!void {
+        const fb = side.fb;
+        const device = side.device.?;
+        const kinds = [3]facet.Format{ .r16g16b16a16_sfloat, .r32_sfloat, .r32g32b32a32_sfloat };
+        for (kinds, 0..) |format, k| {
+            const read_back: u32 = if (k == 2) facet.IMAGE_USAGE_SAMPLED else 0;
+            try side.image(.{ .format = format, .extent = .{ .width = stored_side, .height = stored_side }, .usage = facet.IMAGE_USAGE_STORAGE | read_back }, 0, &side.float_stored[k]);
+            side.float_stored_views[k] = try side.view(side.float_stored[k].?, format, facet.IMAGE_ASPECT_COLOR, 1);
+        }
+        const set_layouts = [3]?*facet.DescriptorSetLayout{ side.stored_set_layout, side.stored_set_layout, side.stored_set_layout };
+        try expect(fb.CreatePipelineLayout(device, &.{ .set_layout_count = 3, .set_layouts = @ptrCast(&set_layouts) }, &side.float_layout), error.Refused);
+        const infos = [2]facet.ComputePipelineCreateInfo{
+            .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = side.module.?, .name = "shipped half stored" }, .layout = side.float_layout.? },
+            .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = side.module.?, .name = "shipped float halved" }, .layout = side.float_layout.? },
+        };
+        try expect(fb.CreateComputePipelines(device, null, 2, &infos, &side.float_pipelines), error.Refused);
+        const layouts = [4]?*facet.DescriptorSetLayout{ side.stored_set_layout, side.stored_set_layout, side.stored_set_layout, side.set_layout };
+        var sets: [4]?*facet.DescriptorSet = undefined;
+        try expect(fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = side.descriptor_pool.?, .descriptor_set_count = 4, .set_layouts = @ptrCast(&layouts) }, &sets), error.Refused);
+        side.float_sets = sets[0..3].*;
+        side.float_sampled = sets[3];
+        var images: [4]facet.DescriptorImageInfo = undefined;
+        var writes: [4]facet.WriteDescriptorSet = undefined;
+        for (0..4) |k| {
+            images[k] = .{ .image_view = side.float_stored_views[@min(k, 2)], .image_layout = .general };
+            writes[k] = .{ .dst_set = sets[k].?, .dst_binding = 0, .descriptor_type = if (k < 3) .storage_image else .sampled_image, .image_info = @ptrCast(&images[k]) };
+        }
+        fb.UpdateDescriptorSets(device, 4, &writes, 0, null);
     }
 
     /// "shipped stored"'s R8G8B8A8 image, the one format the words' Rgba8
@@ -11745,6 +12026,12 @@ const Side = struct {
         fb.DestroyDescriptorSetLayout(device, side.input_set_layout);
         fb.DestroyImageView(device, side.input_view);
         fb.DestroyImage(device, side.input);
+        for (side.float_pipelines) |pipeline| fb.DestroyPipeline(device, pipeline);
+        fb.DestroyPipelineLayout(device, side.float_layout);
+        for (side.float_stored_views, side.float_stored) |float_view, float_image| {
+            fb.DestroyImageView(device, float_view);
+            fb.DestroyImage(device, float_image);
+        }
         fb.DestroyPipeline(device, side.rgba_stored_pipeline);
         fb.DestroyImageView(device, side.rgba_stored_view);
         fb.DestroyImage(device, side.rgba_stored);
@@ -13588,6 +13875,32 @@ const Cases = struct {
         const groups = stored_side / stored_group;
         try storedThenDrawn(side, side.rgba_stored_pipeline.?, side.rgba_stored_set.?, side.rgba_stored_sampled.?, .{ groups, groups });
     }
+    /// The same colours written by glslc's imageStore as floats, into an
+    /// image of halves and one of one float, read back by a second
+    /// program's imageLoad and written again into one of four floats,
+    /// which the draw samples: on the V3D, programs of its own whose TMU
+    /// reads and writes each in the format's own bytes, and samples the
+    /// last as RGBA32F, unfiltered as v3dv has it (docs/facet-vulkan10.md
+    /// item 57; facet 1.241).
+    fn shippedFloatStored(side: *Side) Failure!void {
+        const fb = side.fb;
+        const commands = side.commands.?;
+        const groups = stored_side / stored_group;
+        const written = facet.MemoryBarrier{ .src_access_mask = facet.ACCESS_SHADER_WRITE, .dst_access_mask = facet.ACCESS_SHADER_READ };
+        fb.CmdBindDescriptorSets(commands, .compute, side.float_layout.?, 0, 3, @ptrCast(&side.float_sets), 0, null);
+        fb.CmdBindPipeline(commands, .compute, side.float_pipelines[0].?);
+        fb.CmdDispatch(commands, groups, groups, 1);
+        // The second program's loads after the first's writes.
+        fb.CmdPipelineBarrier(commands, facet.PIPELINE_STAGE_COMPUTE_SHADER, facet.PIPELINE_STAGE_COMPUTE_SHADER, 0, 1, @ptrCast(&written), 0, null, 0, null);
+        fb.CmdBindPipeline(commands, .compute, side.float_pipelines[1].?);
+        fb.CmdDispatch(commands, groups, groups, 1);
+        fb.CmdPipelineBarrier(commands, facet.PIPELINE_STAGE_COMPUTE_SHADER, facet.PIPELINE_STAGE_FRAGMENT_SHADER, 0, 1, @ptrCast(&written), 0, null, 0, null);
+        side.begin(.{});
+        fb.CmdBindDescriptorSets(commands, .graphics, side.layout.?, 0, 1, @ptrCast(&side.float_sampled), 0, null);
+        try side.use(.{ .vertex = "texture", .fragment = "nearest" });
+        side.draw(quad_at, 6);
+        side.end();
+    }
     /// The same texels written by a draw over the quad, glslc's
     /// imageStore in a fragment program at each pixel's place modulo 64,
     /// then drawn as "shipped stored" draws them: on the V3D the fragment
@@ -13952,6 +14265,7 @@ const cases = [_]Case{
     // 1.77: the same texels by glslc's imageStore, which the V3D compiles
     // since facet 1.218 (item 57 step 2).
     .{ .name = "shipped stored", .run = &Cases.shippedStored },
+    .{ .name = "shipped float stored", .run = &Cases.shippedFloatStored },
     // 1.78: the same texels by a draw's imageStore, which the V3D compiles
     // since facet 1.219 (item 57 step 3).
     .{ .name = "shipped drawn stored", .run = &Cases.shippedDrawnStored },

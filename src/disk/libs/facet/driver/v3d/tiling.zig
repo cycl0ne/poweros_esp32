@@ -15,7 +15,8 @@
 //!     height so that a column does not share the banks of the next.
 
 const std = @import("std");
-const texture = @import("sdk").facet.texture;
+const facet = @import("sdk").facet;
+const texture = facet.texture;
 
 /// The most levels a texture here has: 8192 across, down to 1.
 pub const most_levels = 14;
@@ -68,13 +69,24 @@ pub const Layout = struct {
 pub const alignment = page_bytes;
 
 /// A microtile is 64 bytes whatever the texel: 8 x 8 of one byte, 8 x 4
-/// of two, 4 x 4 of four (Mesa's `v3d_utile_width`, `v3d_utile_height`).
+/// of two, 4 x 4 of four, 4 x 2 of eight and 2 x 2 of sixteen (Mesa's
+/// `v3d_utile_width`, `v3d_utile_height`, v3d_tiling.c:37-70). Eight and
+/// sixteen since 1.241, a float texture's (`Texels.rgba16f`, `rgba32f`):
+/// until then they were taken for 4 x 4, which no texture was of.
 fn microtileWidth(pixel: u32) u32 {
-    return if (pixel <= 2) 8 else 4;
+    return switch (pixel) {
+        1, 2 => 8,
+        4, 8 => 4,
+        else => 2,
+    };
 }
 
 fn microtileHeight(pixel: u32) u32 {
-    return if (pixel == 1) 8 else 4;
+    return switch (pixel) {
+        1 => 8,
+        2, 4 => 4,
+        else => 2,
+    };
 }
 
 fn minify(size: u32, level: u32) u32 {
@@ -260,6 +272,15 @@ const TEXTURE_DEPTH24_X8: u64 = 24;
 /// stencil as, the word's low byte its red (v3dv_image.c:781-800;
 /// v3d_packet.xml:407). (Since 1.240.)
 const TEXTURE_RGBA8UI: u64 = 101;
+/// The float formats', as v3dv samples them (v3dvx_formats.c:136, :142,
+/// :181, :200-201; v3d_packet.xml:343-347, :365, :368): four halves,
+/// four floats, one float, two floats of 11 bits and one of 10, and
+/// three of 9 bits with an exponent they share. (Since 1.241.)
+const TEXTURE_RGBA16F: u64 = 18;
+const TEXTURE_R11F_G11F_B10F: u64 = 19;
+const TEXTURE_RGB9_E5: u64 = 20;
+const TEXTURE_R32F: u64 = 29;
+const TEXTURE_RGBA32F: u64 = 31;
 
 const SWIZZLE_ZERO: u64 = 0;
 const SWIZZLE_ONE: u64 = 1;
@@ -294,15 +315,64 @@ pub const Texels = enum {
     /// with SWIZ_X001 under the view's swizzle (v3dv_image.c:781-800;
     /// since 1.240).
     stencil,
+    /// The floats a texture keeps as they lie, where the device keeps
+    /// them (`Capabilities.kept_floats`; since 1.241): four halves, four
+    /// floats, and one float read as (red, 0, 0, 1), as v3dv's RGBA16F,
+    /// RGBA32F and R32F with SWIZ_XYZW and SWIZ_X001 (v3dvx_formats.c:
+    /// 136, :142, :181). The TMU filters the halves, and neither of the
+    /// two of 32-bit floats (`Capabilities.filtered_float32`).
+    rgba16f,
+    rgba32f,
+    r32f,
+    /// B10G11R11_UFLOAT_PACK32's word and E5B9G9R9_UFLOAT_PACK32's, read
+    /// as (red, green, blue, 1): v3dv's R11F_G11F_B10F and RGB9_E5 with
+    /// SWIZ_XYZ1 (v3dvx_formats.c:200-201; since 1.241).
+    rg11b10f,
+    rgb9e5,
 
     pub fn bytes(texels: Texels) u32 {
         return switch (texels) {
-            .rgba, .bgra, .d24, .stencil => 4,
+            .rgba, .bgra, .d24, .stencil, .r32f, .rg11b10f, .rgb9e5 => 4,
             .rgb565, .d16 => 2,
             .r8 => 1,
+            .rgba16f => 8,
+            .rgba32f => 16,
         };
     }
 };
+
+/// How the TMU reads a texture of `format`, a view of the stencil alone
+/// where `stencil` is, or null for a format it reads no texture of: a
+/// sample's, an input attachment's and a storage image's alike
+/// (`_play.tmuConfiguration`; until 1.241 that function's own switch).
+pub fn texelsOf(format: facet.Format, stencil: bool) ?Texels {
+    return switch (format) {
+        .b8g8r8a8_unorm => .bgra,
+        .r8g8b8a8_unorm => .rgba,
+        .r5g6b5_unorm_pack16 => .rgb565,
+        // One byte of red a texel, the TMU's own R8 (since 1.48).
+        .r8_unorm => .r8,
+        // As v3dv samples D16_UNORM (v3dvx_formats.c:204; since 1.142).
+        .d16_unorm => .d16,
+        // And X8_D24_UNORM_PACK32 as DEPTH24_X8 (v3dvx_formats.c:206;
+        // since 1.222).
+        .x8_d24_unorm_pack32 => .d24,
+        // D24_UNORM_S8_UINT's depth the same way, and its stencil as the
+        // word's R8G8B8A8_UINT, the byte below the depth its red
+        // (v3dvx_formats.c:209; v3dv_image.c:781-800; since 1.240).
+        .d24_unorm_s8_uint => if (stencil) .stencil else .d24,
+        // The floats it keeps as they lie (`Capabilities.kept_floats`),
+        // each the TMU's type of them, as v3dv samples them and reads and
+        // writes a storage image of the first three (v3dvx_formats.c:136,
+        // :142, :181, :200-201; since 1.241).
+        .r16g16b16a16_sfloat => .rgba16f,
+        .r32g32b32a32_sfloat => .rgba32f,
+        .r32_sfloat => .r32f,
+        .b10g11r11_ufloat_pack32 => .rg11b10f,
+        .e5b9g9r9_ufloat_pack32 => .rgb9e5,
+        else => null,
+    };
+}
 
 /// Where each of the four channels a sample gives back comes from, as an
 /// image view's swizzle names it: a channel of the colour the format reads
@@ -326,19 +396,28 @@ pub fn writeTextureState(into: []u8, layout: *const Layout, texels: Texels, pick
         .d16 => TEXTURE_DEPTH_COMP16,
         .d24 => TEXTURE_DEPTH24_X8,
         .stencil => TEXTURE_RGBA8UI,
+        .rgba16f => TEXTURE_RGBA16F,
+        .rgba32f => TEXTURE_RGBA32F,
+        .r32f => TEXTURE_R32F,
+        .rg11b10f => TEXTURE_R11F_G11F_B10F,
+        .rgb9e5 => TEXTURE_RGB9_E5,
     };
     // Which channel of the texel each of the four comes out of: a 565
     // texel has no alpha and an R8 one has red alone, so those read 1 and
     // 0, as Vulkan reads a format that is short of a channel. A depth is
-    // red alone too, and so is a stencil (since 1.240).
+    // red alone too, and so is a stencil (since 1.240), and one float
+    // (since 1.241).
     const red: u64 = if (texels == .bgra) SWIZZLE_BLUE else SWIZZLE_RED;
-    const green: u64 = if (texels == .r8 or texels == .d16 or texels == .d24 or texels == .stencil) SWIZZLE_ZERO else SWIZZLE_GREEN;
-    const blue: u64 = switch (texels) {
-        .bgra => SWIZZLE_RED,
-        .r8, .d16, .d24, .stencil => SWIZZLE_ZERO,
-        .rgba, .rgb565 => SWIZZLE_BLUE,
+    const alone = switch (texels) {
+        .r8, .d16, .d24, .stencil, .r32f => true,
+        else => false,
     };
-    const alpha: u64 = if (texels == .rgba or texels == .bgra) SWIZZLE_ALPHA else SWIZZLE_ONE;
+    const green: u64 = if (alone) SWIZZLE_ZERO else SWIZZLE_GREEN;
+    const blue: u64 = if (texels == .bgra) SWIZZLE_RED else if (alone) SWIZZLE_ZERO else SWIZZLE_BLUE;
+    const alpha: u64 = switch (texels) {
+        .rgba, .bgra, .rgba16f, .rgba32f => SWIZZLE_ALPHA,
+        else => SWIZZLE_ONE,
+    };
     // And the view's swizzle over those, as v3dv composes the format's
     // with the view's (`util_format_compose_swizzles`,
     // src/broadcom/vulkan/v3dv_image.c:828-831): a channel the view takes
@@ -777,6 +856,78 @@ test "a D24S8's stencil is its word read as R8G8B8A8_UINT, the stencil's byte re
     try std.testing.expectEqual(SWIZZLE_ZERO, second >> (114 - 64) & 7);
     try std.testing.expectEqual(SWIZZLE_ZERO, second >> (117 - 64) & 7);
     try std.testing.expectEqual(@as(u32, 4), Texels.stencil.bytes());
+}
+
+test "a texel of 8 bytes and one of 16 lie where Mesa's tiling puts them, a microtile 4 x 2 and 2 x 2 of them (since 1.241)" {
+    // v3d_utile_width and v3d_utile_height (v3d_tiling.c:37-70), and the
+    // offsets of v3d_get_lt_pixel_offset and v3d_get_uif_pixel_offset.
+    try std.testing.expectEqual(@as(u32, 4), microtileWidth(8));
+    try std.testing.expectEqual(@as(u32, 2), microtileHeight(8));
+    try std.testing.expectEqual(@as(u32, 2), microtileWidth(16));
+    try std.testing.expectEqual(@as(u32, 2), microtileHeight(16));
+    // 2 x 8 of 16 bytes is lineartile, one microtile across: (1, 5) is in
+    // the third down, 128 bytes in, at (1, 1) of it, 16 + 2 * 16 more.
+    // Taken for 4 x 4 it was in the second, at (1, 1): 144.
+    const narrow = layoutOf(16, 2, 8, 1, 1, false);
+    try std.testing.expectEqual(Kind.lineartile, narrow.levels[0].kind);
+    try std.testing.expectEqual(@as(u32, 176), texelOffset(&narrow, 0, 1, 5) - narrow.levels[0].offset);
+    // 64 x 16 of 8 bytes is UIF, its blocks 8 x 4 and four of them down:
+    // (9, 5) is in block 1 across and 1 down, block 1 + 1 * 4 = 5, 1280
+    // bytes in, at (1, 1) of its first microtile, 8 + 4 * 8 more. Taken
+    // for 4 x 4 it was in block 1, its lower microtile: 424.
+    const wide = layoutOf(8, 64, 16, 1, 1, false);
+    try std.testing.expectEqual(Kind.uif, wide.levels[0].kind);
+    try std.testing.expectEqual(@as(u32, 1320), texelOffset(&wide, 0, 9, 5) - wide.levels[0].offset);
+    try std.testing.expectEqual(@as(u32, 4), blocksDown(&wide, 0));
+    // Each level's bytes are its padded texels', whatever the size.
+    try std.testing.expectEqual(@as(u32, 64 * 16 * 8), wide.levels[0].slice_bytes);
+}
+
+test "each format the TMU reads is its Texels, of the bytes a texel of it takes, and a D24S8's stencil the word's R8G8B8A8_UINT (since 1.241)" {
+    // The draw's states (`_play.tmuConfiguration`) and the layout
+    // (`layoutOf`, by `_image.bytesOf`) have to agree on a texel's size.
+    const each = [_]struct { format: facet.Format, texels: Texels, bytes: u32 }{
+        .{ .format = .b8g8r8a8_unorm, .texels = .bgra, .bytes = 4 },
+        .{ .format = .r8g8b8a8_unorm, .texels = .rgba, .bytes = 4 },
+        .{ .format = .r5g6b5_unorm_pack16, .texels = .rgb565, .bytes = 2 },
+        .{ .format = .r8_unorm, .texels = .r8, .bytes = 1 },
+        .{ .format = .d16_unorm, .texels = .d16, .bytes = 2 },
+        .{ .format = .x8_d24_unorm_pack32, .texels = .d24, .bytes = 4 },
+        .{ .format = .d24_unorm_s8_uint, .texels = .d24, .bytes = 4 },
+        .{ .format = .r16g16b16a16_sfloat, .texels = .rgba16f, .bytes = 8 },
+        .{ .format = .r32g32b32a32_sfloat, .texels = .rgba32f, .bytes = 16 },
+        .{ .format = .r32_sfloat, .texels = .r32f, .bytes = 4 },
+        .{ .format = .b10g11r11_ufloat_pack32, .texels = .rg11b10f, .bytes = 4 },
+        .{ .format = .e5b9g9r9_ufloat_pack32, .texels = .rgb9e5, .bytes = 4 },
+    };
+    for (each) |one| {
+        try std.testing.expectEqual(one.texels, texelsOf(one.format, false).?);
+        try std.testing.expectEqual(one.bytes, one.texels.bytes());
+    }
+    try std.testing.expectEqual(Texels.stencil, texelsOf(.d24_unorm_s8_uint, true).?);
+    // A view of the stencil of nothing else is the format's own.
+    try std.testing.expectEqual(Texels.r8, texelsOf(.r8_unorm, true).?);
+    try std.testing.expectEqual(@as(?Texels, null), texelsOf(.r16g16_sfloat, false));
+}
+
+test "the floats a texture keeps are v3dv's types of them, read as v3dv's swizzles have them (since 1.241)" {
+    // v3dvx_formats.c:136, :142, :181, :200-201, and v3d_packet.xml.
+    const each = [_]struct { texels: Texels, kind: u64, bytes: u32, own: [4]u64 }{
+        .{ .texels = .rgba16f, .kind = 18, .bytes = 8, .own = .{ SWIZZLE_RED, SWIZZLE_GREEN, SWIZZLE_BLUE, SWIZZLE_ALPHA } },
+        .{ .texels = .rgba32f, .kind = 31, .bytes = 16, .own = .{ SWIZZLE_RED, SWIZZLE_GREEN, SWIZZLE_BLUE, SWIZZLE_ALPHA } },
+        .{ .texels = .r32f, .kind = 29, .bytes = 4, .own = .{ SWIZZLE_RED, SWIZZLE_ZERO, SWIZZLE_ZERO, SWIZZLE_ONE } },
+        .{ .texels = .rg11b10f, .kind = 19, .bytes = 4, .own = .{ SWIZZLE_RED, SWIZZLE_GREEN, SWIZZLE_BLUE, SWIZZLE_ONE } },
+        .{ .texels = .rgb9e5, .kind = 20, .bytes = 4, .own = .{ SWIZZLE_RED, SWIZZLE_GREEN, SWIZZLE_BLUE, SWIZZLE_ONE } },
+    };
+    var state: [texture_state_bytes]u8 = undefined;
+    for (each) |one| {
+        try std.testing.expectEqual(one.bytes, one.texels.bytes());
+        const layout = layoutOf(one.texels.bytes(), 64, 64, 1, 1, false);
+        writeTextureState(&state, &layout, one.texels, own_picks, 0x10_0000, 0, 0, 1, 0);
+        const second = std.mem.readInt(u64, state[8..16], .little);
+        try std.testing.expectEqual(one.kind, second >> (100 - 64) & 0x7F);
+        for (one.own, 0..) |swizzle, k| try std.testing.expectEqual(swizzle, second >> @intCast(108 - 64 + 3 * k) & 7);
+    }
 }
 
 test "an image of four is a texture of twice the width and the height to the TMU, its level 0 in UIF" {

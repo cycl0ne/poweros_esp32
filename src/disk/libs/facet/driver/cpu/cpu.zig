@@ -133,8 +133,9 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // decoder reads a BC block as well (`texture.Format.blockOf`).
         .kept_compressed = true,
         // A float image likewise, its texels read and rounded where they
-        // lie (`texture.floatTexel`).
+        // lie (`texture.floatTexel`), and filtered whatever its width.
         .kept_floats = true,
+        .filtered_float32 = true,
         // And a texture whose channels are its own: two bytes of red and
         // green, or 16 bits a channel, read as the colour of their top 8
         // bits and as the whole of them by a function

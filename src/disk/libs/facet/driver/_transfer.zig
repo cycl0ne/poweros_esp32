@@ -638,6 +638,14 @@ fn texelOf(image: *const Image, color: u32, parts: [4]f32, words: [4]u32) ?Texel
             .r8g8b8a8_unorm => .{ .four = color & 0xFF00_FF00 | (color >> 16 & 0xFF) | (color & 0xFF) << 16 },
             .r5g6b5_unorm_pack16 => .{ .two = narrow(color) },
             .r8_unorm => .{ .one = @truncate(color >> 16) },
+            // The floats it keeps as they lie (since 1.241): the four
+            // channels in the format's own bytes, as the cores' texture of
+            // them takes them below, which are a buffer's of it.
+            .r16g16b16a16_sfloat => .{ .eight = pattern(.rgba16f, u64, parts) },
+            .r32g32b32a32_sfloat => .{ .sixteen = pattern(.rgba32f, u128, parts) },
+            .b10g11r11_ufloat_pack32 => .{ .four = pattern(.rg11b10f, u32, parts) },
+            .e5b9g9r9_ufloat_pack32 => .{ .four = pattern(.rgb9e5, u32, parts) },
+            .r32_sfloat => .{ .four = pattern(.r32f, u32, parts) },
             else => null,
         } else switch (image.texels.format) {
             .rgba8888 => .{ .eight = texture.spread(color) },

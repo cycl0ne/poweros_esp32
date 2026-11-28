@@ -332,8 +332,10 @@ pub const glsl_set = "GLSL.std.450";
 pub const Dim = enum(u32) { dim_1d = 0, dim_2d = 1, dim_3d = 2, cube = 3, subpass_data = 6, _ };
 /// An image's format, as OpTypeImage names it: Unknown for a sampled
 /// image, and for a storage image the one its texels are written in
-/// (since facet 1.218).
-pub const ImageFormat = enum(u32) { unknown = 0, rgba8 = 4, _ };
+/// (since facet 1.218). Rgba32f, Rgba16f and R32f since facet 1.241: like
+/// Rgba8, formats a storage image takes with no capability but Shader,
+/// none of StorageImageExtendedFormats' (SPIR-V's Image Format table).
+pub const ImageFormat = enum(u32) { unknown = 0, rgba32f = 1, rgba16f = 2, r32f = 3, rgba8 = 4, _ };
 pub const FunctionControl = enum(u32) { none = 0, _ };
 pub const SelectionControl = enum(u32) { none = 0, _ };
 
