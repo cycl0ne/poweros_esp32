@@ -40,7 +40,8 @@ const Function = _function.Function;
 /// memory.
 ///
 /// BEHAVIOR:
-/// The descriptor's first keyboard collection, its first mouse
+/// The descriptor's keyboard collections - up to four, each in a report
+/// of its own, the keys held in any of them held - its first mouse
 /// collection and its first consumer control are read: where each
 /// report keeps its keys - as bits, as slots of usages - its buttons, its
 /// move or its place, and its wheel, a keyboard's LEDs' output report,
@@ -76,8 +77,8 @@ const Function = _function.Function;
 /// names a port of the second.
 ///
 /// BUGS:
-/// A collection past the first keyboard, the first mouse and the first
-/// consumer control - a second mouse, a system control's power and sleep
+/// A collection past the first four keyboards, the first mouse and the
+/// first consumer control - a second mouse, a system control's power and sleep
 /// keys - is not read.
 ///
 /// SEE ALSO:
@@ -100,7 +101,9 @@ pub fn OpenHID(base: *HIDBase, descriptor: ?[*]const u8, length: u32, tags: ?[*]
     const reply: ?*exec.MsgPort = @ptrFromInt(ub.GetTagData(hid.HIDA_ReplyPort, 0, tags));
     const bytes: []const u8 = if (descriptor) |given| given[0..length] else &.{};
 
-    var keyboard = layout.keyboardLayout(bytes);
+    var keyboards: [layout.KEYBOARDS_MOST]layout.KeyboardLayout = undefined;
+    var keyboard_count = layout.keyboardLayouts(bytes, &keyboards);
+    var keyboard: ?layout.KeyboardLayout = if (keyboard_count > 0) keyboards[0] else null;
     var mouse = layout.mouseLayout(bytes);
     var consumer = layout.consumerLayout(bytes);
     var flags: u32 = 0;
@@ -108,20 +111,25 @@ pub fn OpenHID(base: *HIDBase, descriptor: ?[*]const u8, length: u32, tags: ?[*]
     // protocol's report alone.
     if (boot == hid.HIDBOOT_KEYBOARD and keyboard == null) {
         keyboard = layout.boot_keyboard;
+        keyboards[0] = layout.boot_keyboard;
+        keyboard_count = 1;
         mouse = null;
         consumer = null;
         flags = hid.HIDF_BOOT;
     } else if (boot == hid.HIDBOOT_MOUSE and mouse == null) {
         mouse = layout.boot_mouse;
         keyboard = null;
+        keyboard_count = 0;
         consumer = null;
         flags = hid.HIDF_BOOT;
     }
     // A report is one collection's: media keys in a report the keyboard
     // or the mouse reads too would be read twice.
     if (consumer) |found| {
-        if (keyboard) |other| {
-            if (other.report_id == found.report_id) consumer = null;
+        if (keyboard != null) {
+            for (keyboards[0..keyboard_count]) |other| {
+                if (other.report_id == found.report_id) consumer = null;
+            }
         }
         if (mouse) |other| {
             if (other.report_id == found.report_id) consumer = null;
@@ -142,6 +150,8 @@ pub fn OpenHID(base: *HIDBase, descriptor: ?[*]const u8, length: u32, tags: ?[*]
     }
     if (keyboard) |found| {
         function.keyboard = found;
+        for (keyboards[1..keyboard_count], 0..) |more, i| function.more_keyboards[i] = more;
+        function.more_count = @intCast(keyboard_count -| 1);
         flags |= hid.HIDF_KEYBOARD;
     }
     if (consumer) |found| {

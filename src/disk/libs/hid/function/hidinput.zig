@@ -36,9 +36,9 @@ const Function = _function.Function;
 /// None.
 ///
 /// BEHAVIOR:
-/// A report the keyboard's layout reads becomes the key-ups and then the
-/// key-downs from the keys the last one held to the keys this one holds,
-/// each a RAWKEY event; a report of too many keys at once changes
+/// A report one of the keyboard's layouts reads becomes the key-ups and
+/// then the key-downs from the keys its reports held to the keys they
+/// hold with this one, each a RAWKEY event; a report of too many keys at once changes
 /// nothing. When Caps Lock goes down, the keyboard's Caps Lock light
 /// changes: its LEDs' output report goes to HIDA_OutputHook. A report the
 /// consumer control's layout reads becomes the media keys that went up
@@ -92,7 +92,19 @@ fn media(base: *HIDBase, record: *Function, bytes: []const u8) void {
 /// A keyboard's report: the keys that changed to keyboard.device, and the
 /// light when Caps Lock went down.
 fn keys(base: *HIDBase, record: *Function, bytes: []const u8) void {
-    const held = report_file.keysOf(&record.keyboard, bytes) orelse return;
+    // The keyboard report this is, of those its collections send: what it
+    // holds now, and what all of them hold together.
+    const layouts = 1 + @as(usize, record.more_count);
+    const which = for (0..layouts) |i| {
+        const one = if (i == 0) &record.keyboard else &record.more_keyboards[i - 1];
+        if (one.owns(bytes)) break i;
+    } else return;
+    const one = if (which == 0) &record.keyboard else &record.more_keyboards[which - 1];
+    record.held[which] = report_file.keysOf(one, bytes) orelse return;
+    var held: report_file.KeySet = .{};
+    for (record.held[0..layouts]) |set| {
+        for (&held.bits, set.bits) |*bits, more| bits.* |= more;
+    }
     const count = report_file.keyEvents(record.keys, held, &record.events);
     const caps_down = held.has(report_file.RAWKEY_CAPSLOCK) and !record.keys.has(report_file.RAWKEY_CAPSLOCK);
     record.keys = held;
