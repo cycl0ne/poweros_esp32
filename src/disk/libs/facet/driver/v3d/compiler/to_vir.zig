@@ -97,6 +97,7 @@ const tlb_type_f16_color: u32 = 3 << 6;
 const tlb_type_f32_color: u32 = 0 << 6;
 const tlb_vec_size_minus_1_shift = 0;
 const tlb_render_target_shift = 3;
+const tlb_sample_mode_per_sample: u32 = 0 << 2;
 const tlb_sample_mode_per_pixel: u32 = 1 << 2;
 const tlb_f16_swap_hi_lo: u32 = 1 << 1;
 const tlb_vec_size_4_f16: u32 = 1 << 0;
@@ -155,6 +156,16 @@ pub const Key = struct {
     /// compile (lower_tlb_input_attachments, :2744-2748). `compile.zig`'s
     /// walk reads it, here it is a `tile_load` (since 1.237).
     tile_inputs: compile.TileInputs = compile.no_tile_inputs,
+    /// The pipeline draws four samples a pixel: Mesa's msaa, which v3dv
+    /// sets where rasterizationSamples is more than one
+    /// (v3dv_pipeline.c:2115). Here the tile buffer is read a sample at a
+    /// time where it is (tlb_read_config, nir_to_vir.c:2705-2706;
+    /// vir_emit_tlb_color_read, :2757), and the walk reads each sample
+    /// and keeps the one a subpassLoad asks for (lower_tlb_load,
+    /// v3d_nir_lower_load_output.c:52-80). What else Mesa keys on it,
+    /// interpolation at a sample or an offset (nir_to_vir.c:4030-4093),
+    /// is not taken here (since 1.238).
+    msaa: bool = false,
 };
 
 /// A program compiled: its instructions in `c.qpu_insts`, the uniforms it
@@ -233,8 +244,8 @@ const Emit = struct {
     outputs: [compile.most_colors][4]Reg = undefined,
     /// Each render target's colour as the tile buffer handed it back,
     /// read once whatever reads it (c->color_reads, nir_to_vir.c:
-    /// 2745-2808; since 1.237).
-    color_reads: [compile.most_colors][4]Reg = undefined,
+    /// 2745-2808; since 1.237), of each sample (since 1.238).
+    color_reads: [compile.most_colors][compile.tile_samples_most][4]Reg = undefined,
     color_read: [compile.most_colors]bool = @splat(false),
     flush: [max_tmu_queue_size]Pending = undefined,
     flush_count: u32 = 0,
@@ -754,7 +765,7 @@ fn emitStep(e: *Emit, each: Step, at: u16) Error!void {
         // make floats, which the flush defines, and one written (since
         // 1.218).
         .image_load, .image_store => return emitImageLoadStore(e, each, at),
-        .tile_load => try emitTlbColorRead(e, each.at, at),
+        .tile_load => try emitTlbColorRead(e, compile.tileTarget(each.at), compile.tileSample(each.at), at),
         // ntq_emit_image_size (nir_to_vir.c:2653-2679): each size a
         // uniform of the view's, a 3D image's depth third or an array's
         // layers, and no level, which is 0 (since 1.219).
@@ -1914,15 +1925,15 @@ fn unpackTexel(e: *Emit, at: u16) Error!void {
 /// scoreboard is to be locked before the tile buffer is read, and it is
 /// locked on the last switch, which is after the read where the program
 /// switches again; vir_emit_thrsw then locks it on the first instead
-/// (tlb_read_config, nir_to_vir.c:2682-2727). Read a pixel at a time, of
-/// one sample.
+/// (tlb_read_config, nir_to_vir.c:2682-2727). Read a pixel at a time, or
+/// a sample at a time where the pipeline draws four (since 1.238).
 fn tlbReadConfig(e: *Emit, rt: u32, components: u32) Error!u32 {
     const c = e.c;
     if (!c.emitted_tlb_load) {
         if (!c.last_thrsw_at_top_level) try c.emitThrsw();
         c.emitted_tlb_load = true;
     }
-    var config: u32 = 0xffffff00 | tlb_sample_mode_per_pixel;
+    var config: u32 = 0xffffff00 | if (e.key.msaa) tlb_sample_mode_per_sample else tlb_sample_mode_per_pixel;
     config |= (7 - rt) << tlb_render_target_shift;
     if (e.key.f32_color_rb & (@as(u32, 1) << @intCast(rt)) != 0) {
         config |= tlb_type_f32_color | (components - 1) << tlb_vec_size_minus_1_shift;
@@ -1942,28 +1953,34 @@ fn tlbReadConfig(e: *Emit, rt: u32, components: u32) Error!u32 {
 /// target 0's four half-floats is: then it reads as the others do, with
 /// no uniform. v3dv swaps no red and blue in
 /// the program (swap_color_rb is 0, v3dv_pipeline.c:1335): the store
-/// does (since 1.237).
-fn emitTlbColorRead(e: *Emit, rt: u32, at: u16) Error!void {
+/// does (since 1.237). Where the pipeline draws four samples, the read is
+/// of each in turn, the first read of the first configured, and the
+/// step's are those of `sample` (since 1.238): the tile buffer hands
+/// every sample over whichever the program keeps.
+fn emitTlbColorRead(e: *Emit, rt: u32, sample: u32, at: u16) Error!void {
     const c = e.c;
     if (!e.color_read[rt]) {
         const config = try tlbReadConfig(e, rt, 4);
-        const reads = &e.color_reads[rt];
-        if (e.key.f32_color_rb & (@as(u32, 1) << @intCast(rt)) != 0) {
-            reads[0] = if (config != 0xffffffff) try c.tlbuRead(config) else try c.tlbRead();
-            for (reads[1..]) |*read| read.* = try c.tlbRead();
-        } else {
-            for (0..2) |word| {
-                const pair = if (word == 0 and config != 0xffffffff) try c.tlbuRead(config) else try c.tlbRead();
-                for ([_]instr.InputUnpack{ .l, .h }, 0..) |half, k| {
-                    const float = try c.mul(.fmov, .{pair});
-                    vir.setUnpack(c.defs[float.index].?, 0, half);
-                    reads[word * 2 + k] = float;
+        const samples: usize = if (e.key.msaa) compile.tile_samples_most else 1;
+        for (e.color_reads[rt][0..samples], 0..) |*reads, i| {
+            const configured = config != 0xffffffff and i == 0;
+            if (e.key.f32_color_rb & (@as(u32, 1) << @intCast(rt)) != 0) {
+                reads[0] = if (configured) try c.tlbuRead(config) else try c.tlbRead();
+                for (reads[1..]) |*read| read.* = try c.tlbRead();
+            } else {
+                for (0..2) |word| {
+                    const pair = if (word == 0 and configured) try c.tlbuRead(config) else try c.tlbRead();
+                    for ([_]instr.InputUnpack{ .l, .h }, 0..) |half, k| {
+                        const float = try c.mul(.fmov, .{pair});
+                        vir.setUnpack(c.defs[float.index].?, 0, half);
+                        reads[word * 2 + k] = float;
+                    }
                 }
             }
         }
         e.color_read[rt] = true;
     }
-    for (e.color_reads[rt], 0..) |read, k| try storeDef(e, at, k, try c.mul(.mov, .{read}));
+    for (e.color_reads[rt][sample], 0..) |read, k| try storeDef(e, at, k, try c.mul(.mov, .{read}));
 }
 
 /// The program writes a colour: one of Mesa's output_color_var, which
@@ -2031,6 +2048,13 @@ fn emitTex(e: *Emit, each: Step, at: u16) Error!void {
     // (:122-127), a cube of an array's third to TMUR and which cube, the
     // last, to TMUI (since 1.235), the floats past the image's left
     // unread.
+    // A sample of an input attachment of four has its level first, which
+    // v3d_nir_lower_txf_ms leaves before the coordinate it puts last
+    // (v3d_nir_lower_txf_ms.c:42-57; since 1.238). The scheduler may move
+    // TMUB and T past each other (can_reorder_tmu_write,
+    // qpu_schedule.c:226-235), and of the modules tested it does: written
+    // last, the level makes the same programs.
+    if (each.lookup == .fetch_sample_level) _ = try tmuWrite(c, .tmub, try getSrc(e, each.from[0], 0));
     const s = try getSrc(e, each.a, 0);
     _ = try tmuWrite(c, .tmut, try getSrc(e, each.a, 1));
     switch (dim) {
@@ -2048,7 +2072,7 @@ fn emitTex(e: *Emit, each: Step, at: u16) Error!void {
     // A bias, or a level, after it, as vtn orders the sources
     // (spirv_to_nir.c:3420-3438): each one float to TMUB (v3d_tex.c:
     // 129-150; since 1.180).
-    if (each.lookup.leveled()) _ = try tmuWrite(c, .tmub, try getSrc(e, each.from[0], 0));
+    if (each.lookup.leveled() and each.lookup != .fetch_sample_level) _ = try tmuWrite(c, .tmub, try getSrc(e, each.from[0], 0));
 
     // The texture's number in the high bits of the address, for the
     // driver to put the texture's state there (v3d_tex.c:297-301): here

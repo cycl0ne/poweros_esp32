@@ -1179,8 +1179,8 @@ fn multisampled(physical: *const _instance.PhysicalDevice, info: *const facet.Im
     // attachment too since 1.216, as v3dv makes one: the format query of
     // a colour attachment has to hold framebufferColorSampleCounts, and
     // Vulkan 1.0 has no feature to refuse an input attachment of four
-    // under. Its compiler takes no SubpassDataMS, so what it refuses is
-    // the pipeline that reads one (item 56).
+    // under. Its compiler reads one through SubpassDataMS since 1.238
+    // (item 56).
     if (info.image_type != .@"2d" or info.tiling != .optimal or info.mip_levels != 1) return false;
     if (info.flags & facet.IMAGE_CREATE_CUBE_COMPATIBLE != 0) return false;
     const taken = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT |

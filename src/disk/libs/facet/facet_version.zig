@@ -7972,4 +7972,52 @@ pub const LIBRARY_VERSION = 1;
 /// a clear of its own. On the board FacetProbe passes 1088 of 1088; the
 /// new case is 11 of 230400 apart, at the edge pixels "shipped input
 /// attachment" has, and the other 331 are as in 1.236.
-pub const LIBRARY_REVISION = 237;
+///
+/// 238: **An input attachment of four samples, read through
+/// SubpassDataMS on the V3D (docs/facet-vulkan10.md item 56, the second
+/// entry it left out).** The V3D made such an image and stored it, and
+/// refused the pipeline that read it. Ported from Mesa, both ways v3dv
+/// reads one:
+/// - **The read.** OpTypeImage SubpassData of MS 1 is
+///   GLSL_SAMPLER_DIM_SUBPASS_MS (spirv_to_nir.c:2428-2435), its
+///   OpImageRead's Sample the load's sample (:3905-3911). A read without
+///   one is refused, as SPIR-V's validation refuses it.
+/// - **Through the TMU**, where the subpass does not draw into it:
+///   nir_lower_input_attachments' txf_ms of that sample at the pixel's
+///   place and layer, of level 0 (nir_lower_input_attachments.c:
+///   133-147), which v3d_nir_lower_txf_ms makes the texel of the pixel's
+///   quad (v3d_nir_lower_txf_ms.c:42-57; `sampleTexelOf`, as a
+///   sampler2DMS's since 1.209). Its level goes before the coordinate,
+///   which that pass puts last, so TMUB is written before T: the new
+///   `Lookup.fetch_sample_level`.
+/// - **Out of the tile buffer**, where it draws into it: lower_tlb_load
+///   (v3d_nir_lower_load_output.c:26-98) reads each of the four samples
+///   and keeps the one asked for, a bcsel of each later one on the ieq of
+///   the sample and its number (:71-79), and of a constant sample what
+///   nir_opt_constant_folding leaves, that sample's load. The pipeline's
+///   key says it draws four (`Key.msaa`, v3dv_pipeline.c:2115), so the
+///   back end reads a sample at a time, TLB_SAMPLE_MODE_PER_SAMPLE, all
+///   four, the first read configured (tlb_read_config, nir_to_vir.c:
+///   2705-2706; vir_emit_tlb_color_read, :2757-2805). A tile load's
+///   sample is in its `at` beside the render target (`tileAt`), so two
+///   of other samples are not one to nir_opt_cse.
+///
+/// Three host tests are new, of two glslc modules, sample 2 and the
+/// sample the pixel's x picks: the TMU's fetch, its level at TMUB, in
+/// nineteen instructions, and the picked sample's and and shift; the
+/// tile buffer's eight reads configured by 0xfffffffb, sample 2's words
+/// the ones halved, a sample past the fourth the first's, and of one
+/// sample a pixel two reads; the picked sample's three ieqs and twelve
+/// conditional moves, of four loads each its own sample. 4583 of the
+/// 4586 pass, 3 skipped. FacetBoth 1.86's "shipped input attachment of
+/// four samples" and "... of its own" draw the quad and the glass at four
+/// samples and read them through glslc's subpassLoad of a subpassInputMS
+/// at the sample the two lowest bits of the pixel's x pick: in a later
+/// subpass, and in the subpass that draws into it. On the board
+/// FacetProbe passes 1088 of 1088; both cases are 11 of 230400 apart, as
+/// many as the cases of one sample, and the other 332 are as in 1.237.
+/// Of 12 mutants, 10 fail a test: the level written last makes the same
+/// programs, as the scheduler moves TMUB past T (can_reorder_tmu_write,
+/// qpu_schedule.c:226-235), and the driver's `msaa` key is no host
+/// test's.
+pub const LIBRARY_REVISION = 238;

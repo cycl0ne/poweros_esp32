@@ -32909,6 +32909,189 @@ pub const glslc_subpass = [_]u32{
     0x00010038,
 };
 
+/// glslc -O -fshader-stage=frag: an input attachment of four samples read
+/// where the pixel is at sample 2, halved: OpImageRead of an image of Dim
+/// SubpassData and MS 1 with the Sample operand, a txf_ms (since 1.238).
+/// 133 words.
+///
+/// ```glsl
+/// #version 450
+/// // Sample 2 of an input attachment of four read where the pixel is,
+/// // halved: subpassLoad of a subpassInputMS, which
+/// // nir_lower_input_attachments makes a txf_ms (facet 1.238).
+/// layout(input_attachment_index = 0, set = 0, binding = 0) uniform subpassInputMS a;
+/// layout(location = 0) out vec4 o;
+/// void main() {
+///     o = subpassLoad(a, 2) * 0.5;
+/// }
+/// ```
+///
+/// ```
+/// ; SPIR-V
+/// ; Version: 1.0
+/// ; Generator: Google Shaderc over Glslang; 11
+/// ; Bound: 22
+/// ; Schema: 0
+///                OpCapability Shader
+///                OpCapability InputAttachment
+///           %1 = OpExtInstImport "GLSL.std.450"
+///                OpMemoryModel Logical GLSL450
+///                OpEntryPoint Fragment %4 "main" %9
+///                OpExecutionMode %4 OriginUpperLeft
+///                OpDecorate %9 Location 0
+///                OpDecorate %12 Binding 0
+///                OpDecorate %12 DescriptorSet 0
+///                OpDecorate %12 InputAttachmentIndex 0
+///           %2 = OpTypeVoid
+///           %3 = OpTypeFunction %2
+///           %6 = OpTypeFloat 32
+///           %7 = OpTypeVector %6 4
+///           %8 = OpTypePointer Output %7
+///           %9 = OpVariable %8 Output
+///          %10 = OpTypeImage %6 SubpassData 0 0 1 2 Unknown
+///          %11 = OpTypePointer UniformConstant %10
+///          %12 = OpVariable %11 UniformConstant
+///          %14 = OpTypeInt 32 1
+///          %15 = OpConstant %14 2
+///          %16 = OpConstant %14 0
+///          %17 = OpTypeVector %14 2
+///          %18 = OpConstantComposite %17 %16 %16
+///          %20 = OpConstant %6 0.5
+///           %4 = OpFunction %2 None %3
+///           %5 = OpLabel
+///          %13 = OpLoad %10 %12
+///          %19 = OpImageRead %7 %13 %18 Sample %15
+///          %21 = OpVectorTimesScalar %7 %19 %20
+///                OpStore %9 %21
+///                OpReturn
+///                OpFunctionEnd
+/// ```
+pub const glslc_subpass_ms = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000016, 0x00000000, 0x00020011,
+    0x00000001, 0x00020011, 0x00000028, 0x0006000B, 0x00000001, 0x4C534C47,
+    0x6474732E, 0x3035342E, 0x00000000, 0x0003000E, 0x00000000, 0x00000001,
+    0x0006000F, 0x00000004, 0x00000004, 0x6E69616D, 0x00000000, 0x00000009,
+    0x00030010, 0x00000004, 0x00000007, 0x00040047, 0x00000009, 0x0000001E,
+    0x00000000, 0x00040047, 0x0000000C, 0x00000021, 0x00000000, 0x00040047,
+    0x0000000C, 0x00000022, 0x00000000, 0x00040047, 0x0000000C, 0x0000002B,
+    0x00000000, 0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002,
+    0x00030016, 0x00000006, 0x00000020, 0x00040017, 0x00000007, 0x00000006,
+    0x00000004, 0x00040020, 0x00000008, 0x00000003, 0x00000007, 0x0004003B,
+    0x00000008, 0x00000009, 0x00000003, 0x00090019, 0x0000000A, 0x00000006,
+    0x00000006, 0x00000000, 0x00000000, 0x00000001, 0x00000002, 0x00000000,
+    0x00040020, 0x0000000B, 0x00000000, 0x0000000A, 0x0004003B, 0x0000000B,
+    0x0000000C, 0x00000000, 0x00040015, 0x0000000E, 0x00000020, 0x00000001,
+    0x0004002B, 0x0000000E, 0x0000000F, 0x00000002, 0x0004002B, 0x0000000E,
+    0x00000010, 0x00000000, 0x00040017, 0x00000011, 0x0000000E, 0x00000002,
+    0x0005002C, 0x00000011, 0x00000012, 0x00000010, 0x00000010, 0x0004002B,
+    0x00000006, 0x00000014, 0x3F000000, 0x00050036, 0x00000002, 0x00000004,
+    0x00000000, 0x00000003, 0x000200F8, 0x00000005, 0x0004003D, 0x0000000A,
+    0x0000000D, 0x0000000C, 0x00070062, 0x00000007, 0x00000013, 0x0000000D,
+    0x00000012, 0x00000040, 0x0000000F, 0x0005008E, 0x00000007, 0x00000015,
+    0x00000013, 0x00000014, 0x0003003E, 0x00000009, 0x00000015, 0x000100FD,
+    0x00010038,
+};
+
+/// glslc -O -fshader-stage=frag: the same at the sample the pixel's x
+/// picks, its two lowest bits: a Sample worked out at run time (since
+/// 1.238).
+/// 176 words.
+///
+/// ```glsl
+/// #version 450
+/// // The sample of an input attachment of four that the pixel's x picks,
+/// // its two lowest bits: a sample the program works out, which the tile
+/// // buffer's reads keep with a bcsel of each (facet 1.238).
+/// layout(input_attachment_index = 0, set = 0, binding = 0) uniform subpassInputMS a;
+/// layout(location = 0) out vec4 o;
+/// void main() {
+///     o = subpassLoad(a, int(gl_FragCoord.x) & 3) * 0.5;
+/// }
+/// ```
+///
+/// ```
+/// ; SPIR-V
+/// ; Version: 1.0
+/// ; Generator: Google Shaderc over Glslang; 11
+/// ; Bound: 31
+/// ; Schema: 0
+///                OpCapability Shader
+///                OpCapability InputAttachment
+///           %1 = OpExtInstImport "GLSL.std.450"
+///                OpMemoryModel Logical GLSL450
+///                OpEntryPoint Fragment %4 "main" %9 %15
+///                OpExecutionMode %4 OriginUpperLeft
+///                OpDecorate %9 Location 0
+///                OpDecorate %12 Binding 0
+///                OpDecorate %12 DescriptorSet 0
+///                OpDecorate %12 InputAttachmentIndex 0
+///                OpDecorate %15 BuiltIn FragCoord
+///           %2 = OpTypeVoid
+///           %3 = OpTypeFunction %2
+///           %6 = OpTypeFloat 32
+///           %7 = OpTypeVector %6 4
+///           %8 = OpTypePointer Output %7
+///           %9 = OpVariable %8 Output
+///          %10 = OpTypeImage %6 SubpassData 0 0 1 2 Unknown
+///          %11 = OpTypePointer UniformConstant %10
+///          %12 = OpVariable %11 UniformConstant
+///          %14 = OpTypePointer Input %7
+///          %15 = OpVariable %14 Input
+///          %16 = OpTypeInt 32 0
+///          %17 = OpConstant %16 0
+///          %18 = OpTypePointer Input %6
+///          %21 = OpTypeInt 32 1
+///          %23 = OpConstant %21 3
+///          %25 = OpConstant %21 0
+///          %26 = OpTypeVector %21 2
+///          %27 = OpConstantComposite %26 %25 %25
+///          %29 = OpConstant %6 0.5
+///           %4 = OpFunction %2 None %3
+///           %5 = OpLabel
+///          %13 = OpLoad %10 %12
+///          %19 = OpAccessChain %18 %15 %17
+///          %20 = OpLoad %6 %19
+///          %22 = OpConvertFToS %21 %20
+///          %24 = OpBitwiseAnd %21 %22 %23
+///          %28 = OpImageRead %7 %13 %27 Sample %24
+///          %30 = OpVectorTimesScalar %7 %28 %29
+///                OpStore %9 %30
+///                OpReturn
+///                OpFunctionEnd
+/// ```
+pub const glslc_subpass_ms_picked = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x0000001F, 0x00000000, 0x00020011,
+    0x00000001, 0x00020011, 0x00000028, 0x0006000B, 0x00000001, 0x4C534C47,
+    0x6474732E, 0x3035342E, 0x00000000, 0x0003000E, 0x00000000, 0x00000001,
+    0x0007000F, 0x00000004, 0x00000004, 0x6E69616D, 0x00000000, 0x00000009,
+    0x0000000F, 0x00030010, 0x00000004, 0x00000007, 0x00040047, 0x00000009,
+    0x0000001E, 0x00000000, 0x00040047, 0x0000000C, 0x00000021, 0x00000000,
+    0x00040047, 0x0000000C, 0x00000022, 0x00000000, 0x00040047, 0x0000000C,
+    0x0000002B, 0x00000000, 0x00040047, 0x0000000F, 0x0000000B, 0x0000000F,
+    0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00030016,
+    0x00000006, 0x00000020, 0x00040017, 0x00000007, 0x00000006, 0x00000004,
+    0x00040020, 0x00000008, 0x00000003, 0x00000007, 0x0004003B, 0x00000008,
+    0x00000009, 0x00000003, 0x00090019, 0x0000000A, 0x00000006, 0x00000006,
+    0x00000000, 0x00000000, 0x00000001, 0x00000002, 0x00000000, 0x00040020,
+    0x0000000B, 0x00000000, 0x0000000A, 0x0004003B, 0x0000000B, 0x0000000C,
+    0x00000000, 0x00040020, 0x0000000E, 0x00000001, 0x00000007, 0x0004003B,
+    0x0000000E, 0x0000000F, 0x00000001, 0x00040015, 0x00000010, 0x00000020,
+    0x00000000, 0x0004002B, 0x00000010, 0x00000011, 0x00000000, 0x00040020,
+    0x00000012, 0x00000001, 0x00000006, 0x00040015, 0x00000015, 0x00000020,
+    0x00000001, 0x0004002B, 0x00000015, 0x00000017, 0x00000003, 0x0004002B,
+    0x00000015, 0x00000019, 0x00000000, 0x00040017, 0x0000001A, 0x00000015,
+    0x00000002, 0x0005002C, 0x0000001A, 0x0000001B, 0x00000019, 0x00000019,
+    0x0004002B, 0x00000006, 0x0000001D, 0x3F000000, 0x00050036, 0x00000002,
+    0x00000004, 0x00000000, 0x00000003, 0x000200F8, 0x00000005, 0x0004003D,
+    0x0000000A, 0x0000000D, 0x0000000C, 0x00050041, 0x00000012, 0x00000013,
+    0x0000000F, 0x00000011, 0x0004003D, 0x00000006, 0x00000014, 0x00000013,
+    0x0004006E, 0x00000015, 0x00000016, 0x00000014, 0x000500C7, 0x00000015,
+    0x00000018, 0x00000016, 0x00000017, 0x00070062, 0x00000007, 0x0000001C,
+    0x0000000D, 0x0000001B, 0x00000040, 0x00000018, 0x0005008E, 0x00000007,
+    0x0000001E, 0x0000001C, 0x0000001D, 0x0003003E, 0x00000009, 0x0000001E,
+    0x000100FD, 0x00010038,
+};
+
 /// glslc -O -fshader-stage=frag: an input attachment times a varying: the
 /// layer the read takes is the first varying, flat, and the vertex
 /// program's location 0 the second (since 1.215).

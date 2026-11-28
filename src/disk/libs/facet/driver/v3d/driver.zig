@@ -963,9 +963,10 @@ fn compiled(pipeline: *Pipeline) facet.Result {
     // (:1253-1256; since 1.229). And the render target each input
     // attachment is, where the subpass draws into it as well, which the
     // program reads out of the tile buffer (tlb_input_attachment_location,
-    // v3dv_pipeline.c:2125-2135; since 1.237).
+    // v3dv_pipeline.c:2125-2135; since 1.237), a sample at a time where
+    // the pipeline draws four (msaa, :2115; since 1.238).
     const colors = v3d.target.colorKey(&pipeline.color_formats);
-    const key = compile.Key{ .sample_alpha_to_coverage = coverageOf(pipeline), .cbufs = if (pipeline.colorless) 0 else colors.cbufs, .f32_color_rb = colors.f32_color_rb, .tile_inputs = pipeline.tile_inputs };
+    const key = compile.Key{ .sample_alpha_to_coverage = coverageOf(pipeline), .cbufs = if (pipeline.colorless) 0 else colors.cbufs, .f32_color_rb = colors.f32_color_rb, .tile_inputs = pipeline.tile_inputs, .msaa = pipeline.samples > 1 };
     const code = compile.compileThroughMesa(work, pipeline.fragment_words, v3d.heap.of(sys), key) catch |err| return switch (err) {
         error.OutOfMemory => .error_out_of_host_memory,
         else => .error_feature_not_present,
