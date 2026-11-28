@@ -110,6 +110,46 @@ pub const most_steps = 256;
 /// The varyings the hardware carries
 /// (`PhysicalDeviceLimits.max_vertex_output_components`).
 pub const most_varyings = qpu.most_varyings;
+/// The input attachments a subpass may read out of the tile buffer, by
+/// their index: v3dv's MAX_INPUT_ATTACHMENTS (v3dv_limits.h:52), the size
+/// of its tlb_input_attachment_location (since 1.237).
+pub const most_tile_inputs = 4;
+/// The render target each input attachment of a subpass is, by its
+/// index, where the subpass draws into it as well, or `no_tile` (v3dv's
+/// UINT8_MAX, subpass_setup_tlb_input_attachments, v3dv_pass.c:97-135).
+pub const TileInputs = [most_tile_inputs]u8;
+pub const no_tile: u8 = 0xFF;
+pub const no_tile_inputs: TileInputs = @splat(no_tile);
+/// The samples of a pixel the tile buffer holds where a pipeline draws
+/// several: V3D_MAX_SAMPLES (v3d_limits.h), each read in turn (since
+/// 1.238).
+pub const tile_samples_most = 4;
+/// What a fragment program reads out of the tile buffer: the render
+/// target of each input attachment of the subpass (`TileInputs`), and
+/// the samples each of a pixel has, 1, or 4 where the pipeline draws
+/// four (lower_tlb_load's num_samples, v3d_nir_lower_load_output.c:52;
+/// since 1.238).
+pub const Tiles = struct {
+    inputs: TileInputs = no_tile_inputs,
+    samples: u8 = 1,
+};
+/// A `tile_load`'s `at`: the render target, and which sample of it the
+/// step is, past it (since 1.238). Both are the step's, so two of one
+/// target and other samples are not one to nir_opt_cse (`equalSteps`).
+pub fn tileAt(rt: u8, which: u8) u32 {
+    return @as(u32, rt) | @as(u32, which) << 8;
+}
+pub fn tileTarget(at: u32) u32 {
+    return at & 0xFF;
+}
+pub fn tileSample(at: u32) u32 {
+    return at >> 8;
+}
+/// The colour outs a fragment program writes, one for each render target
+/// at its location: facet's colour attachments a subpass
+/// (`_render.most_colors`), which is V3D_MAX_RENDER_TARGETS at 4.2
+/// (v3d_limits.h:44) and under the 8 of 7.1 (since 1.231).
+pub const most_colors = 4;
 /// The floats a program may read as uniforms of its own. Mesa's grow as
 /// they are added (vir_get_uniform_index, vir.c:2771); a Code and a
 /// Shader hold them by value, 12 bytes each. 32 until 1.191, where a
@@ -343,9 +383,10 @@ pub const Error = error{
     /// which only Mesa's back end compiles.
     Storage,
     /// Input locations that are not 0 upwards without a gap, or a colour
-    /// out that is not location 0.
+    /// out at a location past the render targets (`most_colors`) or at one
+    /// another is at; for the plan's compile, one not at location 0.
     Location,
-    /// More than one colour out (`several_outputs`), or none.
+    /// No colour out; for the plan's compile, more than one.
     Outputs,
     /// More varyings than the hardware carries.
     Varyings,
@@ -417,6 +458,26 @@ pub const Sampler = struct {
     /// 2D (v3d_nir_lower_txf_ms.c:46-59). `dim` is that one: flat, or
     /// layers for an array of them (since 1.209).
     multisampled: bool = false,
+    /// An input attachment, an image of Dim SubpassData: read only by a
+    /// subpassLoad, a fetch at the pixel's place and layer, which is why
+    /// `dim` is layers (`readSubpass`). The draw points the TMU at the
+    /// view the input attachment's descriptor holds, as v3dv's texture
+    /// map takes the kind (pipeline_get_descriptor_map, v3dv_pipeline.c:
+    /// 601-606; since 1.215).
+    input_attachment: bool = false,
+    /// An input attachment's index in its subpass, OpDecorate
+    /// InputAttachmentIndex, or `no_tile`: which of the pipeline's
+    /// `tile_inputs` the read is (since 1.237).
+    input_index: u8 = no_tile,
+    /// A storage image, Sampled 2 of a format: read and written with no
+    /// sampler, at an integer coordinate, its layer or its slice the
+    /// third word where `dim` is layers or a volume. A cube is its six
+    /// faces' layers, as v3d reads one (vir_image_emit_register_writes,
+    /// v3d_tex.c:473-480). The draw points the TMU at the view the
+    /// storage image's descriptor holds, which v3dv's texture map takes
+    /// (pipeline_get_descriptor_map, v3dv_pipeline.c:601-606; since
+    /// 1.218).
+    storage: bool = false,
 };
 
 /// What a sampled image's coordinate names, as a nir_tex_instr's
@@ -433,15 +494,33 @@ pub const SamplerDim = enum(u8) {
     /// GLSL_SAMPLER_DIM_CUBE: a direction, normalized
     /// (nir_normalize_cubemap_coords, v3dv_pipeline.c:406), its third
     /// float in TMUR and the lookup started at TMUSCM rather than TMUS
-    /// (v3d_tex.c:380-381). A cube of an array is refused, as
-    /// SampledCubeArray is not in the profile.
+    /// (v3d_tex.c:380-381).
     cube,
+    /// GLSL_SAMPLER_DIM_CUBE arrayed, of SampledCubeArray: a cube's
+    /// direction, normalized and in S, T and R as a cube's, and which
+    /// cube as its fourth float, left as it is by
+    /// nir_normalize_cubemap_coords (nir_normalize_cubemap_coords.c:
+    /// 59-65), in TMUI after R (handle_tex_src, v3d_tex.c:108-127): the
+    /// TMU rounds it and holds it to the view's cubes, which the draw
+    /// makes its depth (v3dvx_image.c:89-93). A size names its cubes
+    /// last (v3dv_uniforms.c:402-407; since 1.235). A storage image of
+    /// ImageCubeArray is of `layers` instead, as a storage cube is.
+    cubes,
 
     /// glsl_get_sampler_dim_coordinate_components and the layer
     /// (spirv_to_nir.c:3280-3283): the floats of the coordinate a sample
     /// reads.
     pub fn components(dim: SamplerDim) u8 {
-        return if (dim == .flat) 2 else 3;
+        return switch (dim) {
+            .flat => 2,
+            .layers, .volume, .cube => 3,
+            .cubes => 4,
+        };
+    }
+
+    /// Whether a sample of it is a cube's, at TMUSCM.
+    pub fn cubic(dim: SamplerDim) bool {
+        return dim == .cube or dim == .cubes;
     }
 };
 
@@ -450,8 +529,12 @@ pub const SamplerDim = enum(u8) {
 /// and this list is what *this* device can run today. It grows a family
 /// at a time - discard and samplers first.
 pub const profile: spirv.Profile = .{
-    // ImageQuery, which an image's size and levels need (since 1.181).
-    .capabilities = &.{ .shader, .image_query },
+    // ImageQuery, which an image's size and levels need (since 1.181);
+    // InputAttachment, which an input attachment's SubpassData needs
+    // (since 1.215); SampledCubeArray and ImageCubeArray, which a cube
+    // of an array needs, sampled and as a storage image, as v3dv has
+    // imageCubeArray (v3dv_device.c:331; since 1.235).
+    .capabilities = &.{ .shader, .image_query, .input_attachment, .sampled_cube_array, .image_cube_array },
     .opcodes = &.{
         .capability,                   .memory_model,                   .entry_point,                    .execution_mode,
         .decorate,                     .type_void,                      .type_float,                     .type_vector,
@@ -543,17 +626,30 @@ pub const profile: spirv.Profile = .{
         // image at a level, NIR's txf (since 1.182).
         .image,                        .image_fetch,                    .image_query_size_lod,           .image_query_levels,
         .image_sample_explicit_lod,    .image_sample_dref_explicit_lod,
+        // An input attachment read where the pixel is, a subpassLoad
+        // (since 1.215), or a storage image's texel; and one written
+        // (since 1.218); and a storage image's size (since 1.219).
+        .image_read,                     .image_write,
+        .image_query_size,
         // The bit operations, as nir_lower_alu and nir_opt_algebraic lower
         // them for a device of no BFE, BFM or BFI (since 1.202).
-        .bit_field_insert,               .bit_field_s_extract,
-        .bit_field_u_extract,          .bit_reverse,                    .bit_count,
+                    .bit_field_insert,               .bit_field_s_extract,            .bit_field_u_extract,
+        .bit_reverse,                  .bit_count,
         // A compute program's workgroup waiting for all its invocations
         // (since 1.203).
                              .control_barrier,
     },
     // Workgroup: a compute program's shared memory (since 1.203).
     .storage_classes = &.{ .input, .output, .function, .uniform_constant, .push_constant, .uniform, .workgroup },
-    .image_dims = &.{ .dim_2d, .dim_3d, .cube },
+    // SubpassData: an input attachment (since 1.215).
+    .image_dims = &.{ .dim_2d, .dim_3d, .cube, .subpass_data },
+    // A storage image of 8 bits a channel, R8G8B8A8_UNORM's, which the
+    // TMU keeps as RGBA8 (v3dvx_formats.c:131): the one of Vulkan's
+    // storage formats of no StorageImageExtendedFormats this device keeps
+    // in its own layout (`can.kept_floats` is false), and of the others
+    // it keeps, BGRA8 and RGB565 have no SPIR-V format and R8 needs that
+    // capability (since 1.218).
+    .storage_formats = &.{.rgba8},
     // A bias, a level and a constant texel offset, TMUB's and P2's
     // (handle_tex_src, v3d_tex.c:129-170; since 1.180); and a gradient,
     // which nir_lower_tex's lower_txd makes a level (vir.c:802; since
@@ -768,6 +864,34 @@ pub const Tag = enum {
     /// uniform the draw writes (ntq_emit_tex, nir_to_vir.c:972-975; since
     /// 1.181).
     texture_levels,
+    /// A texel of a storage image, NIR's image_load: of the image `at`
+    /// names, at the integer coordinate `a`, the layer or the slice its
+    /// third word where the image has one. An image of 8 bits a channel
+    /// hands back two words of two half-floats each, `kind` the two,
+    /// which the steps v3d_nir_lower_image_load makes after it read as
+    /// four floats (v3d_nir_lower_image_load_store.c:397-420; since
+    /// 1.218).
+    image_load,
+    /// NIR's image_store: the words of `b` written into the storage image
+    /// `at` names at the integer coordinate `a`, the texel
+    /// v3d71_nir_lower_image_store packed in the image's format
+    /// (v3d_nir_lower_image_load_store.c:354-394), `b`'s kind as many
+    /// words as it is. It makes no value (since 1.218).
+    image_store,
+    /// NIR's image_size: the sizes of the storage image `at` names, as
+    /// many integers as `kind` is, each a uniform of the view's: its
+    /// width, its height, and a 3D image's depth or an array's layers
+    /// (ntq_emit_image_size, nir_to_vir.c:2653-2679; since 1.219).
+    image_size,
+    /// An input attachment the subpass draws into as well, read out of
+    /// the tile buffer where the pixel is: render target `at`'s colour,
+    /// four floats. v3dv makes such a subpassLoad a load_tile_image
+    /// (lower_tlb_input_attachment_instr, v3dv_pipeline.c:301-356), and
+    /// v3d a load_tlb_color_brcm of render target `at` and sample 0
+    /// (lower_tlb_load, v3d_nir_lower_load_output.c:26-98), which
+    /// vir_emit_tlb_color_read reads (nir_to_vir.c:2731-2815; since
+    /// 1.237).
+    tile_load,
     /// A vertex program's float `a` written to the VPM at `at`, one
     /// float as v3d_nir_store_output stores each (v3d_nir_lower_io.c:
     /// 72-92): a varying where the fragment program reads it, or one of
@@ -873,11 +997,24 @@ pub const Integer = enum(u32) {
     /// f2f32 of that, an FMOV of the low half (nir_to_vir.c:1575-1578,
     /// 1599-1611; since 1.200).
     half_float,
+    /// Each half of a word, a half-float, made a byte of 0 to 255 in the
+    /// low byte of its half: pack_2x16_to_unorm_2x8_v3d
+    /// (nir_opcodes.py:1827-1828), each _mesa_half_to_unorm's
+    /// (format_utils.h:69-84), held to 0 to 1 and the nearest even of
+    /// 255 times it; the V3D's VFTOUNORM8 (nir_to_vir.c:1829-1831), which
+    /// v3d71_nir_lower_image_store packs an Rgba8 texel with (since
+    /// 1.218).
+    pack_unorm_8,
+    /// The low bytes of the two halves of `a` and of `b`, the four bytes
+    /// of a word, `a`'s first: pack_4x16_to_4x8_v3d (nir_opcodes.py:
+    /// 1822-1824), the V3D's V8PACK (nir_to_vir.c:1825-1827; since
+    /// 1.218).
+    pack_4x8,
 
     /// Whether it reads one value, not two.
     pub fn unary(op: Integer) bool {
         return switch (op) {
-            .ineg, .iabs, .inot, .f2i32, .f2u32, .i2f32, .u2f32, .b2f32, .b2i32, .uclz, .half_float => true,
+            .ineg, .iabs, .inot, .f2i32, .f2u32, .i2f32, .u2f32, .b2f32, .b2i32, .uclz, .half_float, .pack_unorm_8 => true,
             else => false,
         };
     }
@@ -963,6 +1100,15 @@ pub const Lookup = enum(u8) {
     /// 1849-1858), runs before it (vir.c:1987, :2004). So no TMUB is
     /// written (handle_tex_src, v3d_tex.c:137-153; since 1.209).
     fetch_sample,
+    /// A sample of an input attachment of four, of SubpassDataMS: the
+    /// txf_ms nir_lower_input_attachments makes of it has the level of 0
+    /// a txf of one has (nir_lower_input_attachments.c:142-147), and
+    /// v3d_nir_lower_txf_ms takes its coordinate and its sample out and
+    /// gives it the texel of the pixel's quad last (v3d_nir_lower_txf_ms.c:
+    /// 42-57). So TMUB is written first, before T: vir_tex_handle_srcs
+    /// writes the sources in their order (v3d_tex.c:205-218; since
+    /// 1.238).
+    fetch_sample_level,
 
     /// nir_tex_instr_has_implicit_derivative: whether the quad's helper
     /// pixels are needed for the coordinate.
@@ -973,13 +1119,13 @@ pub const Lookup = enum(u8) {
     /// Whether `from[0]` is a bias or a level, a TMUB write (since 1.209,
     /// when a fetch came to have none).
     pub fn leveled(lookup: Lookup) bool {
-        return lookup == .bias or lookup == .lod or lookup == .fetch;
+        return lookup == .bias or lookup == .lod or lookup == .fetch or lookup == .fetch_sample_level;
     }
 
     /// A txf or a txf_ms: no sampler state (nir_tex_instr_need_sampler),
     /// and the lookup started at TMUSF (v3d_tex.c:375-377).
     pub fn fetches(lookup: Lookup) bool {
-        return lookup == .fetch or lookup == .fetch_sample;
+        return lookup == .fetch or lookup == .fetch_sample or lookup == .fetch_sample_level;
     }
 };
 
@@ -1171,6 +1317,12 @@ pub const Code = struct {
     /// since 1.190).
     flat_shade_flags: u32 = 0,
     noperspective_flags: u32 = 0,
+    /// The fragment program's first varying is the layer an input
+    /// attachment is read at, a flat one of VARYING_SLOT_LAYER, which is
+    /// first among them and is counted in `varyings`: the vertex program
+    /// writes 0 there, writing no gl_Layer (`VertexKey.layer`; since
+    /// 1.215).
+    reads_layer: bool = false,
     /// A vertex program's, for its shader record and its attribute
     /// records (`v3d_vs_prog_data`, v3d_vs_set_prog_data, vir.c:860-936;
     /// since 1.163): the floats of each attribute it reads by driver
@@ -1257,9 +1409,16 @@ pub const Word = union(enum) {
     /// A size of the view a unit samples, or its levels: Mesa's
     /// QUNIFORM_TEXTURE_WIDTH, _HEIGHT, _DEPTH, _ARRAY_SIZE and _LEVELS,
     /// which v3dv writes from the view's extent, layers and levels
-    /// (get_texture_size_from_image_view, v3dv_uniforms.c:378-414; since
+    /// (get_texture_size_from_image_view, v3dv_uniforms.c:378-416; since
     /// 1.181).
     texture_size: TextureSize,
+    /// The state of a unit's storage image, as a load's or a store's
+    /// `wrtmuc` takes it: Mesa's QUNIFORM_IMAGE_TMU_CONFIG_P0, which v3dv
+    /// writes as it writes a texture's (write_tmu_p0, v3dv_uniforms.c:
+    /// 139-185, :563-567), the state's address with the words to hand
+    /// back in its low bits, `bits`: a load's two, a store's none (since
+    /// 1.218).
+    image: SamplerWord,
 };
 
 /// A `.texture_size` word: the unit, and which of its view's sizes.
@@ -1292,7 +1451,9 @@ pub const Viewport = enum(u8) { x_scale, y_scale, z_offset, z_scale };
 /// A compute program's: the two words of its payload, which the
 /// program's start moves out of rf3 and rf2 (nir_to_vir.c:4953-4954), and
 /// the dispatch's first workgroup and count of them, a uniform each of x,
-/// y and z (:3877-3910; since 1.194).
+/// y and z (:3877-3910; since 1.194). A fragment program's gl_FragCoord,
+/// a float each of x, y, z and w, which the program's start reads as
+/// emit_fragcoord_input reads them (nir_to_vir.c:1017-1023; since 1.214).
 pub const SystemValue = enum(u8) {
     instance_id,
     base_instance,
@@ -1306,15 +1467,24 @@ pub const SystemValue = enum(u8) {
     num_work_groups_x,
     num_work_groups_y,
     num_work_groups_z,
+    frag_coord_x,
+    frag_coord_y,
+    frag_coord_z,
+    frag_coord_w,
+    /// The layer an input attachment is read at: the input of
+    /// VARYING_SLOT_LAYER, flat, which v3dv reads for it
+    /// (try_lower_intrinsic, v3dv_pipeline.c:276-280) and the vertex
+    /// program writes 0 to, writing no gl_Layer (since 1.215).
+    layer,
 };
 
 /// How many there are.
 const system_value_count = @typeInfo(SystemValue).@"enum".fields.len;
 
 /// The built-in variables a program may read, where `Work.system_ids`
-/// holds each: a vertex program's two (since 1.192) and a compute
-/// program's five (since 1.194).
-const Builtin = enum(u8) { vertex_index, instance_index, num_workgroups, workgroup_id, local_invocation_id, global_invocation_id, local_invocation_index };
+/// holds each: a vertex program's two (since 1.192), a compute program's
+/// five (since 1.194) and a fragment program's FragCoord (since 1.214).
+const Builtin = enum(u8) { vertex_index, instance_index, num_workgroups, workgroup_id, local_invocation_id, global_invocation_id, local_invocation_index, frag_coord };
 const builtin_count = @typeInfo(Builtin).@"enum".fields.len;
 
 /// What v3d_cs_set_prog_data says of a compute program (vir.c:1024-1034;
@@ -1443,6 +1613,11 @@ pub const VertexKey = struct {
     /// fragment program of this device reads its locations from 0 up with
     /// no gap (`order`).
     reads: [most_varyings]u8 = @splat(0),
+    /// The fragment program reads the layer, VARYING_SLOT_LAYER, before
+    /// any of `reads`: the slot before theirs, which the vertex program
+    /// writes 0 to, as it writes no gl_Layer (`Code.reads_layer`; since
+    /// 1.215).
+    layer: bool = false,
     /// The vertex program's `SystemValues`, which the coordinate program
     /// reads rows for as well: v3dv compiles both of the one NIR, whose
     /// system_values_read pipeline_lower_nir gathers before either
@@ -1503,6 +1678,15 @@ pub const Work = struct {
     /// From OpDecorate DescriptorSet and Binding, or `none`.
     set: [most_ids]u16 = @splat(none),
     binding: [most_ids]u16 = @splat(none),
+    /// From OpDecorate InputAttachmentIndex, or `no_tile` (since 1.237).
+    attachment_index: [most_ids]u8 = @splat(no_tile),
+    /// What the fragment program is compiled for: the render target each
+    /// input attachment of the subpass is, by its index, where the
+    /// subpass draws into it as well (`Key.tile_inputs`, since 1.237).
+    tile_inputs: TileInputs = no_tile_inputs,
+    /// And the samples of a pixel each has (`Tiles.samples`, since
+    /// 1.238).
+    tile_samples: u8 = 1,
     /// Which sampler an id names: the variable, and the value an OpLoad
     /// of it answers. A sampler is not a value a step can hold, so it is
     /// carried beside the steps rather than among them.
@@ -1513,6 +1697,12 @@ pub const Work = struct {
     /// An image type of MS 1, and a sampled image type of one (since
     /// 1.209).
     multisampled: std.StaticBitSet(most_ids) = .initEmpty(),
+    /// An image type of Dim SubpassData, an input attachment's (since
+    /// 1.215).
+    subpass: std.StaticBitSet(most_ids) = .initEmpty(),
+    /// An image type of Sampled 2 and a format, a storage image's (since
+    /// 1.218).
+    storage_image: std.StaticBitSet(most_ids) = .initEmpty(),
     /// Which step a value id answers.
     step_of: [most_ids]u16 = @splat(none),
     /// `member_pointer`: which float of the member it names, or `whole`
@@ -1549,6 +1739,12 @@ pub const Work = struct {
     /// is not 0, the variables vtn keeps being those the body names
     /// (spirv_to_nir.c:7533-7551; since 1.168).
     uses_ssbo: bool = false,
+    /// The body loads a storage image's variable or an input
+    /// attachment's: info.num_images is not 0, as nir_shader_gather_info
+    /// counts the image variables vtn keeps (nir_gather_info.c:1086-1099)
+    /// before v3dv lowers them to units (pipeline_lower_nir,
+    /// v3dv_pipeline.c:1875; since 1.219).
+    uses_images: bool = false,
     /// The bytes of shared memory a workgroup has: info.shared_size, the
     /// Workgroup variables laid out one after another, each at its
     /// alignment (lower_vars_to_explicit, nir_lower_explicit_io.c:
@@ -1674,8 +1870,10 @@ pub const Work = struct {
 
     inputs: [most_varyings]Input = undefined,
     input_count: u32 = 0,
-    /// The one colour out.
-    output: u16 = none,
+    /// The colour outs, the variable at each location, `none` at one no
+    /// variable is at (Mesa's output_color_var, nir_to_vir.c:2594-2602;
+    /// one at location 0 until 1.231), and how many there are.
+    output: [most_colors]u16 = @splat(none),
     output_count: u32 = 0,
 
     /// The stage the module is a program of, and what a vertex program
@@ -1746,8 +1944,9 @@ pub const Work = struct {
 
     steps: [most_steps]Step = undefined,
     step_count: u32 = 0,
-    /// The step the body stored into the colour out.
-    stored: u16 = none,
+    /// The step the body stored into the colour out at each location, or
+    /// `none` where there is none or nothing was stored into it.
+    stored: [most_colors]u16 = @splat(none),
     /// The function's own variables, as nir_lower_vars_to_ssa makes
     /// them values (since 1.155): how many floats each is, and which
     /// float each of its floats holds where the walk has got to, a
@@ -1862,7 +2061,12 @@ pub const Work = struct {
 /// follows a pointer out of them, and a module that is not one has
 /// already been turned down by `CreateShaderModule`.
 pub fn compile(work: *Work, words: []const u32) Error!Code {
-    try readModule(work, words);
+    try readModule(work, words, .{});
+    // Every hand-written program writes one colour, at location 0, which
+    // the tile buffer takes without a configuration of its own
+    // (`qpu.zig`): several are Mesa's back end's (since 1.231).
+    if (work.output_count > 1) return Error.Outputs;
+    if (work.output[0] == none) return Error.Location;
     // Every hand-written program's varyings are `qpu.varying`'s, with
     // perspective (since 1.190, where the reading takes the others).
     if (work.flat_floats != 0 or work.noperspective_floats != 0) return Error.Refused;
@@ -1873,7 +2077,7 @@ pub fn compile(work: *Work, words: []const u32) Error!Code {
     // reads it once.
     if (work.sample_count > 1) return Error.Samplers;
     for (work.program()) |each| switch (each.tag) {
-        .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier, .scratch, .scratch_indirect, .scratch_store, .shared, .shared_store, .shared_atomic, .control_barrier => return Error.Storage,
+        .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier, .scratch, .scratch_indirect, .scratch_store, .shared, .shared_store, .shared_atomic, .control_barrier, .image_load, .image_store, .image_size, .tile_load => return Error.Storage,
         .discard => return Error.Discards,
         .sample_compared => return Error.Samplers,
         // Every one reads a 2D texture at s and t (since 1.179), at the
@@ -1941,7 +2145,7 @@ pub fn compileVertexThroughMesa(work: *Work, words: []const u32, child: std.mem.
 
 /// `compileVertexThroughMesa` with the register sets the caller's.
 pub fn compileVertexVir(work: *Work, words: []const u32, allocator: std.mem.Allocator, compiler: *const vir.Compiler, key: VertexKey) (Error || std.mem.Allocator.Error)!Code {
-    try readStage(work, words, .vertex, key);
+    try readStage(work, words, .vertex, key, .{});
     return compileRead(work, allocator, compiler, .{});
 }
 
@@ -1959,7 +2163,7 @@ pub fn compileComputeThroughMesa(work: *Work, words: []const u32, child: std.mem
 
 /// `compileComputeThroughMesa` with the register sets the caller's.
 pub fn compileComputeVir(work: *Work, words: []const u32, allocator: std.mem.Allocator, compiler: *const vir.Compiler) (Error || std.mem.Allocator.Error)!Code {
-    try readStage(work, words, .gl_compute, .{});
+    try readStage(work, words, .gl_compute, .{}, .{});
     return compileRead(work, allocator, compiler, .{});
 }
 
@@ -1970,7 +2174,7 @@ pub fn compileComputeVir(work: *Work, words: []const u32, allocator: std.mem.All
 /// `compiler` is the register sets (`allocate.initRegSets`), made once
 /// for every compile.
 pub fn compileVir(work: *Work, words: []const u32, allocator: std.mem.Allocator, compiler: *const vir.Compiler, key: Key) (Error || std.mem.Allocator.Error)!Code {
-    try readModule(work, words);
+    try readModule(work, words, .{ .inputs = key.tile_inputs, .samples = if (key.msaa) tile_samples_most else 1 });
     return compileRead(work, allocator, compiler, key);
 }
 
@@ -2007,7 +2211,7 @@ fn compileRead(work: *Work, allocator: std.mem.Allocator, compiler: *const vir.C
     };
     defer program.destroy();
     const c = program.c;
-    std.debug.assert(c.num_inputs == work.varyings);
+    std.debug.assert(c.num_inputs == work.varyings + @intFromBool(program.reads_layer));
 
     if (c.qpu_insts.len > most_words) return Error.TooLong;
     @memcpy(work.code[0..c.qpu_insts.len], c.qpu_insts);
@@ -2030,6 +2234,13 @@ fn compileRead(work: *Work, allocator: std.mem.Allocator, compiler: *const vir.C
             // program's own here (since 1.173).
             .tmu_config_p0 => if (vir.unitDataGetOffset(data) == to_vir.texel_words) .{ .texture = try units.at(vir.unitDataGetUnit(data)) } else return Error.Invalid,
             .tmu_config_p1 => if (vir.unitDataGetOffset(data) & ~per_pixel_mask == 0) .{ .sampler = .{ .unit = try units.at(vir.unitDataGetUnit(data)), .bits = vir.unitDataGetOffset(data) } } else return Error.Invalid,
+            // A storage image's: the words a load hands back, or a
+            // store's none (since 1.218).
+            .image_tmu_config_p0 => image: {
+                const bits = vir.unitDataGetOffset(data);
+                if (bits != 0 and bits != to_vir.texel_words) return Error.Invalid;
+                break :image .{ .image = .{ .unit = try units.at(vir.unitDataGetUnit(data)), .bits = bits } };
+            },
             // A word of the push constants: `Step.at` of a `.push`.
             .uniform => .{ .push = data },
             // A uniform buffer's address: the unit is the buffer's slot
@@ -2071,6 +2282,13 @@ fn compileRead(work: *Work, allocator: std.mem.Allocator, compiler: *const vir.C
             .texture_depth => .{ .texture_size = .{ .unit = try units.at(data), .field = .depth } },
             .texture_array_size => .{ .texture_size = .{ .unit = try units.at(data), .field = .array_size } },
             .texture_levels => .{ .texture_size = .{ .unit = try units.at(data), .field = .levels } },
+            // A storage image's, which v3dv answers as a texture's
+            // (get_texture_size_from_image_view, v3dv_uniforms.c:378-416;
+            // since 1.219).
+            .image_width => .{ .texture_size = .{ .unit = try units.at(data), .field = .width } },
+            .image_height => .{ .texture_size = .{ .unit = try units.at(data), .field = .height } },
+            .image_depth => .{ .texture_size = .{ .unit = try units.at(data), .field = .depth } },
+            .image_array_size => .{ .texture_size = .{ .unit = try units.at(data), .field = .array_size } },
             else => return Error.Invalid,
         };
     }
@@ -2078,7 +2296,8 @@ fn compileRead(work: *Work, allocator: std.mem.Allocator, compiler: *const vir.C
 
     return .{
         .words = work.code[0..work.word_count],
-        .varyings = work.varyings,
+        // The layer's ldvary too (since 1.215).
+        .varyings = work.varyings + @intFromBool(program.reads_layer),
         .uniforms = work.stream[0..work.stream_count],
         .uniform_count = work.stream_count,
         .samplers = units.samplers,
@@ -2093,6 +2312,7 @@ fn compileRead(work: *Work, allocator: std.mem.Allocator, compiler: *const vir.C
         .spill_size = c.spill_size,
         .flat_shade_flags = program.flat_shade_flags,
         .noperspective_flags = program.noperspective_flags,
+        .reads_layer = program.reads_layer,
         .vertex = if (work.stage == .vertex) vertexProgram(work, program.single_seg) else .{},
         .compute = if (work.stage == .gl_compute) .{
             .local_size = .{ @intCast(work.local_size[0]), @intCast(work.local_size[1]), @intCast(work.local_size[2]) },
@@ -2164,9 +2384,12 @@ const Units = struct {
         // it takes the unit a sample made, or one of its own that no
         // comparison is in (since 1.181); and so does a fetch, whose P1
         // is a constant (v3d_tex.c:350-354; since 1.182).
+        // A storage image's load and store read no sampler state either
+        // (since 1.218), nor its size (since 1.219).
         for (work.program()) |each| {
             const fetches = each.tag == .sample and each.lookup.fetches();
-            if (each.tag != .texture_size and each.tag != .texture_levels and !fetches) continue;
+            const storage = each.tag == .image_load or each.tag == .image_store or each.tag == .image_size;
+            if (each.tag != .texture_size and each.tag != .texture_levels and !fetches and !storage) continue;
             if (units.of_declared[each.at] != no_unit) continue;
             const declared = work.samplers[each.at];
             const unit: u8 = units.find(declared) orelse made: {
@@ -2187,18 +2410,20 @@ const Units = struct {
 
 /// The words looked at against the profile and read into `work`: what
 /// `compile` and `compileVir` share.
-fn readModule(work: *Work, words: []const u32) Error!void {
-    return readStage(work, words, .fragment, .{});
+fn readModule(work: *Work, words: []const u32, tiles: Tiles) Error!void {
+    return readStage(work, words, .fragment, .{}, tiles);
 }
 
 /// The words of a program of `stage`, read into `work`; a vertex program
-/// for `key` (since 1.163).
-fn readStage(work: *Work, words: []const u32, stage: spirv.ExecutionModel, key: VertexKey) Error!void {
+/// for `key` (since 1.163), a fragment program for a subpass whose input
+/// attachments `tiles` are among its render targets (since 1.237), of
+/// the samples `tiles` says (since 1.238).
+fn readStage(work: *Work, words: []const u32, stage: spirv.ExecutionModel, key: VertexKey, tiles: Tiles) Error!void {
     // The variables found to live in scratch so far, each a walk of its
     // own (since 1.177).
     var scratch: Scratch = .{};
     while (true) {
-        work.* = .{ .stage = stage, .vertex_key = key, .scratch = scratch, .scratch_size = scratch.size() };
+        work.* = .{ .stage = stage, .vertex_key = key, .tile_inputs = tiles.inputs, .tile_samples = tiles.samples, .scratch = scratch, .scratch_size = scratch.size() };
         // The VPM's layout, v3d_nir_setup_vpm_layout_vs (v3d_nir_lower_io.c:
         // 400-435): the coordinate program's position first, then the place
         // on screen; the vertex program's place, its Zs and 1/Wc. A point
@@ -2454,6 +2679,16 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                                 },
                                 else => return Error.Refused,
                             },
+                            // A fragment program's FragCoord, vtn's
+                            // SYSTEM_VALUE_FRAG_COORD (vtn_variables.c:
+                            // 997-1000), which v3dv makes the input of
+                            // VARYING_SLOT_POS (nir_lower_sysvals_to_varyings's
+                            // frag_coord, v3dv_pipeline.c:367-368; since
+                            // 1.214).
+                            .fragment => switch (operands[2]) {
+                                @intFromEnum(spirv.BuiltIn.frag_coord) => .frag_coord,
+                                else => return Error.Refused,
+                            },
                             else => return Error.Refused,
                         };
                         if (work.system_ids[@intFromEnum(which)] != none) return Error.Refused;
@@ -2461,6 +2696,18 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                         continue;
                     },
                     .location, .descriptor_set, .binding => {},
+                    // An input attachment's index in its subpass, which
+                    // v3dv reads only to read the attachment from the
+                    // tile buffer, where the subpass draws into it too
+                    // (lower_tlb_input_attachment_instr, v3dv_pipeline.c:
+                    // 301-356): the TMU's read goes by the set and the
+                    // binding, as a texture's does (lower_tex_src, :767-
+                    // 799; since 1.215).
+                    .input_attachment_index => {
+                        if (operands.len != 3) return Error.Body;
+                        work.attachment_index[id] = @intCast(@min(operands[2], no_tile));
+                        continue;
+                    },
                     // How far an array's elements are apart in a block
                     // (since 1.161).
                     .array_stride => {},
@@ -2483,6 +2730,11 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                         work.non_writable[id] = true;
                         continue;
                     },
+                    // A storage image the program reads none of, which
+                    // glslc says of a writeonly one: vtn's
+                    // ACCESS_NON_READABLE (vtn_variables.c:1669-1670),
+                    // which v3d does not read (since 1.218).
+                    .non_readable => continue,
                     else => return Error.Refused,
                 }
                 if (operands.len < 3) return Error.Body;
@@ -2712,11 +2964,13 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
             .type_image => {
                 // Result, SampledType, Dim, Depth, Arrayed, MS, Sampled,
                 // ImageFormat. `look` has held the dimensionality to the
-                // profile's and Sampled to 1 already: a 2D image, a 3D
-                // one or a cube (since 1.179), each its `SamplerDim`. An
-                // arrayed 2D one has its layer in TMUI; a cube of an
-                // array needs SampledCubeArray, which `look` refuses, and
-                // a 3D one cannot be arrayed (SPIR-V's OpTypeImage). A
+                // profile's and Sampled to 1 already, or 2 for SubpassData:
+                // a 2D image, a 3D one or a cube (since 1.179), each its
+                // `SamplerDim`, or an input attachment (since 1.215). An
+                // arrayed 2D one has its layer in TMUI, and so has a cube
+                // of an array its cube, of SampledCubeArray (since
+                // 1.235); a 3D one cannot be arrayed (SPIR-V's
+                // OpTypeImage). A
                 // multisampled one is a 2D one, of layers or not, vtn's
                 // GLSL_SAMPLER_DIM_MS (spirv_to_nir.c:2431; since 1.209).
                 // Depth is taken whatever it says since 1.143: whether a
@@ -2729,14 +2983,52 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 if (operands[3] > 2 or operands[4] > 1 or operands[5] > 1) return Error.Refused;
                 const dim: spirv.Dim = @enumFromInt(operands[2]);
                 const arrayed = operands[4] == 1;
+                // A storage image: Sampled 2 and of a format the
+                // profile's, which `look` has held it to (since 1.218).
+                // One of four samples is refused, as
+                // shaderStorageImageMultisample is false. A cube is read
+                // and written as its six faces' layers, the face the
+                // coordinate's third word in TMUI, as for an array
+                // (vir_image_emit_register_writes, v3d_tex.c:449-480),
+                // and so is a cube of an array, of ImageCubeArray, its
+                // third word six times the cube and the face (since
+                // 1.235): the draw tells the TMU its layers, not its
+                // cubes (v3dvx_image.c:89-93, :171-174).
+                if (operands[6] == 2 and dim != .subpass_data) {
+                    if (operands[5] == 1) return Error.Refused;
+                    work.sampler_dim[id] = switch (dim) {
+                        .dim_2d => if (arrayed) .layers else .flat,
+                        .dim_3d => if (arrayed) return Error.Refused else .volume,
+                        .cube => .layers,
+                        else => return Error.Refused,
+                    };
+                    work.storage_image.set(id);
+                    work.thing[id] = .image;
+                    continue;
+                }
+                // An input attachment of four, SubpassDataMS, as well
+                // (since 1.238): GLSL_SAMPLER_DIM_SUBPASS_MS
+                // (spirv_to_nir.c:2428-2435), which
+                // nir_lower_input_attachments reads with a txf_ms
+                // (:142-147).
                 if (operands[5] == 1) {
-                    if (dim != .dim_2d) return Error.Refused;
+                    if (dim != .dim_2d and dim != .subpass_data) return Error.Refused;
                     work.multisampled.set(id);
                 }
                 work.sampler_dim[id] = switch (dim) {
                     .dim_2d => if (arrayed) .layers else .flat,
                     .dim_3d => if (arrayed) return Error.Refused else .volume,
-                    .cube => if (arrayed) return Error.Refused else .cube,
+                    .cube => if (arrayed) .cubes else .cube,
+                    // An input attachment, which try_lower_input_load
+                    // reads with a txf of is_array, the layer its
+                    // coordinate's third word (nir_lower_input_attachments.c:
+                    // 102-106, :133-140; since 1.215). One of four samples,
+                    // SubpassDataMS, its txf_ms, since 1.238
+                    // (`Lookup.fetch_sample_level`).
+                    .subpass_data => if (arrayed) return Error.Refused else sub: {
+                        work.subpass.set(id);
+                        break :sub .layers;
+                    },
                     else => return Error.Refused,
                 };
                 work.thing[id] = .image;
@@ -2895,11 +3187,15 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     continue;
                 }
                 if (class == .uniform_constant) {
-                    // A combined image sampler and nothing else. There is
+                    // A combined image sampler, or an input attachment's
+                    // image (since 1.215), and nothing else. There is
                     // one TMU, it is configured from two words of the
                     // uniform stream, and where those words come from is
                     // the set and the binding the draw looks up.
-                    if (work.thing[pointee] != .sampled_image) return Error.Storage;
+                    // Or a storage image (since 1.218).
+                    const subpass = work.thing[pointee] == .image and work.subpass.isSet(pointee);
+                    const storage = work.thing[pointee] == .image and work.storage_image.isSet(pointee);
+                    if (work.thing[pointee] != .sampled_image and !subpass and !storage) return Error.Storage;
                     // This is the table's bound, not the device's: what
                     // the device can run is one *sample*, and a module
                     // may declare many samplers and sample one of them.
@@ -2911,7 +3207,7 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     work.thing[id] = .variable;
                     work.class[id] = @intCast(@intFromEnum(class));
                     work.sampler_of[id] = @intCast(work.sampler_count);
-                    work.samplers[work.sampler_count] = .{ .set = work.set[id], .binding = work.binding[id], .dim = work.sampler_dim[pointee], .multisampled = work.multisampled.isSet(pointee) };
+                    work.samplers[work.sampler_count] = .{ .set = work.set[id], .binding = work.binding[id], .dim = work.sampler_dim[pointee], .multisampled = work.multisampled.isSet(pointee), .input_attachment = subpass, .input_index = if (subpass) work.attachment_index[id] else no_tile, .storage = storage };
                     work.sampler_count += 1;
                     continue;
                 }
@@ -3069,12 +3365,15 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     // VertexIndex or InstanceIndex: a 32-bit integer, as
                     // Vulkan has them, of no location (since 1.192). A
                     // compute program's three of each and its index
-                    // (since 1.194).
-                    const wanted: Kind = switch (@as(Builtin, @enumFromInt(systemOf(work, id).?))) {
+                    // (since 1.194). A fragment program's FragCoord, four
+                    // floats (since 1.214).
+                    const which: Builtin = @enumFromInt(systemOf(work, id).?);
+                    const wanted: Kind = switch (which) {
                         .vertex_index, .instance_index, .local_invocation_index => .f32x1,
+                        .frag_coord => .f32x4,
                         else => .f32x3,
                     };
-                    if (!isIntegerType(work, pointee) or try kindOf(work, pointee) != wanted) return Error.Type;
+                    if (isIntegerType(work, pointee) == (which == .frag_coord) or try kindOf(work, pointee) != wanted) return Error.Type;
                     if (operands.len != 3) return Error.Body;
                     work.thing[id] = .variable;
                     work.class[id] = @intCast(@intFromEnum(class));
@@ -3085,9 +3384,12 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 // An integer varying is a vertex program's to write, and a
                 // fragment program's to read where it is Flat, as Vulkan
                 // has it (since 1.190). An integer attribute is not
-                // ported, and the tile buffer takes floats (since 1.165).
+                // ported. A fragment program's colour of whole numbers is
+                // its words, which a target of whole numbers takes as
+                // they are under f32_color_rb (v3dv_pipeline.c:1253-1256;
+                // since 1.229, the tile buffer taking floats alone before).
                 if (isIntegerType(work, pointee) and class != .function) {
-                    const varying = if (work.stage == .vertex) class == .output else class == .input and work.interpolation[id] == .flat;
+                    const varying = if (work.stage == .vertex) class == .output else class == .output or class == .input and work.interpolation[id] == .flat;
                     if (!varying) return Error.Type;
                 }
                 work.thing[id] = .variable;
@@ -3115,14 +3417,18 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                         work.output_vars[work.output_var_count] = id;
                         work.output_var_count += 1;
                     } else {
-                        // One colour out, at location 0, of four floats:
-                        // what the tile buffer takes without a
-                        // configuration of its own (`qpu.zig`).
-                        if (work.output_count != 0) return Error.Outputs;
-                        if (work.location[id] != 0) return Error.Location;
+                        // A colour out of four floats at a location of a
+                        // render target, which its TLB write names
+                        // (`to_vir.emitTlbColorWrite`): FRAG_RESULT_DATA0
+                        // upwards, each its render target's
+                        // output_color_var (ntq_setup_outputs,
+                        // nir_to_vir.c:2580-2602; one at location 0 until
+                        // 1.231).
+                        const at = work.location[id];
+                        if (at >= most_colors or work.output[at] != none) return Error.Location;
                         if (floats != .f32x4) return Error.Type;
-                        work.output = id;
-                        work.output_count = 1;
+                        work.output[at] = id;
+                        work.output_count += 1;
                         work.points[id] = try outputLocal(work, floats);
                     },
                     else => return Error.Storage,
@@ -3439,6 +3745,18 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                         // (nir_to_vir.c:2265, :2269-2279), which finds
                         // the arm without it (since 1.185).
                         .image_sample_implicit_lod, .image_sample_dref_implicit_lod, .image_sample_explicit_lod, .image_sample_dref_explicit_lod, .image_fetch, .image_query_size_lod, .image_query_levels => texture = true,
+                        // A subpassLoad is a txf; a storage image's texel
+                        // read or written an image_load or an
+                        // image_store, intrinsics
+                        // block_check_for_allowed_instrs lets none of
+                        // through (its default, nir_opt_peephole_select.c:
+                        // 235-236; since 1.218).
+                        .image_read => if (storageOf(work, operands, 2) != null) selection.keep() else {
+                            texture = true;
+                        },
+                        .image_write => selection.keep(),
+                        // And an image_size (since 1.219).
+                        .image_query_size => selection.keep(),
                         // An atomic or a barrier is neither either: it
                         // would run where the arm is not taken (since
                         // 1.169).
@@ -3485,7 +3803,8 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
     if (work.stage == .vertex) return finishVertex(work);
     if (work.stage == .gl_compute) return finishCompute(work);
     if (work.output_count == 0) return Error.Outputs;
-    if (work.stored == none) return Error.NoColor;
+    if (std.mem.allEqual(u16, &work.stored, none)) return Error.NoColor;
+    try builtinVariables(work);
     try algebraic(work);
     try order(work);
 }
@@ -3554,7 +3873,7 @@ fn finishCompute(work: *Work) Error!void {
 /// v3dv_pipeline.c:1422-1429).
 fn slotOf(key: *const VertexKey, location: u32, component: u32) ?u32 {
     if (key.coordinate or location >= most_varyings or component >= key.reads[location]) return null;
-    var before: u32 = 0;
+    var before: u32 = @intFromBool(key.layer);
     for (key.reads[0..location]) |each| before += each;
     return before + component;
 }
@@ -3562,7 +3881,7 @@ fn slotOf(key: *const VertexKey, location: u32, component: u32) ?u32 {
 /// The floats the fragment program reads of how many of them there are.
 fn usedOutputs(key: *const VertexKey) u32 {
     if (key.coordinate) return 0;
-    var count: u32 = 0;
+    var count: u32 = @intFromBool(key.layer);
     for (key.reads) |each| count += each;
     return count;
 }
@@ -4369,7 +4688,7 @@ fn loopCost(work: *const Work, from: u16, to: u16) u32 {
                 cost += each.kind.parts();
                 continue;
             },
-            .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier, .scratch, .scratch_indirect, .scratch_store, .shared, .shared_store, .shared_atomic, .control_barrier, .discard, .sample, .sample_compared, .output, .viewport, .system => {
+            .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier, .scratch, .scratch_indirect, .scratch_store, .shared, .shared_store, .shared_atomic, .control_barrier, .discard, .sample, .sample_compared, .output, .viewport, .system, .image_load, .image_store, .image_size, .tile_load => {
                 cost += 1;
                 continue;
             },
@@ -4903,8 +5222,12 @@ fn storedMask(work: *const Work, local: u16) u8 {
 /// (nir_move_output_stores_to_end.c:86-93).
 fn copyOutputs(work: *Work) Error!void {
     switch (work.stage) {
-        .fragment => if (work.output != none and storedMask(work, work.points[work.output]) != 0) {
-            work.stored = try outputValue(work, work.points[work.output]);
+        // Each colour out at its location; one nothing was stored into
+        // has no TLB write, where Mesa's writes the 0 its temporary holds
+        // (nir_lower_undef_to_zero): what is written there is undefined
+        // either way.
+        .fragment => for (work.output, &work.stored) |id, *stored| {
+            if (id != none and storedMask(work, work.points[id]) != 0) stored.* = try outputValue(work, work.points[id]);
         },
         .vertex => {
             if (work.position_local != none and storedMask(work, work.position_local) != 0) work.position = try outputValue(work, work.position_local);
@@ -5883,7 +6206,10 @@ fn armCost(work: *const Work, from: u16, to: u16) u32 {
             // load_scratch is made of later, is let through by none
             // (nir_opt_peephole_select.c:109-129), nor is a store_deref
             // (since 1.177).
-            .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier, .scratch, .scratch_indirect, .scratch_store, .shared, .shared_store, .shared_atomic, .control_barrier => return std.math.maxInt(u32),
+            // An image_load and an image_store neither (since 1.218), nor
+            // an image_size (since 1.219), nor a read of the tile buffer,
+            // which is not speculated (since 1.237).
+            .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier, .scratch, .scratch_indirect, .scratch_store, .shared, .shared_store, .shared_atomic, .control_barrier, .image_load, .image_store, .image_size, .tile_load => return std.math.maxInt(u32),
             // ineg and iabs are move-like, as fneg and fabs are
             // (nir_opt_peephole_select.c:251-264; since 1.165).
             .integer => switch (@as(Integer, @enumFromInt(each.at))) {
@@ -5898,12 +6224,11 @@ fn armCost(work: *const Work, from: u16, to: u16) u32 {
             used = true;
             if (user.tag != .add) only_added = false;
         };
-        if (work.stored == at) {
-            used = true;
-            only_added = false;
-        }
         // A float a variable holds after the merge, where the other way
-        // in left it nothing to choose against, is read later.
+        // in left it nothing to choose against, is read later: a colour
+        // out's among them, its variable being the function's own until
+        // `copyOutputs` reads it where the module ends (since 1.206), after
+        // every selection is counted.
         for (work.values[0..work.local_count]) |holds| for (holds) |each_float| if (each_float.step == at) {
             used = true;
             only_added = false;
@@ -6218,11 +6543,13 @@ const Order = struct {
         return new;
     }
 
-    /// nir_opt_dce: live is the colour's step, a discard, and what a live
-    /// step reads.
+    /// nir_opt_dce: live is each colour's step, a discard, and what a
+    /// live step reads.
     fn dce(list: *Order, work: *const Work) void {
         var reached: [most_steps]bool = @splat(false);
-        if (work.stored != none) reached[work.stored] = true;
+        for (work.stored) |stored| if (stored != none) {
+            reached[stored] = true;
+        };
         var at = list.last;
         while (at != none) : (at = list.prev[at]) {
             if (list.removed[at]) continue;
@@ -6230,8 +6557,9 @@ const Order = struct {
             // What writes memory, or orders it, is kept whatever reads it
             // (nir_instr_can_remove, nir_opt_dce.c; since 1.168 and 1.169).
             if (each.tag == .discard or each.tag == .output or each.tag == .ssbo_store or each.tag == .ssbo_atomic or each.tag == .barrier or each.tag == .scratch_store) reached[at] = true;
-            // Shared memory's too (since 1.203).
-            if (each.tag == .shared_store or each.tag == .shared_atomic or each.tag == .control_barrier) reached[at] = true;
+            // Shared memory's too (since 1.203), and a storage image's
+            // (since 1.218).
+            if (each.tag == .shared_store or each.tag == .shared_atomic or each.tag == .control_barrier or each.tag == .image_store) reached[at] = true;
             // A kept selection's marks are its nir_if, which nir_opt_dce
             // does not take out (since 1.171): `flattenEmptied` does, once
             // its arms are empty.
@@ -6321,10 +6649,10 @@ const Order = struct {
         return progress;
     }
 
-    /// How many times the steps still in the program, and the colour
+    /// How many times the steps still in the program, and the colours
     /// stored, read `at`: what is_used_once counts.
     fn usesOf(list: *const Order, work: *const Work, at: u16) u32 {
-        var count: u32 = if (work.stored == at) 1 else 0;
+        var count: u32 = @intCast(std.mem.count(u16, &work.stored, &.{at}));
         for (work.steps[0..work.step_count], 0..) |user, k| {
             if (!list.present(@intCast(k))) continue;
             for (readsOf(user)) |field| if (field) |operand_at| {
@@ -6883,7 +7211,9 @@ const Order = struct {
         for (kept[0..count]) |*each| renameReads(each, &renamed);
         @memcpy(work.steps[0..count], kept[0..count]);
         work.step_count = count;
-        if (work.stored != none) work.stored = renamed[work.stored];
+        for (&work.stored) |*stored| if (stored.* != none) {
+            stored.* = renamed[stored.*];
+        };
         work.sampled = none;
         work.sample_count = 0;
         for (work.steps[0..count], 0..) |each, place| {
@@ -7119,7 +7449,12 @@ fn oneFloat(work: *const Work, left: Float, right: Float) bool {
 /// component and a construct only name floats.
 fn computes(tag: Tag) bool {
     return switch (tag) {
-        .input, .constant, .push, .component, .construct, .discard, .output, .viewport, .system, .ssbo_store, .ssbo_atomic, .barrier, .begin_if, .begin_else, .end_if, .phi, .scratch, .scratch_indirect, .scratch_store, .shared, .shared_store, .shared_atomic, .control_barrier => false,
+        // An image_load is not taken for another either: an image's
+        // loads are ACCESS_CAN_REORDER where nir_opt_access finds no store
+        // to any image (nir_opt_access.c:224-293), which is not ported
+        // (since 1.218). A tile_load is, as the txf it is made of is
+        // before it is one (v3dv_pipeline.c:386, :413; since 1.237).
+        .input, .constant, .push, .component, .construct, .discard, .output, .viewport, .system, .ssbo_store, .ssbo_atomic, .barrier, .begin_if, .begin_else, .end_if, .phi, .scratch, .scratch_indirect, .scratch_store, .shared, .shared_store, .shared_atomic, .control_barrier, .image_load, .image_store => false,
         else => true,
     };
 }
@@ -7223,6 +7558,10 @@ fn readsOf(each: Step) [4]?u16 {
         // A load_shared's offset, where it is computed (since 1.203).
         .shared => .{ if (each.a != none) each.a else null, null, null, null },
         .barrier, .control_barrier => .{ null, null, null, null },
+        // A storage image's coordinate, and a store's texel (since 1.218).
+        .image_load => .{ each.a, null, null, null },
+        .image_store => .{ each.a, each.b, null, null },
+        .image_size, .tile_load => .{ null, null, null, null },
     };
 }
 
@@ -7287,20 +7626,11 @@ fn renameReads(each: *Step, renamed: *const [most_steps]u16) void {
     }
 }
 
-/// How many times the steps after `at`, and the colour stored, read it.
-fn usesOf(work: *const Work, at: u16) u32 {
-    var count: u32 = if (work.stored == at) 1 else 0;
-    for (work.steps[at + 1 .. work.step_count]) |user| {
-        for (readsOf(user)) |field| if (field) |of| {
-            if (of == at) count += 1;
-        };
-    }
-    return count;
-}
-
 /// What read `from` reads `to`.
 fn replaceUses(work: *Work, from: u16, to: u16) void {
-    if (work.stored == from) work.stored = to;
+    for (&work.stored) |*stored| if (stored.* == from) {
+        stored.* = to;
+    };
     for (work.steps[0..work.step_count]) |*user| {
         switch (user.tag) {
             .input, .constant, .push, .ubo, .ssbo, .barrier, .scratch, .control_barrier => {},
@@ -7622,6 +7952,8 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
                 // texture the TMU is to be pointed at, and the only
                 // instruction that may read it is a sample.
                 work.sampler_of[id] = work.sampler_of[from];
+                const declared = work.samplers[work.sampler_of[from]];
+                if (declared.storage or declared.input_attachment) work.uses_images = true;
                 return;
             }
             if (work.class[from] != @intFromEnum(spirv.StorageClass.input)) return Error.Body;
@@ -7680,7 +8012,8 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
             }
             if (work.thing[base] == .variable and work.class[base] == @intFromEnum(spirv.StorageClass.input) and systemOf(work, base) != null) {
                 // One word of a compute program's built-in, as glslc
-                // writes `gl_GlobalInvocationID.x` (since 1.194).
+                // writes `gl_GlobalInvocationID.x` (since 1.194), or one
+                // float of FragCoord, `gl_FragCoord.x` (since 1.214).
                 if (operands.len != 4) return Error.Body;
                 const which = try indexOf(work, operands[3]);
                 if (work.wide[base] == 1 or which >= work.wide[base]) return Error.Body;
@@ -8510,6 +8843,11 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
             work.step_of[id] = try glslCall(work, operands[3], kind, operands[4..]);
         },
         .image_sample_implicit_lod, .image_sample_explicit_lod, .image_sample_dref_implicit_lod, .image_sample_dref_explicit_lod, .image_fetch => try readSample(work, instruction.op, operands),
+        // An input attachment's subpassLoad, or a storage image's texel
+        // (since 1.218).
+        .image_read => if (storageOf(work, operands, 2) != null) try readStorage(work, operands) else try readSubpass(work, operands),
+        .image_query_size => try sizeOfStorage(work, operands),
+        .image_write => try writeStorage(work, operands),
         .image => {
             // ResultType, Result, SampledImage: the image of a sampled
             // image, which vtn reads as the same texture deref
@@ -8526,7 +8864,8 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
             // its lod source (spirv_to_nir.c:3384-3386), as many integers
             // as nir_tex_instr_dest_size gives the image (nir.c): two for
             // a 2D image and a cube, three for a 3D one and a 2D array,
-            // the array's layers last (since 1.181).
+            // the array's layers last (since 1.181), and for a cube of an
+            // array its cubes last (since 1.235).
             if (operands.len != 4) return Error.Body;
             const type_id = try idOf(operands[0]);
             if (!isIntegerType(work, type_id)) return Error.Type;
@@ -8536,7 +8875,7 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
             const kind = try kindOf(work, type_id);
             const sizes: u32 = switch (work.samplers[which].dim) {
                 .flat, .cube => 2,
-                .layers, .volume => 3,
+                .layers, .volume, .cubes => 3,
             };
             if (kind.parts() != sizes) return Error.Type;
             const level = try operand(work, operands[3], .f32x1);
@@ -9003,8 +9342,10 @@ fn lanes(work: *Work) void {
         // (:611-615). The base instance, the first vertex, and the
         // dispatch's count and base of workgroups are the same in every
         // lane (:240-250, :342).
+        // FragCoord's floats are a fragment program's load_input, which
+        // differs from lane to lane (:472-480; since 1.214).
         if (each.tag == .system) switch (@as(SystemValue, @enumFromInt(each.at))) {
-            .vertex_id, .instance_id, .cs_payload0, .cs_payload1 => work.divergent[at] = true,
+            .vertex_id, .instance_id, .cs_payload0, .cs_payload1, .frag_coord_x, .frag_coord_y, .frag_coord_z, .frag_coord_w, .layer => work.divergent[at] = true,
             .base_instance, .first_vertex, .work_group_base_x, .work_group_base_y, .work_group_base_z, .num_work_groups_x, .num_work_groups_y, .num_work_groups_z => {},
         };
         for (readsOf(each)) |field| if (field) |of| {
@@ -9041,8 +9382,10 @@ fn lanes(work: *Work) void {
     }
     for (steps, 0..) |each, k| switch (each.tag) {
         // v3d's callback lets a load_scratch skip them too
-        // (intrinsic_try_skip_helpers, vir.c:1937-1951; since 1.177).
-        .sample, .sample_compared, .ubo_indirect, .ssbo_indirect, .scratch, .scratch_indirect => work.skip_helpers[k] = work.divergent[k] and !needs[k],
+        // (intrinsic_try_skip_helpers, vir.c:1937-1951; since 1.177),
+        // and an image_load (since 1.219), which has no offset to want
+        // them (nir_get_io_offset_src_number, nir_lower_io.c:1002-1135).
+        .sample, .sample_compared, .ubo_indirect, .ssbo_indirect, .scratch, .scratch_indirect, .image_load => work.skip_helpers[k] = work.divergent[k] and !needs[k],
         else => {},
     };
 }
@@ -10612,6 +10955,8 @@ fn foldedInteger(work: *Work, op: Integer, a: u16, b: ?u16) Error!?u16 {
             .uclz => @clz(x),
             .pack_half => halvesOf(f, @bitCast(y)),
             .half_float => @bitCast(floatOfHalf(x)),
+            .pack_unorm_8 => unormsOfHalves(x),
+            .pack_4x8 => bytesOfPairs(x, y),
         };
         work.pool[out + k] = @bitCast(word);
     }
@@ -10625,6 +10970,29 @@ fn halvesOf(low: f32, high: f32) u32 {
     const l: u16 = @bitCast(@as(f16, @floatCast(low)));
     const h: u16 = @bitCast(@as(f16, @floatCast(high)));
     return @as(u32, h) << 16 | l;
+}
+
+/// _mesa_half_to_unorm(half, 8) of the half in `word`'s low 16 bits
+/// (format_utils.h:69-84): 0 below 0, 255 above 1, and else the nearest
+/// even of 255 times it, a NaN 0 as neither bound takes it.
+fn unormOfHalf(word: u32) u32 {
+    const f = floatOfHalf(word);
+    if (f < 0) return 0;
+    if (f > 1) return 255;
+    if (std.math.isNan(f)) return 0;
+    return @intFromFloat(roundEven(f * 255));
+}
+
+/// pack_2x16_to_unorm_2x8_v3d's word (nir_opcodes.py:1827-1828): each half
+/// of `word` made a byte in the low bits of its own half.
+fn unormsOfHalves(word: u32) u32 {
+    return unormOfHalf(word) | unormOfHalf(word >> 16) << 16;
+}
+
+/// pack_4x16_to_4x8_v3d's word (nir_opcodes.py:1817-1824): the low byte of
+/// each half of `low`, then of `high`.
+fn bytesOfPairs(low: u32, high: u32) u32 {
+    return (low & 0xff) | (low & 0xff0000) >> 8 | (high & 0xff) << 16 | (high & 0xff0000) << 8;
 }
 
 /// The float of the half in `word`'s low 16 bits, exactly.
@@ -10738,6 +11106,17 @@ fn computeValueOf(work: *Work, which: Builtin) Error!u16 {
         // the program start says (:4959-4965).
         .local_invocation_index => invocationIndexOf(work),
         .local_invocation_id => wordVector(work, try localIdOf(work)),
+        // load_input of VARYING_SLOT_POS, which nir_lower_io_to_scalar
+        // makes a load of each float (vir.c:1339): a float each, which
+        // the program's start reads (since 1.214).
+        .frag_coord => frag: {
+            var made = Step{ .tag = .construct, .kind = .f32x4 };
+            for ([_]SystemValue{ .frag_coord_x, .frag_coord_y, .frag_coord_z, .frag_coord_w }, 0..) |each, k| {
+                made.from[k] = try systemStep(work, each);
+                made.part[k] = 0;
+            }
+            break :frag put(work, made);
+        },
         // nir_lower_compute_system_values, where the device has no global
         // id and has a base workgroup id (v3dv_pipeline.c:3313-3316):
         // (group id + base) * size + local id
@@ -10937,7 +11316,7 @@ fn readSample(work: *Work, op: spirv.Op, operands: []const u32) Error!void {
     const which = work.sampler_of[try idOf(operands[2])];
     if (which == none) return Error.Body;
     const dim = work.samplers[which].dim;
-    if (fetch and dim == .cube) return Error.Body;
+    if (fetch and dim.cubic()) return Error.Body;
     const multisampled = work.samplers[which].multisampled;
     if (multisampled and !fetch) return Error.Body;
     var ms_index: ?u16 = null;
@@ -11008,6 +11387,256 @@ fn readSample(work: *Work, op: spirv.Op, operands: []const u32) Error!void {
     work.sample_count += 1;
 }
 
+/// An OpImageRead of an input attachment, vtn's image_deref_load of a
+/// GLSL_SAMPLER_DIM_SUBPASS, which nir_lower_input_attachments makes a
+/// txf of the attachment where the pixel is (try_lower_input_load,
+/// nir_lower_input_attachments.c:57-156): its coordinate the read's own
+/// two words, a third of 0, added to the input attachment's place, and
+/// a level of 0 (:133-142). v3dv asks for the place as an intrinsic
+/// (`use_ia_coord_intrin`, v3dv_pipeline.c:385-389) and makes it
+/// FragCoord's x and y, made integers, and the layer, a flat varying
+/// (try_lower_intrinsic, :263-286). The image is read through no sampler,
+/// as a fetch is (since 1.215). The read's result is four floats: a
+/// format of whole numbers is no input attachment this device takes.
+///
+/// One of four samples, SubpassDataMS, is read at the read's Sample, the
+/// image operand SPIR-V asks of it and no other, which vtn makes the
+/// load's sample (spirv_to_nir.c:3905-3911): a read without one, which
+/// vtn gives an undef, is refused, as SPIR-V's validation refuses it. Its
+/// txf is a txf_ms of
+/// that sample (nir_lower_input_attachments.c:142-147), and
+/// v3d_nir_lower_txf_ms fetches the texel of the pixel's quad the sample
+/// is (`sampleTexelOf`), its level of 0 before it
+/// (`Lookup.fetch_sample_level`; since 1.238).
+fn readSubpass(work: *Work, operands: []const u32) Error!void {
+    // ResultType, Result, Image, Coordinate, and of an image of four the
+    // image operands, Sample alone, and the sample.
+    if (operands.len < 4) return Error.Body;
+    const type_id = try idOf(operands[0]);
+    const id = try idOf(operands[1]);
+    if (try kindOf(work, type_id) != .f32x4) return Error.Type;
+    const which = work.sampler_of[try idOf(operands[2])];
+    if (which == none or !work.samplers[which].input_attachment) return Error.Body;
+    const multisampled = work.samplers[which].multisampled;
+    var ms_index: ?u16 = null;
+    if (multisampled) {
+        if (operands.len != 6) return Error.Operands;
+        if (operands[4] != @intFromEnum(spirv.ImageOperands.sample)) return Error.Operands;
+        ms_index = try operand(work, operands[5], .f32x1);
+    } else if (operands.len > 4) return Error.Operands;
+    // An attachment the subpass draws into as well is read out of the
+    // tile buffer, its render target's colour where the pixel is, and
+    // the read's place is not looked at: lower_tlb_input_attachment_instr
+    // makes the txf a load_tile_image of the location
+    // tlb_input_attachment_location gives the input attachment's index,
+    // where it gives one (v3dv_pipeline.c:301-356). The txf's place and
+    // layer go with the txf, and so does its unit: nothing samples it
+    // (since 1.237). Its sample goes to the load, or 0 (:341-343).
+    const index = work.samplers[which].input_index;
+    if (index < work.tile_inputs.len and work.tile_inputs[index] != no_tile) {
+        work.step_of[id] = try tileLoadOf(work, work.tile_inputs[index], ms_index);
+        return;
+    }
+    // The read's two words, each a constant of its own where it is one,
+    // as nir_opt_constant_folding leaves a channel of a load_const, so
+    // (('iadd', a, 0), a) takes them (nir_opt_algebraic.py:239).
+    const offset = try operand(work, operands[3], .f32x2);
+    var moved: [2]u16 = undefined;
+    for (&moved, 0..) |*each, k| {
+        const part = partOf(work, offset, @intCast(k));
+        each.* = if (floatBits(work, part)) |bits| try wordConstant(work, bits) else try floatOf(work, part);
+    }
+    const zero = try wordConstant(work, 0);
+    const x = try integerOf(work, .f2i32, try systemStep(work, .frag_coord_x), null);
+    const y = try integerOf(work, .f2i32, try systemStep(work, .frag_coord_y), null);
+    const layer = try systemStep(work, .layer);
+    var place: Step = .{ .tag = .construct, .kind = .f32x3 };
+    place.from[0] = try integerOf(work, .iadd, x, moved[0]);
+    place.from[1] = try integerOf(work, .iadd, y, moved[1]);
+    place.from[2] = try integerOf(work, .iadd, layer, zero);
+    place.part = .{ 0, 0, 0, 0 };
+    var coordinate = try put(work, place);
+    var lookup: Lookup = .fetch;
+    if (ms_index) |chosen| {
+        coordinate = try sampleTexelOf(work, coordinate, chosen, .layers);
+        lookup = .fetch_sample_level;
+    }
+    const at = try put(work, .{
+        .tag = .sample,
+        .kind = .f32x4,
+        .a = coordinate,
+        .at = which,
+        .lookup = lookup,
+        .from = .{ zero, 0, 0, 0 },
+    });
+    work.step_of[id] = at;
+    if (work.sampled == none) work.sampled = at;
+    work.sample_count += 1;
+}
+
+/// The colour of render target `rt` out of the tile buffer at `sample`,
+/// as lower_tlb_load makes a load_tile_image
+/// (v3d_nir_lower_load_output.c:26-98): of one sample a pixel, its load
+/// of sample 0, whatever the sample. Of four, the load of each, the
+/// first's kept unless the sample is another's: a bcsel of each later
+/// one on the ieq of the sample and its number (:52-80), a float at a
+/// time, as nir_lower_alu_to_scalar leaves it. Of a constant sample,
+/// what nir_opt_constant_folding leaves of that, which v3d_optimize_nir
+/// runs after it (vir.c:1309, :2077): the load of that sample, or of the
+/// first where it is past the fourth (since 1.238).
+fn tileLoadOf(work: *Work, rt: u8, ms_index: ?u16) Error!u16 {
+    const samples = work.tile_samples;
+    if (samples == 1) return put(work, .{ .tag = .tile_load, .kind = .f32x4, .at = tileAt(rt, 0) });
+    const chosen = ms_index orelse try wordConstant(work, 0);
+    if (floatBits(work, .{ .step = chosen, .part = 0 })) |bits| {
+        const kept: u8 = if (bits < samples) @intCast(bits) else 0;
+        return put(work, .{ .tag = .tile_load, .kind = .f32x4, .at = tileAt(rt, kept) });
+    }
+    const first = try put(work, .{ .tag = .tile_load, .kind = .f32x4, .at = tileAt(rt, 0) });
+    var out: [4]u16 = undefined;
+    for (&out, 0..) |*each, k| each.* = try floatOf(work, partOf(work, first, @intCast(k)));
+    for (1..samples) |i| {
+        const equal = try put(work, compareOf(.int_equal, chosen, try wordConstant(work, @intCast(i))));
+        const value = try put(work, .{ .tag = .tile_load, .kind = .f32x4, .at = tileAt(rt, @intCast(i)) });
+        for (&out, 0..) |*each, k| each.* = try put(work, selectOf(equal, try floatOf(work, partOf(work, value, @intCast(k))), each.*));
+    }
+    return vectorOf(work, &out);
+}
+
+/// The storage image the OpLoad of `operands[at]` reads, as the
+/// sampler the module declares it: null where it reads another kind.
+fn storageOf(work: *const Work, operands: []const u32, at: usize) ?u16 {
+    if (operands.len <= at) return null;
+    const id = idOf(operands[at]) catch return null;
+    const which = work.sampler_of[id];
+    if (which == none or !work.samplers[which].storage) return null;
+    return which;
+}
+
+/// A storage image's coordinate, as vtn hands it to image_deref_load and
+/// image_deref_store: an integer for each word its image's `dim` names, x
+/// and y, and the layer, a cube's face or a 3D image's slice
+/// (vir_image_emit_register_writes, v3d_tex.c:449-480; since 1.218).
+fn storageCoordinate(work: *Work, word: u32, which: u16) Error!u16 {
+    const kind: Kind = if (work.samplers[which].dim == .flat) .f32x2 else .f32x3;
+    return operand(work, word, kind);
+}
+
+/// OpImageRead of a storage image, vtn's image_deref_load, which
+/// nir_lower_image makes an image_load of the image's unit
+/// (vtn_handle_image, spirv_to_nir.c:3895-3900, :4087-4095): the texel at an integer
+/// coordinate. An image of 8 bits a channel returns 16-bit floats, two
+/// words of two each (v3d_gl_format_is_return_32,
+/// v3d_nir_lower_image_load_store.c:48-62), which v3d_nir_lower_image_load
+/// makes four floats (:397-420): nir_extract_bits's halves of each word,
+/// nir_unpack_32_2x16 (nir_builder.h:1573-1635, :1536-1541), which
+/// nir_lower_pack splits and nir_opt_algebraic makes the word's u2u16 and
+/// the u2u16 of the word shifted down by 16, as v3dv lowers the split
+/// (lower_unpack_32_2x16_split, v3dv_pipeline.c:191;
+/// nir_opt_algebraic.py:2271-2272), and the f2f32 of each, an FMOV of the
+/// low half (`half_float`). Its ImageOperands are refused: a Sample is an
+/// image of four's, which is refused, and no other is in the profile. A
+/// compute program's (since 1.218) or a fragment program's (since 1.219),
+/// whose load leaves its helper pixels out where nothing derived from
+/// it wants them (`lanes`); a vertex program's is refused, the device
+/// taking no stores there (`vertexPipelineStoresAndAtomics`).
+fn readStorage(work: *Work, operands: []const u32) Error!void {
+    // ResultType, Result, Image, Coordinate.
+    if (operands.len < 4) return Error.Body;
+    if (operands.len > 4) return Error.Operands;
+    if (!takesStorage(work)) return Error.Refused;
+    const type_id = try idOf(operands[0]);
+    const id = try idOf(operands[1]);
+    if (try kindOf(work, type_id) != .f32x4) return Error.Type;
+    const which = storageOf(work, operands, 2) orelse return Error.Body;
+    const coordinate = try storageCoordinate(work, operands[3], which);
+    const words = try put(work, .{ .tag = .image_load, .kind = .f32x2, .a = coordinate, .at = which });
+    const sixteen = try integerSplat(work, .f32x1, 16);
+    var floats: [4]u16 = undefined;
+    for (0..2) |k| {
+        const word = try channelOf(work, words, @intCast(k));
+        floats[2 * k] = try integerOf(work, .half_float, word, null);
+        floats[2 * k + 1] = try integerOf(work, .half_float, try integerOf(work, .ushr, word, sixteen), null);
+    }
+    work.step_of[id] = try vectorOf(work, &floats);
+}
+
+/// OpImageWrite of a storage image, vtn's image_deref_store, an
+/// image_store of the image's unit (vtn_handle_image, spirv_to_nir.c:
+/// 3937-3945, :4097-4110), its texel packed in the image's format as
+/// v3d71_nir_lower_image_store packs it (v3d_nir_lower_image_load_store.c:
+/// 354-394): an Rgba8 one's four floats of 0 to 1 as pack_xbit's
+/// pack_8bit makes them with TO_UNORM (:153-195, :242-274), the first two
+/// and the last two each two halves (pack_half_2x16_split, VFPACK), each
+/// pair of halves two bytes (pack_2x16_to_unorm_2x8_v3d, VFTOUNORM8), and
+/// the two pairs the four bytes of one word (pack_4x16_to_4x8_v3d,
+/// V8PACK). Each a constant where its floats are, as
+/// nir_opt_constant_folding makes it (`Order.fold`). A compute program's
+/// or a fragment program's, as `readStorage`; a fragment program's is
+/// written where the pixel is covered alone, the TMU's per-pixel mask
+/// leaving its helper pixels out (p1_unpacked_default, v3d_tex.c:64-66;
+/// since 1.219).
+fn writeStorage(work: *Work, operands: []const u32) Error!void {
+    // Image, Coordinate, Texel.
+    if (operands.len < 3) return Error.Body;
+    if (operands.len > 3) return Error.Operands;
+    if (!takesStorage(work)) return Error.Refused;
+    const which = storageOf(work, operands, 0) orelse return Error.Body;
+    const coordinate = try storageCoordinate(work, operands[1], which);
+    // Each channel a float of its own, so that a pair of constants is
+    // packed to one by the folding of the loop of passes (`Order.fold`);
+    // a channel of a constant vector a constant of its own, which
+    // nir_opt_constant_folding folds as it folds a vec of them (since
+    // 1.219).
+    const texel = try operand(work, operands[2], .f32x4);
+    var channels: [4]u16 = undefined;
+    for (&channels, 0..) |*each, k| {
+        const part = partOf(work, texel, @intCast(k));
+        each.* = if (floatBits(work, part)) |bits| try wordConstant(work, bits) else try floatOf(work, part);
+    }
+    const low = try integerOf(work, .pack_unorm_8, try integerOf(work, .pack_half, channels[0], channels[1]), null);
+    const high = try integerOf(work, .pack_unorm_8, try integerOf(work, .pack_half, channels[2], channels[3]), null);
+    const word = try integerOf(work, .pack_4x8, low, high);
+    _ = try put(work, .{ .tag = .image_store, .kind = .f32x1, .a = coordinate, .b = word, .at = which });
+}
+
+/// Whether the program's stage reads and writes storage images: a
+/// compute program's (since 1.218) and a fragment program's (since
+/// 1.219).
+fn takesStorage(work: *const Work) bool {
+    return work.stage == .gl_compute or work.stage == .fragment;
+}
+
+/// OpImageQuerySize of a storage image, vtn's image_deref_size, which
+/// nir_lower_image makes an image_size of the image's unit
+/// (spirv_to_nir.c:6444-6451; vtn_handle_image, :3885-3893, :4080-4082):
+/// as many integers as the result names, two for a 2D image and a cube,
+/// three for a 3D image and a 2D array, the array's layers last. Its level
+/// is 0, which ntq_emit_image_size asserts (nir_to_vir.c:2653-2679; since
+/// 1.219).
+fn sizeOfStorage(work: *Work, operands: []const u32) Error!void {
+    // ResultType, Result, Image.
+    if (operands.len != 3) return Error.Body;
+    if (!takesStorage(work)) return Error.Refused;
+    const type_id = try idOf(operands[0]);
+    if (!isIntegerType(work, type_id)) return Error.Type;
+    const id = try idOf(operands[1]);
+    const which = storageOf(work, operands, 2) orelse return Error.Body;
+    const kind = try kindOf(work, type_id);
+    // A cube is its faces' layers here (`Sampler.storage`), its size two
+    // integers, a 2D array's three: of layers either is taken, the two
+    // being told apart by nothing here, and the third, where there is
+    // one, is the layers (ntq_emit_image_size's is_array).
+    const fits = switch (work.samplers[which].dim) {
+        .flat => kind == .f32x2,
+        .layers => kind == .f32x2 or kind == .f32x3,
+        .volume => kind == .f32x3,
+        .cube, .cubes => false,
+    };
+    if (!fits) return Error.Type;
+    work.step_of[id] = try put(work, .{ .tag = .image_size, .kind = kind, .at = which });
+}
+
 /// lower_gradient (nir_lower_tex.c:855-912): the level a gradient's
 /// sample is taken at, which replace_gradient_with_lod makes the txl's
 /// lod (:690-704). The size of level 0, a txs at the integer 0
@@ -11020,7 +11649,7 @@ fn readSample(work: *Work, op: spirv.Op, operands: []const u32) Error!void {
 ///
 /// A cube's is `cubeGradientLevel` (since 1.184; refused at 1.183).
 fn gradientLevel(work: *Work, which: u16, dim: SamplerDim, coordinate: u16, dx: u32, dy: u32) Error!u16 {
-    if (dim == .cube) return cubeGradientLevel(work, which, coordinate, dx, dy);
+    if (dim.cubic()) return cubeGradientLevel(work, which, try directionOf(work, coordinate), dx, dy);
     const count: u8 = if (dim == .layers) 2 else dim.components();
     const kind = std.enums.fromInt(Kind, count) orelse return Error.Type;
     const ddx = try operand(work, dx, kind);
@@ -11118,7 +11747,7 @@ fn pairOf(work: *Work, first: u16, second: u16) Error!u16 {
 fn texelOffsets(work: *const Work, word: u32, dim: SamplerDim) Error![3]i8 {
     const id = try idOf(word);
     const count: u8 = if (dim == .layers) 2 else dim.components();
-    if (dim == .cube) return Error.Body;
+    if (dim.cubic()) return Error.Body;
     if (!isConstant(work, id) or work.wide[id] != count) return Error.Type;
     var made: [3]i8 = @splat(0);
     for (made[0..count], 0..) |*each, k| {
@@ -11169,7 +11798,41 @@ fn sampledAt(work: *Work, word: u32, dim: SamplerDim) Error!u16 {
         std.enums.fromInt(Kind, work.wide[id]) orelse return Error.Type;
     if (kind.parts() < dim.components()) return Error.Type;
     const coordinate = try operand(work, word, kind);
-    return if (dim == .cube) normalizedCube(work, coordinate) else coordinate;
+    return switch (dim) {
+        .cube => normalizedCube(work, coordinate),
+        .cubes => normalizedCubes(work, coordinate),
+        else => coordinate,
+    };
+}
+
+/// A cube of an array's coordinate, nir_normalize_cubemap_coords's
+/// (nir_normalize_cubemap_coords.c:56-65): the direction normalized as a
+/// cube's is, and the fourth float, which cube, after it as it was, which
+/// nir_vector_insert_imm puts back where the product of all four was
+/// (since 1.235).
+fn normalizedCubes(work: *Work, coordinate: u16) Error!u16 {
+    const direction = try normalizedCube(work, coordinate);
+    var made: Step = .{ .tag = .construct, .kind = .f32x4 };
+    for (0..3) |k| made.from[k] = direction;
+    made.part = .{ 0, 1, 2, 0 };
+    const which = partOf(work, coordinate, 3);
+    made.from[3] = which.step;
+    made.part[3] = which.part;
+    return put(work, made);
+}
+
+/// A coordinate's first three floats, nir_trim_vector's: the coordinate
+/// itself where it has three, and a vector made of them where it has more
+/// (since 1.235; `normalizedCube`'s own before).
+fn directionOf(work: *Work, coordinate: u16) Error!u16 {
+    if (work.steps[coordinate].kind == .f32x3) return coordinate;
+    var trimmed: Step = .{ .tag = .construct, .kind = .f32x3 };
+    for (0..3) |k| {
+        const of = partOf(work, coordinate, @intCast(k));
+        trimmed.from[k] = of.step;
+        trimmed.part[k] = of.part;
+    }
+    return put(work, trimmed);
 }
 
 /// nir_normalize_cubemap_coords (v3dv_pipeline.c:406;
@@ -11180,16 +11843,7 @@ fn sampledAt(work: *Work, word: u32, dim: SamplerDim) Error!u16 {
 /// (nir_builtin_builder.h:84-91). The TMU finds the face and the place on
 /// it from what is left (since 1.179).
 fn normalizedCube(work: *Work, coordinate: u16) Error!u16 {
-    var direction = coordinate;
-    if (work.steps[coordinate].kind != .f32x3) {
-        var trimmed: Step = .{ .tag = .construct, .kind = .f32x3 };
-        for (0..3) |k| {
-            const of = partOf(work, coordinate, @intCast(k));
-            trimmed.from[k] = of.step;
-            trimmed.part[k] = of.part;
-        }
-        direction = try put(work, trimmed);
-    }
+    const direction = try directionOf(work, coordinate);
     const magnitudes = try put(work, .{ .tag = .abs, .kind = .f32x3, .a = direction });
     var largest = try floatOf(work, .{ .step = magnitudes, .part = 0 });
     for (1..3) |k| {
@@ -11298,7 +11952,7 @@ fn settle(work: *Work) Error!void {
             // are already in registers, so neither costs an instruction.
             .input, .component, .construct => {},
             // Refused by `compile` before the plan is laid out.
-            .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier, .scratch, .scratch_indirect, .scratch_store, .shared, .shared_store, .shared_atomic, .control_barrier => return Error.Storage,
+            .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier, .scratch, .scratch_indirect, .scratch_store, .shared, .shared_store, .shared_atomic, .control_barrier, .image_load, .image_store, .image_size, .tile_load => return Error.Storage,
             .compare, .discard => return Error.Discards,
             .sample_compared, .texture_size, .texture_levels => return Error.Samplers,
             .begin_if, .begin_else, .end_if, .phi => return Error.Branches,
@@ -11372,7 +12026,7 @@ fn settle(work: *Work) Error!void {
     // samples puts it. Where it did not, it goes here, and what the
     // colour waits for is waited out first so that the two writes stay
     // next to it as they are in `flat_code`.
-    const slots = work.slot_of[work.stored];
+    const slots = work.slot_of[work.stored[0]];
     // A texel drawn as it is: the two words the TMU handed back are
     // already two pairs of half-floats, which is what the tile buffer
     // takes, so nothing unpacks them and nothing packs them again
@@ -11388,7 +12042,7 @@ fn settle(work: *Work) Error!void {
     // colour below is right: it packs the four floats back, and the 1 it
     // needs is already loaded, because reading a half out non-fused is
     // exactly what makes `wantsOne` true.
-    const packed_whole = work.steps[work.stored].tag == .sample and
+    const packed_whole = work.steps[work.stored[0]].tag == .sample and
         work.slot_half[slots[0]] == .low and work.slot_half[slots[1]] == .high and
         work.slot_half[slots[2]] == .low and work.slot_half[slots[3]] == .high;
     if (packed_whole) {
@@ -11526,8 +12180,8 @@ fn wantsOne(work: *const Work) bool {
     }
     // The texel drawn as it is goes to the tile buffer packed, which is
     // the form it came in.
-    if (work.steps[work.stored].tag == .sample) return false;
-    for (work.slot_of[work.stored][0..4]) |slot| if (work.slot_texel[slot]) return true;
+    if (work.steps[work.stored[0]].tag == .sample) return false;
+    for (work.slot_of[work.stored[0]][0..4]) |slot| if (work.slot_texel[slot]) return true;
     return false;
 }
 
@@ -11597,7 +12251,7 @@ fn live(work: *Work) Error!void {
     // to carry the bump across.
     var part: u32 = 0;
     while (part < 4) : (part += 1) {
-        const slot = work.slot_of[work.stored][part];
+        const slot = work.slot_of[work.stored[0]][part];
         work.slot_last[slot] = most_steps;
     }
     // A texel's four floats are two registers, a pair of half-floats
@@ -12025,6 +12679,29 @@ fn patched(comptime words: []const u32, comptime op: spirv.Op, comptime at: u32,
     }
 }
 
+/// `words` with its colour out, its one Output variable, decorated at
+/// `location` instead (since 1.231).
+fn colourAt(comptime words: []const u32, comptime location: u32) [words.len]u32 {
+    comptime {
+        @setEvalBranchQuota(100_000);
+        var copy: [words.len]u32 = words[0..words.len].*;
+        var out_id: u32 = 0;
+        var k: usize = 5;
+        while (k < copy.len) : (k += copy[k] >> 16) {
+            if (copy[k] & 0xFFFF == @intFromEnum(spirv.Op.variable) and copy[k + 3] == @intFromEnum(spirv.StorageClass.output)) out_id = copy[k + 2];
+        }
+        if (out_id == 0) @compileError("no colour out");
+        k = 5;
+        while (k < copy.len) : (k += copy[k] >> 16) {
+            if (copy[k] & 0xFFFF == @intFromEnum(spirv.Op.decorate) and copy[k + 1] == out_id and copy[k + 2] == @intFromEnum(spirv.Decoration.location)) {
+                copy[k + 3] = location;
+                return copy;
+            }
+        }
+        @compileError("the colour out has no location");
+    }
+}
+
 /// `words` with the `at`th instruction of `op` made one of `to`, of the
 /// same operands: an IAdd an IMul, a comparison another.
 fn retyped(comptime words: []const u32, comptime op: spirv.Op, comptime at: u32, comptime to: spirv.Op) [words.len]u32 {
@@ -12067,6 +12744,33 @@ fn withOperand(comptime words: []const u32, comptime op: spirv.Op, comptime at: 
                     copy[k + 5] = mask;
                     copy[k + 6] = words[k + 6];
                     @memcpy(copy[k + 7 ..], words[k + 6 ..]);
+                    return copy;
+                }
+                seen += 1;
+            }
+            k += count;
+        }
+        @compileError("no such instruction to widen");
+    }
+}
+
+/// `words` with the `at`th instruction `op` widened by the words
+/// `extra` after its own, as a module that gives it more operands than
+/// glslc wrote would carry it.
+fn widened(comptime words: []const u32, comptime op: spirv.Op, comptime at: u32, comptime extra: []const u32) [words.len + extra.len]u32 {
+    comptime {
+        var seen: u32 = 0;
+        var k: usize = 5;
+        while (k < words.len) {
+            const count = words[k] >> 16;
+            if (count == 0) @compileError("a word count of zero");
+            if (words[k] & 0xFFFF == @intFromEnum(op)) {
+                if (seen == at) {
+                    var copy: [words.len + extra.len]u32 = undefined;
+                    @memcpy(copy[0 .. k + count], words[0 .. k + count]);
+                    copy[k] = ((count + extra.len) << 16) | @intFromEnum(op);
+                    @memcpy(copy[k + count ..][0..extra.len], extra);
+                    @memcpy(copy[k + count + extra.len ..], words[k + count ..]);
                     return copy;
                 }
                 seen += 1;
@@ -13404,9 +14108,118 @@ test "a cube or an array of depths compared takes the floats its image names of 
     try testing.expect(writtenWith(layers_code, "fmul", tmuSource(layers_code, "tmui", &names, &into).?));
 }
 
-test "a cube of an array is refused, which needs SampledCubeArray" {
+test "a cube of an array, of SampledCubeArray, is sampled at its direction normalized as a cube's and its cube as it is: the third float to TMUR, the fourth to TMUI, the lookup at TMUSCM (since 1.235)" {
+    // nir_normalize_cubemap_coords leaves an array's index as it was
+    // (nir_normalize_cubemap_coords.c:56-65); handle_tex_src writes it to
+    // TMUI after R (v3d_tex.c:108-127), and a cube's lookup is TMUSCM
+    // (:378-379), its sampler_dim a cube's.
     var work: Work = .{};
-    try testing.expectError(Error.Refused, throughMesa(&work, &reference.glslc_cube_array));
+    const code = try throughMesa(&work, &reference.glslc_cubes);
+    try testing.expectEqual(Sampler{ .set = 0, .binding = 0, .dim = .cubes }, code.sampled()[0]);
+    const sampled = try onlySample(&work);
+    const coordinate = work.steps[sampled.a];
+    try testing.expectEqual(Tag.construct, coordinate.tag);
+    try testing.expectEqual(Kind.f32x4, coordinate.kind);
+    const normalized = work.steps[coordinate.from[0]];
+    try testing.expectEqual(Tag.mul, normalized.tag);
+    try testing.expectEqual(Kind.f32x3, normalized.kind);
+    try testing.expectEqual(Tag.recip, work.steps[normalized.b].tag);
+    for (0..3) |k| {
+        try testing.expectEqual(coordinate.from[0], coordinate.from[k]);
+        try testing.expectEqual(@as(u8, @intCast(k)), coordinate.part[k]);
+        try testing.expect(isInputPart(&work, normalized.a, @intCast(k), @intCast(k)));
+    }
+    // Which cube, the colour's fourth float, as it was.
+    try testing.expect(isInputPart(&work, sampled.a, 3, 3));
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .abs));
+    try testing.expectEqual(@as(usize, 2), stepsOf(&work, .max));
+    // The writes before the start in any order, as can_reorder_tmu_write
+    // lets the scheduler place them (qpu_schedule.c:226).
+    try expectTmuWritesEnding(code, &.{ "tmut", "tmur", "tmui" }, "tmuscm");
+    var names: [8][2][16]u8 = undefined;
+    var into: [8]TmuWrite = undefined;
+    for ([_][]const u8{ "tmut", "tmur", "tmuscm" }) |name| try testing.expect(writtenWith(code, "fmul", tmuSource(code, name, &names, &into).?));
+    try testing.expect(!writtenWith(code, "fmul", tmuSource(code, "tmui", &names, &into).?));
+    // glslc's cube of 1.0, a constant the module constructs the
+    // coordinate with: the same four writes.
+    var constant: Work = .{};
+    const constant_code = try throughMesa(&constant, &reference.glslc_cube_array);
+    try testing.expectEqual(SamplerDim.cubes, constant_code.sampled()[0].dim);
+    try expectTmuWritesEnding(constant_code, &.{ "tmut", "tmur", "tmui" }, "tmuscm");
+}
+
+test "a cube of an array sampled at three floats is refused, as its coordinate names the cube fourth (since 1.235)" {
+    // glsl_get_sampler_dim_coordinate_components and the layer
+    // (spirv_to_nir.c:3280-3283): four floats, the three of the
+    // direction and which cube. glslc_cube's image made arrayed, its
+    // operand Arrayed 1, is sampled at the direction alone.
+    var work: Work = .{};
+    try expectRefusal(Error.Type, throughMesa(&work, &comptime patched(&reference.glslc_cube, .type_image, 0, 4, 1)));
+}
+
+test "a cube of an array of depths compared writes the reference to TMUDREF beside the cube's TMUI, a cube of an array at a level has P2 disable the automatic level and its level to TMUB, both started at TMUSCM (since 1.235)" {
+    // handle_tex_src's order of NIR's sources: the coordinate's T, R and
+    // I, then the comparator (v3d_tex.c:108-157) and the level, and a
+    // cube's txl disables the automatic level in P2 (:142-148).
+    var shadow: Work = .{};
+    const shadow_code = try throughMesa(&shadow, &reference.glslc_cubes_shadow);
+    try testing.expectEqual(Sampler{ .set = 0, .binding = 0, .compared = true, .dim = .cubes }, shadow_code.sampled()[0]);
+    try expectTmuWritesEnding(shadow_code, &.{ "tmut", "tmur", "tmui", "tmudref" }, "tmuscm");
+    // Five writes, TMUI's among them, which four threads have no room
+    // for (v3d_tex.c:222, :265-266).
+    try testing.expectEqual(@as(u8, 2), shadow_code.threads);
+    var lod: Work = .{};
+    const lod_code = try throughMesa(&lod, &reference.glslc_cubes_lod);
+    try testing.expectEqual(Lookup.lod, (try onlySample(&lod)).lookup);
+    try expectTmuWritesEnding(lod_code, &.{ "tmut", "tmur", "tmui", "tmub" }, "tmuscm");
+    try testing.expectEqual(@as(u8, 2), lod_code.threads);
+    const stream = lod_code.stream();
+    try testing.expectEqualSlices(Word, &sampledStream(0x00F00002), stream[stream.len - 3 ..]);
+}
+
+test "a cube of an array's gradient is the level lower_gradient_cube_map makes of its direction, the width alone read, and its size is three integers, its cubes the draw's array size (since 1.235)" {
+    // lower_gradient_cube_map reads the coordinate's first three floats
+    // and the size's first (nir_lower_tex.c:707-852); ntq_emit_txs takes
+    // QUNIFORM_TEXTURE_ARRAY_SIZE for an array's last
+    // (nir_to_vir.c:929-930), which v3dv answers in cubes for a cube of
+    // an array (v3dv_uniforms.c:402-407).
+    var grad: Work = .{};
+    const grad_code = try throughMesa(&grad, &reference.glslc_cubes_grad);
+    const sampler: Word = .{ .sampler = .{ .bits = per_pixel_mask } };
+    const width: Word = .{ .texture_size = .{ .field = .width } };
+    const p2: Word = .{ .float = @bitCast(@as(u32, 0x00F00002)) };
+    const stream = grad_code.stream();
+    try testing.expectEqual(width, stream[0]);
+    try testing.expectEqualSlices(Word, &[_]Word{ .{ .texture = 0 }, sampler, p2 }, stream[stream.len - 3 ..]);
+    for (stream) |word| try testing.expect(!std.meta.eql(word, Word{ .texture_size = .{ .field = .array_size } }) and !std.meta.eql(word, Word{ .texture_size = .{ .field = .height } }));
+    try testing.expectEqual(Lookup.lod, (try onlySample(&grad)).lookup);
+    try expectTmuWritesEnding(grad_code, &.{ "tmut", "tmur", "tmui", "tmub" }, "tmuscm");
+    var size: Work = .{};
+    const size_code = try throughMesa(&size, &reference.glslc_cubes_size);
+    try testing.expectEqualSlices(Word, &sizesOf(&.{ .width, .height, .array_size }), size_code.stream());
+    try testing.expectEqual(@as(usize, 2), countOf(size_code, "shr "));
+}
+
+test "a storage cube of an array, of ImageCubeArray, is read and written as its faces' layers, the third word to TMUI, and its size's third the draw's array size (since 1.235)" {
+    // vir_image_emit_register_writes writes a cube's and an array's
+    // third word to TMUI (v3d_tex.c:449-480), the faces of a cube of an
+    // array six to a cube, which v3dv's storage state counts as layers
+    // (v3dvx_image.c:89-93, :171-174); ntq_emit_image_size's array size
+    // is its cubes (nir_to_vir.c:2653-2679; v3dv_uniforms.c:402-407).
+    var work: Work = .{};
+    const code = try computeThroughMesa(&work, &reference.glslc_cubes_storage);
+    try testing.expectEqual(Sampler{ .set = 0, .binding = 0, .dim = .layers, .storage = true }, code.sampled()[0]);
+    try testing.expectEqual(@as(usize, 2), countOf(code, "mov tmui"));
+    try testing.expectEqual(@as(usize, 0), countOf(code, "mov tmur"));
+    var sizes: usize = 0;
+    for (code.stream()) |word| switch (word) {
+        .texture_size => |size| {
+            try testing.expectEqual(TextureSize.Field.array_size, size.field);
+            sizes += 1;
+        },
+        else => {},
+    };
+    try testing.expectEqual(@as(usize, 1), sizes);
 }
 
 /// The uniform stream of a sample whose P2 is `p2`: its texture, its
@@ -14362,7 +15175,7 @@ test "an fabs of an fneg is the fabs of what it negates, a float or a vector at 
         }
     };
     const color = [4]f32{ -0.25, 0.5, -0.75, 1.0 };
-    try testing.expectEqual([4]f32{ 0.25, 0.75, 1.0, 0.75 }, evaluatedOf(&work, work.stored, color, 0));
+    try testing.expectEqual([4]f32{ 0.25, 0.75, 1.0, 0.75 }, evaluatedOf(&work, work.stored[0], color, 0));
     // The fabs nir_normalize_cubemap_coords takes of each float of a
     // direction (nir_normalize_cubemap_coords.c:30-55) is of the float
     // itself where the direction negates it, and the two fnegs are the
@@ -14430,7 +15243,7 @@ test "a 32-bit division or remainder is nir_lower_idiv's: a Newton step of the r
                     .irem => @rem(numer, denom),
                     .imod => @mod(numer, denom),
                 };
-                const found = evaluatedOf(&work, work.stored, color, 0)[0];
+                const found = evaluatedOf(&work, work.stored[0], color, 0)[0];
                 try testing.expectEqual(@as(f32, @floatFromInt(expected)), found);
             }
         }
@@ -14489,7 +15302,7 @@ test "a division of two vectors of two is a lowering a float, of one set of cons
                 const x: u32 = @intFromFloat(color[0] * 100.0);
                 const y: u32 = @intFromFloat(color[1] * 100.0);
                 if (x == 0 or y == 0) continue;
-                const found = evaluatedOf(&work, work.stored, color, 0);
+                const found = evaluatedOf(&work, work.stored[0], color, 0);
                 try testing.expectEqual(@as(f32, @floatFromInt(x / y)), found[0]);
                 try testing.expectEqual(@as(f32, @floatFromInt(y / x)), found[1]);
             }
@@ -14553,7 +15366,7 @@ test "glslc's divisions by constants are multiplies by magic numbers, shifts and
                     2 => .{ @floatFromInt(@divTrunc(n, 3)), 0, 0, 1 },
                     else => .{ @floatFromInt(@divTrunc(n, m)), @floatFromInt(@divTrunc(m, 3)), 0, 1 },
                 };
-                try testing.expectEqual(expected, evaluatedOf(&work, work.stored, color, 0));
+                try testing.expectEqual(expected, evaluatedOf(&work, work.stored[0], color, 0));
             }
         }
     }
@@ -14593,7 +15406,7 @@ test "five divisions by constants and their checks are more steps than the table
             var y: u32 = 0;
             while (y < 256) : (y += 1) {
                 const color = [4]f32{ (@as(f32, @floatFromInt(x)) + 0.25) / 255.0, (@as(f32, @floatFromInt(y)) + 0.25) / 255.0, 0, 0 };
-                try testing.expectEqual([4]f32{ color[0], 1.0, color[1], 1.0 }, evaluatedOf(&work, work.stored, color, 0));
+                try testing.expectEqual([4]f32{ color[0], 1.0, color[1], 1.0 }, evaluatedOf(&work, work.stored[0], color, 0));
             }
         }
     }
@@ -14748,6 +15561,9 @@ fn evaluatedStep(work: *const Work, values: *const [most_steps]?[4]f32, at: u16,
                     .uclz => @bitCast(@as(u32, @clz(u))),
                     .pack_half => @bitCast(halvesOf(x[k], y[if (single) 0 else k])),
                     .half_float => floatOfHalf(u),
+                    // A storage image's texel packed (since 1.218).
+                    .pack_unorm_8 => @bitCast(unormsOfHalves(u)),
+                    .pack_4x8 => @bitCast(bytesOfPairs(u, v)),
                     else => @bitCast(switch (op) {
                         .iadd => u +% v,
                         .isub => u -% v,
@@ -15231,6 +16047,37 @@ test "through Mesa's back end, a pixel dropped: the comparison into the flags, S
     });
 }
 
+test "texture_cutout's programs are what Mesa's back end makes of facet's cut-out shader, word for word: into half-floats, into 32-bit floats, and with no render target (since 1.236)" {
+    // As `qpu.no_color_code` is held to compileNoColor: the fixed form's
+    // programs are Mesa's, keyed as v3dv keys a subpass of each
+    // (v3dv_pipeline.c:1240-1243, :2137-2142), and what the shader
+    // record says of them is what Mesa says.
+    const keys = [_]Key{ .{}, .{ .f32_color_rb = 1 }, .{ .cbufs = 0 } };
+    const programs = [_]qpu.Fragment{ qpu.cutout_fragment, qpu.wide_cutout_fragment, qpu.colorless_cutout_fragment };
+    for (keys, programs) |key, fragment| {
+        var work: Work = .{};
+        const code = try throughMesaKeyed(&work, Cutout.words, key);
+        try testing.expectEqualSlices(u64, code.words, fragment.code);
+        try testing.expectEqual(code.varyings, fragment.varyings);
+        try testing.expectEqual(code.uniform_count, fragment.uniforms);
+        try testing.expectEqual(code.threads, fragment.threads);
+        try testing.expectEqual(code.center_w, fragment.center_w);
+        try testing.expectEqual(code.lock_scoreboard_on_first_thrsw, fragment.lock_scoreboard_on_first_thrsw);
+        try testing.expectEqual(code.writes_z, fragment.writes_z);
+        try testing.expectEqual(code.disable_ez, fragment.disable_ez);
+        try testing.expect(fragment.writes_z and fragment.disable_ez);
+        // The stream the draw writes for them (`_play.zig`'s
+        // `textureUniforms`): P0 and P1, the per-pixel mask set in P1,
+        // the depth's specifier, and, into 32-bit floats, the colour's.
+        const stream = code.stream();
+        try testing.expectEqual(@as(usize, if (key.f32_color_rb != 0) 4 else 3), stream.len);
+        try testing.expectEqual(Word{ .texture = 0 }, stream[0]);
+        try testing.expectEqual(Word{ .sampler = .{ .bits = per_pixel_mask } }, stream[1]);
+        try testing.expectEqual(qpu.no_color_specifier, @as(u32, @bitCast(stream[2].float)));
+        if (key.f32_color_rb != 0) try testing.expectEqual(qpu.tlb_f32_specifier, @as(u32, @bitCast(stream[3].float)));
+    }
+}
+
 test "through Mesa's back end, alpha to coverage: FTOC of the colour's alpha, kept of MSF by SETMSF, then Z written through before the colour" {
     var work: Work = .{};
     const code = try throughMesaKeyed(&work, Smooth.words, .{ .sample_alpha_to_coverage = true });
@@ -15333,6 +16180,298 @@ test "through Mesa's back end, a module's colour in a key of no render target: n
     try testing.expectEqual(@as(u32, 1), z);
     // Its varyings are still read, as every program here reads them all.
     try testing.expectEqual(@as(u32, 4), code.varyings);
+}
+
+test "through Mesa's back end, a colour into a render target of 32-bit floats: four floats moved to the TLB, the first to TLBU with its specifier, nothing packed (since 1.228)" {
+    var work: Work = .{};
+    const code = try throughMesaKeyed(&work, Smooth.words, .{ .f32_color_rb = 1 });
+    // The one uniform the program reads is the specifier the TLBU write
+    // takes: vir_emit_tlb_color_write's for f32_color_rb.
+    try testing.expectEqual(@as(usize, 1), code.stream().len);
+    try testing.expectEqual(qpu.tlb_f32_specifier, @as(u32, @bitCast(code.stream()[0].float)));
+    var tlbu: u32 = 0;
+    var tlb: u32 = 0;
+    for (code.words) |word| {
+        var buffer: [disasm.most_text]u8 = undefined;
+        const line = disasm.disasm(word, &buffer).?;
+        try testing.expect(std.mem.indexOf(u8, line, "vfpack") == null);
+        if (std.mem.indexOf(u8, line, "mov tlbu,") != null) tlbu += 1;
+        if (std.mem.indexOf(u8, line, "mov tlb,") != null) tlb += 1;
+    }
+    try testing.expectEqual(@as(u32, 1), tlbu);
+    try testing.expectEqual(@as(u32, 3), tlb);
+    // The same module of half-floats, its key's default: two VFPACKs and
+    // no uniform.
+    var halves: Work = .{};
+    const packed_code = try throughMesa(&halves, Smooth.words);
+    try testing.expectEqual(@as(usize, 0), packed_code.stream().len);
+    try testing.expectEqual(@as(u32, 4), code.varyings);
+}
+
+test "through Mesa's back end, whole numbers into a target of them: the push constants' four words moved to the TLB as they are, the first to TLBU with the F32 specifier, nothing packed or converted (since 1.229)" {
+    // v3dv keys a pure integer target as one of 32-bit floats
+    // (v3dv_pipeline.c:1253-1256), and vir_emit_tlb_color_write writes
+    // its words as it writes floats (nir_to_vir.c:1955).
+    for ([2][]const u32{ &reference.glslc_whole_unsigned, &reference.glslc_whole_signed }) |words| {
+        var work: Work = .{};
+        const code = try throughMesaKeyed(&work, words, .{ .f32_color_rb = 1 });
+        var pushed: u32 = 0;
+        var specifiers: u32 = 0;
+        for (code.stream()) |word| switch (word) {
+            .push => |place| {
+                try testing.expect(place < 4);
+                pushed |= @as(u32, 1) << @intCast(place);
+            },
+            .float => |value| {
+                try testing.expectEqual(qpu.tlb_f32_specifier, @as(u32, @bitCast(value)));
+                specifiers += 1;
+            },
+            else => return error.TestUnexpectedResult,
+        };
+        try testing.expectEqual(@as(u32, 0xF), pushed);
+        try testing.expectEqual(@as(u32, 1), specifiers);
+        var tlbu: u32 = 0;
+        var tlb: u32 = 0;
+        for (code.words) |word| {
+            var buffer: [disasm.most_text]u8 = undefined;
+            const line = disasm.disasm(word, &buffer).?;
+            for ([_][]const u8{ "vfpack", "ftoi", "itof", "ftoui", "utof" }) |never| try testing.expect(std.mem.indexOf(u8, line, never) == null);
+            if (std.mem.indexOf(u8, line, "mov tlbu,") != null) tlbu += 1;
+            if (std.mem.indexOf(u8, line, "mov tlb,") != null) tlb += 1;
+        }
+        try testing.expectEqual(@as(u32, 1), tlbu);
+        try testing.expectEqual(@as(u32, 3), tlb);
+        try testing.expectEqual(@as(u32, 0), code.varyings);
+    }
+}
+
+/// vir_emit_tlb_color_write's specifier of a colour of half-floats into
+/// render target `rt`, a pixel at a time (nir_to_vir.c:1966-1985): ~0 for
+/// render target 0, which the register is preloaded with.
+fn f16Specifier(rt: u32) u32 {
+    return 0xffffff00 | 1 << 2 | (7 - rt) << 3 | 3 << 6 | 1 << 1 | 1 << 0;
+}
+
+/// And of four 32-bit channels.
+fn f32Specifier(rt: u32) u32 {
+    return 0xffffff00 | 1 << 2 | (7 - rt) << 3 | 0 << 6 | (4 - 1);
+}
+
+/// The specifiers a program's uniforms hand its TLBU writes, in the order
+/// it reads them: the uniforms whose top three bytes are all set, which
+/// no other constant of these programs is.
+fn specifiersOf(code: *const Code, into: []u32) []const u32 {
+    var count: usize = 0;
+    for (code.stream()) |word| switch (word) {
+        .float => |value| {
+            const bits: u32 = @bitCast(value);
+            if (bits & 0xffffff00 == 0xffffff00) {
+                into[count] = bits;
+                count += 1;
+            }
+        },
+        else => {},
+    };
+    return into[0..count];
+}
+
+/// The two operands of each of a program's packed TLB writes, to TLBU
+/// or TLB, in their order: what each pair of half-floats is packed from.
+const Packs = struct {
+    names: [16][2][8]u8 = undefined,
+    lengths: [16][2]usize = undefined,
+    count: usize = 0,
+
+    fn of(code: Code) Packs {
+        var packs: Packs = .{};
+        for (code.words) |word| {
+            var buffer: [disasm.most_text]u8 = undefined;
+            const line = disasm.disasm(word, &buffer).?;
+            const pack = std.mem.indexOf(u8, line, "vfpack tlb") orelse continue;
+            const comma = std.mem.indexOfScalarPos(u8, line, pack, ',').?;
+            var operands = std.mem.tokenizeAny(u8, line[comma + 1 ..], ", ");
+            for (0..2) |k| {
+                const name = operands.next().?;
+                @memcpy(packs.names[packs.count][k][0..name.len], name);
+                packs.lengths[packs.count][k] = name.len;
+            }
+            packs.count += 1;
+        }
+        return packs;
+    }
+
+    /// The `k`th operand of the `pack`th write.
+    fn operand(packs: *const Packs, pack: usize, k: usize) []const u8 {
+        return packs.names[pack][k][0..packs.lengths[pack][k]];
+    }
+};
+
+/// Its TLB writes in order, `u` for one to TLBU and `.` for one to TLB.
+fn tlbWritesOf(code: Code, into: []u8) []const u8 {
+    var count: usize = 0;
+    for (code.words) |word| {
+        var buffer: [disasm.most_text]u8 = undefined;
+        const line = disasm.disasm(word, &buffer).?;
+        var rest = line;
+        while (std.mem.indexOf(u8, rest, " tlb")) |at| {
+            const after = rest[at + " tlb".len ..];
+            into[count] = if (after.len > 0 and after[0] == 'u') 'u' else '.';
+            count += 1;
+            rest = after;
+        }
+    }
+    return into[0..count];
+}
+
+test "through Mesa's back end, three colour outs stored out of their order: each written to the render target of its location, in the order of the render targets, the first by the specifier the register holds and the others each by its own (since 1.231)" {
+    // emit_frag_end writes each render target the key has and the
+    // program has a colour out at, from 0 up (nir_to_vir.c:2142-2143),
+    // and vir_emit_tlb_color_write names it by 7 - rt (:1970).
+    var work: Work = .{};
+    const code = try throughMesaKeyed(&work, &reference.glslc_several_colours, .{ .cbufs = 0b111 });
+    try testing.expectEqual(@as(u32, 3), work.output_count);
+    for (work.stored[0..3]) |stored| try testing.expect(stored != none);
+    try testing.expectEqual(none, work.stored[3]);
+    try testing.expectEqual(~@as(u32, 0), f16Specifier(0));
+    var specifiers: [8]u32 = undefined;
+    try testing.expectEqualSlices(u32, &.{ f16Specifier(1), f16Specifier(2) }, specifiersOf(&code, &specifiers));
+    var writes: [16]u8 = undefined;
+    try testing.expectEqualStrings("..u.u.", tlbWritesOf(code, &writes));
+    try testing.expectEqual(@as(usize, 6), countOf(code, "vfpack tlb"));
+    // Each render target packed from its own location's floats: render
+    // target 2's red and blue are render target 0's blue and red, its
+    // green and alpha the same, and render target 1's are none of them.
+    const packs = Packs.of(code);
+    try testing.expectEqual(@as(usize, 6), packs.count);
+    try testing.expectEqualStrings(packs.operand(1, 0), packs.operand(4, 0));
+    try testing.expectEqualStrings(packs.operand(0, 1), packs.operand(4, 1));
+    try testing.expectEqualStrings(packs.operand(0, 0), packs.operand(5, 0));
+    try testing.expectEqualStrings(packs.operand(1, 1), packs.operand(5, 1));
+    for ([2]usize{ 2, 3 }) |pack| for (0..2) |k| for ([4]usize{ 0, 1, 4, 5 }) |other| for (0..2) |j| {
+        try testing.expect(!std.mem.eql(u8, packs.operand(pack, k), packs.operand(other, j)));
+    };
+    // What each render target is given: location 0 the colour as it came,
+    // location 1 one minus it, location 2 it with red and blue swapped.
+    try testing.expect(isInputPart(&work, work.stored[0], 0, 0));
+    try testing.expect(isInputPart(&work, work.stored[2], 0, 2));
+    try testing.expect(isInputPart(&work, work.stored[2], 2, 0));
+    try testing.expectEqual(Tag.sub, work.steps[partOf(&work, work.stored[1], 0).step].tag);
+    try testing.expectEqual(@as(u32, 4), code.varyings);
+
+    // A part drawn alone, render target 0 its one: location 0 is
+    // written, and nothing else.
+    var alone: Work = .{};
+    const first = try throughMesaKeyed(&alone, &reference.glslc_several_colours, .{ .cbufs = 0b001 });
+    try testing.expectEqual(@as(usize, 0), specifiersOf(&first, &specifiers).len);
+    try testing.expectEqualStrings("..", tlbWritesOf(first, &writes));
+
+    // Render target 1 of 32-bit floats (f32_color_rb): its four floats a
+    // write each, the first to TLBU with its own specifier, between the
+    // pairs of the others.
+    var wide: Work = .{};
+    const wide_code = try throughMesaKeyed(&wide, &reference.glslc_several_colours, .{ .cbufs = 0b111, .f32_color_rb = 0b010 });
+    try testing.expectEqualSlices(u32, &.{ f32Specifier(1), f16Specifier(2) }, specifiersOf(&wide_code, &specifiers));
+    try testing.expectEqualStrings("..u...u.", tlbWritesOf(wide_code, &writes));
+    try testing.expectEqual(@as(usize, 3), countOf(wide_code, "mov tlb,"));
+}
+
+test "through Mesa's back end, a colour out at location 1 alone: render target 1 written by its own specifier, and none where the key has no render target 1, which then writes Z through (since 1.231)" {
+    var work: Work = .{};
+    const code = try throughMesaKeyed(&work, &reference.glslc_second_colour, .{ .cbufs = 0b011 });
+    try testing.expectEqual(none, work.stored[0]);
+    try testing.expect(work.stored[1] != none);
+    var specifiers: [8]u32 = undefined;
+    try testing.expectEqualSlices(u32, &.{f16Specifier(1)}, specifiersOf(&code, &specifiers));
+    var writes: [16]u8 = undefined;
+    try testing.expectEqualStrings("u.", tlbWritesOf(code, &writes));
+    try testing.expect(!code.writes_z);
+
+    // No render target of the key's has a colour: no colour is written,
+    // so early fragment tests are not promoted and the program writes Z
+    // (nir_to_vir.c:2050-2054, 2098).
+    var unkeyed: Work = .{};
+    const none_written = try throughMesaKeyed(&unkeyed, &reference.glslc_second_colour, .{ .cbufs = 0b001 });
+    try testing.expectEqualStrings("u", tlbWritesOf(none_written, &writes));
+    try testing.expect(none_written.writes_z);
+
+    // Alpha to coverage reads location 0's alpha, output_color_var[0]
+    // (nir_to_vir.c:2056-2065): a program with nothing there covers by
+    // nothing, and one with a colour there by its alpha alone.
+    var uncovered: Work = .{};
+    const no_alpha = try throughMesaKeyed(&uncovered, &reference.glslc_second_colour, .{ .cbufs = 0b011, .sample_alpha_to_coverage = true });
+    try testing.expectEqual(@as(usize, 0), opsOf(no_alpha, "ftoc"));
+    var covered: Work = .{};
+    const by_alpha = try throughMesaKeyed(&covered, &reference.glslc_several_colours, .{ .cbufs = 0b111, .sample_alpha_to_coverage = true });
+    try testing.expectEqual(@as(usize, 1), opsOf(by_alpha, "ftoc"));
+}
+
+test "through Mesa's back end, the optimizations see every colour out: a sum another colour reads is not contracted, a colour nir_opt_cse makes one with another is written, and a float a colour reads past a kept selection is live to the end (since 1.231)" {
+    // fadd(a, fadd(is_used_once)(a, b)) (nir_opt_algebraic.py:275): the
+    // inner sum is location 1's colour too, so read twice, and left. Its
+    // store into location 0 instead (`patched`), the colour at 1 never
+    // stored, it is read once, and contracted to a product by 2.0.
+    // The varying's four FMULs by W are the program's only products
+    // (emit_fragment_varying).
+    var work: Work = .{};
+    const code = try throughMesaKeyed(&work, &reference.glslc_shared_sum, .{ .cbufs = 0b011 });
+    try testing.expectEqual(Tag.add, work.steps[work.stored[0]].tag);
+    try testing.expectEqual(work.stored[1], work.steps[work.stored[0]].b);
+    try testing.expectEqual(@as(usize, 4), opsOf(code, "fmul"));
+    var once: Work = .{};
+    const contracted = try throughMesaKeyed(&once, &comptime patched(&reference.glslc_shared_sum, .store, 1, 0, 19), .{ .cbufs = 0b011 });
+    try testing.expectEqual(none, once.stored[1]);
+    try testing.expectEqual(@as(usize, 4 + 4), opsOf(contracted, "fmul"));
+
+    // A product nothing reads goes (nir_opt_dce), and every step after it
+    // is renumbered; the sum made twice is one (nir_opt_cse), which both
+    // location 1 and location 2 are, each written.
+    var folded: Work = .{};
+    const both = try throughMesaKeyed(&folded, &reference.glslc_folded_colours, .{ .cbufs = 0b111 });
+    try testing.expectEqual(@as(usize, 4), opsOf(both, "fmul"));
+    try testing.expectEqual(folded.stored[1], folded.stored[2]);
+    var writes: [16]u8 = undefined;
+    try testing.expectEqualStrings("..u.u.", tlbWritesOf(both, &writes));
+    const color = [4]f32{ 0.5, 0.25, 0.75, 1.0 };
+    try testing.expectEqual(color, evaluatedOf(&folded, folded.stored[0], color, 0));
+    try testing.expectEqual([4]f32{ 0.75, 0.5, 1.0, 1.25 }, evaluatedOf(&folded, folded.stored[1], color, 0));
+
+    // The selection kept over its limit, its colour at location 1: `x`,
+    // read past the merge by the colour alone, is live to the end, so it
+    // interferes with the phi and the false way copies it into the phi's
+    // register (nir_def_is_live_at), as at location 0.
+    var kept: Work = .{};
+    const branched = try throughMesaKeyed(&kept, &comptime colourAt(Costly(13).words, 1), .{ .cbufs = 0b011 });
+    try testing.expectEqual(@as(usize, 1), stepsOf(&kept, .begin_if));
+    try testing.expectEqual(@as(usize, 1), countOf(branched, "bu.allna"));
+    try testing.expectEqual(@as(usize, 1), opsOf(branched, "xor.ifa"));
+    try testing.expectEqual(@as(usize, 1), opsOf(branched, "mov.ifna"));
+    try testing.expectEqual(@as(usize, 3), opsOf(branched, "mov.ifa"));
+    try testing.expectEqualStrings("u.", tlbWritesOf(branched, &writes));
+
+    // A colour stored in a selection's arm alone is that arm's step, which
+    // nir_opt_peephole_select counts as read (`armCost`): seven
+    // operations of four floats, 28 past the limit of 24, so the
+    // selection is not flattened, at location 1 as at location 0 - and a
+    // kept selection one way of which leaves a variable nothing is
+    // refused here (`Selection.one_way`), where 24 would have flattened it.
+    for ([2][]const u32{ &reference.glslc_arm_colour, &comptime colourAt(&reference.glslc_arm_colour, 0) }) |words| {
+        var arm: Work = .{};
+        try testing.expectError(Error.Branches, throughMesaKeyed(&arm, words, .{ .cbufs = 0b011 }));
+    }
+}
+
+test "a colour out past the render targets, or two at one location, is refused; the plan's compile takes one, at location 0, alone (since 1.231)" {
+    // OpDecorate %9 Location 1 made 4: past `most_colors`.
+    var work: Work = .{};
+    try testing.expectError(Error.Location, throughMesa(&work, &comptime patched(&reference.glslc_second_colour, .decorate, 0, 2, most_colors)));
+    // OpDecorate %16 Location 1 made 0, where %14 is.
+    var twice: Work = .{};
+    try testing.expectError(Error.Location, throughMesa(&twice, &comptime patched(&reference.glslc_several_colours, .decorate, 3, 2, 0)));
+    // The plan writes the tile buffer's one colour.
+    var planned: Work = .{};
+    try testing.expectError(Error.Outputs, compile(&planned, &reference.glslc_several_colours));
+    var second: Work = .{};
+    try testing.expectError(Error.Location, compile(&second, &reference.glslc_second_colour));
 }
 
 test "through Mesa's back end, glslc's discard is facet's, to the word" {
@@ -16747,7 +17886,7 @@ test "a variable of the function's own read before anything is stored into it is
     // nothing, which is 0 (nir_lower_undef_to_zero).
     var work: Work = .{};
     _ = try throughMesa(&work, &comptime patched(&reference.glslc_cutout_unoptimized, .store, 0, 0, 32));
-    const colour = work.steps[work.stored];
+    const colour = work.steps[work.stored[0]];
     try testing.expectEqual(Tag.construct, colour.tag);
     for (colour.from[0..4]) |each| {
         try testing.expectEqual(Tag.constant, work.steps[each].tag);
@@ -16978,11 +18117,13 @@ test "an outer arm that jumps to the inner merge block, where its own merge is d
     try testing.expectError(Error.Branches, throughMesa(&work, &comptime patched(&reference.glslc_nested, .branch, 3, 0, 36)));
 }
 
-/// Which steps are live: the colour's, each discard, and what a live
+/// Which steps are live: each colour's, each discard, and what a live
 /// step reads.
 fn liveMask(work: *const Work) [most_steps]bool {
     var reached: [most_steps]bool = @splat(false);
-    if (work.stored != none) reached[work.stored] = true;
+    for (work.stored) |stored| if (stored != none) {
+        reached[stored] = true;
+    };
     var at = work.step_count;
     while (at > 0) {
         at -= 1;
@@ -17523,14 +18664,16 @@ test "an integer operation of constants is folded as NIR's 32-bit arithmetic is:
     try testing.expectEqual(Tag.integer, work.steps[try integerOf(&work, .iadd, input, try of.word(&work, 1))].tag);
 }
 
-test "a 32-bit integer is computed, compared and converted, but no varying and no colour is one, and a division of it fits the tables" {
+test "a 32-bit integer is computed, compared and converted, but no interpolated varying is one, and a division of it fits the tables" {
     // The colour in made a vector of integers, the push constants' ivec4:
     // a varying of them would want flat interpolation, which is not
-    // ported, and is refused by its type. The colour out the same: it
-    // would want an integer format of the tile buffer.
+    // ported, and is refused by its type. The colour out the same was
+    // refused until 1.229, wanting an integer format of the tile buffer;
+    // a target of whole numbers takes its words since.
     var work: Work = .{};
     try testing.expectError(Error.Type, throughMesa(&work, &comptime patched(&reference.glslc_integers, .type_pointer, 0, 2, 7)));
-    try testing.expectError(Error.Type, throughMesa(&work, &comptime patched(&reference.glslc_integers, .type_pointer, 5, 2, 7)));
+    var out: Work = .{};
+    _ = try throughMesa(&out, &comptime patched(&reference.glslc_integers, .type_pointer, 5, 2, 7));
     // Its first OpIMul, the push constants' s.y times s.z, made OpSDiv:
     // nir_lower_idiv's lowering of it on top of the program's other
     // steps, more than the tables of 128 held (since 1.187) and fewer
@@ -17907,7 +19050,7 @@ test "Asin, Acos, Atan and Atan2 are nir_asin's, nir_acos's, nir_atan's and nir_
         const s = [2]f32{ std.math.asin(c[0]) * 0.3183099 + 0.5, std.math.asin(c[1]) * 0.3183099 + 0.5 };
         const o = [2]f32{ std.math.acos(c[1]) * 0.3183099, std.math.acos(c[2]) * 0.3183099 };
         const expected = [4]f32{ s[0] * 0.5 + o[1] * 0.5, s[1] * 0.5 + o[0] * 0.5, std.math.atan(c[2] * 4.0) * 0.3183099 + 0.5, std.math.atan2(c[3], c[0]) * 0.1591549 + 0.5 };
-        const found = evaluatedOf(&work, work.stored, color, 0);
+        const found = evaluatedOf(&work, work.stored[0], color, 0);
         for (expected, found) |want, got| try testing.expectApproxEqAbs(want, got, 1e-4);
     }
 }
@@ -17931,7 +19074,7 @@ test "Sinh, Cosh, Tanh, Asinh, Acosh and Atanh are vtn_glsl450.c's of fexp, flog
         const b = std.math.acosh(color[0] + 1.0) * 0.7;
         const d = std.math.atanh(c[1] * 0.9) * 0.3 + 0.5;
         const expected = [4]f32{ s * 0.5 + h * 0.5, t, a * 0.5 + b * 0.5, d };
-        const found = evaluatedOf(&work, work.stored, color, 0);
+        const found = evaluatedOf(&work, work.stored[0], color, 0);
         for (expected, found) |want, got| try testing.expectApproxEqAbs(want, got, 1e-4);
     }
 }
@@ -17968,7 +19111,7 @@ test "Cross, Reflect, FaceForward, Refract and Fma are vtn_glsl450.c's, Refract'
         const t: V3 = if (k < 0) @splat(0) else @as(V3, @splat(eta)) * i - @as(V3, @splat(eta * ndi + @sqrt(k))) * n;
         if (k < 0) whole += 1;
         const expected = [4]f32{ x[0] * 0.5 + 0.5, r[1] * 0.25 + f[2] * 0.25 + 0.5, t[0] * 0.375 + 0.5, t[2] * 0.25 + x[2] * 0.25 + 0.5 };
-        const found = evaluatedOf(&work, work.stored, color, 0);
+        const found = evaluatedOf(&work, work.stored[0], color, 0);
         for (expected, found) |want, got| try testing.expectApproxEqAbs(want, got, 1e-5);
     }
     // Both of FaceForward's ways and both of Refract's are worked out.
@@ -18037,7 +19180,7 @@ test "FindILsb, FindSMsb and FindUMsb are 31 - uclz of x & -x, of x ^ (x >> 31) 
     try testing.expectEqual(@as(usize, 8), countOf(code, "clz"));
     for (find_colors) |color| {
         const expected = bitFindsOf(color);
-        const found = evaluatedOf(&work, work.stored, color, 0);
+        const found = evaluatedOf(&work, work.stored[0], color, 0);
         try testing.expectEqualSlices(f32, &expected, &found);
     }
 }
@@ -18110,7 +19253,7 @@ test "ModfStruct, FrexpStruct and Ldexp are vtn_glsl450.c's, nir_lower_frexp's a
     try testing.expectEqual(@as(usize, 4), of_one);
     for (modf_colors) |color| {
         const expected = modfFrexpOf(color);
-        const found = evaluatedOf(&work, work.stored, color, 0);
+        const found = evaluatedOf(&work, work.stored[0], color, 0);
         for (expected, found) |want, got| try testing.expectApproxEqAbs(want, got, 1e-6);
     }
 }
@@ -18248,7 +19391,7 @@ test "the packings of snorms and unorms are nir_opt_algebraic's and nir_lower_al
         try testing.expectEqual(each.fround, countOf(code, "ftouz"));
         for (packing_colors) |color| {
             const expected = each.of(color);
-            const found = evaluatedOf(&work, work.stored, color, 0);
+            const found = evaluatedOf(&work, work.stored[0], color, 0);
             for (expected, found) |want, got| try testing.expectApproxEqAbs(want, got, 1e-6);
         }
     }
@@ -18302,7 +19445,7 @@ test "PackHalf2x16 is a VFPACK of its two floats and UnpackHalf2x16 an FMOV of e
     try testing.expectEqual(@as(usize, 1), countOf(code, "shr"));
     for (packing_colors) |color| {
         const expected = halfPackingOf(color);
-        const found = evaluatedOf(&work, work.stored, color, 0);
+        const found = evaluatedOf(&work, work.stored[0], color, 0);
         for (expected, found) |want, got| try testing.expectApproxEqAbs(want, got, 1e-6);
     }
 }
@@ -18423,7 +19566,7 @@ test "Determinant and MatrixInverse of a mat2 and a mat3 are build_det's and mat
     try testing.expectEqual(@as(usize, 2), countOf(code, "recip "));
     for (packing_colors) |color| {
         const expected = matrixInverseOf(color);
-        const found = evaluatedOf(&work, work.stored, color, 0);
+        const found = evaluatedOf(&work, work.stored[0], color, 0);
         for (expected, found) |want, got| try testing.expectApproxEqAbs(want, got, 1e-5);
     }
 }
@@ -18434,7 +19577,7 @@ test "Determinant of a mat4 is build_det's cofactors of column 0, each a mat3's,
     try testing.expectEqual(@as(usize, 0), countOf(code, "recip "));
     for (packing_colors) |color| {
         const expected = determinant4Of(color);
-        const found = evaluatedOf(&work, work.stored, color, 0);
+        const found = evaluatedOf(&work, work.stored[0], color, 0);
         for (expected, found) |want, got| try testing.expectApproxEqAbs(want, got, 1e-5);
     }
 }
@@ -18541,12 +19684,12 @@ test "OpBitCount, OpBitReverse, OpBitFieldInsert, OpBitFieldSExtract and OpBitFi
     for (steps) |x| for (steps) |y| for (steps) |z| {
         const color = [4]f32{ x, y, z, 1.0 };
         const expected = bitsOf(color);
-        const found = evaluatedOf(&work, work.stored, color, 0);
+        const found = evaluatedOf(&work, work.stored[0], color, 0);
         for (expected, found) |want, got| try testing.expectApproxEqAbs(want, got, 1e-6);
     };
     for (packing_colors) |color| {
         const expected = bitsOf(color);
-        const found = evaluatedOf(&work, work.stored, color, 0);
+        const found = evaluatedOf(&work, work.stored[0], color, 0);
         for (expected, found) |want, got| try testing.expectApproxEqAbs(want, got, 1e-6);
     }
 }
@@ -18671,12 +19814,12 @@ test "packings and unpackings of constants fold to GLSL's words and floats: roun
     for (cases) |case| {
         var work: Work = .{};
         const packing = @intFromEnum(case.which) <= @intFromEnum(spirv.Glsl.pack_unorm_2x16);
-        work.stored = if (packing)
+        work.stored[0] = if (packing)
             try packOf(&work, case.which, try floatsConstant(&work, case.floats))
         else
             try unpackOf(&work, case.which, try integerSplat(&work, .f32x1, @bitCast(case.word)));
         try algebraic(&work);
-        const made = work.steps[work.stored];
+        const made = work.steps[work.stored[0]];
         try testing.expectEqual(Tag.constant, made.tag);
         if (packing) {
             try testing.expectEqual(packedOf(case.floats, if (case.which == .pack_unorm_4x8 or case.which == .pack_snorm_4x8) 8 else 16, case.which == .pack_snorm_4x8 or case.which == .pack_snorm_2x16), case.word);
@@ -19721,9 +20864,9 @@ test "nir_opt_algebraic's rules of an address's arithmetic, and of masks and shi
     };
     for (cases) |case| {
         var work: Work = .{};
-        work.stored = try case.build(&work);
+        work.stored[0] = try case.build(&work);
         try algebraic(&work);
-        var shape = shapeOf(&work, work.stored);
+        var shape = shapeOf(&work, work.stored[0]);
         try testing.expectEqualStrings(case.shape, shape.text());
     }
 }
@@ -20285,9 +21428,9 @@ test "a struct or an array made by OpCompositeConstruct is read by OpCompositeEx
     var work: Work = .{};
     _ = try throughMesa(&work, &reference.glslc_aggregate_values);
     try testing.expectEqual(@as(u32, 3), work.local_count - work.output_local_count);
-    const out = work.steps[work.stored];
+    const out = work.steps[work.stored[0]];
     for (0..3) |k| {
-        const float = partOf(&work, work.stored, @intCast(k));
+        const float = partOf(&work, work.stored[0], @intCast(k));
         try testing.expectEqual(Tag.input, work.steps[float.step].tag);
         try testing.expectEqual(@as(u8, 3), float.part);
     }
@@ -20541,7 +21684,7 @@ test "an array in scratch stored into at an index the body computes, and an elem
     work = .{};
     _ = try throughMesa(&work, &reference.glslc_scratch_reread);
     try testing.expectEqual(@as(usize, 3), liveOf(&work, .scratch));
-    const before = partOf(&work, work.stored, 0);
+    const before = partOf(&work, work.stored[0], 0);
     try testing.expectEqual(Tag.constant, work.steps[before.step].tag);
     try testing.expectEqual(@as(f32, 0.25), work.pool[work.steps[before.step].at + before.part]);
     var stored: ?usize = null;
@@ -20582,14 +21725,14 @@ test "nir_opt_copy_prop_vars takes a load of a float in scratch whose value it h
     // p the initializer's a[1], and q color.y as a[i] was stored; r and
     // a[3] loads, the store at an index the body computes having taken
     // the copies of a[2] and a[3], which it may be of.
-    const p = partOf(&work, work.stored, 0);
+    const p = partOf(&work, work.stored[0], 0);
     try testing.expectEqual(Tag.constant, work.steps[p.step].tag);
     try testing.expectEqual(@as(f32, 0.375), work.pool[work.steps[p.step].at + p.part]);
-    const q = partOf(&work, work.stored, 1);
+    const q = partOf(&work, work.stored[0], 1);
     try testing.expectEqual(Tag.input, work.steps[q.step].tag);
     try testing.expectEqual(@as(u8, 1), q.part);
     for ([_]u8{ 2, 3 }, [_]u32{ 8, 12 }) |part, bytes| {
-        const loaded = partOf(&work, work.stored, part);
+        const loaded = partOf(&work, work.stored[0], part);
         try testing.expectEqual(Tag.scratch, work.steps[loaded.step].tag);
         try testing.expectEqual(bytes * 16, work.steps[loaded.step].at);
     }
@@ -20641,7 +21784,7 @@ test "a load of a float in scratch at an index the body computes reads every sto
     try testing.expectEqualSlices(u32, &.{ 0, 4, 8, 12, 4 }, offsets[0..count]);
     try testing.expectEqual(@as(usize, 1), stepsOf(&work, .scratch_indirect));
     try testing.expectEqual(@as(usize, 0), stepsOf(&work, .scratch));
-    const third = partOf(&work, work.stored, 2);
+    const third = partOf(&work, work.stored[0], 2);
     try testing.expectEqual(Tag.constant, work.steps[third.step].tag);
     try testing.expectEqual(@as(f32, 0.625), work.pool[work.steps[third.step].at + third.part]);
 }
@@ -20671,7 +21814,7 @@ test "an index computed twice is one value to nir_opt_copy_prop_vars once nir_op
     try testing.expectEqual(@as(u32, 0), code.spill_size);
     try testing.expectEqual(@as(usize, 0), stepsOf(&work, .scratch_store));
     try testing.expectEqual(@as(usize, 0), stepsOf(&work, .scratch_indirect));
-    const first = partOf(&work, work.stored, 0);
+    const first = partOf(&work, work.stored[0], 0);
     try testing.expectEqual(Tag.input, work.steps[first.step].tag);
     try testing.expectEqual(@as(u8, 1), first.part);
     try testing.expectEqual(@as(usize, 0), streamWordsOf(code, .spill_offset));
@@ -20696,7 +21839,7 @@ test "an array of structs in scratch: members two floats apart, and a kept selec
     try testing.expectEqualSlices(u32, &.{ 0, 4, 8, 12, 16, 20, 12, 0, 0 }, offsets[0..count]);
     try testing.expectEqual(@as(usize, 2), stepsOf(&work, .scratch_indirect));
     try testing.expectEqual(@as(usize, 0), stepsOf(&work, .scratch));
-    const third = partOf(&work, work.stored, 2);
+    const third = partOf(&work, work.stored[0], 2);
     try testing.expectEqual(Tag.constant, work.steps[third.step].tag);
     try testing.expectEqual(@as(f32, 0.625), work.pool[work.steps[third.step].at + third.part]);
 }
@@ -20709,7 +21852,7 @@ test "FacetBoth's scratch case: eight floats in scratch, one stored at a compute
     try testing.expectEqual(@as(usize, 8 + 1), stepsOf(&work, .scratch_store));
     try testing.expectEqual(@as(usize, 2), stepsOf(&work, .scratch_indirect));
     try testing.expectEqual(@as(usize, 1), stepsOf(&work, .scratch));
-    const second = partOf(&work, work.stored, 1);
+    const second = partOf(&work, work.stored[0], 1);
     try testing.expectEqual(Tag.input, work.steps[second.step].tag);
     try testing.expectEqual(@as(u8, 2), second.part);
 }
@@ -20787,15 +21930,15 @@ test "a load at an index the body computes into an array of two of the function'
     try testing.expectEqual(@as(usize, 0), stepsOf(&work, .select));
     try testing.expectEqual(@as(usize, 1), stepsOf(&work, .compare));
     try testing.expectEqual(@as(usize, 2), integerOpsOf(&work, .b2f32));
-    const x = work.steps[partOf(&work, work.stored, 0).step];
+    const x = work.steps[partOf(&work, work.stored[0], 0).step];
     try testing.expect(isIntegerOp(x, .b2f32));
     try expectTreeCondition(&work, x.a);
-    try testing.expectEqual(@as(?u32, 0), floatBits(&work, partOf(&work, work.stored, 1)));
-    const z = work.steps[partOf(&work, work.stored, 2).step];
+    try testing.expectEqual(@as(?u32, 0), floatBits(&work, partOf(&work, work.stored[0], 1)));
+    const z = work.steps[partOf(&work, work.stored[0], 2).step];
     try testing.expect(isIntegerOp(z, .b2f32));
     try testing.expectEqual(Tag.logic, work.steps[z.a].tag);
     try testing.expectEqual(x.a, work.steps[z.a].a);
-    try testing.expectEqual(@as(?u32, @bitCast(@as(f32, 1.0))), floatBits(&work, partOf(&work, work.stored, 3)));
+    try testing.expectEqual(@as(?u32, @bitCast(@as(f32, 1.0))), floatBits(&work, partOf(&work, work.stored[0], 3)));
     // Each b2f the AND of the bool and 1.0, and the inot a NOT
     // (nir_to_vir.c:1521-1523, :1683-1694).
     try testing.expectEqual(@as(usize, 2), countOf(code, "and "));
@@ -20831,10 +21974,10 @@ test "a store at an index the body computes into an array of two of the function
     try testing.expect(by_j != by_i);
     try testing.expectEqual(selects[1], program[selects[2]].b);
     try testing.expectEqual(selects[0], program[selects[2]].from[0]);
-    try testing.expectEqual(selects[1], partOf(&work, work.stored, 0).step);
-    try testing.expectEqual(selects[0], partOf(&work, work.stored, 1).step);
-    try testing.expectEqual(selects[2], partOf(&work, work.stored, 2).step);
-    try testing.expect(isInputPart(&work, work.stored, 3, 3));
+    try testing.expectEqual(selects[1], partOf(&work, work.stored[0], 0).step);
+    try testing.expectEqual(selects[0], partOf(&work, work.stored[0], 1).step);
+    try testing.expectEqual(selects[2], partOf(&work, work.stored[0], 2).step);
+    try testing.expect(isInputPart(&work, work.stored[0], 3, 3));
 }
 
 test "a member, a struct and a matrix's column through an if-else tree, and a float of a vector stored through one is the vector loaded, the float inserted and the vector stored" {
@@ -20855,7 +21998,7 @@ test "a member, a struct and a matrix's column through an if-else tree, and a fl
         try testing.expect(isInputFloat(&work, program[at].b, pair[0]));
         try testing.expect(isInputFloat(&work, program[at].from[0], pair[1]));
     }
-    for (selects[0..4], 0..) |at, k| try testing.expectEqual(at, partOf(&work, work.stored, @intCast(k)).step);
+    for (selects[0..4], 0..) |at, k| try testing.expectEqual(at, partOf(&work, work.stored[0], @intCast(k)).step);
     // two[i].y = w * 0.5, two vec2s: the tree of the vector's load, its
     // x then nir_opt_algebraic's; the store's merge two[1] first, then
     // two[0] (vtn_local_store, vtn_variables.c:644-667).
@@ -20867,10 +22010,10 @@ test "a member, a struct and a matrix's column through an if-else tree, and a fl
     try testing.expect(isInputFloat(&work, work.program()[selects[0]].b, 3));
     try testing.expectEqual(half, work.program()[selects[1]].b);
     try testing.expect(isInputFloat(&work, work.program()[selects[1]].from[0], 1));
-    try testing.expect(isInputPart(&work, work.stored, 0, 0));
-    try testing.expectEqual(selects[1], partOf(&work, work.stored, 1).step);
-    try testing.expect(isInputPart(&work, work.stored, 2, 2));
-    try testing.expectEqual(selects[0], partOf(&work, work.stored, 3).step);
+    try testing.expect(isInputPart(&work, work.stored[0], 0, 0));
+    try testing.expectEqual(selects[1], partOf(&work, work.stored[0], 1).step);
+    try testing.expect(isInputPart(&work, work.stored[0], 2, 2));
+    try testing.expectEqual(selects[0], partOf(&work, work.stored[0], 3).step);
 }
 
 test "an index the body computes into one element is that element, a float of a vector loaded through a tree its bcsel, and an element nothing was stored into takes what the other arm's was" {
@@ -20889,10 +22032,10 @@ test "an index the body computes into one element is that element, a float of a 
     try expectTreeCondition(&work, chosen.a);
     try testing.expect(isInputFloat(&work, chosen.b, 1));
     try testing.expect(isInputFloat(&work, chosen.from[0], 3));
-    try testing.expect(isInputPart(&work, work.stored, 0, 2));
-    try testing.expectEqual(selects[0], partOf(&work, work.stored, 1).step);
-    try testing.expect(isInputPart(&work, work.stored, 2, 1));
-    try testing.expect(isInputPart(&work, work.stored, 3, 0));
+    try testing.expect(isInputPart(&work, work.stored[0], 0, 2));
+    try testing.expectEqual(selects[0], partOf(&work, work.stored[0], 1).step);
+    try testing.expect(isInputPart(&work, work.stored[0], 2, 1));
+    try testing.expect(isInputPart(&work, work.stored[0], 3, 0));
 }
 
 test "the phis of an array an if-else tree reaches are put down at a merge before the others', and a tree in an arm or one into scratch is refused" {
@@ -20910,7 +22053,7 @@ test "the phis of an array an if-else tree reaches are put down at a merge befor
     try testing.expect(isInputFloat(&work, program[selects[1]].from[0], 0));
     try expectTreeCondition(&work, program[selects[2]].a);
     try testing.expectEqual(selects[0], program[selects[2]].b);
-    try testing.expectEqual(selects[1], partOf(&work, work.stored, 1).step);
+    try testing.expectEqual(selects[1], partOf(&work, work.stored[0], 1).step);
     // A load through a tree in an arm, which Mesa flattens with the
     // tree's only in the loop of passes after it.
     work = .{};
@@ -20929,16 +22072,16 @@ test "a bcsel of 1.0 and 0.0 is the b2f of its bool, of 0.0 and 1.0 the b2f of t
     try testing.expectEqual(@as(usize, 0), stepsOf(&work, .select));
     try testing.expectEqual(@as(usize, 2), integerOpsOf(&work, .b2f32));
     try testing.expectEqual(@as(usize, 2), stepsOf(&work, .negate));
-    const straight = partOf(&work, work.stored, 0).step;
-    const turned = partOf(&work, work.stored, 1).step;
+    const straight = partOf(&work, work.stored[0], 0).step;
+    const turned = partOf(&work, work.stored[0], 1).step;
     try testing.expect(isIntegerOp(work.steps[straight], .b2f32));
     try testing.expectEqual(Tag.compare, work.steps[work.steps[straight].a].tag);
     try testing.expect(isIntegerOp(work.steps[turned], .b2f32));
     try testing.expectEqual(Tag.logic, work.steps[work.steps[turned].a].tag);
-    const minus = work.steps[partOf(&work, work.stored, 2).step];
+    const minus = work.steps[partOf(&work, work.stored[0], 2).step];
     try testing.expectEqual(Tag.negate, minus.tag);
     try testing.expectEqual(straight, minus.a);
-    const minus_turned = work.steps[partOf(&work, work.stored, 3).step];
+    const minus_turned = work.steps[partOf(&work, work.stored[0], 3).step];
     try testing.expectEqual(Tag.negate, minus_turned.tag);
     try testing.expectEqual(turned, minus_turned.a);
 }
@@ -21040,7 +22183,7 @@ test "an integer varying is read flat, its bits the C coefficient, and its float
     for (0..256) |v| {
         const bits: f32 = @bitCast(@as(u32, @intCast(v)));
         const other: f32 = @bitCast(@as(u32, @intCast(255 - v)));
-        const made = evaluatedOf(&work, work.stored, .{ bits, other, bits, other }, 0);
+        const made = evaluatedOf(&work, work.stored[0], .{ bits, other, bits, other }, 0);
         const value = @as(f32, @floatFromInt(v)) * scale;
         const rest = @as(f32, @floatFromInt(255 - v)) * scale;
         try testing.expectEqual([4]f32{ value, rest, value, rest }, made);
@@ -21122,7 +22265,7 @@ test "a module of more than 256 ids, 32 constants and 256 words is read, its loo
         for (0..3) |_| {
             for (&a) |*each| each.* = each.* * 0.5 + 0.25;
         }
-        try testing.expectEqual(a, evaluatedOf(&work, work.stored, color, 0));
+        try testing.expectEqual(a, evaluatedOf(&work, work.stored[0], color, 0));
     }
 }
 
@@ -22086,14 +23229,14 @@ test "through Mesa's back end, a fragment program's colour stored in both arms w
     try testing.expect(!hasBranch(&work));
     try testing.expectEqual(@as(usize, 4), stepsOf(&work, .select));
     for (0..4) |k| {
-        const chosen = work.steps[partOf(&work, work.stored, @intCast(k)).step];
+        const chosen = work.steps[partOf(&work, work.stored[0], @intCast(k)).step];
         try testing.expectEqual(Tag.select, chosen.tag);
         // The false way's v * 0.5.
         try testing.expectEqual(Tag.mul, work.steps[partOf(&work, chosen.from[0], 0).step].tag);
     }
     // The true way's x and y are v's y and z.
-    try testing.expect(isInputFloat(&work, work.steps[partOf(&work, work.stored, 0).step].b, 1));
-    try testing.expect(isInputFloat(&work, work.steps[partOf(&work, work.stored, 1).step].b, 2));
+    try testing.expect(isInputFloat(&work, work.steps[partOf(&work, work.stored[0], 0).step].b, 1));
+    try testing.expect(isInputFloat(&work, work.steps[partOf(&work, work.stored[0], 1).step].b, 2));
     try testing.expectEqual(@as(usize, 19), code.words.len);
 }
 
@@ -22103,7 +23246,7 @@ test "through Mesa's back end, a fragment program's colour stored, then again in
     try testing.expect(hasBranch(&work));
     try testing.expectEqual(@as(usize, 4), stepsOf(&work, .phi));
     try testing.expectEqual(@as(usize, 0), stepsOf(&work, .select));
-    for (0..4) |k| try testing.expectEqual(Tag.phi, work.steps[partOf(&work, work.stored, @intCast(k)).step].tag);
+    for (0..4) |k| try testing.expectEqual(Tag.phi, work.steps[partOf(&work, work.stored[0], @intCast(k)).step].tag);
     try testing.expectEqual(@as(usize, 1), countOf(code, "bu.allna"));
     try testing.expectEqual(@as(usize, 2), countOf(code, "ldtmu"));
     try testing.expectEqual(@as(usize, 35), code.words.len);
@@ -22206,7 +23349,7 @@ test "through Mesa's back end, FacetBoth's shipped outputs: the colour stored in
     try testing.expect(!hasBranch(&work));
     // r, g, b and the alpha before its fma: each a bcsel (since 1.206).
     try testing.expectEqual(@as(usize, 4), stepsOf(&work, .select));
-    try testing.expectEqual(Tag.select, work.steps[partOf(&work, work.stored, 2).step].tag);
+    try testing.expectEqual(Tag.select, work.steps[partOf(&work, work.stored[0], 2).step].tag);
     try testing.expectEqual(@as(usize, 19), code.words.len);
 }
 
@@ -22263,4 +23406,752 @@ test "a vertex program's varying declared and never stored takes none of the eig
     var rows: [16]u32 = undefined;
     try testing.expectEqualSlices(u32, &.{ 4, 5, 6, 7, 8, 9, 10, 11, 0, 1, 2, 3 }, outputRows(&work, &rows));
     try testing.expectEqual(@as(usize, 12), countOf(code, "stvpmv"));
+}
+
+test "through Mesa's back end, gl_FragCoord's x and y are FXCD and FYCD, and its z the payload's, which a program that reads it writes as Z" {
+    // emit_fragcoord_input (nir_to_vir.c:1017-1023): FXCD and FYCD on
+    // the add side, Z the payload's rf2 as it comes, whose MOV copy
+    // propagation takes out; and w, the reciprocal of W, dead code here.
+    // A program that reads Z writes it (c->reads_z, :2991-2995, :2099):
+    // the rasterizer's, through TLBU, early Z left on (since 1.214).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_frag_coord);
+    try expectText(code, &.{
+        text("fxcd rf4", "nop", ""),
+        text("fycd rf5", "fmul rf6, rf4, 0x3b800000", ""),
+        text("nop", "nop", "thrsw"),
+        text("nop", "nop", "thrsw"),
+        text("nop", "fmul rf7, rf5, 0x3b800000", ""),
+        text("nop", "mov tlbu, rf5", ""),
+        text("vfpack tlb, rf6, rf7", "nop", ""),
+        text("vfpack tlb, rf2, 0x3f800000", "nop", ""),
+        text("nop", "nop", "thrsw"),
+        text("nop", "nop", ""),
+        text("nop", "nop", ""),
+    });
+    try testing.expectEqual(@as(u32, 0), code.varyings);
+    try testing.expect(code.writes_z);
+    try testing.expect(!code.disable_ez);
+    try testing.expect(!code.center_w);
+}
+
+test "through Mesa's back end, gl_FragCoord's w is the reciprocal of the payload's W, which the shader record is told is read" {
+    // RECIP of rf3, W on 7.1 (nir_to_vir.c:4917, :1023): W read for
+    // something other than a varying, so uses_center_w
+    // (vir_check_payload_w, :5117-5131). No Z is read, and none written
+    // (since 1.214).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_frag_coord_w);
+    try expectText(code, &.{
+        text("recip rf4, rf3", "nop", "thrsw"),
+        text("nop", "nop", "thrsw"),
+        text("nop", "nop", ""),
+        text("vfpack tlb, rf4, rf4", "nop", "thrsw"),
+        text("vfpack tlb, rf4, rf4", "nop", ""),
+        text("nop", "nop", ""),
+    });
+    try testing.expect(code.center_w);
+    try testing.expect(!code.writes_z);
+    try testing.expectEqual(@as(usize, 0), countOf(code, "fxcd"));
+}
+
+test "FragCoord is the one built-in a fragment program reads: FragDepth and VertexIndex on its input are refused" {
+    var work: Work = .{};
+    // FragDepth and VertexIndex where FragCoord was, on the input.
+    try testing.expectError(Error.Refused, compile(&work, &comptime patched(&reference.glslc_frag_coord, .decorate, 1, 2, @intFromEnum(spirv.BuiltIn.frag_depth))));
+    try testing.expectError(Error.Refused, compile(&work, &comptime patched(&reference.glslc_frag_coord, .decorate, 1, 2, @intFromEnum(spirv.BuiltIn.vertex_index))));
+}
+
+test "through Mesa's back end, a uniform buffer read at an index gl_FragCoord gives goes through the TMU: FragCoord differs from lane to lane" {
+    // FragCoord is a fragment program's load_input
+    // (nir_divergence_analysis.c:472-480), so the load_ubo of an index
+    // made of it is divergent and ntq_emit_load_ubo_unifa takes the TMU's
+    // way (nir_to_vir.c:3315-3317; since 1.214).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_frag_coord_ubo);
+    try testing.expectEqual(@as(usize, 0), countOf(code, "ldunifa"));
+    try testing.expectEqual(@as(usize, 4), countOf(code, "ldtmu"));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "fxcd"));
+}
+
+test "through Mesa's back end, a subpassLoad is a fetch where the pixel is: FragCoord's x and y made integers, and the layer, a flat varying read first" {
+    // try_lower_input_load's txf (nir_lower_input_attachments.c:57-156):
+    // the place v3dv makes of FragCoord's x and y, f2i32, and the flat
+    // int of VARYING_SLOT_LAYER (try_lower_intrinsic, v3dv_pipeline.c:
+    // 263-286), plus the read's (0, 0), which nir_opt_algebraic takes
+    // away. T, I and the level of 0 at B, which the scheduler may reorder,
+    // and S last at TMUSF (handle_tex_src, v3d_tex.c:99-150;
+    // can_reorder_tmu_write, qpu_schedule.c:243-246). The layer's ldvary
+    // is the program's one varying, and flat: C's MOV (emit_flat_varying,
+    // nir_to_vir.c:1049-1121). No sampler: P0 alone (since 1.215). The
+    // input attachment is an image variable, which info.num_images counts,
+    // so early_fragment_tests is not promoted and the program writes the
+    // rasterizer's Z through TLBU (nir_to_vir.c:2073-2137; since 1.219).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_subpass);
+    try expectText(code, &.{
+        text("fycd rf5", "nop", "ldvary.rf6; wrtmuc"),
+        text("fxcd rf4", "nop", ""),
+        text("ftoiz rf9, rf5", "mov rf7, rf0", ""),
+        text("ftoiz rf8, rf4", "mov tmub, 0", ""),
+        text("nop", "mov tmut, rf9", "thrsw"),
+        text("nop", "mov tmui, rf7", "thrsw"),
+        text("nop", "mov tmusf, rf8", ""),
+        text("nop", "mov tlbu, rf5", "ldtmu.rf10"),
+        text("nop", "nop", "ldtmu.rf11"),
+        text("nop", "fmul rf12, rf10.l, 0x3f000000", ""),
+        text("nop", "fmul rf13, rf10.h, 0x3f000000", ""),
+        text("vfpack tlb, rf12, rf13", "fmul rf14, rf11.l, 0x3f000000", ""),
+        text("nop", "fmul rf15, rf11.h, 0x3f000000", ""),
+        text("vfpack tlb, rf14, rf15", "nop", "thrsw"),
+        text("nop", "nop", ""),
+        text("nop", "nop", ""),
+    });
+    try testing.expectEqual(@as(u32, 1), code.varyings);
+    try testing.expect(code.reads_layer);
+    try testing.expectEqual(@as(u32, 1), code.flat_shade_flags);
+    try testing.expectEqual(@as(u32, 0), code.noperspective_flags);
+    try expectStream(&.{ .{ .texture = 0 }, wordOf(0xFFFF_FF84) }, code.stream());
+    // Only FragCoord's x and y: no Z read and no W, but Z written, and the
+    // early test off (`uses_images`).
+    try testing.expect(code.writes_z and code.disable_ez);
+    try testing.expect(!code.center_w);
+    try testing.expectEqual(@as(u32, 1), code.sampler_count);
+}
+
+test "through Mesa's back end, the layer a subpassLoad reads comes before the program's own varyings, and is the one of them that is flat" {
+    // VARYING_SLOT_LAYER is 22 and VARYING_SLOT_VAR0 32 (shader_enums.h),
+    // and nir_assign_io_var_locations numbers the inputs in that order
+    // (lower_fs_io, v3dv_pipeline.c:1036): the layer is input 0 and the
+    // vec4 at location 0 inputs 1 to 4, each smooth, read times W
+    // (since 1.215).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_subpass_varying);
+    try testing.expectEqual(@as(u32, 5), code.varyings);
+    try testing.expectEqual(@as(usize, 5), countOf(code, "ldvary"));
+    try testing.expectEqual(@as(u32, 1), code.flat_shade_flags);
+    try testing.expect(code.center_w);
+    // The layer's flat MOV of C is the first instruction after the first
+    // ldvary that reads rf0 alone.
+    try testing.expectEqual(@as(usize, 1), countOf(code, "mov rf7, rf0"));
+    try testing.expectEqual(@as(usize, 4), countOf(code, "fadd"));
+}
+
+test "a vertex program writes 0 to the layer a fragment program's subpassLoad reads, the slot before the varyings it reads" {
+    // v3d_nir_emit_ff_vpm_outputs' 0 for each used output nothing stored
+    // (v3d_nir_lower_io.c:576-585): no gl_Layer is written, so the
+    // fragment program's input 0 is 0 and the colour moves one row on
+    // (since 1.215).
+    var work: Work = .{};
+    var key = VertexKey{};
+    key.reads[0] = 4;
+    key.layer = true;
+    const code = try vertexThroughMesa(&work, &reference.glslc_vertex_as_it_is, key);
+    // The colour at rows 5 to 8 where it was at 4 to 7, the place at 0
+    // and 1, Zs at 2 and 1/Wc at 3, and the layer's 0 at row 4.
+    var rows: u32 = 0;
+    for (work.steps[0..work.step_count]) |each| {
+        if (each.tag != .output) continue;
+        rows |= @as(u32, 1) << @intCast(each.at);
+        try testing.expectEqual(each.at == 4, isZero(&work, each.a));
+    }
+    try testing.expectEqual(@as(u32, 0x1ff), rows);
+    // The colour's rows are the uniforms its loads read, and the 0's row
+    // the one word more.
+    try testing.expectEqualSlices(Word, &.{
+        vpmIndex(0),               vpmIndex(1), vpmIndex(2),               vpmIndex(3),
+        vpmIndex(8),               vpmIndex(9), vpmIndex(4),               vpmIndex(5),
+        vpmIndex(6),               vpmIndex(7), .{ .viewport = .x_scale }, vpmIndex(0),
+        .{ .viewport = .y_scale }, vpmIndex(1), .{ .viewport = .z_scale }, .{ .viewport = .z_offset },
+        vpmIndex(2),               vpmIndex(3), vpmIndex(4),
+    }, code.stream());
+    try testing.expectEqual(@as(usize, 9), countOf(code, "stvpmv"));
+}
+
+test "through Mesa's back end, a subpassLoad of an attachment the subpass draws into reads its render target out of the tile buffer, after the last thread switch (since 1.237)" {
+    // lower_tlb_input_attachment_instr makes the txf a load_tile_image of
+    // the location tlb_input_attachment_location gives input attachment
+    // 0, render target 0 (v3dv_pipeline.c:301-356); lower_tlb_load a
+    // load_tlb_color_brcm of sample 0 (v3d_nir_lower_load_output.c:
+    // 26-98). vir_emit_tlb_color_read reads its four half-floats in two
+    // words, an FMOV of each half, which copy propagation hands the fmul
+    // (nir_to_vir.c:2731-2815). tlb_read_config emits a thread switch
+    // before the first read, which is the last, so the scoreboard is
+    // locked there; and its configuration is 0xffffffff, the default, so
+    // both reads are LDTLB and no uniform configures them (:2682-2727).
+    // The txf's place and layer went with it: no varying, no TMU, no
+    // unit. The input attachment's variable is still counted in
+    // info.num_images (pipeline_lower_nir, v3dv_pipeline.c:1875), so Z is
+    // written through as before.
+    var work: Work = .{};
+    const code = try throughMesaKeyed(&work, &reference.glslc_subpass, .{ .tile_inputs = .{ 0, no_tile, no_tile, no_tile } });
+    try expectText(code, &.{
+        text("nop", "nop", "thrsw"),
+        text("nop", "nop", "thrsw"),
+        text("nop", "nop", ""),
+        text("nop", "nop", "ldtlb.rf4"),
+        text("nop", "fmul rf6, rf4.l, 0x3f000000", ""),
+        text("nop", "fmul rf7, rf4.h, 0x3f000000", ""),
+        text("nop", "nop", "ldtlb.rf5"),
+        text("mov tlbu, rf5", "fmul rf8, rf5.l, 0x3f000000", ""),
+        text("vfpack tlb, rf6, rf7", "fmul rf9, rf5.h, 0x3f000000", ""),
+        text("vfpack tlb, rf8, rf9", "nop", "thrsw"),
+        text("nop", "nop", ""),
+        text("nop", "nop", ""),
+    });
+    try testing.expectEqual(@as(u32, 0), code.varyings);
+    try testing.expect(!code.reads_layer);
+    try testing.expectEqual(@as(u32, 0), code.sampler_count);
+    try testing.expect(!code.lock_scoreboard_on_first_thrsw);
+    try testing.expect(code.writes_z and code.disable_ez);
+    try expectStream(&.{wordOf(0xFFFF_FF84)}, code.stream());
+    // Keyed for none, or for another index, it is the fetch of 1.215.
+    for ([_]TileInputs{ no_tile_inputs, .{ no_tile, 0, no_tile, no_tile } }) |tiles| {
+        const fetched = try throughMesaKeyed(&work, &reference.glslc_subpass, .{ .tile_inputs = tiles });
+        try testing.expect(fetched.reads_layer);
+        try testing.expectEqual(@as(u32, 1), fetched.sampler_count);
+        try testing.expectEqual(@as(usize, 0), countOf(fetched, "ldtlb"));
+    }
+}
+
+test "through Mesa's back end, a read of another render target, or of one of 32-bit floats, is configured by a uniform, and the floats are read one at a time (since 1.237)" {
+    // Render target 1: (7 - 1) << 3 in the configuration, of half-floats
+    // swapped, four of them, a pixel at a time: 0xfffffff7, the stream's
+    // first word, ahead of the Z write's specifier (tlb_read_config,
+    // nir_to_vir.c:2706-2724).
+    var work: Work = .{};
+    const other = try throughMesaKeyed(&work, &reference.glslc_subpass, .{ .tile_inputs = .{ 1, no_tile, no_tile, no_tile }, .cbufs = 0b11 });
+    try expectStream(&.{ wordOf(0xFFFF_FFF7), wordOf(0xFFFF_FF84) }, other.stream());
+    try testing.expectEqual(@as(usize, 1), countOf(other, "ldtlbu"));
+    try testing.expectEqual(@as(usize, 2), countOf(other, "ldtlb"));
+    // f32_color_rb: TLB_TYPE_F32_COLOR and a vector of four, 0xffffff3f,
+    // the read's first; four reads, a float each, no FMOV between them
+    // and the fmul; then the colour written as one of floats is, by its
+    // own specifier, the same word.
+    const wide = try throughMesaKeyed(&work, &reference.glslc_subpass, .{ .tile_inputs = .{ 0, no_tile, no_tile, no_tile }, .f32_color_rb = 1 });
+    try expectStream(&.{ wordOf(0xFFFF_FF3F), wordOf(0xFFFF_FF84), wordOf(0xFFFF_FF3F) }, wide.stream());
+    try testing.expectEqual(@as(usize, 1), countOf(wide, "ldtlbu"));
+    try testing.expectEqual(@as(usize, 4), countOf(wide, "ldtlb"));
+    try testing.expectEqual(@as(usize, 4), countOf(wide, "fmul rf"));
+    try testing.expectEqual(@as(usize, 0), countOf(wide, ".l,"));
+}
+
+/// `glslc_subpass_varying` with its varying's OpLoad made a second
+/// OpImageRead of the input attachment, so that the colour is the
+/// subpassLoad times itself: `%21 = OpImageRead %7 %13 %17`.
+fn readTwice(comptime words: []const u32) [words.len + 1]u32 {
+    const load = [4]u32{ 0x0004_003D, 7, 0x15, 0x14 };
+    const at = std.mem.indexOf(u32, words, &load).?;
+    return words[0..at].* ++ [5]u32{ 0x0005_0062, 7, 0x15, 0x0D, 0x11 } ++ words[at + 4 ..].*;
+}
+
+test "through Mesa's back end, a render target the program reads out of the tile buffer twice is read once (since 1.237)" {
+    // The two subpassLoads are one step: nir_lower_input_attachments
+    // makes each a txf (v3dv_pipeline.c:386) and v3d_optimize_nir's
+    // nir_opt_cse one of the two (:413, nir_to_vir.c:2265), before
+    // lower_tlb_input_attachments makes it a load (`computes`). So
+    // vir_emit_tlb_color_read's c->color_reads, which keeps a render
+    // target's colour for every later load of it (nir_to_vir.c:2745-
+    // 2812), is not reached from a module here: taken out, it fails no
+    // test.
+    var work: Work = .{};
+    const code = try throughMesaKeyed(&work, &comptime readTwice(&reference.glslc_subpass_varying), .{ .tile_inputs = .{ 0, no_tile, no_tile, no_tile } });
+    try testing.expectEqual(@as(usize, 2), countOf(code, "ldtlb"));
+    try testing.expectEqual(@as(usize, 4), countOf(code, "fmul"));
+    try expectStream(&.{wordOf(0xFFFF_FF84)}, code.stream());
+}
+
+test "through Mesa's back end, a subpassLoad read out of the tile buffer beside a varying: the varyings are the program's own, and the reads after the last thread switch (since 1.237)" {
+    var work: Work = .{};
+    const code = try throughMesaKeyed(&work, &reference.glslc_subpass_varying, .{ .tile_inputs = .{ 0, no_tile, no_tile, no_tile } });
+    try testing.expectEqual(@as(u32, 4), code.varyings);
+    try testing.expect(!code.reads_layer);
+    try testing.expectEqual(@as(u32, 0), code.flat_shade_flags);
+    try testing.expectEqual(@as(usize, 4), countOf(code, "ldvary"));
+    try testing.expectEqual(@as(usize, 2), countOf(code, "ldtlb"));
+    try testing.expect(!code.lock_scoreboard_on_first_thrsw);
+    // Each read is after the second of the pair of switches that is the
+    // last, and the last but the end's.
+    var switches: u32 = 0;
+    for (code.words) |word| {
+        var buffer: [disasm.most_text]u8 = undefined;
+        const line = disasm.disasm(word, &buffer).?;
+        if (std.mem.indexOf(u8, line, "thrsw") != null) switches += 1;
+        if (std.mem.indexOf(u8, line, "ldtlb") != null) try testing.expectEqual(@as(u32, 2), switches);
+    }
+    try testing.expectEqual(@as(u32, 3), switches);
+}
+
+/// How many times `name` is among a program's instructions as the
+/// disassembler prints them, both sides and the signals.
+fn timesOf(code: Code, name: []const u8) usize {
+    var count: usize = 0;
+    for (code.words) |word| {
+        var buffer: [disasm.most_text]u8 = undefined;
+        count += std.mem.count(u8, disasm.disasm(word, &buffer).?, name);
+    }
+    return count;
+}
+
+test "through Mesa's back end, a subpassLoad of an input attachment of four samples is a txf_ms, which v3d_nir_lower_txf_ms makes the texel of the pixel's quad, its level of 0 at TMUB (since 1.238)" {
+    // nir_lower_input_attachments makes the SubpassDataMS read a txf_ms
+    // of the read's Sample, at the pixel's place and layer, of level 0
+    // (nir_lower_input_attachments.c:133-147). v3d_nir_lower_txf_ms
+    // fetches the texel of the pixel's quad: x and y doubled, the
+    // sample's low bit added to x and its next to y, which of sample 2
+    // nir_opt_constant_folding leaves 0 and 1 (v3d_nir_lower_txf_ms.c:
+    // 42-57). Its coordinate goes last, after the level: TMUB is
+    // written, as a fetch of a sampler2DMS's sample has not.
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_subpass_ms);
+    var fetched: u32 = 0;
+    for (work.steps[0..work.step_count]) |each| if (each.tag == .sample) {
+        try testing.expectEqual(Lookup.fetch_sample_level, each.lookup);
+        fetched += 1;
+    };
+    try testing.expectEqual(@as(u32, 1), fetched);
+    try testing.expect(Lookup.fetch_sample_level.leveled() and Lookup.fetch_sample_level.fetches() and !Lookup.fetch_sample_level.derived());
+    try testing.expect(code.reads_layer);
+    try testing.expectEqual(@as(u32, 1), code.sampler_count);
+    try expectText(code, &.{
+        text("fycd rf5", "nop", "ldvary.rf6; wrtmuc"),
+        text("ftoiz rf9, rf5", "nop", ""),
+        text("fxcd rf4", "mov rf7, rf0", ""),
+        text("shl rf11, rf9, 1", "mov tmui, rf7", ""),
+        text("ftoiz rf8, rf4", "add rf12, 1, rf11", ""),
+        text("nop", "mov tmub, 0", ""),
+        text("shl rf10, rf8, 1", "mov tmut, rf12", ""),
+        text("nop", "mov tmusf, rf10", "thrsw"),
+        text("nop", "nop", "thrsw"),
+        text("nop", "nop", ""),
+        text("nop", "mov tlbu, rf5", "ldtmu.rf13"),
+        text("nop", "nop", "ldtmu.rf14"),
+        text("nop", "fmul rf15, rf13.l, 0x3f000000", ""),
+        text("nop", "fmul rf16, rf13.h, 0x3f000000", ""),
+        text("vfpack tlb, rf15, rf16", "fmul rf17, rf14.l, 0x3f000000", ""),
+        text("nop", "fmul rf18, rf14.h, 0x3f000000", ""),
+        text("vfpack tlb, rf17, rf18", "nop", "thrsw"),
+        text("nop", "nop", ""),
+        text("nop", "nop", ""),
+    });
+    try expectStream(&.{ .{ .texture = 0 }, wordOf(0xFFFF_FF84) }, code.stream());
+
+    // A sample worked out at run time, the two lowest bits of the pixel's
+    // x: its low bit and its next found by and and shr, which the
+    // constant folded away (v3d_nir_lower_txf_ms.c:46-51).
+    work = .{};
+    const picked = try throughMesa(&work, &reference.glslc_subpass_ms_picked);
+    try testing.expectEqual(@as(usize, 1), countOf(picked, "and rf9, rf8, 3"));
+    try testing.expectEqual(@as(usize, 1), countOf(picked, "shr "));
+    try testing.expectEqual(@as(usize, 2), countOf(picked, "shl "));
+    try testing.expectEqual(@as(usize, 3), countOf(picked, "and "));
+    for ([_][]const u8{ "mov tmub, 0", "mov tmut", "mov tmui", "mov tmusf" }) |write| try testing.expectEqual(@as(usize, 1), countOf(picked, write));
+}
+
+test "through Mesa's back end, a subpassLoad of four samples read out of the tile buffer reads each sample, a sample at a time, and keeps the one asked for (since 1.238)" {
+    // A pipeline of four samples, Mesa's msaa: tlb_read_config's
+    // TLB_SAMPLE_MODE_PER_SAMPLE, so render target 0's four half-floats
+    // are configured by 0xfffffffb and no longer the default, and
+    // vir_emit_tlb_color_read reads each of the four samples, two words
+    // each (nir_to_vir.c:2705-2706, :2757-2805). Sample 2 is what the
+    // bcsels lower_tlb_load makes come to once their ieqs are folded
+    // (v3d_nir_lower_load_output.c:52-80): its two words, the fifth and
+    // the sixth read, are the ones halved.
+    var work: Work = .{};
+    const code = try throughMesaKeyed(&work, &reference.glslc_subpass_ms, .{ .tile_inputs = .{ 0, no_tile, no_tile, no_tile }, .msaa = true });
+    try testing.expect(!code.reads_layer);
+    try testing.expectEqual(@as(u32, 0), code.sampler_count);
+    try testing.expectEqual(@as(u32, 0), code.varyings);
+    try testing.expect(!code.lock_scoreboard_on_first_thrsw);
+    try expectText(code, &.{
+        text("nop", "nop", "thrsw"),
+        text("nop", "nop", "thrsw"),
+        text("nop", "nop", ""),
+        text("nop", "nop", "ldtlbu.rf4"),
+        text("nop", "nop", "ldtlb.rf5"),
+        text("nop", "nop", "ldtlb.rf6"),
+        text("nop", "nop", "ldtlb.rf7"),
+        text("nop", "nop", "ldtlb.rf8"),
+        text("nop", "fmul rf12, rf8.l, 0x3f000000", ""),
+        text("nop", "fmul rf13, rf8.h, 0x3f000000", ""),
+        text("nop", "nop", "ldtlb.rf9"),
+        text("nop", "fmul rf14, rf9.l, 0x3f000000", ""),
+        text("nop", "fmul rf15, rf9.h, 0x3f000000", ""),
+        text("nop", "nop", "ldtlb.rf10"),
+        text("nop", "nop", "ldtlb.rf11"),
+        text("nop", "mov tlbu, rf5", "thrsw"),
+        text("vfpack tlb, rf12, rf13", "nop", ""),
+        text("vfpack tlb, rf14, rf15", "nop", ""),
+    });
+    try expectStream(&.{ wordOf(0xFFFF_FFFB), wordOf(0xFFFF_FF84) }, code.stream());
+
+    // A sample past the fourth: no ieq holds, and the first sample's
+    // load is what is left (:71-79). The program reads all four the
+    // same, the first two words halved.
+    work = .{};
+    const past = try throughMesaKeyed(&work, &comptime patched(&reference.glslc_subpass_ms, .constant, 0, 2, 5), .{ .tile_inputs = .{ 0, no_tile, no_tile, no_tile }, .msaa = true });
+    try testing.expectEqual(@as(usize, 8), timesOf(past, "ldtlb"));
+    try testing.expectEqual(@as(usize, 1), countOf(past, "fmul rf12, rf4.l, 0x3f000000"));
+    try testing.expectEqual(@as(usize, 1), countOf(past, "fmul rf14, rf5.l, 0x3f000000"));
+
+    // Of one sample a pixel, the load is of sample 0 whatever the read
+    // asks for (:52-62): the default configuration and two words, as a
+    // subpassLoad of one sample is read (since 1.237).
+    work = .{};
+    const single = try throughMesaKeyed(&work, &reference.glslc_subpass_ms, .{ .tile_inputs = .{ 0, no_tile, no_tile, no_tile } });
+    try testing.expectEqual(@as(usize, 2), timesOf(single, "ldtlb"));
+    try testing.expectEqual(@as(usize, 0), timesOf(single, "ldtlbu"));
+    try expectStream(&.{wordOf(0xFFFF_FF84)}, single.stream());
+}
+
+test "through Mesa's back end, a sample worked out at run time is kept out of the tile buffer's four by a bcsel of each later one on its ieq (since 1.238)" {
+    // lower_tlb_load's chain: the first sample's load, then of samples
+    // 1, 2 and 3 an ieq of the sample and that number and a bcsel of
+    // each of the four floats (v3d_nir_lower_load_output.c:71-79), which
+    // ntq_emit_bcsel makes a move under the flag the ieq's XOR pushed.
+    // Four loads in the steps, each its own sample, which nir_opt_cse
+    // does not take for one another (`tileAt`).
+    var work: Work = .{};
+    const code = try throughMesaKeyed(&work, &reference.glslc_subpass_ms_picked, .{ .tile_inputs = .{ 0, no_tile, no_tile, no_tile }, .msaa = true });
+    var seen: [tile_samples_most]bool = @splat(false);
+    for (work.steps[0..work.step_count]) |each| if (each.tag == .tile_load) {
+        try testing.expectEqual(@as(u32, 0), tileTarget(each.at));
+        try testing.expect(!seen[tileSample(each.at)]);
+        seen[tileSample(each.at)] = true;
+    };
+    for (seen) |each| try testing.expect(each);
+    try testing.expectEqual(@as(usize, 8), timesOf(code, "ldtlb"));
+    try testing.expectEqual(@as(usize, 1), timesOf(code, "ldtlbu"));
+    for (1..tile_samples_most) |i| {
+        var line: [32]u8 = undefined;
+        try testing.expectEqual(@as(usize, 1), countOf(code, try std.fmt.bufPrint(&line, "xor.pushz -, rf6, {}", .{i})));
+    }
+    try testing.expectEqual(@as(usize, 12), timesOf(code, "mov.ifa"));
+    try expectStream(&.{ wordOf(0xFFFF_FFFB), wordOf(0xFFFF_FF84) }, code.stream());
+}
+
+test "a subpassLoad of an image of four samples, of an array of input attachments' images, or with an image operand, and an input attachment of Sampled 1, are refused" {
+    var work: Work = .{};
+    // MS 1: SubpassDataMS, read since 1.238, but with no Sample, which
+    // SPIR-V asks of it.
+    try testing.expectError(Error.Operands, compile(&work, &comptime patched(&reference.glslc_subpass, .type_image, 0, 5, 1)));
+    // Arrayed 1, which SPIR-V does not allow SubpassData.
+    work = .{};
+    try testing.expectError(Error.Refused, compile(&work, &comptime patched(&reference.glslc_subpass, .type_image, 0, 4, 1)));
+    // A Sample operand, of %15, the int 0, which only SubpassDataMS's
+    // read takes.
+    work = .{};
+    try testing.expectError(Error.Operands, compile(&work, &comptime widened(&reference.glslc_subpass, .image_read, 0, &.{ @intFromEnum(spirv.ImageOperands.sample), 15 })));
+    // Sampled 1: an input attachment is Sampled 2, and only one is.
+    try testing.expect(spirv.look(&comptime patched(&reference.glslc_subpass, .type_image, 0, 6, 1), profile) == .fault);
+    try testing.expect(spirv.look(&reference.glslc_subpass, profile) == .seen);
+}
+
+test "through Mesa's back end, an imageStore of an Rgba8 storage image is its texel packed to one word, VFPACK, VFTOUNORM8 and V8PACK, written at TMUD, x at TMUSF and y at TMUT, with P0 its unit and no words back" {
+    // vir_image_emit_register_writes and v3d_vir_emit_image_load_store
+    // (v3d_tex.c:440-655): P0 alone, of no return words and the unit,
+    // y at TMUT and the data at TMUD, x last at TMUSF, and a TMUWT for
+    // the store (ntq_flush_tmu's wait, nir_to_vir.c). The texel's red and
+    // green are the place over 64, packed at run time
+    // (v3d71_nir_lower_image_store); its blue and alpha, 0.5 and 1, the
+    // constant 0x00FF0080 (nir_opt_constant_folding of
+    // pack_2x16_to_unorm_2x8_v3d of pack_half_2x16_split), V8PACK's
+    // second word (since 1.218).
+    var work: Work = .{};
+    const code = try computeThroughMesa(&work, &reference.glslc_storage_store);
+    try expectText(code, &.{
+        text("nop", "nop", "ldunif"),
+        text("and rf4, rf3, rf0", "nop", "ldunif"),
+        text("shr rf5, rf3, rf0", "nop", "ldunif"),
+        text("add rf6, rf4, rf0", "nop", "ldunif"),
+        text("add rf7, rf5, rf0", "nop", "ldunif"),
+        text("shr rf8, rf2, rf0", "nop", "ldunif"),
+        text("shr rf10, rf8, 3", "nop", ""),
+        text("shl rf12, rf6, 3", "nop", ""),
+        text("shl rf14, rf7, 3", "nop", ""),
+        text("and rf9, rf8, 7", "nop", ""),
+        text("and rf11, rf10, 7", "add rf13, rf12, rf9", ""),
+        text("itof rf16, rf13", "add rf15, rf14, rf11", "wrtmuc"),
+        text("itof rf17, rf15", "fmul rf18, rf16, 0x3c800000", ""),
+        text("mov tmut, rf15", "fmul rf19, rf17, 0x3c800000", ""),
+        text("vfpack rf20, rf18, rf19", "nop", ""),
+        text("nop", "vftounorm8 rf21, rf20", ""),
+        text("v8pack rf22, rf21, rf0", "nop", "thrsw"),
+        text("nop", "mov tmud, rf22", "thrsw"),
+        text("nop", "mov tmusf, rf13", ""),
+        text("tmuwt -", "nop", "thrsw"),
+        text("nop", "nop", ""),
+        text("nop", "nop", ""),
+    });
+    try expectStream(&.{
+        wordOf(0xFFFF),
+        wordOf(16),
+        .{ .work_group_base = 0 },
+        .{ .work_group_base = 1 },
+        wordOf(26),
+        wordOf(0x00FF_0080),
+        .{ .image = .{ .unit = 0, .bits = 0 } },
+    }, code.stream());
+    try testing.expectEqual(@as(u8, 4), code.threads);
+    try testing.expect(code.tmu_dirty_rcl);
+    try testing.expectEqual(@as(u32, 1), code.sampler_count);
+    try testing.expectEqual(Sampler{ .set = 0, .binding = 0, .storage = true }, code.sampled()[0]);
+}
+
+test "through Mesa's back end, an imageLoad of an Rgba8 storage image is two words back, each two halves its FMOV makes floats, which an imageStore packs again where VFPACK reads the halves" {
+    // The load's P0 asks for two words (v3d_gl_format_is_return_32 is
+    // false for an image of 8 bits a channel, v3d_nir_lower_image_load_store.c:
+    // 48-62), each two halves of the texel; the store's for none. The
+    // swizzle's blue and green are the second word's low half and the
+    // first's high one: try_opt_extract_h16 (vir_opt_alu.c:62) makes the
+    // FMOV of the shifted word one of the high half, and copy propagation
+    // hands each FMOV's unpack to the VFPACK that reads it
+    // (vir_opt_copy_propagate.c). The load's lookup is written before the
+    // store's, both of x at TMUSF (since 1.218).
+    var work: Work = .{};
+    const code = try computeThroughMesa(&work, &reference.glslc_storage_copy);
+    try expectText(code, &.{
+        text("nop", "nop", "ldunif"),
+        text("and rf4, rf3, rf0", "nop", "ldunif"),
+        text("shr rf5, rf3, rf0", "nop", "ldunif"),
+        text("add rf6, rf4, rf0", "nop", "ldunif"),
+        text("add rf7, rf5, rf0", "nop", "ldunif"),
+        text("shr rf8, rf2, rf0", "nop", "wrtmuc"),
+        text("shr rf10, rf8, 3", "nop", ""),
+        text("shl rf14, rf7, 3", "nop", ""),
+        text("and rf11, rf10, 7", "nop", ""),
+        text("shl rf12, rf6, 3", "add rf15, rf14, rf11", ""),
+        text("and rf9, rf8, 7", "mov tmut, rf15", ""),
+        text("add rf13, rf12, rf9", "nop", "thrsw"),
+        text("nop", "mov tmusf, rf13", ""),
+        text("nop", "nop", ""),
+        text("nop", "mov tmut, rf15", "ldtmu.rf16; wrtmuc"),
+        text("nop", "nop", "ldtmu.rf17"),
+        text("vfpack rf18, rf17.l, rf16.h", "nop", ""),
+        text("vfpack rf20, rf16.l, rf17.h", "vftounorm8 rf19, rf18", ""),
+        text("nop", "vftounorm8 rf21, rf20", ""),
+        text("v8pack rf22, rf19, rf21", "nop", "thrsw"),
+        text("nop", "mov tmud, rf22", "thrsw"),
+        text("nop", "mov tmusf, rf13", ""),
+        text("tmuwt -", "nop", "thrsw"),
+        text("nop", "nop", ""),
+        text("nop", "nop", ""),
+    });
+    try expectStream(&.{
+        wordOf(0xFFFF),
+        wordOf(16),
+        .{ .work_group_base = 0 },
+        .{ .work_group_base = 1 },
+        wordOf(26),
+        .{ .image = .{ .unit = 0, .bits = to_vir.texel_words } },
+        .{ .image = .{ .unit = 1, .bits = 0 } },
+    }, code.stream());
+    try testing.expect(code.tmu_dirty_rcl);
+    try testing.expectEqual(@as(u32, 2), code.sampler_count);
+    try testing.expectEqual(Sampler{ .set = 0, .binding = 0, .storage = true }, code.sampled()[0]);
+    try testing.expectEqual(Sampler{ .set = 0, .binding = 1, .storage = true }, code.sampled()[1]);
+}
+
+test "a storage image's texel packs as the V3D's VFTOUNORM8 and V8PACK do: 0 below 0, 255 above 1, a NaN 0, the even of two as near, each pair's low bytes one word" {
+    var work: Work = .{};
+    // _mesa_float_to_unorm (format_utils.h:69-79): 0.5 is 127.5, and
+    // goes to 128, the even; -2 to 0, 2 to 255, 1 to 255, 0 to 0.
+    const Case = struct { word: u32, made: u32 };
+    const cases = [_]Case{
+        .{ .word = 0x3C00_3800, .made = 0x00FF_0080 },
+        .{ .word = 0x4000_C000, .made = 0x00FF_0000 },
+        .{ .word = 0x0000_7E00, .made = 0x0000_0000 },
+        .{ .word = 0x3400_3BFF, .made = 0x0040_00FF },
+    };
+    for (cases) |case| {
+        const made = try integerOf(&work, .pack_unorm_8, try integerSplat(&work, .f32x1, @bitCast(case.word)), null);
+        try testing.expectEqual(Tag.constant, work.steps[made].tag);
+        try testing.expectEqual(case.made, @as(u32, @bitCast(work.pool[work.steps[made].at])));
+        try testing.expectEqual(case.made, unormsOfHalves(case.word));
+    }
+    // pack_4x16_to_4x8_v3d (nir_opcodes.py:1817-1824).
+    const word = try integerOf(&work, .pack_4x8, try integerSplat(&work, .f32x1, 0x00FF_0080), try integerSplat(&work, .f32x1, 0x0011_0022));
+    try testing.expectEqual(Tag.constant, work.steps[word].tag);
+    try testing.expectEqual(@as(u32, 0x1122_FF80), @as(u32, @bitCast(work.pool[work.steps[word].at])));
+}
+
+test "a storage image in a vertex program, of four samples, of a format other than Rgba8, or with an image operand, is refused" {
+    // A vertex program's store asks for vertexPipelineStoresAndAtomics,
+    // which the device does not take (since 1.219).
+    var work: Work = .{};
+    try expectRefusal(Error.Refused, vertexThroughMesa(&work, &reference.glslc_storage_vertex, .{}));
+    work = .{};
+    try expectRefusal(Error.Refused, computeThroughMesa(&work, &comptime patched(&reference.glslc_storage_store, .type_image, 0, 5, 1)));
+    // Rgba32f, which the V3D's profile does not take (`storage_formats`).
+    try testing.expect(spirv.look(&comptime patched(&reference.glslc_storage_store, .type_image, 0, 7, 1), profile) == .fault);
+    try testing.expect(spirv.look(&reference.glslc_storage_store, profile) == .seen);
+    // A Sample, or any operand: none is in the profile.
+    work = .{};
+    try expectRefusal(Error.Operands, computeThroughMesa(&work, &comptime widened(&reference.glslc_storage_copy, .image_read, 0, &.{ @intFromEnum(spirv.ImageOperands.sample), 15 })));
+    work = .{};
+    try expectRefusal(Error.Operands, computeThroughMesa(&work, &comptime widened(&reference.glslc_storage_store, .image_write, 0, &.{ @intFromEnum(spirv.ImageOperands.sample), 15 })));
+}
+
+/// That `made` is the refusal `expected`, without printing a program made
+/// instead: a Code's units past its count are undefined.
+fn expectRefusal(expected: anyerror, made: anyerror!Code) !void {
+    if (made) |_| return error.TestExpectedError else |err| try testing.expectEqual(expected, err);
+}
+
+test "through Mesa's back end, a fragment program's imageStore is x at TMUSF, y at TMUT and its constant texel one word at TMUD, under the per-pixel mask, and the program writes the rasterizer's Z, an image being named" {
+    // vir_image_emit_register_writes (v3d_tex.c:440-518) of FragCoord's
+    // x and y made integers, and the texel (1, 0.5, 0.25, 1) packed to
+    // 0xFF4080FF by nir_opt_constant_folding. P1 is the default, the
+    // per-pixel mask on, a store never being one of the helper pixels
+    // (:576-579, :645-646). info.num_images is not 0, so
+    // early_fragment_tests is not promoted and Z is written (nir_to_vir.c:
+    // 2073-2137); the store leaves the job's caches to be cleaned
+    // (:625-626; since 1.219).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_storage_fragment);
+    try expectText(code, &.{
+        text("fycd rf5", "nop", "ldunif"),
+        text("ftoiz rf7, rf5", "nop", "wrtmuc"),
+        text("fxcd rf4", "mov tmut, rf7", "thrsw"),
+        text("ftoiz rf6, rf4", "mov tmud, rf0", "thrsw"),
+        text("nop", "mov tmusf, rf6", ""),
+        text("tmuwt -", "mov tlbu, rf5", ""),
+        text("nop", "nop", "thrsw; ldunif"),
+        text("nop", "mov tlb, rf0", ""),
+        text("nop", "mov tlb, rf0", ""),
+    });
+    try expectStream(&.{
+        wordOf(0xFF40_80FF),
+        .{ .image = .{ .unit = 0, .bits = 0 } },
+        wordOf(0xFFFF_FF84),
+        wordOf(0x3800_3800),
+    }, code.stream());
+    try testing.expect(code.tmu_dirty_rcl);
+    try testing.expect(code.writes_z and code.disable_ez);
+    try testing.expectEqual(Sampler{ .set = 0, .binding = 0, .storage = true }, code.sampled()[0]);
+}
+
+test "through Mesa's back end, a fragment program's imageLoad that a sample's coordinate is keeps the quad's helper pixels, P1 the constant 0, and one that is the colour leaves them out, P1 the default" {
+    // nir_opt_load_skip_helpers with v3d's intrinsic_try_skip_helpers
+    // (vir.c:1937-1951): the sample's coordinate wants the helper pixels
+    // for its derivatives, so the load it is made of keeps them, its
+    // per-pixel mask off and P1 written (v3d_tex.c:576-579, :645-646);
+    // the sample's own result wants none, so it skips them, as it did
+    // (since 1.177). A load that is the colour is wanted by nothing that
+    // reads a neighbour, so it skips them, and P0 is its one word (since
+    // 1.219).
+    var work: Work = .{};
+    const kept = try throughMesa(&work, &reference.glslc_storage_helpers);
+    try expectText(kept, &.{
+        text("fycd rf5", "nop", "wrtmuc"),
+        text("fxcd rf4", "nop", "wrtmuc"),
+        text("ftoiz rf7, rf5", "nop", "thrsw"),
+        text("ftoiz rf6, rf4", "mov tmut, rf7", ""),
+        text("nop", "mov tmusf, rf6", ""),
+        text("nop", "nop", "ldtmu.rf8; wrtmuc"),
+        text("fmov rf10, rf8.l", "fmov rf11, rf8.h", "thrsw; ldtmu.rf9; wrtmuc"),
+        text("nop", "mov tmut, rf11", "thrsw"),
+        text("nop", "mov tmus, rf10", ""),
+        text("nop", "mov tlbu, rf5", "thrsw; ldtmu.rf12"),
+        text("vfpack tlb, rf12.l, rf12.h", "nop", "ldtmu.rf13"),
+        text("vfpack tlb, rf13.l, rf13.h", "nop", ""),
+    });
+    try expectStream(&.{
+        .{ .image = .{ .unit = 1, .bits = to_vir.texel_words } },
+        wordOf(0),
+        .{ .texture = 0 },
+        .{ .sampler = .{ .unit = 0, .bits = per_pixel_mask } },
+        wordOf(0xFFFF_FF84),
+    }, kept.stream());
+    try testing.expect(!kept.tmu_dirty_rcl);
+    try testing.expectEqual(Sampler{ .set = 0, .binding = 1 }, kept.sampled()[0]);
+    try testing.expectEqual(Sampler{ .set = 0, .binding = 0, .storage = true }, kept.sampled()[1]);
+
+    work = .{};
+    const skipped = try throughMesa(&work, &reference.glslc_storage_read);
+    try expectText(skipped, &.{
+        text("fycd rf5", "nop", "wrtmuc"),
+        text("fxcd rf4", "nop", ""),
+        text("ftoiz rf7, rf5", "nop", "thrsw"),
+        text("ftoiz rf6, rf4", "mov tmut, rf7", "thrsw"),
+        text("nop", "mov tmusf, rf6", ""),
+        text("nop", "mov tlbu, rf5", "thrsw; ldtmu.rf8"),
+        text("vfpack tlb, rf8.l, rf8.h", "nop", "ldtmu.rf9"),
+        text("vfpack tlb, rf9.l, rf9.h", "nop", ""),
+    });
+    try expectStream(&.{
+        .{ .image = .{ .unit = 0, .bits = to_vir.texel_words } },
+        wordOf(0xFFFF_FF84),
+    }, skipped.stream());
+    try testing.expect(skipped.writes_z and skipped.disable_ez);
+}
+
+test "through Mesa's back end, imageSize of a storage image is its view's width, height and layers as uniforms, and a 3D image's depth third" {
+    // ntq_emit_image_size (nir_to_vir.c:2653-2679): IMAGE_WIDTH,
+    // IMAGE_HEIGHT and, of an array, IMAGE_ARRAY_SIZE, which v3dv answers
+    // from the view as it answers a texture's (v3dv_uniforms.c:378-416).
+    // The last layer, the layers less one, goes to TMUI; the place over
+    // the size is each float times the size's reciprocal (lower_fdiv).
+    // Of a 3D image the third is IMAGE_DEPTH, and the slice goes to TMUR
+    // (v3d_tex.c:466-487; since 1.219).
+    var work: Work = .{};
+    const code = try computeThroughMesa(&work, &reference.glslc_storage_size);
+    try expectText(code, &.{
+        text("nop", "nop", "ldunifrf.rf4"),
+        text("itof rf22, rf4", "nop", "ldunifrf.rf5"),
+        text("itof rf23, rf5", "nop", "ldunifrf.rf6"),
+        text("recip rf24, rf22", "nop", "ldunif"),
+        text("and rf7, rf3, rf0", "nop", "ldunif"),
+        text("shr rf8, rf3, rf0", "nop", "ldunif"),
+        text("recip rf25, rf23", "add rf9, rf7, rf0", "ldunif"),
+        text("add rf10, rf8, rf0", "nop", "ldunif"),
+        text("shr rf11, rf2, rf0", "sub rf19, rf6, 1", ""),
+        text("shr rf13, rf11, 3", "mov tmui, rf19", ""),
+        text("shl rf15, rf9, 3", "nop", ""),
+        text("shl rf17, rf10, 3", "nop", ""),
+        text("and rf12, rf11, 7", "nop", ""),
+        text("and rf14, rf13, 7", "add rf16, rf15, rf12", ""),
+        text("itof rf20, rf16", "add rf18, rf17, rf14", "ldunif"),
+        text("itof rf21, rf18", "fmul rf26, rf20, rf24", "wrtmuc"),
+        text("mov tmut, rf18", "fmul rf27, rf21, rf25", ""),
+        text("vfpack rf28, rf26, rf27", "nop", ""),
+        text("nop", "vftounorm8 rf29, rf28", ""),
+        text("v8pack rf30, rf29, rf0", "nop", "thrsw"),
+        text("nop", "mov tmud, rf30", "thrsw"),
+        text("nop", "mov tmusf, rf16", ""),
+        text("tmuwt -", "nop", "thrsw"),
+        text("nop", "nop", ""),
+        text("nop", "nop", ""),
+    });
+    try expectStream(&.{
+        .{ .texture_size = .{ .unit = 0, .field = .width } },
+        .{ .texture_size = .{ .unit = 0, .field = .height } },
+        .{ .texture_size = .{ .unit = 0, .field = .array_size } },
+        wordOf(0xFFFF),
+        wordOf(16),
+        .{ .work_group_base = 0 },
+        .{ .work_group_base = 1 },
+        wordOf(26),
+        wordOf(0x00FF_0080),
+        .{ .image = .{ .unit = 0, .bits = 0 } },
+    }, code.stream());
+    try testing.expectEqual(Sampler{ .set = 0, .binding = 0, .dim = .layers, .storage = true }, code.sampled()[0]);
+
+    // The image 3D, not arrayed: Dim 3D (2) and Arrayed 0.
+    work = .{};
+    const volume = try computeThroughMesa(&work, &comptime patched(&patched(&reference.glslc_storage_size, .type_image, 0, 2, 2), .type_image, 0, 4, 0));
+    try testing.expectEqual(Word{ .texture_size = .{ .unit = 0, .field = .depth } }, volume.stream()[2]);
+    try testing.expectEqual(@as(usize, 1), countOf(volume, "mov tmur"));
+    try testing.expectEqual(@as(usize, 0), countOf(volume, "mov tmui"));
+    try testing.expectEqual(Sampler{ .set = 0, .binding = 0, .dim = .volume, .storage = true }, volume.sampled()[0]);
+}
+
+test "imageSize of a 3D storage image as two integers, or as floats, is refused" {
+    // A 3D image's size is three integers (since 1.219): its ResultType
+    // made %24, an ivec2, or %47, a vec4.
+    const volume = comptime patched(&patched(&reference.glslc_storage_size, .type_image, 0, 2, 2), .type_image, 0, 4, 0);
+    var work: Work = .{};
+    try expectRefusal(Error.Type, computeThroughMesa(&work, &comptime patched(&volume, .image_query_size, 0, 0, 24)));
+    work = .{};
+    try expectRefusal(Error.Type, computeThroughMesa(&work, &comptime patched(&volume, .image_query_size, 0, 0, 47)));
 }

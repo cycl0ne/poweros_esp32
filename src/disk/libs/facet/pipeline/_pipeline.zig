@@ -225,6 +225,19 @@ pub const Pipeline = struct {
     /// subpass with no colour (since 1.150, docs/facet-vulkan10.md item
     /// 43).
     colorless: bool = false,
+    /// The format of each colour attachment of its subpass by its
+    /// location, undefined for an unused one and past the last: what a
+    /// driver that compiles keys its colour writes on, as v3dv keys cbufs
+    /// and f32_color_rb on the subpass's colour formats
+    /// (v3dv_pipeline.c:2137-2146, 1240-1257). Since 1.233; until then
+    /// `part_formats`, the format each part of the subpass drew first
+    /// (since 1.228).
+    color_formats: [_render.most_colors]facet.Format = @splat(.undefined),
+    /// Its subpass's `tile_inputs`: the colour location each input
+    /// attachment is, by its index, where the subpass draws into it as
+    /// well, which v3dv keys a pipeline on (v3dv_pipeline.c:2125-2135;
+    /// since 1.237).
+    tile_inputs: [_render.most_tile_inputs]u8 = @splat(_render.no_tile_input),
     /// Its subpass is drawn in more than one part, a part for each colour
     /// attachment, its commands played again from its begin for each
     /// (docs/facet-vulkan10.md items 80 and 87). A driver whose program
@@ -268,12 +281,16 @@ pub const Pipeline = struct {
     /// (`Capabilities.independent_blend`, since 1.33). All hold
     /// the default where the create info gave no attachment state.
     mixings: [_render.most_colors]Mixing,
-    /// The colour attachments the fragment function writes in the one
-    /// call (`shader.fragmentOutputs`, since 1.51): 1 for a function that
-    /// writes the one colour, and the subpass's colour attachment count
-    /// for one drawing a subpass whose attachments go together
-    /// (SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER).
+    /// The colours the fragment function writes in the one call, at
+    /// locations 0 upwards (`shader.fragmentOutputs`, since 1.51): 1 for
+    /// a function that writes the one colour, and for a pipeline of no
+    /// fragment stage. Whatever the subpass has since 1.230; until then
+    /// its colour attachment count where they went together, with facet's
+    /// own SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER.
     outputs: u32 = 1,
+    /// What the fragment function writes for each of them
+    /// (`shader.Written`, since 1.226): 0xAARRGGBB, or four words a pixel.
+    written: facet.shader.Written = .colors,
     /// The viewport and the scissor, or null where commands set them.
     viewport: ?facet.Viewport,
     scissor: ?facet.Rect2D,

@@ -92,6 +92,9 @@
 
 const std = @import("std");
 
+/// What a depth of 24 bits holds as 1: every bit of it set (`Format.d24`).
+const d24_whole: f64 = 0xFF_FFFF;
+
 /// How a texel is kept.
 pub const Format = enum {
     /// 32 bits, 0xAARRGGBB; kept spread, in 64.
@@ -237,6 +240,14 @@ pub const Format = enum {
     /// format of four samples a pixel is sampled as where its rows lie,
     /// nothing re-tiling those (`Texture.sampleOf`). (Since 1.110.)
     rgba8,
+    /// 24 bits of depth, 0 nearest, in the top of a word whose low byte is
+    /// a stencil or nothing: X8_D24_UNORM_PACK32 and D24_UNORM_S8_UINT as
+    /// facet.library keeps them, which is the V3D's D24S8, "X low, D high"
+    /// (v3d_packet.xml:357; v3dv relocates the two on a copy,
+    /// v3dvx_meta_common.c:436-445). Kept in rows and sampled by
+    /// `sampleBy` alone, as `d16` is. A texel is the 24 bits: `putLayer`
+    /// leaves the low byte as it was. (Since 1.222.)
+    d24,
 
     /// The bytes a texel is kept in; 0 for a compressed format, whose
     /// texels have no size of their own (`blockLog2`).
@@ -251,7 +262,7 @@ pub const Format = enum {
         return switch (format) {
             .rgba8888, .rgba16f, .rgba16 => 3,
             .rgba32f => 4,
-            .argb8888, .rg11b10f, .rgb9e5, .r32f, .rg16, .rgba8 => 2,
+            .argb8888, .rg11b10f, .rgb9e5, .r32f, .rg16, .rgba8, .d24 => 2,
             .rgb565, .d16, .rg8, .r16 => 1,
             .r8, .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc6hu, .bc6hs, .bc7 => 0,
             // The whole numbers of 1.70: one channel, two or four, of 8,
@@ -272,7 +283,7 @@ pub const Format = enum {
             // 16 texels of 8 bytes, and of 2.
             .rgba8888, .rgba16f, .rgba16 => 7,
             .rgba32f => 8,
-            .argb8888, .rg11b10f, .rgb9e5, .r32f, .rg16, .rgba8 => 6,
+            .argb8888, .rg11b10f, .rgb9e5, .r32f, .rg16, .rgba8, .d24 => 6,
             .rgb565, .d16, .rg8, .r16 => 5,
             // The whole numbers of 1.70, 16 texels of each width.
             .rgba32u, .rgba32i => 8,
@@ -297,7 +308,7 @@ pub const Format = enum {
     pub fn compressed(format: Format) bool {
         return switch (format) {
             .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc6hu, .bc6hs, .bc7 => true,
-            .rgba8888, .argb8888, .rgb565, .r8, .d16, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => false,
+            .rgba8888, .argb8888, .rgb565, .r8, .d16, .d24, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => false,
             .rg8, .r16, .rg16, .rgba16, .rgba8 => false,
             .r8u, .rg8u, .rgba8u, .r8i, .rg8i, .rgba8i, .r16u, .rg16u, .rgba16u, .r16i, .rg16i, .rgba16i, .r32u, .rg32u, .rgba32u, .r32i, .rg32i, .rgba32i => false,
         };
@@ -312,7 +323,7 @@ pub const Format = enum {
     pub fn floats(format: Format) bool {
         return switch (format) {
             .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => true,
-            .rgba8888, .argb8888, .rgb565, .r8, .d16, .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc6hu, .bc6hs, .bc7 => false,
+            .rgba8888, .argb8888, .rgb565, .r8, .d16, .d24, .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc6hu, .bc6hs, .bc7 => false,
             .rg8, .r16, .rg16, .rgba16, .rgba8 => false,
             .r8u, .rg8u, .rgba8u, .r8i, .rg8i, .rgba8i, .r16u, .rg16u, .rgba16u, .r16i, .rg16i, .rgba16i, .r32u, .rg32u, .rgba32u, .r32i, .rg32i, .rgba32i => false,
         };
@@ -328,7 +339,7 @@ pub const Format = enum {
     pub fn channels(format: Format) bool {
         return switch (format) {
             .rg8, .r16, .rg16, .rgba16, .rgba8 => true,
-            .rgba8888, .argb8888, .rgb565, .r8, .d16, .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc6hu, .bc6hs, .bc7 => false,
+            .rgba8888, .argb8888, .rgb565, .r8, .d16, .d24, .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc6hu, .bc6hs, .bc7 => false,
             .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => false,
             // Whole numbers are their own kind: `wholes` (since 1.70).
             .r8u, .rg8u, .rgba8u, .r8i, .rg8i, .rgba8i, .r16u, .rg16u, .rgba16u, .r16i, .rg16i, .rgba16i, .r32u, .rg32u, .rgba32u, .r32i, .rg32i, .rgba32i => false,
@@ -404,7 +415,7 @@ pub const Format = enum {
     pub fn small(format: Format) bool {
         return switch (format) {
             .argb8888, .r8, .rg8, .r16, .rg16, .rgba8 => true,
-            .rgba8888, .rgb565, .d16, .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc6hu, .bc6hs, .bc7, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => false,
+            .rgba8888, .rgb565, .d16, .d24, .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc6hu, .bc6hs, .bc7, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => false,
             // Eight bytes, as a spread colour is, and still read channel
             // by channel (since 1.69).
             .rgba16 => false,
@@ -416,10 +427,10 @@ pub const Format = enum {
     }
 
     /// Whether a texture of this holds a depth rather than a colour: read
-    /// at all 16 bits by a shadow sample, and as a grey by one of the
-    /// colour.
+    /// at all its bits by a shadow sample, 16 or 24 (since 1.222), and as
+    /// a grey by one of the colour.
     pub fn depth(format: Format) bool {
-        return format == .d16;
+        return format == .d16 or format == .d24;
     }
 };
 
@@ -760,6 +771,23 @@ pub const Texture = struct {
     /// depth's or a stencil's view, whose green and blue read 0 and whose
     /// alpha reads 1 whatever the view says (since 1.121).
     swizzle: Swizzle = .{},
+    /// Where texel (x, y) of a level of a layer lies, in bytes from
+    /// `memory`, on a device that lays its textures out its own way: the
+    /// V3D's, whose TMU reads a texture in its tiles (since 1.217). Every
+    /// read and write of a texel one at a time asks it - `colorAt`,
+    /// `partsAt`, `wholesAt`, `setColor` and the rest, and so a sample
+    /// through `sampleLayer` - so a function of the program's run on the
+    /// cores reads and writes a texture where that device keeps it, as
+    /// Mesa's v3d driver moves a mapped texture's texels through
+    /// v3d_tiling.c's places (src/broadcom/common/v3d_tiling.c). Null, the
+    /// library's own blocks or rows, for every other texture; the fast
+    /// samplers a fragment function of the cores draws with (`sample`,
+    /// `sampleAt`) read those alone, and no such function draws on a
+    /// device of its own layout.
+    place: ?*const fn (texture: *const Texture, layer: u32, lod: u32, x: u32, y: u32) callconv(.c) usize = null,
+    /// What `place` finds the texture's image by: the library's own, and
+    /// nothing a program reads.
+    owner: ?*const anyopaque = null,
 
     pub const Error = error{BadSize};
 
@@ -904,6 +932,8 @@ pub const Texture = struct {
     /// texture's memory: its row and column for one kept in rows, and the
     /// level's own spread places for one kept in blocks.
     inline fn placeOf(texture: *const Texture, layer: u32, lod: u32, x: u32, y: u32) usize {
+        // Where a device lays the texture out its own way, it says.
+        if (texture.place) |own| return own(texture, layer, lod, x, y);
         if (texture.pitch != 0) {
             const apart = if (texture.stride != 0) texture.stride else texture.format.bytes();
             // The level's own rows, after the levels before it inside the
@@ -949,6 +979,12 @@ pub const Texture = struct {
             .rgba8888 => @as(*u64, @ptrCast(@alignCast(at))).* = spread(texel),
             .argb8888 => @as(*u32, @ptrCast(@alignCast(at))).* = texel,
             .rgb565, .d16 => @as(*u16, @ptrCast(@alignCast(at))).* = @truncate(texel),
+            // The depth into the top 24 bits, the stencil below it left
+            // as it lies (since 1.222).
+            .d24 => {
+                const word: *u32 = @ptrCast(@alignCast(at));
+                word.* = word.* & 0xFF | texel << 8;
+            },
             .r8 => at[0] = @truncate(texel),
             // Nothing is written a texel at a time into a texture that
             // keeps what it was given: `putTexels` moves the bytes.
@@ -967,6 +1003,7 @@ pub const Texture = struct {
             .rgba8888 => gather(@as(*const u64, @ptrCast(@alignCast(at))).*),
             .argb8888 => @as(*const u32, @ptrCast(@alignCast(at))).*,
             .rgb565, .d16 => @as(*const u16, @ptrCast(@alignCast(at))).*,
+            .d24 => @as(*const u32, @ptrCast(@alignCast(at))).* >> 8,
             .r8 => at[0],
             inline .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc6hu, .bc6hs, .bc7 => |one| blockOf(one, at)[(y % block) * block + (x % block)],
             inline .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => |one| floatTexel(one, at),
@@ -1092,6 +1129,7 @@ pub const Texture = struct {
             .r8 => color >> 16 & 0xFF,
             // The red channel as a depth, its 8 bits in the top of the 16.
             .d16 => (color >> 16 & 0xFF) * 0x101,
+            .d24 => (color >> 16 & 0xFF) * 0x10101,
             // Nothing is written a texel at a time into a compressed
             // texture: `putLayer` leaves it as it lies.
             .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc6hu, .bc6hs, .bc7 => 0,
@@ -1123,6 +1161,7 @@ pub const Texture = struct {
         // A depth takes x as 0 to 1 over all 16 bits, where a colour of 8
         // bits a channel would keep the top 8 of them (since 1.58).
         if (texture.format == .d16) return texture.putLayer(layer, lod, x, y, @intFromFloat(@round(heldAt(parts[0], 1) * 65535)));
+        if (texture.format == .d24) return texture.putLayer(layer, lod, x, y, @intFromFloat(@round(@as(f64, heldAt(parts[0], 1)) * d24_whole)));
         if (texture.format.compressed()) return;
         texture.setColor(layer, lod, x, y, colorOfParts(parts));
     }
@@ -1213,6 +1252,7 @@ pub const Texture = struct {
         // A depth as x, 0 to 1 over all 16 bits (since 1.58): `colorAt`
         // gives a grey of its top 8, which is all a colour holds.
         if (texture.format == .d16) return .{ @as(f32, @floatFromInt(texture.peekLayer(layer, lod, x, y))) / 65535, 0, 0, 1 };
+        if (texture.format == .d24) return .{ @floatCast(@as(f64, @floatFromInt(texture.peekLayer(layer, lod, x, y))) / d24_whole), 0, 0, 1 };
         if (texture.format.floats()) {
             const at = texture.memory + texture.placeOf(layer, lod, x, y);
             return switch (texture.format) {
@@ -1283,6 +1323,7 @@ pub const Texture = struct {
             // (D, 0, 0, 1), as lavapipe's does (since 1.121,
             // image/createimageview.zig `depthRead`).
             .d16 => greyOf8(@truncate(texel >> 8)),
+            .d24 => greyOf8(@truncate(texel >> 16)),
             // Decoded already: `peekLayer` read it out of its block, out
             // of its floats, or out of its channels.
             .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc6hu, .bc6hs, .bc7, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => texel,
@@ -1418,10 +1459,11 @@ pub const Texture = struct {
     }
 
     /// What a comparison reads of a texel that is there: a depth as 0 to 1
-    /// over all 16 bits it keeps, and anything else as its red.
+    /// over all the bits it keeps, 16 or 24, and anything else as its red.
     fn valueOf(texture: *const Texture, layer: u32, lod: u32, x: u32, y: u32) f32 {
         if (texture.format.depth()) {
             const kept = texture.peekLayer(layer, lod, x, y);
+            if (texture.format == .d24) return @floatCast(@as(f64, @floatFromInt(kept & 0xFF_FFFF)) / d24_whole);
             return @as(f32, @floatFromInt(kept & 0xFFFF)) / 65535;
         }
         return @as(f32, @floatFromInt(texture.readColor(layer, lod, x, y) >> 16 & 0xFF)) / 255;
@@ -1446,6 +1488,7 @@ pub const Texture = struct {
                 const texel: u32 = switch (texture.format) {
                     .rgba8888, .argb8888 => std.mem.readInt(u32, row[x * 4 ..][0..4], .little),
                     .rgb565, .d16 => std.mem.readInt(u16, row[x * 2 ..][0..2], .little),
+                    .d24 => std.mem.readInt(u32, row[x * 4 ..][0..4], .little) >> 8,
                     .r8 => row[x],
                     .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc6hu, .bc6hs, .bc7, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => unreachable,
                     .rg8, .r16, .rg16, .rgba16, .rgba8 => unreachable,
@@ -3128,6 +3171,7 @@ inline fn fetch(comptime format: Format, at: [*]const u8) u32 {
         // A depth as a grey, as `Texture.colorAt` reads one: the fast path
         // is built for blocks and never reads a texture of this.
         .d16 => greyOf8(@truncate(@as(*const u16, @ptrCast(@alignCast(at))).* >> 8)),
+        .d24 => greyOf8(@truncate(@as(*const u32, @ptrCast(@alignCast(at))).* >> 24)),
         // Never read a texel at a time: `sampleBlocked` has the block.
         .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc6hu, .bc6hs, .bc7 => missing_texel,
         // A float texel read and rounded where it lies (since 1.45): the
@@ -3147,7 +3191,7 @@ inline fn fetchSpread(comptime format: Format, at: [*]const u8) u64 {
     @setRuntimeSafety(false);
     return switch (format) {
         .rgba8888 => @as(*const u64, @ptrCast(@alignCast(at))).*,
-        .argb8888, .r8, .rgb565, .d16, .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc6hu, .bc6hs, .bc7, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => spread(fetch(format, at)),
+        .argb8888, .r8, .rgb565, .d16, .d24, .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc6hu, .bc6hs, .bc7, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => spread(fetch(format, at)),
         .rg8, .r16, .rg16, .rgba16, .rgba8 => spread(fetch(format, at)),
         .r8u, .rg8u, .rgba8u, .r8i, .rg8i, .rgba8i, .r16u, .rg16u, .rgba16u, .r16i, .rg16i, .rgba16i, .r32u, .rg32u, .rgba32u, .r32i, .rg32i, .rgba32i => spread(fetch(format, at)),
     };

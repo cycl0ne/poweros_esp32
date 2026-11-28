@@ -31,11 +31,18 @@ pub const EVENTS_MOST = 64;
 /// A function. Made by OpenHID in memory cleared, never as a whole.
 pub const Function = struct {
     public: hid.HIDFunction,
+    /// The first keyboard collection's layout, whose LEDs are the
+    /// keyboard's; then the others', each in a report of its own.
     keyboard: layout.KeyboardLayout,
+    more_keyboards: [layout.KEYBOARDS_MOST - 1]layout.KeyboardLayout,
+    more_count: u8,
+    /// What each keyboard report last held down, the first's first.
+    held: [layout.KEYBOARDS_MOST]report.KeySet,
     mouse: layout.MouseLayout,
     consumer: layout.ConsumerLayout,
-    /// What the last report held down: the keyboard's keys, the mouse's
-    /// buttons, the consumer control's media keys.
+    /// What the last reports held down: the keyboard's keys - in any of
+    /// its reports - the mouse's buttons, the consumer control's media
+    /// keys.
     keys: report.KeySet,
     buttons: u8,
     media: report.KeySet,

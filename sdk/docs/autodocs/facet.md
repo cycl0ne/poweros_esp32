@@ -2837,9 +2837,10 @@ that one colour attachment by these, and the others by whatever they had:
 what CmdSetBlendConstants set over all of them, or their own set before.
 facet.library's own, where Vulkan has the one set a pipeline shares
 between its attachments - which matters where a subpass draws several
-together and one fragment call writes them all
-(SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER), there being no replay left to
-set them between.
+together and one fragment call writes them all (every subpass of
+several on the cores since 1.230; one carrying facet's own
+SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER from 1.51), there being no replay
+left to set them between.
 
 A later CmdSetBlendConstants sets the one set again over every
 attachment, and forgets what this set for any of them. An `attachment`
@@ -4132,12 +4133,14 @@ of 0. A binding's descriptors are an array, read by a shader as
 element 0 on (shader.Resources).
 
 Some kinds want a device that has them, others answering
-`error_feature_not_present`: a storage image `storage_images`, a texel
+`error_feature_not_present`: a storage image `storage_images` (every
+device since 1.217, the V3D's functions on the cores writing it where
+its TMU reads it), a texel
 buffer `texel_buffers`, a dynamic buffer `dynamic_descriptors` (and no
 more of them in one set than
 `PhysicalDeviceLimits.max_descriptor_set_dynamic_buffers`), and an
-input attachment `input_attachments` - the cores, not the V3D, whose
-fragment functions are of fixed forms and read none.
+input attachment `input_attachments` - the cores, and since 1.216 the
+V3D, whose fragment programs read one through the TMU.
 
 **CONTEXT**
 
@@ -4525,10 +4528,9 @@ fn CreateGraphicsPipelines(base: *FacetBase, device: *facet.Device, cache: ?*fac
 and one fragment function of the same varyings or none (since 1.115),
 with or without a tessellation control and evaluation function, whose
 varyings then the fragment function's have to be, or for a fragment
-function that writes other
-than the subpass's colour attachments (`shader.fragmentOutputs`, since
-1.51), or for a fragment entry whose `varyings` word names no fixed
-form (since 1.75); `error_feature_not_present`
+entry whose `varyings` word names no fixed form (since 1.75; and from
+1.51 to 1.229 for a fragment function that wrote other than the
+subpass's part's colour attachments); `error_feature_not_present`
 for state Vulkan allows and facet.library does not draw (see BEHAVIOR),
 among it a stage whose `specialization_info` names a constant (since
 1.80); `error_validation_failed` for state Vulkan does not allow on the
@@ -4711,11 +4713,12 @@ the alpha's factors the same or ZERO and ONE and the mask whole, cost
 less than any other mixing.
 
 The fragment entry says how many colours its function writes in the
-one call: one, or the subpass's colour attachments where the subpass
-draws them together (SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER,
-`shader.fragmentOutputs`, since 1.51). It has to come to exactly what
-the subpass has either way, and a function of several wants a device
-whose `several_outputs` is true.
+one call, at locations 0 upwards (`shader.fragmentOutputs`, since
+1.51): any count since 1.230, an attachment past them left as it is
+and an output past the attachments going nowhere; until then exactly
+what the subpass's part had, one where it was played over for each
+attachment. A function of several wants a device whose
+`several_outputs` is true.
 
 **BUGS**
 
@@ -4860,8 +4863,12 @@ images lie in a layout of its own (`Ops.texture_memory`, the V3D) the
 first is made since 1.210, as are a colour attachment's levels, in
 that device's layout, each layer a texture of its own that the pass
 stores into where the TMU reads it, as v3dv keeps every optimal image
-(src/broadcom/vulkan/v3dv_image.c:481-483); the second is refused
-there, that device reading no input attachment.
+(src/broadcom/vulkan/v3dv_image.c:481-483). So since 1.216 is any
+image there read as an input attachment, a depth one too, which that
+device's fragment programs read through the TMU where the pass stored
+it: in optimal tiling, and of a format the TMU reads. One of four
+samples is made as well, kept as a sampled one is, and read through
+SubpassDataMS since 1.238.
 
 **An image may have four samples a pixel** on a device that draws them
 (`Capabilities.multisampling`, since 1.98): 2D, optimal, one level and
@@ -5599,10 +5606,8 @@ must not be used multiple times in a single subpass";
 `error_initialization_failed` until 1.134);
 `error_feature_not_present` for a subpass that reads its own depth
 attachment, which Vulkan allows and this library does not draw
-(docs/facet-vulkan10.md item 92), and for one of colours drawn together
-that reads another than the first, which only this library's own
-SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER asks for (item 80; both
-`error_initialization_failed` until 1.134); `error_out_of_host_memory`.
+(docs/facet-vulkan10.md item 92; `error_initialization_failed` until
+1.134); `error_out_of_host_memory`.
 
 **BEHAVIOR**
 
@@ -5650,9 +5655,8 @@ locations after it keep their attachments, as Vulkan has it (since
 (vk_render_pass.c:1924-1930), and lavapipe gives it no colour buffer
 (lvp_execute.c:1984-1999). A subpass drawn a part for each colour
 attachment has no part for it, and one whose every colour is unused is
-drawn as a subpass of none. One whose colours go together
-(SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER) would have a plane in its tiles
-with no image behind it, and is `error_feature_not_present`. A resolve
+drawn as a subpass of none. Drawn together it has no plane in the
+tiles (since 1.230; `error_feature_not_present` until then). A resolve
 attachment for an unused colour is `error_validation_failed`
 (VUID-VkSubpassDescription-pResolveAttachments-00847;
 `error_initialization_failed` until 1.134).
@@ -5765,11 +5769,10 @@ Only the fragment's own pixel is read: the rest of the attachment is
 in other tiles, drawn on other cores or not yet drawn, and reads as
 transparent black - which is all Vulkan's by-region dependency
 promises either. A subpass of several colour attachments drawn
-together reads the first of them this way, and another of them is
-`error_feature_not_present`: only the library's own flag draws them
-together, and that goes with the flag (docs/facet-vulkan10.md item 80).
-Reading the depth attachment it draws into is not among this either,
-and is `error_feature_not_present` as well (item 92; both
+together reads one of them this way, whichever it is (the first alone
+until 1.230, docs/facet-vulkan10.md item 80), and one that reads two
+is drawn once for each of them. Reading the depth attachment it draws
+into is not among this, and is `error_feature_not_present` (item 92;
 `error_initialization_failed` until 1.134).
 
 Without that dependency the subpass is drawn the same way since 1.134.
@@ -5777,33 +5780,37 @@ Vulkan allows such a pass - a feedback loop, whose reads it leaves
 undefined where nothing orders the write before them - and the tile's
 pixel is an answer it allows; until then the pass was refused, with
 `error_initialization_failed`. Only a device whose `input_attachments`
-is true reads any - the cores, not the V3D - others answering
-`error_feature_not_present`. The pass does not say
+is true reads any - the cores, and since 1.216 the V3D - others
+answering `error_feature_not_present`; and only one whose
+`tile_inputs` is true reads an attachment the subpass draws into, the
+cores and not the V3D. The pass does not say
 which descriptor a subpass reads one through: the set written with the
 `input_attachment` descriptor does (UpdateDescriptorSets), and the
 image wants IMAGE_USAGE_INPUT_ATTACHMENT (CreateImage).
 
-A subpass of several colour attachments is drawn once for each, its commands
-played over, so it costs that much more: its fragment function is called for
-each, and `shader.Resources.output` says for which. A fixed fragment
-function has one colour, which every attachment gets.
-
-Since 1.51 such a subpass may be drawn **together** instead, in one
-pass over the tiles: SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER in its
-`flags`, facet.library's own, and every pipeline of it has a fragment
-entry that writes exactly its colour attachments in the one call
-(`shader.fragmentOutputs`, `shader.Fragments.colorsOf`); one that does
-not is `error_invalid_shader_nv` (CreateGraphicsPipelines). The
-vertices are worked once, the triangles binned once and a quad's
-fragment function called once for all of them - a G-buffer's three or
-four planes for the price of one - and each attachment is still
-blended its own way, into a plane of each tile's own. The flag wants a
-device whose `several_outputs` is true: the cores, not the V3D, whose
-fragment programs are the fixed forms and each write the one colour;
-there it is `error_feature_not_present`, and a subpass without it is
-drawn as it always was. Any other bit in `flags` is none of Vulkan
-1.0's (VUID-VkSubpassDescription-flags-parameter): `error_validation_failed`
-since 1.133, `error_feature_not_present` before.
+A subpass of several colour attachments is drawn **together**, in one
+pass over the tiles, on a device whose fragment functions write
+several (`several_outputs`, the cores), as lavapipe draws a subpass's
+colour buffers at once: the vertices are worked once, the triangles
+binned once and a quad's fragment function called once for all of
+them, and each attachment is blended its own way, into a plane of each
+tile's own. A function writes the colours of the locations it has
+outputs for (`shader.fragmentOutputs`, `shader.Fragments.colorsOf`),
+and an attachment at a location past them is left as it is, as
+llvmpipe blends only the colour buffers a shader has an output for
+(lp_state_fs.c:3618-3623): a `fragment` entry's one colour is the
+first's. A subpass that reads two of its own colour attachments, and
+every subpass of several on the V3D, whose programs write one colour,
+is drawn once for each instead, its commands played over: each time
+the function's output at that attachment's location is drawn, and an
+attachment past its outputs is left as it is there too (since 1.230;
+until then that was every subpass unless it carried facet.library's
+own SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER, from 1.51, and every
+attachment got a fixed function's one colour, `shader.Resources.output`
+telling it which was drawn). A flag in `flags` is none of Vulkan
+1.0's (VUID-VkSubpassDescription-flags-parameter):
+`error_validation_failed` since 1.133, `error_feature_not_present`
+before.
 
 Attachments a subpass does not name are left as they are. The
 dependencies say nothing of what waits for what - a queue's commands
@@ -5935,8 +5942,9 @@ form samples through one (`shader.FixedKind.texture_sampled`,
 `texture_shadow`, since 1.49 `texture_array_sampled`,
 `texture_cube_sampled` and `texture_3d_sampled`, and since 1.53
 `texture_cube_array_sampled`) is refused on a device whose
-`Capabilities.samplers` is false, or some of them are: the V3D draws
-the 2D, array, cube and 3D ones since 1.141.
+`Capabilities.samplers` is false, or some of them are: the V3D drew
+the 2D, array, cube and 3D ones since 1.141, and every one since
+1.234.
 
 **CONTEXT**
 
@@ -8696,11 +8704,11 @@ the off value is *mandatory*: say `sampler_anisotropy` is false and
 `max_clip_distances` must read 0. Each `of(...)` below therefore ties a
 limit as well, and `_instance.limits` says which.
 
-What a program may usefully branch on per device is `sampler_anisotropy`
-and `image_cube_array`, which the cores have and a CM5's V3D has not,
-with the limits saying the rest of what differs - that V3D takes one
-sampled image a stage where the cores take as many as a set will hold
-(`GetPhysicalDeviceProperties`).
+What a program may usefully branch on per device is in the features
+that differ between the two - the cores have `image_cube_array`, and
+so does a CM5's V3D since 1.234, as v3dv has it (v3dv_device.c:331) -
+with the limits saying the rest of what differs, such as how many
+sampled images a stage takes (`GetPhysicalDeviceProperties`).
 
 **What is no longer asked here.** Six of facet's 49 were facet's own
 idea with no Vulkan meaning - `own_fragment_functions`,

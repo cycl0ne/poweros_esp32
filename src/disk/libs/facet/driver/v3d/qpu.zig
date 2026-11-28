@@ -354,6 +354,82 @@ const texture_code = varying(4) ++ varying(5) ++ sampled(4, 5) ++ [_]u64{
 
 pub const texture_fragment = Fragment{ .code = &texture_code, .varyings = 2, .uniforms = 2 };
 
+/// `texture_cutout`'s program: a texture at the varyings s and t, a
+/// pixel dropped where the texel's alpha is under a half, and the rest
+/// drawn as `texture_fragment` draws them (since 1.236). These are the
+/// words Mesa's back end makes of facet's own cut-out shader
+/// (`compile.zig`'s `Cutout`, whose test holds them to it), as
+/// `no_color_code` is the noop shader's:
+///
+/// - The comparison into the flags: FCMP of the second word's high half,
+///   the alpha, with 0.5, pushing N (ntq_emit_comparison's flt,
+///   nir_to_vir.c:1727), and SETMSF of 0 where it holds, which clears
+///   the pixel's mask (terminate_if, nir_to_vir.c:3833-3850). Under half
+///   is the cores' alpha byte under `shader.cutout_alpha`, 128.
+/// - Z written through before the colour, as a program that discards
+///   writes it (emit_frag_end, nir_to_vir.c:2073-2134): `mov tlbu, rf5`,
+///   which reads `no_color_specifier`, the uniform after P0 and P1. Early
+///   Z is off, and the shader record says it writes Z.
+/// - The last thread switch on that write, the two colour words in its
+///   delay slots, as qpu_schedule.c puts them.
+///
+/// Mesa reads W beside the varyings here (vir_check_payload_w), so the
+/// record says `center_w` as for any program it compiled.
+const cutout_code = [_]u64{
+    0x3A81_3186_BB03_F000, // nop ; nop ; ldvary.rf4; wrtmuc
+    0x5681_D146_BB10_3000, // nop ; fmul rf5, rf4, rf3 ; ldvary.rf7; wrtmuc
+    0x5400_0206_051C_3005, // fadd rf6, rf0, rf5 ; fmul rf8, rf7, rf3
+    0x3820_2189_0503_F008, // fadd rf9, rf0, rf8 ; nop ; thrsw
+    0x3820_3886_BB24_3000, // nop ; mov tmut, rf9 ; thrsw
+    0x3800_3846_BB18_3000, // nop ; mov tmus, rf6
+    0x3882_B186_BB03_F000, // nop ; nop ; ldtmu.rf10
+    0x3882_F186_BB03_F000, // nop ; nop ; ldtmu.rf11
+    0x39E0_B186_CD03_F2E7, // fcmp.pushn -, rf11.h, 0x3f000000 ; nop
+    0x39C8_3186_BA03_F006, // setmsf.ifa -, 0 ; nop
+    0x3820_3206_BB14_3000, // nop ; mov tlbu, rf5 ; thrsw
+    0x3800_3187_3B03_F28A, // vfpack tlb, rf10.l, rf10.h ; nop
+    0x3800_3187_3B03_F2CB, // vfpack tlb, rf11.l, rf11.h ; nop
+};
+
+pub const cutout_fragment = Fragment{ .code = &cutout_code, .varyings = 2, .uniforms = 3, .center_w = true, .writes_z = true, .disable_ez = true };
+
+/// The same into a render target of 32-bit floats: Mesa's back end
+/// keyed with `f32_color_rb` (vir_emit_tlb_color_write, nir_to_vir.c:
+/// 2007-2022), its four floats the halves made floats by FMOV, the first
+/// to TLBU with `tlb_f32_specifier`, the uniform after the depth's. It is
+/// Mesa's own and not `wide(cutout_fragment)`: the last thread switch
+/// lies among the four writes, two of which `wide` would put past the
+/// program's end (since 1.236).
+const wide_cutout_code = [_]u64{
+    0x3A81_3186_BB03_F000, // nop ; nop ; ldvary.rf4; wrtmuc
+    0x5681_D146_BB10_3000, // nop ; fmul rf5, rf4, rf3 ; ldvary.rf7; wrtmuc
+    0x5400_0206_051C_3005, // fadd rf6, rf0, rf5 ; fmul rf8, rf7, rf3
+    0x3820_2189_0503_F008, // fadd rf9, rf0, rf8 ; nop ; thrsw
+    0x3820_3886_BB24_3000, // nop ; mov tmut, rf9 ; thrsw
+    0x3800_3846_BB18_3000, // nop ; mov tmus, rf6
+    0x3882_B186_BB03_F000, // nop ; nop ; ldtmu.rf10
+    0x3882_C30D_F928_828C, // fmov rf13, rf10.h ; fmov rf12, rf10.l ; ldtmu.rf11
+    0x39E0_9386_CD2C_82E7, // fcmp.pushn -, rf11.h, 0x3f000000 ; fmov rf14, rf11.l
+    0x39C8_13C6_BA2C_C006, // setmsf.ifa -, 0 ; fmov rf15, rf11.h
+    0x3800_3206_BB14_3000, // nop ; mov tlbu, rf5
+    0x3800_3206_BB30_3000, // nop ; mov tlbu, rf12
+    0x3820_31C6_BB34_3000, // nop ; mov tlb, rf13 ; thrsw
+    0x3800_31C6_BB38_3000, // nop ; mov tlb, rf14
+    0x3800_31C6_BB3C_3000, // nop ; mov tlb, rf15
+};
+
+pub const wide_cutout_fragment = Fragment{ .code = &wide_cutout_code, .varyings = 2, .uniforms = 4, .center_w = true, .writes_z = true, .disable_ez = true };
+
+/// The same where the frame has no render target 0, the one a fixed form
+/// writes: Mesa's back end keyed with no render target (`cbufs` 0). The
+/// sample and the comparison stay, and the depth is the one TLB write,
+/// the colour's delay slots empty. Where every other fixed form draws
+/// with `no_color_fragment` there, this one drops pixels, which that
+/// program would not (since 1.236).
+const colorless_cutout_code = cutout_code[0..11].* ++ [_]u64{ nop, nop };
+
+pub const colorless_cutout_fragment = Fragment{ .code = &colorless_cutout_code, .varyings = 2, .uniforms = 3, .center_w = true, .writes_z = true, .disable_ez = true };
+
 /// What is left of a sample once it is started by S: the last section, and the
 /// two words read and passed on as they are.
 const sample_end = last_section ++ [_]u64{
@@ -421,6 +497,34 @@ const cube_code = varying(4) ++ varying(5) ++ varying(6) ++ [_]u64{
 
 pub const cube_fragment = Fragment{ .code = &cube_code, .varyings = 3, .uniforms = 2 };
 
+/// A cube of an array: varyings x, y, z and which cube. The direction is
+/// normalized as a cube's is, and the cube is left as it is, as
+/// nir_normalize_cubemap_coords leaves an array's index
+/// (nir_normalize_cubemap_coords.c:59-65). It goes to TMUI after TMUR,
+/// as handle_tex_src writes an array's index after the coordinate's
+/// other floats (v3d_tex.c:108-127), a float the TMU rounds and holds to
+/// the texture's depth, which the draw makes the view's cubes
+/// (v3dvx_image.c:89-93); the lookup is a cube's, at TMUSCM
+/// (v3d_tex.c:378-379). Since 1.234.
+const cube_array_code = varying(4) ++ varying(5) ++ varying(6) ++ varying(7) ++ [_]u64{
+    fmaxAbs(12, 4, 5),
+    fmaxAbs(12, 12, 6),
+    recip(13, 12),
+    nop,
+    nop,
+    fmul(4, 4, 13),
+    fmul(5, 5, 13),
+    fmul(6, 6, 13),
+    movMagic(WADDR_TMUT, 5),
+    movMagic(WADDR_TMUR, 6),
+    movMagic(WADDR_TMUI, 7),
+    wrtmuc,
+    wrtmuc,
+    movMagic(WADDR_TMUSCM, 4),
+} ++ sample_end;
+
+pub const cube_array_fragment = Fragment{ .code = &cube_array_code, .varyings = 4, .uniforms = 2 };
+
 /// A texture as `texture_code` has it, times the colour of the vertices:
 /// varyings s, t, red, green, blue, alpha.
 const texture_color_code = varying(4) ++ varying(5) ++ varying(6) ++ varying(7) ++ varying(8) ++ varying(9) ++ sampled(4, 5) ++ [_]u64{
@@ -434,6 +538,157 @@ const texture_color_code = varying(4) ++ varying(5) ++ varying(6) ++ varying(7) 
 } ++ end_of_program;
 
 pub const texture_color_fragment = Fragment{ .code = &texture_color_code, .varyings = 6, .uniforms = 2 };
+
+// --- render targets of 32-bit floats (since 1.228) --------------------------
+
+const instr = @import("qpu/instr.zig");
+const pack = @import("qpu/pack.zig");
+
+/// The TLB write's specifier for four 32-bit floats into render target 0,
+/// one sample a pixel: what vir_emit_tlb_color_write builds for a target
+/// in the key's f32_color_rb (nir_to_vir.c:1955-1990), from
+/// TLB_SAMPLE_MODE_PER_PIXEL, render target 0 reversed to 7 at
+/// TLB_RENDER_TARGET_SHIFT, TLB_TYPE_F32_COLOR and a vector size of 4
+/// less one (nir_to_vir.c:1931-1940), over the 0xffffff00 every
+/// specifier has.
+pub const tlb_f32_specifier: u32 = f32Specifier(0);
+
+/// The specifier of four 32-bit channels into render target `rt`
+/// (`tlb_f32_specifier` for 0): render target `rt` reversed, 7 - rt at
+/// TLB_RENDER_TARGET_SHIFT (nir_to_vir.c:1971; since 1.233).
+pub fn f32Specifier(rt: u32) u32 {
+    std.debug.assert(rt < 8);
+    return 0xffffff00 | 1 << 2 | (7 - rt) << 3 | 0 << 6 | (4 - 1);
+}
+
+/// The specifier of four half-floats into render target `rt`:
+/// TLB_SAMPLE_MODE_PER_PIXEL, 7 - rt, TLB_TYPE_F16_COLOR,
+/// TLB_F16_SWAP_HI_LO and TLB_VEC_SIZE_4_F16 (nir_to_vir.c:1966-1985).
+/// Render target 0's is ~0, which the TLB takes without a TLBU write
+/// (`conf != ~0`, :2028), so only another target's is a uniform (since
+/// 1.233).
+pub fn f16Specifier(rt: u32) u32 {
+    std.debug.assert(rt < 8);
+    return 0xffffff00 | 1 << 2 | (7 - rt) << 3 | 3 << 6 | 1 << 1 | 1 << 0;
+}
+
+/// The low or the high half-float of `from`, as a float, to a magic
+/// address.
+fn fmovMagic(waddr: instr.Waddr, from: Rf, half: instr.InputUnpack) u64 {
+    return pack.pack(&.{ .alu = .{ .add = .{ .op = .fmov, .a = .{ .raddr = from, .unpack = half }, .waddr = instr.magic(waddr) } } }).?;
+}
+
+fn movTo(waddr: instr.Waddr, from: Rf) u64 {
+    return movMagic(instr.magic(waddr), from);
+}
+
+/// `fragment` as it draws into a render target of 32-bit floats, which
+/// the tile buffer takes a float a channel, as Mesa's back end writes one
+/// (vir_emit_tlb_color_write's f32_color_rb half, nir_to_vir.c:2007-2022):
+/// four writes of a float, the first to TLBU with `tlb_f32_specifier`.
+/// Each of its writes of two half-floats becomes two of floats: a word
+/// the TMU or a uniform gave as two half-floats its low one and its high
+/// one, and a VFPACK of two floats the two as they are. The specifier is
+/// the uniform TLBU reads, after the program's own, so it takes one more.
+pub fn wide(comptime fragment: Fragment) Fragment {
+    comptime {
+        @setEvalBranchQuota(200_000);
+        var code: [fragment.code.len * 2]u64 = undefined;
+        var used = 0;
+        var first = true;
+        for (fragment.code) |word| {
+            const inst = pack.unpack(word) orelse unreachable;
+            const add = inst.alu.add;
+            const to_tlb = inst.kind == .alu and add.magic_write and add.waddr == instr.magic(.tlb) and (add.op == .mov or add.op == .vfpack);
+            if (!to_tlb) {
+                code[used] = word;
+                used += 1;
+                continue;
+            }
+            const into: instr.Waddr = if (first) .tlbu else .tlb;
+            first = false;
+            if (add.op == .vfpack) {
+                code[used] = movTo(into, add.a.raddr);
+                code[used + 1] = movTo(.tlb, add.b.raddr);
+            } else {
+                code[used] = fmovMagic(into, add.a.raddr, .l);
+                code[used + 1] = fmovMagic(.tlb, add.a.raddr, .h);
+            }
+            used += 2;
+        }
+        if (first) @compileError("a fragment program that writes no colour");
+        const made = code[0..used].*;
+        var widened = fragment;
+        widened.code = &made;
+        widened.uniforms = fragment.uniforms + 1;
+        return widened;
+    }
+}
+
+/// `fragment`, a program of half-floats, as it draws into a render target
+/// other than 0: its first write to the TLB made to TLBU, which reads the
+/// specifier naming the target (`f16Specifier`) as the uniform after the
+/// program's own, as Mesa's back end aims the first VFPACK of a target
+/// whose specifier is not ~0 (vir_emit_tlb_color_write, nir_to_vir.c:
+/// 2026-2037). What it writes is the same. A clear of a render target but
+/// 0 draws with it (`_play.zig`'s `clearRectangle`, since 1.233).
+pub fn targeted(comptime fragment: Fragment) Fragment {
+    comptime {
+        @setEvalBranchQuota(200_000);
+        var code: [fragment.code.len]u64 = fragment.code[0..fragment.code.len].*;
+        var aimed = false;
+        for (&code) |*word| {
+            var inst = pack.unpack(word.*) orelse unreachable;
+            const add = inst.alu.add;
+            if (!(inst.kind == .alu and add.magic_write and add.waddr == instr.magic(.tlb))) continue;
+            inst.alu.add.waddr = instr.magic(.tlbu);
+            word.* = pack.pack(&inst).?;
+            aimed = true;
+            break;
+        }
+        if (!aimed) @compileError("a fragment program that writes no colour");
+        const made = code;
+        var targeted_fragment = fragment;
+        targeted_fragment.code = &made;
+        targeted_fragment.uniforms = fragment.uniforms + 1;
+        return targeted_fragment;
+    }
+}
+
+pub const targeted_color_fragment = targeted(color_fragment);
+
+pub const wide_color_fragment = wide(color_fragment);
+pub const wide_texture_fragment = wide(texture_fragment);
+pub const wide_texture_color_fragment = wide(texture_color_fragment);
+pub const wide_array_fragment = wide(array_fragment);
+pub const wide_cube_fragment = wide(cube_fragment);
+pub const wide_cube_array_fragment = wide(cube_array_fragment);
+pub const wide_volume_fragment = wide(volume_fragment);
+pub const wide_shadow_fragment = wide(shadow_fragment);
+
+/// A clear's four words into a render target the TLB takes a word a
+/// channel, of 32-bit floats or of whole numbers: v3dv's clear-rect
+/// fragment shader (`get_color_clear_rect_fs`, v3dv_meta_clear.c:
+/// 421-440), which loads the colour from its push constants and stores it
+/// as it is, written as Mesa's back end writes it under f32_color_rb
+/// (vir_emit_tlb_color_write, nir_to_vir.c:2007-2022): four uniforms, the
+/// four words untouched by any float operation, and the specifier the
+/// TLBU write reads as the fifth. The colour of the vertices instead
+/// would pass each word through the varyings' FMUL and FADD, which flush
+/// whole numbers below 2^23 to 0 as denormals (since 1.229).
+const words_code = [_]u64{
+    ldunifrf(4),
+    ldunifrf(5),
+    ldunifrf(6),
+    ldunifrf(7),
+} ++ last_section ++ [_]u64{
+    movTo(.tlbu, 4),
+    movTo(.tlb, 5),
+    movTo(.tlb, 6),
+    movTo(.tlb, 7),
+} ++ end_of_program;
+
+pub const words_fragment = Fragment{ .code = &words_code, .varyings = 0, .uniforms = 5 };
 
 const std = @import("std");
 
@@ -467,7 +722,7 @@ test "fmul and fadd read and write where qpu_pack.c puts them" {
 }
 
 test "a program keeps to the registers a thread has, on both sides and in its signals" {
-    const programs = [_]Fragment{ flat_fragment, color_fragment, texture_fragment, texture_color_fragment, array_fragment, cube_fragment, volume_fragment, shadow_fragment };
+    const programs = [_]Fragment{ flat_fragment, color_fragment, texture_fragment, texture_color_fragment, array_fragment, cube_fragment, cube_array_fragment, volume_fragment, shadow_fragment };
     for (programs) |fragment| {
         var waits: u32 = 0;
         for (fragment.code, 0..) |instruction, at| {
@@ -505,4 +760,189 @@ test "the destinations of the instructions that have them are read off where qpu
 test "a value read and written has its offset and registers in place" {
     try std.testing.expectEqual(@as(u64, 0x39C0_0009_BC03_F080) | MM | WADDR_NOP << WADDR_M_SHIFT, ldvpmIn(9, 2));
     try std.testing.expectEqual(@as(u64, 0x39C0_0000_BE03_F089) | MM | WADDR_NOP << WADDR_M_SHIFT, stvpm(2, 9));
+}
+
+test "a fixed form's program for floats of 32 bits: each write of two half-floats as two floats, the first to TLBU, one uniform more (since 1.228)" {
+    const disasm = @import("qpu/disasm.zig");
+    _ = disasm;
+    // The colour of the vertices: four floats packed in two VFPACKs,
+    // now each moved as it is.
+    const color = wide_color_fragment;
+    try std.testing.expectEqual(color_fragment.code.len + 2, color.code.len);
+    try std.testing.expectEqual(@as(u32, 1), color.uniforms);
+    try std.testing.expectEqual(color_fragment.varyings, color.varyings);
+    const tail = color.code[color.code.len - end_of_program.len - 4 ..][0..4];
+    try std.testing.expectEqual(movTo(.tlbu, 4), tail[0]);
+    try std.testing.expectEqual(movTo(.tlb, 5), tail[1]);
+    try std.testing.expectEqual(movTo(.tlb, 6), tail[2]);
+    try std.testing.expectEqual(movTo(.tlb, 7), tail[3]);
+    try std.testing.expectEqualSlices(u64, &end_of_program, color.code[color.code.len - end_of_program.len ..]);
+    // Nothing before the writes moved.
+    try std.testing.expectEqualSlices(u64, color_fragment.code[0 .. color_fragment.code.len - end_of_program.len - 2], color.code[0 .. color_fragment.code.len - end_of_program.len - 2]);
+
+    // A texture: two words of two half-floats each, now four floats, the
+    // first to TLBU; its two uniforms of the TMU first, the specifier
+    // third.
+    const texture = wide_texture_fragment;
+    try std.testing.expectEqual(@as(u32, 3), texture.uniforms);
+    const writes = texture.code[texture.code.len - end_of_program.len - 4 ..][0..4];
+    try std.testing.expectEqual(fmovMagic(.tlbu, 10, .l), writes[0]);
+    try std.testing.expectEqual(fmovMagic(.tlb, 10, .h), writes[1]);
+    try std.testing.expectEqual(fmovMagic(.tlb, 11, .l), writes[2]);
+    try std.testing.expectEqual(fmovMagic(.tlb, 11, .h), writes[3]);
+    // As the packer reads them back: an FMOV of the low half and of the
+    // high, written to the magic addresses, the first the one that reads
+    // a uniform.
+    const low = pack.unpack(writes[0]).?;
+    try std.testing.expectEqual(instr.AddOp.fmov, low.alu.add.op);
+    try std.testing.expectEqual(instr.InputUnpack.l, low.alu.add.a.unpack);
+    try std.testing.expectEqual(@as(u6, 10), low.alu.add.a.raddr);
+    try std.testing.expectEqual(instr.magic(.tlbu), low.alu.add.waddr);
+    try std.testing.expect(low.alu.add.magic_write);
+    try std.testing.expectEqual(instr.InputUnpack.h, pack.unpack(writes[1]).?.alu.add.a.unpack);
+    try std.testing.expectEqual(instr.magic(.tlb), pack.unpack(writes[1]).?.alu.add.waddr);
+
+    // The texture times the colour: its VFPACKs of products.
+    const both = wide_texture_color_fragment;
+    const products = both.code[both.code.len - end_of_program.len - 4 ..][0..4];
+    try std.testing.expectEqual(movTo(.tlbu, 6), products[0]);
+    try std.testing.expectEqual(movTo(.tlb, 9), products[3]);
+    // Every variant writes the tile buffer four times, once to TLBU.
+    for ([_]Fragment{ wide_color_fragment, wide_texture_fragment, wide_texture_color_fragment, wide_array_fragment, wide_cube_fragment, wide_cube_array_fragment, wide_volume_fragment, wide_shadow_fragment }) |each| {
+        var tlb: u32 = 0;
+        var tlbu: u32 = 0;
+        for (each.code) |word| {
+            const inst = pack.unpack(word) orelse continue;
+            if (!inst.alu.add.magic_write) continue;
+            if (inst.alu.add.waddr == instr.magic(.tlb)) tlb += 1;
+            if (inst.alu.add.waddr == instr.magic(.tlbu)) tlbu += 1;
+        }
+        try std.testing.expectEqual(@as(u32, 3), tlb);
+        try std.testing.expectEqual(@as(u32, 1), tlbu);
+    }
+    try std.testing.expectEqual(@as(u32, 0xFFFF_FF3F), tlb_f32_specifier);
+}
+
+test "the cut-out's programs keep to the registers a thread has, write the tile buffer as their targets take it, and the one of no colour is the half-floats' with its colour writes made nops (since 1.236)" {
+    // Mesa's words (`compile.zig` holds them to its back end): the thread
+    // switches on the instructions that do the work, not on nops of their
+    // own, so `last_section` and `end_of_program` are not looked for.
+    for ([_]Fragment{ cutout_fragment, wide_cutout_fragment, colorless_cutout_fragment }) |fragment| {
+        var switches: u32 = 0;
+        var setmsf: u32 = 0;
+        for (fragment.code) |instruction| {
+            for (destinations(instruction)) |side| if (side) |to| try std.testing.expect(to < registers);
+            if (signalled(instruction)) |to| try std.testing.expect(to < registers);
+            const inst = pack.unpack(instruction) orelse return error.TestUnexpectedResult;
+            switches += @intFromBool(inst.sig.thrsw);
+            setmsf += @intFromBool(inst.kind == .alu and inst.alu.add.op == .setmsf);
+        }
+        // The wait on the scoreboard, two in a row, and the last.
+        try std.testing.expectEqual(@as(u32, 3), switches);
+        try std.testing.expectEqual(@as(u32, 1), setmsf);
+        try std.testing.expectEqual(@as(u32, 2), fragment.varyings);
+    }
+    const counts = struct {
+        fn of(fragment: Fragment) [2]u32 {
+            var tlb: u32 = 0;
+            var tlbu: u32 = 0;
+            for (fragment.code) |word| {
+                const inst = pack.unpack(word) orelse continue;
+                if (inst.kind != .alu) continue;
+                for ([_]bool{ inst.alu.add.magic_write, inst.alu.mul.magic_write }, [_]u6{ inst.alu.add.waddr, inst.alu.mul.waddr }, [_]bool{ inst.alu.add.op != .nop, inst.alu.mul.op != .nop }) |magic, waddr, working| {
+                    if (!magic or !working) continue;
+                    if (waddr == instr.magic(.tlb)) tlb += 1;
+                    if (waddr == instr.magic(.tlbu)) tlbu += 1;
+                }
+            }
+            return .{ tlb, tlbu };
+        }
+    }.of;
+    // Z to TLBU in each, then two words of half-floats, or four floats
+    // the first of them to TLBU, or none.
+    try std.testing.expectEqual([2]u32{ 2, 1 }, counts(cutout_fragment));
+    try std.testing.expectEqual([2]u32{ 3, 2 }, counts(wide_cutout_fragment));
+    try std.testing.expectEqual([2]u32{ 0, 1 }, counts(colorless_cutout_fragment));
+    try std.testing.expectEqualSlices(u64, cutout_fragment.code[0 .. cutout_fragment.code.len - 2], colorless_cutout_fragment.code[0 .. colorless_cutout_fragment.code.len - 2]);
+    try std.testing.expectEqual(cutout_fragment.uniforms + 1, wide_cutout_fragment.uniforms);
+    try std.testing.expectEqual(cutout_fragment.uniforms, colorless_cutout_fragment.uniforms);
+}
+
+test "a cube of an array is the cube's program and a fourth varying, which cube, written to TMUI after TMUR as handle_tex_src writes an array's index, the lookup at TMUSCM (since 1.234)" {
+    const cube = cube_fragment.code;
+    const cubes = cube_array_fragment.code;
+    try std.testing.expectEqual(@as(u32, 4), cube_array_fragment.varyings);
+    try std.testing.expectEqual(cube_fragment.uniforms, cube_array_fragment.uniforms);
+    try std.testing.expectEqual(cube.len + 4, cubes.len);
+    // The cube's three varyings, then the fourth into rf7.
+    try std.testing.expectEqualSlices(u64, cube[0..9], cubes[0..9]);
+    try std.testing.expectEqualSlices(u64, &varying(7), cubes[9..12]);
+    // The direction normalized and written to T and R as a cube's is,
+    // the cube left out of it (nir_normalize_cubemap_coords.c:59-65).
+    try std.testing.expectEqualSlices(u64, cube[9..19], cubes[12..22]);
+    try std.testing.expectEqual(movMagic(WADDR_TMUR, 6), cubes[21]);
+    try std.testing.expectEqual(movMagic(WADDR_TMUI, 7), cubes[22]);
+    // The configuration, the lookup at TMUSCM and the rest as the cube's.
+    try std.testing.expectEqualSlices(u64, cube[19..], cubes[23..]);
+    try std.testing.expectEqual(movMagic(WADDR_TMUSCM, 4), cubes[25]);
+    // Nothing but the varying writes rf7.
+    for (cubes, 0..) |word, at| {
+        if (at >= 9 and at < 12) continue;
+        for (destinations(word)) |side| if (side) |to| try std.testing.expect(to != 7);
+    }
+}
+
+test "the colour of the vertices into a render target but 0: its first VFPACK to TLBU, a uniform more, and each target's specifier Mesa's (since 1.233)" {
+    const aimed = targeted_color_fragment;
+    try std.testing.expectEqual(color_fragment.code.len, aimed.code.len);
+    try std.testing.expectEqual(@as(u32, 1), aimed.uniforms);
+    try std.testing.expectEqual(color_fragment.varyings, aimed.varyings);
+    var differ: u32 = 0;
+    for (color_fragment.code, aimed.code) |old, new| {
+        if (old == new) continue;
+        differ += 1;
+        try std.testing.expectEqual(vfpackMagic(WADDR_TLB, 4, 5), old);
+        const inst = pack.unpack(new).?;
+        try std.testing.expectEqual(instr.AddOp.vfpack, inst.alu.add.op);
+        try std.testing.expectEqual(instr.magic(.tlbu), inst.alu.add.waddr);
+        try std.testing.expectEqual(@as(u6, 4), inst.alu.add.a.raddr);
+        try std.testing.expectEqual(@as(u6, 5), inst.alu.add.b.raddr);
+    }
+    try std.testing.expectEqual(@as(u32, 1), differ);
+    // Render target 0 of half-floats is ~0, which needs no TLBU write;
+    // the others name 7 - rt at bit 3 (as compile.zig's tests read them
+    // out of Mesa's back end's code).
+    try std.testing.expectEqual(~@as(u32, 0), f16Specifier(0));
+    try std.testing.expectEqual(@as(u32, 0xFFFF_FFF7), f16Specifier(1));
+    try std.testing.expectEqual(@as(u32, 0xFFFF_FFE7), f16Specifier(3));
+    try std.testing.expectEqual(tlb_f32_specifier, f32Specifier(0));
+    try std.testing.expectEqual(@as(u32, 0xFFFF_FF27), f32Specifier(3));
+}
+
+test "a clear's four words into a target taken a word a channel: four uniforms moved as they are, the first to TLBU, and the specifier the fifth (since 1.229)" {
+    const clear = words_fragment;
+    try std.testing.expectEqual(@as(u32, 0), clear.varyings);
+    try std.testing.expectEqual(@as(u32, 5), clear.uniforms);
+    var loads: u32 = 0;
+    var tlb: u32 = 0;
+    var tlbu: u32 = 0;
+    for (clear.code) |word| {
+        const inst = pack.unpack(word) orelse return error.TestUnexpectedResult;
+        if (inst.sig.ldunifrf) loads += 1;
+        if (inst.kind != .alu) continue;
+        // Nothing that would read a word as a float.
+        try std.testing.expect(inst.alu.add.op != .fmov and inst.alu.add.op != .fadd and inst.alu.mul.op != .fmul);
+        if (!inst.alu.add.magic_write) continue;
+        if (inst.alu.add.waddr == instr.magic(.tlb)) tlb += 1;
+        if (inst.alu.add.waddr == instr.magic(.tlbu)) {
+            // The first write, and of the first word loaded.
+            try std.testing.expectEqual(@as(u32, 0), tlb);
+            try std.testing.expectEqual(@as(u6, 4), inst.alu.add.a.raddr);
+            tlbu += 1;
+        }
+    }
+    try std.testing.expectEqual(@as(u32, 4), loads);
+    try std.testing.expectEqual(@as(u32, 3), tlb);
+    try std.testing.expectEqual(@as(u32, 1), tlbu);
+    try std.testing.expectEqualSlices(u64, &end_of_program, clear.code[clear.code.len - end_of_program.len ..]);
 }

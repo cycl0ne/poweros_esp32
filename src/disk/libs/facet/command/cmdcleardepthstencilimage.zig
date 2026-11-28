@@ -8,7 +8,8 @@ const FacetBase = @import("../facet_base.zig").FacetBase;
 const _objects = @import("../_objects.zig");
 const _command = @import("_command.zig");
 const _render = @import("../render/_render.zig");
-const Image = @import("../image/_image.zig").Image;
+const _image = @import("../image/_image.zig");
+const Image = _image.Image;
 
 /// Recorded: a depth image's pixels set to a depth.
 ///
@@ -86,11 +87,12 @@ pub fn CmdClearDepthStencilImage(base: *FacetBase, buffer: *facet.CommandBuffer,
     _ = base;
     _ = layout;
     const made = _command.recording(buffer) orelse return;
+    const kept = _objects.of(Image, image);
     const command = _command.ClearDepthStencilImage{
         .count = range_count,
-        .depth = _render.depthOf(value.*),
+        .depth = _render.depthOfBits(value.*, _image.depthBits(kept.format)),
         .stencil = @truncate(value.stencil),
-        .image = _objects.of(Image, image),
+        .image = kept,
     };
     _command.record(made, command, facet.ImageSubresourceRange, ranges[0..range_count]);
 }

@@ -45,8 +45,9 @@ pub const RasterState = struct {
     cull: raster.Cull,
     front: raster.Winding,
     depth_test: ?raster.batched.Compare,
-    /// One for each colour attachment of the subpass, the draw taking the
-    /// one for the attachment being drawn (`shader.Resources.output`).
+    /// One for each colour attachment of the subpass, by its location: a
+    /// plane of the frame takes the one at its own (`Player.locations`,
+    /// since 1.230).
     blend: [_render.most_colors]raster.Blend,
     mixing: [_render.most_colors]raster.Mixing,
 };
@@ -207,18 +208,19 @@ pub fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_in
     const viewport = pipeline.viewport orelse player.viewport;
     const scissor = pipeline.scissor orelse player.scissor;
     const translated: *const RasterState = @ptrCast(@alignCast(pipeline.driver.?));
-    // The colour attachment being drawn has a mixing of its own; a
-    // fragment function that writes several at once has them all, each
-    // blended its own way into its own plane (since 1.51).
-    const colors = @min(@max(pipeline.outputs, 1), target.colorCount());
-    const first_output = @min(resources.output, _render.most_colors - 1);
-    const blend, const mixing = player.mixingFor(pipeline, translated, first_output);
+    // Each of the frame's planes has the mixing of its location, and
+    // takes the colour the fragment function writes there (since 1.230;
+    // the planes as many as the function wrote, each at its own number but
+    // the first at the part's, until then): blended its own way into its
+    // own plane (since 1.51).
+    const colors = target.colorCount();
+    const blend, const mixing = player.mixingFor(pipeline, translated, player.locations[0]);
     var more_blends: [_render.most_colors - 1]raster.pipeline.Blend = @splat(.off);
     var more_mixings: [_render.most_colors - 1]raster.pipeline.Mixing = @splat(.{});
     // None past the first where there is no first: a subpass of no colour
     // attachment (since 1.113).
     for (1..@max(colors, 1)) |k| {
-        more_blends[k - 1], more_mixings[k - 1] = player.mixingFor(pipeline, translated, @intCast(k));
+        more_blends[k - 1], more_mixings[k - 1] = player.mixingFor(pipeline, translated, player.locations[k]);
     }
     const stencil: ?[2]raster.batched.StencilFace = if (player.stencil.of(pipeline)) |faces| .{ stencilFaceOf(faces[0]), stencilFaceOf(faces[1]) } else null;
     // What the queries begun count of this draw, nothing where none is:
@@ -260,12 +262,15 @@ pub fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_in
         .more_blends = more_blends,
         .more_mixings = more_mixings,
         .color_count = colors,
+        .output_count = pipeline.outputs,
+        .locations = player.locations,
         .stencil = stencil,
         .prepass = pipeline.prepass and stencil == null,
         .varyings = pipeline.varyings,
         .discards = pipeline.discards,
         .alpha_to_coverage = pipeline.alpha_to_coverage,
         .fragment = pipeline.fragment,
+        .written = pipeline.written,
         .resources = resources,
         // The pixels already in the tile, for a subpass that reads the
         // attachment it draws into (since 1.64).
@@ -370,6 +375,26 @@ fn clearColor(fragments: *const shader.Fragments) callconv(.c) void {
 
 const no_resources = shader.Resources{};
 
+/// The clear of an attachment the tiles keep in its own bytes: the clear's
+/// four words, from the push constants' first sixteen bytes, into every
+/// pixel as the floats they are (`shader.Written.floats`). Exact, where
+/// the corners' colour of `clearColor` is a byte a channel. (Since
+/// 1.226.)
+fn clearValues(fragments: *const shader.Fragments) callconv(.c) void {
+    const words: [4]u32 = @bitCast(fragments.resources.push[0..16].*);
+    for (fragments.values[0..fragments.count]) |*quad| quad.* = @splat(words);
+}
+
+/// Each plane's location for a clear of `command`: 0, the one output of
+/// the clear's function, for the plane of the colour attachment it
+/// clears, and one past it for every other plane, which is then left as
+/// it is. (Since 1.230.)
+fn clearedLocations(player: *const _play.Player, command: *const _command.ClearAttachment) [_render.most_colors]u8 {
+    var locations: [_render.most_colors]u8 = @splat(_render.most_colors);
+    if (_play.clearedPlane(player, command)) |plane| locations[plane] = 0;
+    return locations;
+}
+
 /// A part of the attachments cleared in the middle of a pass: a rectangle
 /// drawn over the part, writing what is cleared and no more.
 pub fn clearAttachment(queue: *Queue, command: *const _command.ClearAttachment) void {
@@ -404,7 +429,15 @@ pub fn clearAttachment(queue: *Queue, command: *const _command.ClearAttachment) 
         .depth_test = if (clears_depth) .always else null,
         .depth_write = clears_depth,
         .blend = .general,
-        .mixing = .{ .mask = if (aspect & facet.IMAGE_ASPECT_COLOR != 0 and command.output == player.resources.output) 0xFFFF_FFFF else 0 },
+        .mixing = .{ .mask = 0xFFFF_FFFF },
+        .more_blends = @splat(.general),
+        .more_mixings = @splat(.{ .mask = 0xFFFF_FFFF }),
+        // The one plane cleared takes the colour, every other none: its
+        // location the one output, theirs past it (since 1.230; the
+        // part's first plane alone was cleared until then, which drawn
+        // together missed the others).
+        .color_count = target.colorCount(),
+        .locations = clearedLocations(player, command),
         .stencil = if (clears_stencil) .{ stencil_face, stencil_face } else null,
         .varyings = 4,
         .fragment = &clearColor,
@@ -415,7 +448,20 @@ pub fn clearAttachment(queue: *Queue, command: *const _command.ClearAttachment) 
     for ([4][2]f32{ .{ -1, -1 }, .{ 1, -1 }, .{ -1, 1 }, .{ 1, 1 } }, 0..) |corner, k| {
         vertices[k * 8 ..][0..8].* = .{ corner[0], corner[1], command.depth, 1, channels[0], channels[1], channels[2], channels[3] };
     }
-    raster.batched.draw(target, &state, &vertices, 8, &[6]u32{ 0, 1, 2, 2, 1, 3 }) catch return;
+    // An attachment the tiles keep in its own bytes takes the clear's
+    // words as they were given, kept in the frame's arena for the tiles
+    // drawn after this (since 1.226).
+    var exact = state;
+    const plane = _play.clearedPlane(player, command) orelse 0;
+    if (plane < target.surface_count and target.surfaceAt(plane).texels != .none) {
+        const held = target.arena.create(shader.Resources) orelse return;
+        held.* = .{};
+        held.push[0..16].* = @bitCast(command.words);
+        exact.fragment = &clearValues;
+        exact.written = .floats;
+        exact.resources = held;
+    }
+    raster.batched.draw(target, &exact, &vertices, 8, &[6]u32{ 0, 1, 2, 2, 1, 3 }) catch return;
 }
 
 /// `bytes` of the player's memory for a draw's vertices, aligned for a

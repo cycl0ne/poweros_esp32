@@ -235,8 +235,8 @@ pub fn CreateImageView(base: *FacetBase, device: *facet.Device, info: *const fac
         // (-image-01003, -viewType-02960, -viewType-02962).
         .cube => if (!image.cube or layers != 6) return .error_validation_failed,
         // Cubes one after another, six layers to each (since 1.46), on a
-        // device that has imageCubeArray (-viewType-01004; the V3D has
-        // not): of an image made CUBE_COMPATIBLE, a multiple of six layers
+        // device that has imageCubeArray (-viewType-01004; the V3D since
+        // 1.234): of an image made CUBE_COMPATIBLE, a multiple of six layers
         // of it (-viewType-02961, -viewType-02963). Its first layer is the
         // first face of its first cube whatever layer of the image that
         // is, as Vulkan counts a cube array's faces from `baseArrayLayer`
@@ -293,7 +293,7 @@ pub fn CreateImageView(base: *FacetBase, device: *facet.Device, info: *const fac
     // (src/broadcom/vulkan/v3dvx_image.c:68, :79-80).
     const held = if (image.volume) image.layers else layers;
     const made = _objects.create(base.sys_base, ImageView) orelse return .error_out_of_host_memory;
-    made.* = .{ .image = image, .format = info.format, .base_level = range.base_mip_level, .level_count = count, .base_layer = range.base_array_layer, .layer_count = held, .swizzle = swizzle };
+    made.* = .{ .image = image, .format = info.format, .base_level = range.base_mip_level, .level_count = count, .base_layer = range.base_array_layer, .layer_count = held, .swizzle = swizzle, .cubes = info.view_type == .cube_array };
     // A level of a 3D image has half the slices of the one before
     // (`texture.Texture.slicesAt`), and the view's texture begins at the
     // level it names, so it has that level's slices (since 1.135), as
@@ -312,6 +312,10 @@ pub fn CreateImageView(base: *FacetBase, device: *facet.Device, info: *const fac
     // Of another format than the image's (since 1.131): the same texels
     // at the same places, read the view's way.
     if (info.format != image.given_format and _image.hasTexels(image)) made.texels = _image.readAs(made.texels, image, info.format);
+    // On a device whose images lie in a layout of their own (the V3D),
+    // where that device keeps them: what a function of the program's run
+    // on the cores reads and writes (since 1.217).
+    if (_image.hasTexels(image)) _image.deviceTexels(made);
     // What a sample, a fetch and a read of the texels give back, swizzled
     // as the view says (since 1.120), and of a depth or a stencil read
     // (D, 0, 0, 1) whatever it says (since 1.121). An input attachment's

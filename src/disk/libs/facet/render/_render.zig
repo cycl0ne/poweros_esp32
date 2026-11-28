@@ -9,10 +9,14 @@
 //! very attachments of the one before it goes on in the same tiles, its depth
 //! and all: the only way two subpasses share a depth.
 //!
-//! The tiles have one colour. A subpass of several colour attachments is drawn
-//! once for each, up to 4, a `Part` each, its draws played over for each after
-//! the first; `shader.Resources.output` says which is being drawn. All drawn
-//! the same way: the blend states of a pipeline have to be alike.
+//! A subpass of several colour attachments, up to 4, is drawn together, one
+//! `Part` with a plane of the tiles for each, on a device whose fragment
+//! functions write several (`Capabilities.several_outputs`, the cores;
+//! since 1.230, docs/facet-vulkan10.md item 80). On one that writes one,
+//! the V3D, it is drawn once for each, a `Part` each, its draws played
+//! over for each after the first, as on the cores until 1.230 unless the
+//! subpass carried facet's own SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER. Each
+//! plane takes the output at its location (`Part.locations`).
 //!
 //! How each starts and ends is settled as the pass is made:
 //! - a colour: CLEAR clears every tile of the render area the first time
@@ -36,18 +40,32 @@ pub const most_attachments = 8;
 pub const most_subpasses = 4;
 pub const most_colors = 4;
 pub const most_parts = 8;
+/// The input attachments, by their index, whose reads `Subpass.tile_inputs`
+/// says a subpass may take out of the tile it draws: v3dv's
+/// MAX_INPUT_ATTACHMENTS (v3dv_limits.h:52), the size of its
+/// tlb_input_attachment_location (since 1.237).
+pub const most_tile_inputs = 4;
+/// What `Subpass.tile_inputs` holds for an input attachment the subpass
+/// does not draw into, v3dv's UINT8_MAX.
+pub const no_tile_input: u8 = 0xFF;
 
 /// One pass over the tiles: a subpass's colour attachments, or one of
 /// them where the subpass is drawn once for each.
 pub const Part = struct {
     /// The colour attachments it draws into, by their place among the
     /// pass's: `color_count` of them, which is 1 unless the subpass
-    /// draws several together (SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER,
-    /// since 1.51).
+    /// draws several together (since 1.51; every subpass of several on
+    /// a device of `several_outputs` since 1.230, one carrying facet's
+    /// own SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER until then). The one it
+    /// reads of its own, where it reads one, is first.
     colors: [most_colors]u32 = @splat(0),
     color_count: u32 = 1,
     /// The depth attachment's place, if there is one.
     depth: ?u32,
+    /// Its depth's bits, 16 or 24 (`_image.depthBits`; 16 for a stencil
+    /// alone, and for no attachment): what a clear value's depth is
+    /// taken to (`depthOfBits`), and how the tiles keep it (since 1.223).
+    depth_bits: u32 = 16,
     /// What that attachment has of the two.
     tests_depth: bool,
     tests_stencil: bool,
@@ -79,13 +97,17 @@ pub const Part = struct {
     /// pass's, or null for none: what that colour's samples are averaged
     /// into as the subpass ends (since 1.100).
     resolves: [most_colors]?u32 = @splat(null),
-    /// The place of its first colour among the subpass's colour
-    /// attachments: the location a fragment function writes it at, and
-    /// the blend state it is mixed by. A part's number in its subpass
-    /// where it is drawn once for each, unless one before it is
-    /// ATTACHMENT_UNUSED and has no part (since 1.118); 0 where they go
-    /// together.
-    output: u32 = 0,
+    /// Each colour's place among the subpass's colour attachments: the
+    /// location a fragment function writes it at, and the blend state it
+    /// is mixed by. A plane whose location is past what the function
+    /// writes is left as it is, as llvmpipe blends only a colour buffer
+    /// the shader has an output for (lp_state_fs.c:3618-3623) and v3d
+    /// writes no render target it has none for (`vir_emit_tlb_color_write`,
+    /// nir_to_vir.c:1958). Drawn together, the planes in the order the part
+    /// keeps them, an ATTACHMENT_UNUSED one having none; drawn once for
+    /// each, the part's one colour at its own (`output` until 1.230, which
+    /// was the first alone).
+    locations: [most_colors]u8 = .{ 0, 1, 2, 3 },
 };
 
 pub const Subpass = struct {
@@ -98,6 +120,14 @@ pub const Subpass = struct {
     color_count: u32,
     /// Goes on in the tiles of the one before it.
     joined: bool,
+    /// For each input attachment, by its index, the location among the
+    /// subpass's colour attachments of the one it is, where the subpass
+    /// draws into it as well, or `no_tile_input`: v3dv's
+    /// tlb_input_attachment_location (subpass_setup_tlb_input_attachments,
+    /// v3dv_pass.c:97-135), which a driver whose programs read the tile
+    /// buffer keys a pipeline of the subpass on (`Pipeline.tile_inputs`,
+    /// since 1.237).
+    tile_inputs: [most_tile_inputs]u8 = @splat(no_tile_input),
 };
 
 pub const RenderPass = struct {
@@ -148,6 +178,20 @@ pub fn colorOf(value: facet.ClearColorValue) u32 {
 pub fn depthOf(value: facet.ClearDepthStencilValue) u16 {
     const depth = if (value.depth >= 0) @min(value.depth, 1) else 0; // a NaN as well
     return @intFromFloat(@round(depth * 65535));
+}
+
+/// The most a depth of `bits` holds, the furthest: 65535 for 16, and
+/// 16777215 for 24 (since 1.223).
+pub fn depthUnits(bits: u32) u32 {
+    return if (bits == 24) 0xFF_FFFF else 0xFFFF;
+}
+
+/// The same as a depth of `bits` holds it: 0 to 65535 for 16, and 0 to
+/// 16777215 for 24 (since 1.222).
+pub fn depthOfBits(value: facet.ClearDepthStencilValue, bits: u32) u32 {
+    if (bits != 24) return depthOf(value);
+    const depth = if (value.depth >= 0) @min(value.depth, 1) else 0; // a NaN as well
+    return @intFromFloat(@round(@as(f64, depth) * 0xFF_FFFF));
 }
 
 fn byteOf(channel: f32) u32 {

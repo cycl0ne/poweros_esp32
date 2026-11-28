@@ -299,6 +299,13 @@ const Item = struct {
 /// `reader.take`. False when there is no such collection, the descriptor
 /// is past what this keeps, or `take` says the collection is unreadable.
 fn walk(descriptor: []const u8, application: u32, reader: anytype) bool {
+    return walkNth(descriptor, application, 0, reader);
+}
+
+/// `walk` for the application collection of `application` that comes
+/// after `skip` others of it.
+fn walkNth(descriptor: []const u8, application: u32, skip: u32, reader: anytype) bool {
+    var skipped: u32 = 0;
     var globals: Globals = .{};
     var saved: [4]Globals = undefined;
     var saved_count: usize = 0;
@@ -339,7 +346,9 @@ fn walk(descriptor: []const u8, application: u32, reader: anytype) bool {
                     },
                     MAIN_COLLECTION => {
                         collections += 1;
-                        if (depth == 0 and data == COLLECTION_APPLICATION and locals.usageAt(globals.page, 0) == application) depth = collections;
+                        if (depth == 0 and data == COLLECTION_APPLICATION and locals.usageAt(globals.page, 0) == application) {
+                            if (skipped == skip) depth = collections else skipped += 1;
+                        }
                     },
                     MAIN_END_COLLECTION => {
                         if (depth != 0 and depth == collections) return true;
@@ -421,10 +430,37 @@ const MouseReader = struct {
 /// Where `descriptor` says its keyboard's report keeps its keys, and its
 /// LEDs' report; null when it describes no keyboard keys this can read.
 pub fn keyboardLayout(descriptor: []const u8) ?KeyboardLayout {
-    var reader: KeyboardReader = .{};
-    if (!walk(descriptor, USAGE_KEYBOARD, &reader)) return null;
-    if (reader.layout.bits_count == 0 and reader.layout.slots.size == 0) return null;
-    return reader.layout;
+    var layouts: [KEYBOARDS_MOST]KeyboardLayout = undefined;
+    if (keyboardLayouts(descriptor, &layouts) == 0) return null;
+    return layouts[0];
+}
+
+/// How many keyboard collections one descriptor is read for: a keyboard
+/// may describe several, each in a report of its own - the 8BitDo Retro
+/// Mechanical Keyboard's receiver six slots in report 1, and every key
+/// as a bit in report 12 and again in report 10, which is the one it
+/// sends.
+pub const KEYBOARDS_MOST = 4;
+
+/// Each keyboard collection of `descriptor` whose report keeps keys this
+/// reads, in the order the descriptor gives them, into `into`: how many.
+/// One whose report is another's already read is passed over.
+pub fn keyboardLayouts(descriptor: []const u8, into: *[KEYBOARDS_MOST]KeyboardLayout) usize {
+    var count: usize = 0;
+    var skip: u32 = 0;
+    // A descriptor holds few collections; past these there is none.
+    while (skip < 16 and count < into.len) : (skip += 1) {
+        var reader: KeyboardReader = .{};
+        if (!walkNth(descriptor, USAGE_KEYBOARD, skip, &reader)) continue;
+        if (reader.layout.bits_count == 0 and reader.layout.slots.size == 0) continue;
+        const known = for (into[0..count]) |other| {
+            if (other.report_id == reader.layout.report_id) break true;
+        } else false;
+        if (known) continue;
+        into[count] = reader.layout;
+        count += 1;
+    }
+    return count;
 }
 
 const KeyboardReader = struct {

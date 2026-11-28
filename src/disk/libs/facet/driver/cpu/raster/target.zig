@@ -26,6 +26,14 @@
 //! each pixel's depth and stencil beside each other, which the planes'
 //! `stride` says.
 //!
+//! The depth is kept at its attachment's own width, as llvmpipe tests a
+//! depth in its format's own bits (lp_bld_depth.c:1067-1095): 16 bits a
+//! pixel for D16_UNORM and D16_UNORM_S8_UINT, and since 1.223 32 for
+//! X8_D24_UNORM_PACK32 and D24_UNORM_S8_UINT, the 24 bits of depth in the
+//! low ones of the tile's word (`Attachments.Depth.bits`). The buffer has
+//! room for the wider; a depth of 16 bits touches the first half of it,
+//! so the cache it takes is what it was.
+//!
 //! A frame of four samples a pixel keeps sample 0 of each in the buffer,
 //! as a frame of one does, and samples 1 to 3 in planes of their own
 //! beside it: of every colour attachment since 1.103, and of the depth
@@ -64,6 +72,7 @@
 //! has to fetch again from memory for nothing.
 
 const sdk = @import("sdk");
+const shader = sdk.facet.shader;
 const bins = @import("bins.zig");
 const Header = bins.Header;
 
@@ -71,9 +80,9 @@ const Header = bins.Header;
 pub const tile_size = 64;
 const tile_pixels = tile_size * tile_size;
 
-/// The words of a plane of depth in a tile, 16 bits a pixel, and of one
-/// of stencil, a byte. (Since 1.105.)
-const depth_plane_words = tile_pixels / 2;
+/// The words of a plane of depth in a tile, room for 32 bits a pixel
+/// (16 until 1.223), and of one of stencil, a byte. (Since 1.105.)
+const depth_plane_words = tile_pixels;
 const stencil_plane_words = tile_pixels / 4;
 
 /// The most parts a frame's tiles are shared between: a buffer each.
@@ -93,12 +102,28 @@ pub const most_colors = 4;
 pub const batch_color_words = 64 * 4;
 
 /// The words a batch of quads' depths take at four samples a pixel,
-/// held for a fragment function that may drop pixels: sixteen 16-bit
-/// depths a quad, as many quads as a batch holds (`batched.batch_quads`,
+/// held for a fragment function that may drop pixels: sixteen 32-bit
+/// depths a quad (16-bit until 1.223), as many quads as a batch holds (`batched.batch_quads`,
 /// which a comptime check there holds to this). A tile hands out its
 /// part's own, as it does the colours of several attachments, rather
 /// than the worker's stack growing by them. (Since 1.105.)
-pub const batch_depth_words = 64 * 16 / 2;
+pub const batch_depth_words = 64 * 16;
+
+/// The words a batch of quads' four words a pixel take for one colour
+/// attachment, for a fragment function that writes floats or whole
+/// numbers (`shader.Fragments.values`): sixteen a quad, as many quads as
+/// a batch holds (`batched.batch_quads`, which a comptime check there
+/// holds to this). Every part has room for them, as it has for nothing
+/// else every frame: a function may write floats into any attachment.
+/// (Since 1.226.)
+pub const batch_value_words = 64 * 16;
+
+/// The words a plane of a colour attachment the tiles keep in its own
+/// bytes takes (`Surface.texels`): room for 16 bytes a pixel, the widest
+/// of them, R32G32B32A32_SFLOAT. A row of one is `tile_size` pixels of
+/// the format's own bytes, so a narrower format takes the front of it.
+/// (Since 1.226.)
+pub const texel_plane_words = tile_pixels * 4;
 
 /// The cache line a tile's rows start on.
 const line_bytes = 64;
@@ -218,11 +243,25 @@ pub const Packing = struct {
 /// without a tile. Cut to the surface. One sample's plane: of a
 /// multisampled image the caller fills each sample's, a surface of its
 /// own (since 1.104).
-pub fn fillSurface(surface: Surface, area: Rect, color: u32) void {
+///
+/// A surface the tiles keep in its own bytes (`Surface.texels`) is set to
+/// `words` instead, a `ClearColorValue`'s four, written in its format as
+/// a tile's clear is (`encodeWords`, since 1.226).
+pub fn fillSurface(surface: Surface, area: Rect, color: u32, words: [4]u32) void {
     const packing = Packing.of(surface.format);
     const right = @min(area.x +| area.width, surface.width);
     const bottom = @min(area.y +| area.height, surface.height);
     if (area.x >= right or area.y >= bottom) return;
+    if (surface.texels != .none) {
+        var clear: [16]u8 = undefined;
+        encodeWords(surface.texels, words, &clear);
+        const bytes = surface.texels.bytes();
+        for (area.y..bottom) |y| {
+            const row = surface.pixels + y * surface.pitch;
+            for (area.x..right) |x| @memcpy(row[x * bytes ..][0..bytes], clear[0..bytes]);
+        }
+        return;
+    }
     const run: [tile_size]u32 = @splat(color);
     var y = area.y;
     while (y < bottom) : (y += 1) {
@@ -272,13 +311,55 @@ pub fn average565(samples: [4]u32) u32 {
 /// both surfaces; a surface of another format than `from`'s is given
 /// nothing, as Vulkan has a resolve keep the one format. (Since 1.109.)
 pub fn resolveSurface(from: Surface, into: Surface, area: Rect) void {
-    if (from.format != into.format) return;
+    if (from.format != into.format or from.texels != into.texels) return;
     const right = @min(area.x +| area.width, from.width, into.width);
     const bottom = @min(area.y +| area.height, from.height, into.height);
     if (area.x >= right or area.y >= bottom) return;
+    if (from.texels != .none) return resolveTexels(from, into, area.x, area.y, right, bottom);
     switch (from.format) {
         .bgra32, .rgba32 => resolveRows(u32, average8888, from, into, area.x, area.y, right, bottom),
         .rgb565 => resolveRows(u16, average565, from, into, area.x, area.y, right, bottom),
+    }
+}
+
+/// The same of a surface the tiles keep in its own bytes: each pixel's
+/// four samples read as floats, averaged and written back in the format,
+/// an sRGB one's in linear terms, as a blit of the format between views
+/// of it resolves them in lavapipe (`resolve_color`,
+/// src/gallium/frontends/lavapipe/lvp_execute.c:1782-1827, whose blit
+/// samples the source through its format). (Since 1.226.)
+fn resolveTexels(from: Surface, into: Surface, left: u32, top: u32, right: u32, bottom: u32) void {
+    // Whole numbers are not averaged: the first sample is kept, as
+    // Vulkan has a resolve of an integer format select one sample's
+    // value ("Multisample Resolve Operations"), and as lavapipe's nearest
+    // blit of one does (`resolve_color`, lvp_execute.c:1802). (Since
+    // 1.227.)
+    if (wholeTexels(from.texels)) {
+        const bytes = from.texels.bytes();
+        var y = top;
+        while (y < bottom) : (y += 1) {
+            const at = @as(usize, y) * from.pitch + @as(usize, left) * bytes;
+            const to = @as(usize, y) * into.pitch + @as(usize, left) * bytes;
+            const count = (right - left) * bytes;
+            @memcpy(into.pixels[to..][0..count], from.pixels[at..][0..count]);
+        }
+        return;
+    }
+    var y = top;
+    while (y < bottom) : (y += 1) {
+        var planes: [4]shader.Texels = undefined;
+        for (&planes, 0..) |*plane, sample| plane.* = .{ .bytes = from.pixels + @as(usize, y) * from.pitch + sample * from.sample_bytes, .count = from.width, .format = from.texels, .writable = false };
+        var out = shader.Texels{ .bytes = into.pixels + @as(usize, y) * into.pitch, .count = into.width, .format = into.texels, .writable = true };
+        var x = left;
+        while (x < right) : (x += 1) {
+            var sum: [4]f32 = .{ 0, 0, 0, 0 };
+            for (&planes) |*plane| {
+                const parts = plane.at(x);
+                for (&sum, parts) |*total, part| total.* += part;
+            }
+            for (&sum) |*total| total.* *= 0.25;
+            out.set(x, sum);
+        }
     }
 }
 
@@ -298,18 +379,70 @@ fn resolveRows(comptime Pixel: type, comptime average: fn ([4]u32) u32, from: Su
 }
 
 /// A rectangle of a depth plane set to `depth`, as `storeDepth` leaves a
-/// tile cleared to it: the 16 bits low byte first, wherever the plane's
-/// stride puts them. The caller cuts the rectangle to the plane, and of a
-/// multisampled image fills each sample's (since 1.104).
-pub fn fillDepth(plane: Attachments.Plane, area: Rect, depth: u16) void {
+/// tile cleared to it: of `bits` 16, the 16 bits low byte first, wherever
+/// the plane's stride puts them; of 24 (since 1.223), the top three bytes
+/// of the pixel's word, its low byte - a stencil, or nothing - left as it
+/// is. The caller cuts the rectangle to the plane, and of a multisampled
+/// image fills each sample's (since 1.104).
+pub fn fillDepth(plane: Attachments.Plane, area: Rect, depth: u32, bits: u32) void {
     for (area.y..area.y + area.height) |y| {
         const row = plane.pixels + y * plane.pitch;
         for (area.x..area.x + area.width) |x| {
             const at = row + x * plane.stride;
-            at[0] = @truncate(depth);
-            at[1] = @truncate(depth >> 8);
+            if (bits == 24) {
+                putDepth24(at, depth);
+            } else {
+                at[0] = @truncate(depth);
+                at[1] = @truncate(depth >> 8);
+            }
         }
     }
+}
+
+/// A depth of 24 bits into the top three bytes of the pixel at `at`, as
+/// the V3D and this library keep X8_D24_UNORM_PACK32 and
+/// D24_UNORM_S8_UINT ("X low, D high", v3d_packet.xml:357): the low byte,
+/// the stencil or nothing, left as it is. (Since 1.223.)
+inline fn putDepth24(at: [*]u8, depth: u32) void {
+    at[1] = @truncate(depth);
+    at[2] = @truncate(depth >> 8);
+    at[3] = @truncate(depth >> 16);
+}
+
+/// The same read: the word's top 24 bits. (Since 1.223.)
+inline fn depth24At(at: [*]const u8) u32 {
+    return @as(u32, at[1]) | @as(u32, at[2]) << 8 | @as(u32, at[3]) << 16;
+}
+
+/// Whether `texels` holds whole numbers: what the tiles keep a colour
+/// attachment of `_uint` or `_sint` in (since 1.227).
+pub fn wholeTexels(texels: shader.TexelFormat) bool {
+    return switch (texels.kind()) {
+        .uint, .sint => true,
+        else => texels == .rgb10a2u or texels == .bgr10a2u,
+    };
+}
+
+/// A `ClearColorValue`'s four words written as one pixel of `texels`, a
+/// format the tiles keep in its own bytes (`Surface.texels`): its floats
+/// held to 0 to 1 for a format of those, through the transfer function
+/// for an sRGB one, as Vulkan clears one ("Clear Values": the colour is
+/// linear and converted), and kept as they are in a float format's
+/// width. (Since 1.226.)
+///
+/// A format of whole numbers takes the words as the numbers `uint32` or
+/// `int32` hold, signed where the format is, each held to what its
+/// channel holds (since 1.227).
+pub fn encodeWords(texels: shader.TexelFormat, words: [4]u32, into: *[16]u8) void {
+    var one = shader.Texels{ .bytes = into, .count = 1, .format = texels, .writable = true };
+    if (wholeTexels(texels)) {
+        var wholes: [4]i64 = undefined;
+        for (&wholes, words) |*whole, word| whole.* = if (texels.kind() == .sint) @as(i32, @bitCast(word)) else word;
+        return one.setInt(0, wholes);
+    }
+    var parts: [4]f32 = undefined;
+    for (&parts, words) |*part, word| part.* = @bitCast(word);
+    one.set(0, parts);
 }
 
 /// A rectangle of a stencil plane set to `stencil`, as `storeStencil`
@@ -410,6 +543,20 @@ pub const Surface = struct {
     /// the samples past the first are reached by it, so a frame of one
     /// sample a pixel never uses it. (Since 1.103.)
     sample_bytes: usize = 0,
+    /// Its pixels' format where the tiles keep them in their own bytes
+    /// rather than as 0xAARRGGBB (since 1.226, docs/facet-vulkan10.md
+    /// item 36): the tile's plane of it is rows of those bytes, a
+    /// fragment's colour blended against what they hold in floats and
+    /// written back at the format's width, as llvmpipe draws into a
+    /// surface of its format (`generate_unswizzled_blend`,
+    /// src/gallium/drivers/llvmpipe/lp_state_fs.c). `.none` for the three
+    /// `format` names, and then `format` is what the pixels are.
+    texels: shader.TexelFormat = .none,
+
+    /// The bytes a pixel takes.
+    pub fn pixelBytes(surface: Surface) u32 {
+        return if (surface.texels != .none) surface.texels.bytes() else surface.format.bytes();
+    }
 };
 
 /// What each frame starts with.
@@ -421,8 +568,7 @@ pub const Attachments = struct {
     /// (`Target.initAll`). (Since 1.51.)
     more: [most_colors - 1]Color = @splat(.{}),
     /// How many colour attachments the frame draws: 1, and `color`
-    /// alone, which is every frame until a subpass asks for several
-    /// (SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER).
+    /// alone, unless its subpass draws several together.
     color_count: u32 = 1,
     depth: Depth = .{},
     stencil: Stencil = .{},
@@ -443,6 +589,11 @@ pub const Attachments = struct {
         load: Load = .clear,
         /// 0xAARRGGBB.
         clear: u32 = 0xFF00_0000,
+        /// The clear as it was given, a `ClearColorValue`'s four words,
+        /// for a surface the tiles keep in its own bytes
+        /// (`Surface.texels`): four floats, or four whole numbers of a
+        /// format of those. (Since 1.226.)
+        clear_words: [4]u32 = .{ 0, 0, 0, 0x3F80_0000 },
         /// Where its samples are averaged into as the frame ends, at four
         /// samples a pixel: a surface of one sample a pixel, of the
         /// colour's own format, each tile's part of the area averaged
@@ -452,14 +603,22 @@ pub const Attachments = struct {
     };
 
     pub const Depth = struct {
-        /// Whether triangles are tested against a depth: 16 bits a pixel,
+        /// Whether triangles are tested against a depth: `bits` a pixel,
         /// a sample's at four samples a pixel (since 1.105), 0 nearest,
         /// set to `clear` as each tile starts.
         used: bool = false,
-        clear: u16 = 0xFFFF,
+        /// In the depth's own units: 0 to 65535, or to 16777215 at 24
+        /// bits (since 1.223; a u16 until then).
+        clear: u32 = 0xFFFF,
+        /// The depth's bits: 16, or 24 for X8_D24_UNORM_PACK32 and
+        /// D24_UNORM_S8_UINT (since 1.223). The tile keeps a depth of 16
+        /// bits in 16 and one of 24 in 32 (`Tile.depthRow`), and the
+        /// draws test it in those units (`setup.Depth.units`).
+        bits: u32 = 16,
         /// Where the depth outlives the frame: the image's rows, 16 bits a
-        /// pixel. Null for a depth that lives in the tiles alone, which is
-        /// every frame until a pass asks for it to be kept.
+        /// pixel, or the top 24 of a word at 24 bits. Null for a depth that
+        /// lives in the tiles alone, which is every frame until a pass asks
+        /// for it to be kept.
         plane: ?Plane = null,
         /// Cleared as each tile starts, or read from the plane.
         load: Load = .clear,
@@ -473,7 +632,10 @@ pub const Attachments = struct {
     /// own bytes, `pitch` the bytes from one row to the next and `stride`
     /// those from one pixel to the next - 2 for a plane of depth alone, 1
     /// for one of stencil alone, and 4 for either of a format that holds
-    /// both, the depth of a pixel first and its stencil after.
+    /// both, the depth of a pixel first and its stencil after - and 4 for
+    /// a depth of 24 bits, `pixels` the word's first byte and the depth
+    /// its top three, with a stencil in the first where there is one
+    /// (since 1.223).
     pub const Plane = struct {
         pixels: [*]u8,
         pitch: u32,
@@ -557,10 +719,12 @@ const TileState = struct {
 /// (`Target.extras`), and so do the samples past the first of a frame
 /// of four, of the colours (since 1.103) and of the depth and the
 /// stencil (since 1.105): the one colour a frame usually draws keeps
-/// the buffer the 24 KiB it was, and the cache with it.
+/// the buffer the 24 KiB it was, and the cache with it. The depth has
+/// room for 32 bits a pixel since 1.223, of which one of 16 bits takes
+/// the first half (`Tile.depthRow`).
 const Buffer = extern struct {
     color: [tile_pixels]u32 align(line_bytes),
-    depth: [tile_pixels]u16,
+    depth: [tile_pixels]u32,
     shaded: [tile_size]u64,
     stencil: [tile_pixels]u8,
 };
@@ -576,12 +740,13 @@ pub const Tile = struct {
     /// after another, `tile_pixels` words each; null where the frame
     /// draws the one colour. (Since 1.51.)
     extras: ?[*]u32 = null,
-    /// This part's room for a batch's colours, one colour attachment
-    /// after another, `batch_color_words` each and one more run than
-    /// there are extra planes: what the fragment function writes for all
-    /// of them in the one call, before each goes into its own plane.
-    /// Null where the frame draws the one colour, whose colours go on the
-    /// stack as they always did. (Since 1.51.)
+    /// This part's room for a batch's colours, one location after
+    /// another, `batch_color_words` each and `most_colors` runs: what a
+    /// fragment function that writes several writes for all of them in
+    /// the one call, before each plane takes the one at its location. A
+    /// function that writes the one colour has its colours on the stack,
+    /// as they always were. (Since 1.51; a run for each attachment, and
+    /// null for a frame of one, until 1.230.)
     extra_colors: ?[*][4]u32 = null,
     /// The planes of samples 1 to `samples` - 1 of every colour
     /// attachment, `samples` - 1 of the first's and then of each after,
@@ -589,16 +754,32 @@ pub const Tile = struct {
     /// 1.103.)
     sample_planes: ?[*]u32 = null,
     samples: u32 = 1,
-    /// The planes of samples 1 to `samples` - 1 of the depth, 16 bits a
-    /// pixel, and of the stencil, a byte, `tile_pixels` of them each;
-    /// null at one sample a pixel. (Since 1.105.)
-    depth_planes: ?[*]u16 = null,
+    /// The planes of samples 1 to `samples` - 1 of the depth, with room
+    /// for 32 bits a pixel (`depthPlane`), and of the stencil, a byte,
+    /// `tile_pixels` of them each; null at one sample a pixel. (Since
+    /// 1.105.)
+    depth_planes: ?[*]u32 = null,
     stencil_planes: ?[*]u8 = null,
     /// A batch's depths at more than one sample a pixel, held for a
     /// fragment function that may drop pixels (`batch_depth_words`):
-    /// sample s of a quad's pixel i at 4s + i. Null at one, whose batch
-    /// holds its own. (Since 1.105.)
-    batch_depths: ?[*][16]u16 = null,
+    /// sample s of a quad's pixel i at 4s + i, in the depth's units (32
+    /// bits each since 1.223). Null at one, whose batch holds its own.
+    /// (Since 1.105.)
+    batch_depths: ?[*][16]u32 = null,
+    /// The planes of the colour attachments the tiles keep in their own
+    /// bytes (`Surface.texels`): each attachment's samples' one after
+    /// another, then the next attachment's, `texel_plane_words` each.
+    /// Null where none of the frame's is one. (Since 1.226.)
+    texel_planes: ?[*]u32 = null,
+    /// Each colour attachment's format where it is one of those, and
+    /// `.none` where the tile keeps it as 0xAARRGGBB. (Since 1.226.)
+    texels: [most_colors]shader.TexelFormat = @splat(.none),
+    /// This part's room for a batch's four words a pixel, one location's
+    /// `batch_value_words` after another, `most_colors` of them: what a
+    /// fragment function that writes floats or whole numbers writes
+    /// (`shader.Fragments.values`). (Since 1.226; one for each attachment
+    /// until 1.230.)
+    batch_values: ?[*][4][4]u32 = null,
     /// The grid square's number, row by row.
     index: u32,
     /// The grid square's top left on the surface.
@@ -658,9 +839,10 @@ pub const Tile = struct {
         return tile.plane(output) + y * tile_size;
     }
 
-    /// Row `y` of the tile's depth, from its left.
-    pub inline fn depthRow(tile: *const Tile, y: u32) [*]u16 {
-        return tile.buffer.depth[y * tile_size ..].ptr;
+    /// Row `y` of the tile's depth, from its left, as a depth of
+    /// `Kept` is held: `u16` for 16 bits, `u32` for 24 (since 1.223).
+    pub inline fn depthRow(tile: *const Tile, comptime Kept: type, y: u32) [*]Kept {
+        return tile.depthPlane(Kept, 0) + y * tile_size;
     }
 
     /// Row `y` of the tile's stencil, from its left.
@@ -668,11 +850,25 @@ pub const Tile = struct {
         return tile.buffer.stencil[y * tile_size ..].ptr;
     }
 
-    /// Sample `sample`'s plane of the depth, 64 x 64: the buffer's own
-    /// for 0, one of `depth_planes` for the others. (Since 1.105.)
-    pub inline fn depthPlane(tile: *const Tile, sample: u32) [*]u16 {
-        if (sample == 0) return &tile.buffer.depth;
-        return tile.depth_planes.? + (sample - 1) * tile_pixels;
+    /// Sample `sample`'s plane of the depth, 64 x 64 of `Kept`: the
+    /// buffer's own for 0, one of `depth_planes` for the others. (Since
+    /// 1.105; of `Kept` since 1.223.)
+    pub inline fn depthPlane(tile: *const Tile, comptime Kept: type, sample: u32) [*]Kept {
+        comptime if (Kept != u16 and Kept != u32) @compileError("a depth is kept in 16 bits or 32");
+        if (sample == 0) return @ptrCast(&tile.buffer.depth);
+        return @ptrCast(tile.depth_planes.? + (sample - 1) * tile_pixels);
+    }
+
+    /// Sample `sample`'s plane of colour attachment `output`, one the tile
+    /// keeps in its own bytes (`texels`): rows of `tile_size` pixels of
+    /// them. (Since 1.226.)
+    pub inline fn texelPlane(tile: *const Tile, output: u32, sample: u32) [*]u8 {
+        return @ptrCast(tile.texel_planes.? + (output * tile.samples + sample) * texel_plane_words);
+    }
+
+    /// Row `y` of that plane, from its left. (Since 1.226.)
+    pub inline fn texelRow(tile: *const Tile, output: u32, sample: u32, y: u32) [*]u8 {
+        return tile.texelPlane(output, sample) + y * tile_size * tile.texels[output].bytes();
     }
 
     /// The same of the stencil. (Since 1.105.)
@@ -682,8 +878,8 @@ pub const Tile = struct {
     }
 
     /// Row `y` of sample `sample`'s depth, from its left. (Since 1.105.)
-    pub inline fn depthRowOf(tile: *const Tile, sample: u32, y: u32) [*]u16 {
-        return tile.depthPlane(sample) + y * tile_size;
+    pub inline fn depthRowOf(tile: *const Tile, comptime Kept: type, sample: u32, y: u32) [*]Kept {
+        return tile.depthPlane(Kept, sample) + y * tile_size;
     }
 
     /// Row `y` of sample `sample`'s stencil, from its left. (Since
@@ -713,7 +909,7 @@ const Grid = struct {
         var across: u32 = 1;
         for (surfaces) |surface| {
             if (@as(u64, area.x) + area.width > surface.width or @as(u64, area.y) + area.height > surface.height) return error.OutOfBounds;
-            across = @max(across, line_bytes / surface.format.bytes());
+            across = @max(across, line_bytes / surface.pixelBytes());
         }
         const x = area.x / across * across;
         return .{
@@ -758,6 +954,10 @@ pub const Target = struct {
     extras: ?[*]u32 = null,
     extra_planes: u32 = 0,
     sample_room: u32 = 1,
+    /// Whether each part has room for planes of colour attachments kept
+    /// in their own bytes (`Tile.texel_planes`), every attachment's at
+    /// every sample. (Since 1.226.)
+    texel_room: bool = false,
     /// The squares a frame draws, in the order they are handed out, and
     /// the next to hand out.
     order: []u32,
@@ -765,6 +965,9 @@ pub const Target = struct {
     next: u32 = 0,
     /// Each colour attachment's clear, 0xAARRGGBB as the tiles keep it.
     clear_pixels: [most_colors]u32 = @splat(0),
+    /// And as one the tiles keep in its own bytes keeps it: the clear
+    /// written in that format (since 1.226).
+    clear_texels: [most_colors][16]u8 = undefined,
     /// The frame's memory, and the triangles set up by the draw under way
     /// and not yet on the tiles' lists.
     arena: bins.Arena,
@@ -811,7 +1014,7 @@ pub const Target = struct {
             .room = 0,
         };
         target.take(surfaces);
-        try target.lay(grid.squares(), planesOf(attachments), attachments.samples);
+        try target.lay(grid.squares(), planesOf(attachments), attachments.samples, anyTexels(surfaces));
         return target;
     }
 
@@ -831,6 +1034,13 @@ pub const Target = struct {
         return target.surfaces[@min(output, target.surface_count - 1)];
     }
 
+    /// Whether any of `surfaces` is kept by the tiles in its own bytes.
+    /// (Since 1.226.)
+    fn anyTexels(surfaces: []const Surface) bool {
+        for (surfaces) |surface| if (surface.texels != .none) return true;
+        return false;
+    }
+
     /// The planes a frame needs past the first colour attachment's.
     fn planesOf(attachments: Attachments) u32 {
         return @min(@max(attachments.color_count, 1), most_colors) - 1;
@@ -840,20 +1050,27 @@ pub const Target = struct {
     /// to `samples` - 1 of each of those and the first's (since 1.103),
     /// of the depth and of the stencil, with a batch's depths at that
     /// many samples (since 1.105), and for the batch colours of the
-    /// attachments: 0 for a frame of the one colour at one sample a
-    /// pixel. The one colour a draw usually writes has its batch's
-    /// colours on the worker's stack.
-    fn wordsOf(planes: u32, samples: u32) usize {
+    /// `most_colors` a fragment function may write at once, whatever the
+    /// frame's attachments (since 1.230; the attachments' where there
+    /// were several until then). The one colour a draw usually writes has
+    /// its batch's colours on the worker's stack. Then, since 1.226, the
+    /// room for a batch's four words a pixel (`batch_value_words`) of as
+    /// many, and where `texels` says so a plane at each sample of every
+    /// attachment for one the tiles keep in its own bytes
+    /// (`texel_plane_words`).
+    fn wordsOf(planes: u32, samples: u32, texels: bool) usize {
         const room: usize = samples - 1;
         const held: usize = if (room == 0) 0 else batch_depth_words;
         const sample_words = (@as(usize, planes + 1) * tile_pixels + depth_plane_words + stencil_plane_words) * room + held;
-        if (planes == 0) return sample_words;
-        return @as(usize, planes) * tile_pixels + sample_words + @as(usize, planes + 1) * batch_color_words;
+        const color_words: usize = @as(usize, planes) * tile_pixels + most_colors * batch_color_words;
+        const value_words: usize = most_colors * batch_value_words;
+        const texel_words: usize = if (texels) @as(usize, planes + 1) * samples * texel_plane_words else 0;
+        return sample_words + color_words + value_words + texel_words;
     }
 
     /// The same for this target's own planes.
     inline fn partWords(target: *const Target) usize {
-        return wordsOf(target.extra_planes, target.sample_room);
+        return wordsOf(target.extra_planes, target.sample_room, target.texel_room);
     }
 
     /// The target moved onto `area` of `surface`, which may be another, and
@@ -869,8 +1086,9 @@ pub const Target = struct {
     pub fn moveToAll(target: *Target, surfaces: []const Surface, area: Rect, attachments: Attachments) error{ OutOfMemory, OutOfBounds }!void {
         const grid = try Grid.over(surfaces, area);
         const planes = planesOf(attachments);
-        if (grid.squares() > target.room or planes > target.extra_planes or attachments.samples > target.sample_room) {
-            try target.lay(@max(grid.squares(), target.room), @max(planes, target.extra_planes), @max(attachments.samples, target.sample_room));
+        const texels = anyTexels(surfaces);
+        if (grid.squares() > target.room or planes > target.extra_planes or attachments.samples > target.sample_room or (texels and !target.texel_room)) {
+            try target.lay(@max(grid.squares(), target.room), @max(planes, target.extra_planes), @max(attachments.samples, target.sample_room), texels or target.texel_room);
         }
         target.take(surfaces);
         target.area = area;
@@ -886,10 +1104,10 @@ pub const Target = struct {
     /// A block for the buffers, `planes` colour planes a part past the
     /// first, room for `samples` samples a pixel and `squares` squares, in
     /// place of the one there was: all of them laid out in it.
-    fn lay(target: *Target, squares: u32, planes: u32, samples: u32) error{OutOfMemory}!void {
+    fn lay(target: *Target, squares: u32, planes: u32, samples: u32, texels: bool) error{OutOfMemory}!void {
         const host = target.host;
         const buffers_bytes = @sizeOf([most_parts]Buffer);
-        const extras_bytes = @as(usize, most_parts) * wordsOf(planes, samples) * @sizeOf(u32);
+        const extras_bytes = @as(usize, most_parts) * wordsOf(planes, samples, texels) * @sizeOf(u32);
         const tiles_bytes = squares * @sizeOf(TileState);
         const order_bytes = squares * @sizeOf(u32);
         const bytes = line_bytes + buffers_bytes + extras_bytes + tiles_bytes + order_bytes;
@@ -901,6 +1119,7 @@ pub const Target = struct {
         target.extras = if (extras_bytes == 0) null else @as([*]u32, @ptrFromInt(at));
         target.extra_planes = planes;
         target.sample_room = samples;
+        target.texel_room = texels;
         at += extras_bytes;
         target.tiles = @as([*]TileState, @ptrFromInt(at))[0..squares];
         at += tiles_bytes;
@@ -933,6 +1152,8 @@ pub const Target = struct {
         for (0..colors) |output| {
             const color = target.attachments.colorAt(@intCast(output));
             target.clear_pixels[output] = color.clear;
+            const texels = target.surfaces[output].texels;
+            if (texels != .none) encodeWords(texels, color.clear_words, &target.clear_texels[output]);
             if (color.load == .clear or color.resolve != null) any_cleared = true;
         }
         const cleared = any_cleared or
@@ -1035,6 +1256,10 @@ pub const Target = struct {
         const stencils_at = depths_at + room * depth_plane_words;
         const held_at = stencils_at + room * stencil_plane_words;
         const colors_at = held_at + @as(usize, if (room == 0) 0 else batch_depth_words);
+        const values_at = colors_at + most_colors * batch_color_words;
+        const texels_at = values_at + most_colors * batch_value_words;
+        var texels: [most_colors]shader.TexelFormat = @splat(.none);
+        for (target.surfaces[0..target.surface_count], 0..) |surface, k| texels[k] = surface.texels;
         return .{
             .buffer = &target.buffers[part],
             .part = part,
@@ -1044,7 +1269,10 @@ pub const Target = struct {
             .depth_planes = if (samples == 1) null else @ptrCast(block.? + depths_at),
             .stencil_planes = if (samples == 1) null else @ptrCast(block.? + stencils_at),
             .batch_depths = if (samples == 1) null else @ptrCast(block.? + held_at),
-            .extra_colors = if (planes == 0) null else @ptrCast(@alignCast(block.? + colors_at)),
+            .extra_colors = @ptrCast(@alignCast(block.? + colors_at)),
+            .batch_values = @ptrCast(@alignCast(block.? + values_at)),
+            .texel_planes = if (target.texel_room) block.? + texels_at else null,
+            .texels = texels,
             .index = index,
             .x = x,
             .y = y,
@@ -1063,6 +1291,15 @@ pub const Target = struct {
         var output: u32 = 0;
         while (output < colors) : (output += 1) {
             var sample: u32 = 0;
+            // One the tiles keep in its own bytes has its rows of those
+            // (since 1.226).
+            if (tile.texels[output] != .none) {
+                while (sample < tile.samples) : (sample += 1) switch (target.attachments.colorAt(output).load) {
+                    .clear => target.clearTexels(tile, output, sample),
+                    .keep => target.loadTexels(tile, output, sample),
+                };
+                continue;
+            }
             while (sample < tile.samples) : (sample += 1) switch (target.attachments.colorAt(output).load) {
                 .clear => @memset(tile.samplePlane(output, sample)[0..tile_pixels], target.clear_pixels[output]),
                 .keep => target.load(tile, output, sample),
@@ -1073,7 +1310,7 @@ pub const Target = struct {
         if (depth.used) {
             var sample: u32 = 0;
             while (sample < tile.samples) : (sample += 1) switch (depth.load) {
-                .clear => @memset(tile.depthPlane(sample)[0..tile_pixels], depth.clear),
+                .clear => clearDepth(tile, sample, depth.clear, depth.bits),
                 .keep => target.loadDepth(tile, sample),
             };
         }
@@ -1101,7 +1338,9 @@ pub const Target = struct {
         output = 0;
         while (output < colors) : (output += 1) {
             var sample: u32 = 0;
-            while (sample < tile.samples) : (sample += 1) target.store(tile, output, sample);
+            while (sample < tile.samples) : (sample += 1) {
+                if (tile.texels[output] != .none) target.storeTexels(tile, output, sample) else target.store(tile, output, sample);
+            }
             // Its samples, as the surface now holds them, averaged into
             // its resolve while their rows are still in this part's
             // cache (since 1.109).
@@ -1151,6 +1390,42 @@ pub const Target = struct {
         }
     }
 
+    /// Sample `sample`'s plane of colour attachment `output`, one the
+    /// tiles keep in its own bytes, set to its clear over the part of the
+    /// tile inside the area, which is all that is stored. (Since 1.226.)
+    fn clearTexels(target: *Target, tile: *const Tile, output: u32, sample: u32) void {
+        const bytes = tile.texels[output].bytes();
+        const clear = target.clear_texels[output][0..bytes];
+        var row = tile.top;
+        while (row < tile.bottom) : (row += 1) {
+            const into = tile.texelRow(output, sample, row);
+            for (tile.left..tile.right) |x| @memcpy(into[x * bytes ..][0..bytes], clear);
+        }
+    }
+
+    /// Such a plane loaded from its surface under the tile, the same bytes
+    /// a row at a time. (Since 1.226.)
+    fn loadTexels(target: *Target, tile: *const Tile, output: u32, sample: u32) void {
+        const bytes = tile.texels[output].bytes();
+        const count = (tile.right - tile.left) * bytes;
+        var row = tile.top;
+        while (row < tile.bottom) : (row += 1) {
+            const into = tile.texelRow(output, sample, row) + tile.left * bytes;
+            @memcpy(into[0..count], target.pixelAt(output, sample, tile.x + tile.left, tile.y + row)[0..count]);
+        }
+    }
+
+    /// And stored into it. (Since 1.226.)
+    fn storeTexels(target: *Target, tile: *const Tile, output: u32, sample: u32) void {
+        const bytes = tile.texels[output].bytes();
+        const count = (tile.right - tile.left) * bytes;
+        var row = tile.top;
+        while (row < tile.bottom) : (row += 1) {
+            const from = tile.texelRow(output, sample, row) + tile.left * bytes;
+            @memcpy(target.pixelAt(output, sample, tile.x + tile.left, tile.y + row)[0..count], from[0..count]);
+        }
+    }
+
     /// The tile's plane for colour attachment `output`, into its surface:
     /// sample `sample`'s of each.
     fn store(target: *Target, tile: *const Tile, output: u32, sample: u32) void {
@@ -1167,15 +1442,21 @@ pub const Target = struct {
     /// depth attachment loads starts from. Sample `sample`'s of each
     /// (since 1.105).
     fn loadDepth(target: *Target, tile: *const Tile, sample: u32) void {
-        const plane = target.attachments.depth.plane orelse {
-            @memset(tile.depthPlane(sample)[0..tile_pixels], target.attachments.depth.clear);
-            return;
-        };
+        const depth = &target.attachments.depth;
+        const plane = depth.plane orelse return clearDepth(tile, sample, depth.clear, depth.bits);
         var row = tile.top;
+        if (depth.bits == 24) {
+            while (row < tile.bottom) : (row += 1) {
+                const from = pixelOf(plane, sample, tile.x + tile.left, tile.y + row);
+                const into = tile.depthRowOf(u32, sample, row) + tile.left;
+                for (0..tile.right - tile.left) |k| into[k] = depth24At(from + k * plane.stride);
+            }
+            return;
+        }
         while (row < tile.bottom) : (row += 1) {
             const count = tile.right - tile.left;
             const from = pixelOf(plane, sample, tile.x + tile.left, tile.y + row);
-            const into = tile.depthRowOf(sample, row) + tile.left;
+            const into = tile.depthRowOf(u16, sample, row) + tile.left;
             // Depth alone lies as the tile's own does, so a row is one
             // copy; beside a stencil it is every other pixel.
             if (plane.stride == 2) {
@@ -1192,10 +1473,20 @@ pub const Target = struct {
     fn storeDepth(target: *Target, tile: *const Tile, sample: u32) void {
         const plane = target.attachments.depth.plane orelse return;
         var row = tile.top;
+        // A depth of 24 bits into its word's top three bytes, the stencil
+        // or nothing in the low one left for `storeStencil` (since 1.223).
+        if (target.attachments.depth.bits == 24) {
+            while (row < tile.bottom) : (row += 1) {
+                const into = pixelOf(plane, sample, tile.x + tile.left, tile.y + row);
+                const from = tile.depthRowOf(u32, sample, row) + tile.left;
+                for (0..tile.right - tile.left) |k| putDepth24(into + k * plane.stride, from[k]);
+            }
+            return;
+        }
         while (row < tile.bottom) : (row += 1) {
             const count = tile.right - tile.left;
             const into = pixelOf(plane, sample, tile.x + tile.left, tile.y + row);
-            const from = tile.depthRowOf(sample, row) + tile.left;
+            const from = tile.depthRowOf(u16, sample, row) + tile.left;
             if (plane.stride == 2) {
                 @memcpy(into[0 .. count * 2], @as([*]const u8, @ptrCast(from))[0 .. count * 2]);
             } else for (0..count) |k| {
@@ -1204,6 +1495,14 @@ pub const Target = struct {
                 at[1] = @truncate(from[k] >> 8);
             }
         }
+    }
+
+    /// Sample `sample`'s plane of the tile's depth set to `clear`, at the
+    /// width a depth of `bits` is kept in (since 1.223).
+    fn clearDepth(tile: *const Tile, sample: u32, clear: u32, bits: u32) void {
+        if (bits == 24) {
+            @memset(tile.depthPlane(u32, sample)[0..tile_pixels], clear);
+        } else @memset(tile.depthPlane(u16, sample)[0..tile_pixels], @truncate(clear));
     }
 
     /// The stencil plane under the tile, into its buffer: a byte a pixel,
@@ -1255,7 +1554,7 @@ pub const Target = struct {
     /// sample `sample`'s plane.
     inline fn pixelAt(target: *const Target, output: u32, sample: u32, x: u32, y: u32) [*]u8 {
         const surface = target.surfaces[output];
-        return surface.pixels + sample * surface.sample_bytes + @as(usize, y) * surface.pitch + @as(usize, x) * target.packings[output].bytes;
+        return surface.pixels + sample * surface.sample_bytes + @as(usize, y) * surface.pitch + @as(usize, x) * surface.pixelBytes();
     }
 };
 
@@ -1339,10 +1638,13 @@ test "a part's block holds everything a tile is handed past its buffer, and noth
             const handed = [_]struct { ?usize, usize }{
                 .{ Memory.addressOf(tile.extras), planes * tile_pixels * 4 },
                 .{ Memory.addressOf(tile.sample_planes), (planes + 1) * room * tile_pixels * 4 },
-                .{ Memory.addressOf(tile.depth_planes), room * tile_pixels * 2 },
+                .{ Memory.addressOf(tile.depth_planes), room * tile_pixels * 4 },
                 .{ Memory.addressOf(tile.stencil_planes), room * tile_pixels },
                 .{ Memory.addressOf(tile.batch_depths), batch_depth_words * 4 },
-                .{ Memory.addressOf(tile.extra_colors), (planes + 1) * batch_color_words * 4 },
+                .{ Memory.addressOf(tile.extra_colors), most_colors * batch_color_words * 4 },
+                // Room for every location a function writes, whatever
+                // the frame's attachments (since 1.230).
+                .{ Memory.addressOf(tile.batch_values), most_colors * batch_value_words * 4 },
             };
             const block = if (target.extras) |extras| @intFromPtr(extras) + part * words * 4 else 0;
             for (handed, 0..) |one, k| {

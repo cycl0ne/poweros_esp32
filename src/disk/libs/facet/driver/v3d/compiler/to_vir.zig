@@ -33,8 +33,9 @@
 //! - The colour is moved out where the body ends and not at its OpStore,
 //!   which the steps do not keep: what comes after the store is not
 //!   handed on.
-//! - The key is the one this device's draws have: render target 0, of
-//!   16-bit floats, red and blue not swapped, or none (since 1.150), and
+//! - The key is the one this device's draws have: render targets of
+//!   16-bit floats or of 32-bit channels, red and blue not swapped, or
+//!   none (since 1.150), and
 //!   of what Mesa's key varies, alpha to coverage and that alone (`Key`). One sample a pixel or four
 //!   (since 1.148): the colour is written a pixel at a time either way,
 //!   as Mesa writes it without sample shading (msaa_per_sample_output).
@@ -93,7 +94,10 @@ const max_tmu_queue_size = 8;
 
 // The tile buffer's write specifiers (nir_to_vir.c:1930).
 const tlb_type_f16_color: u32 = 3 << 6;
+const tlb_type_f32_color: u32 = 0 << 6;
+const tlb_vec_size_minus_1_shift = 0;
 const tlb_render_target_shift = 3;
+const tlb_sample_mode_per_sample: u32 = 0 << 2;
 const tlb_sample_mode_per_pixel: u32 = 1 << 2;
 const tlb_f16_swap_hi_lo: u32 = 1 << 1;
 const tlb_vec_size_4_f16: u32 = 1 << 0;
@@ -136,9 +140,32 @@ pub const Key = struct {
     sample_alpha_to_coverage: bool = false,
     /// The render targets the subpass draws, a bit each: Mesa's cbufs,
     /// which v3dv sets for each colour attachment that is not
-    /// ATTACHMENT_UNUSED (v3dv_pipeline.c:2137-2142). A part draws one, as
-    /// render target 0, or none (since 1.150).
+    /// ATTACHMENT_UNUSED (v3dv_pipeline.c:2137-2142). A part drawn alone
+    /// draws one, as render target 0, or none (since 1.150); the program
+    /// writes each it has a colour out at the location of (since 1.231).
     cbufs: u8 = 1,
+    /// The render targets of 32-bit channels, a bit each, which the TLB
+    /// is written a float at a time (Mesa's f32_color_rb, v3d_compiler.h):
+    /// v3dv sets it for a colour attachment of 32-bit floats
+    /// (v3dv_pipeline.c:1240-1243; since 1.228).
+    f32_color_rb: u8 = 0,
+    /// The render target each input attachment of the subpass is, by its
+    /// index, where the subpass draws into it as well: v3dv's
+    /// tlb_input_attachment_location, which its pipeline key carries
+    /// (v3dv_pipeline.c:2125-2135) and its lowering reads before the
+    /// compile (lower_tlb_input_attachments, :2744-2748). `compile.zig`'s
+    /// walk reads it, here it is a `tile_load` (since 1.237).
+    tile_inputs: compile.TileInputs = compile.no_tile_inputs,
+    /// The pipeline draws four samples a pixel: Mesa's msaa, which v3dv
+    /// sets where rasterizationSamples is more than one
+    /// (v3dv_pipeline.c:2115). Here the tile buffer is read a sample at a
+    /// time where it is (tlb_read_config, nir_to_vir.c:2705-2706;
+    /// vir_emit_tlb_color_read, :2757), and the walk reads each sample
+    /// and keeps the one a subpassLoad asks for (lower_tlb_load,
+    /// v3d_nir_lower_load_output.c:52-80). What else Mesa keys on it,
+    /// interpolation at a sample or an offset (nir_to_vir.c:4030-4093),
+    /// is not taken here (since 1.238).
+    msaa: bool = false,
 };
 
 /// A program compiled: its instructions in `c.qpu_insts`, the uniforms it
@@ -167,6 +194,10 @@ pub const Program = struct {
     /// 985-1003; since 1.190).
     flat_shade_flags: u32 = 0,
     noperspective_flags: u32 = 0,
+    /// A fragment program's first varying is the layer an input
+    /// attachment is read at, the input of VARYING_SLOT_LAYER, which the
+    /// vertex program writes (since 1.215).
+    reads_layer: bool = false,
 
     pub fn destroy(program: Program) void {
         program.c.destroy();
@@ -197,8 +228,10 @@ const Emit = struct {
     words_defined: [compile.most_steps]bool = @splat(false),
     inputs: [compile.most_varyings]Reg = undefined,
     /// A vertex program's loads of the VPM's instance id, base instance
-    /// and vertex id (c->iid, c->biid, c->vid; since 1.192).
-    system: [6]Reg = undefined,
+    /// and vertex id (c->iid, c->biid, c->vid; since 1.192); a compute
+    /// program's payload (since 1.194); a fragment program's FragCoord
+    /// (c->inputs of VARYING_SLOT_POS; since 1.214).
+    system: [@typeInfo(compile.SystemValue).@"enum".fields.len]Reg = undefined,
     start_msf: Reg = .{},
     payload_w: Reg = .{},
     payload_w_centroid: Reg = .{},
@@ -206,7 +239,14 @@ const Emit = struct {
     /// Where the workgroup's shared memory starts, worked out at the
     /// program's start (c->cs_shared_offset; since 1.203).
     cs_shared_offset: Reg = .{},
-    outputs: [4]Reg = undefined,
+    /// The colour at each location, as Mesa's c->outputs holds each
+    /// output's four floats at its driver location.
+    outputs: [compile.most_colors][4]Reg = undefined,
+    /// Each render target's colour as the tile buffer handed it back,
+    /// read once whatever reads it (c->color_reads, nir_to_vir.c:
+    /// 2745-2808; since 1.237), of each sample (since 1.238).
+    color_reads: [compile.most_colors][compile.tile_samples_most][4]Reg = undefined,
+    color_read: [compile.most_colors]bool = @splat(false),
     flush: [max_tmu_queue_size]Pending = undefined,
     flush_count: u32 = 0,
     output_fifo_size: u32 = 0,
@@ -216,6 +256,11 @@ const Emit = struct {
     /// info.fs.uses_discard says of the NIR here.
     uses_discard: bool = false,
     writes_z: bool = false,
+    /// The program reads the payload's Z, FragCoord's z (c->reads_z,
+    /// nir_to_vir.c:2991-2995), so it writes Z (:2099; since 1.214).
+    reads_z: bool = false,
+    /// The program reads the layer, a varying of its own (since 1.215).
+    reads_layer: bool = false,
     /// info.fs.early_fragment_tests, as emit_frag_end leaves it.
     early_fragment_tests: bool = true,
     /// Where the last load_ubo of a constant offset left unifa: its
@@ -337,6 +382,7 @@ pub fn compileSteps(allocator: std.mem.Allocator, compiler: *const vir.Compiler,
             .single_seg = c.last_thrsw == null,
             .flat_shade_flags = e.flat_shade_flags,
             .noperspective_flags = e.noperspective_flags,
+            .reads_layer = e.reads_layer,
         };
     }
     return if (failed_register_allocation) Error.Registers else Error.Invalid;
@@ -389,8 +435,8 @@ fn nirToVir(e: *Emit) Error!void {
     // No primitive id, point or line coordinate is in the profile.
     try setupScratch(e);
     try setupFsInputs(e);
-    // ntq_setup_outputs: the colour is location 0, which needs nothing
-    // emitted.
+    // ntq_setup_outputs: each colour is its location's, which needs
+    // nothing emitted.
     try emitBlock(e);
 }
 
@@ -442,10 +488,69 @@ fn setupScratch(e: *Emit) Error!void {
 /// its location, a float at a time (emit_fragment_input,
 /// nir_to_vir.c:1123). compile.zig has numbered the floats so already.
 fn setupFsInputs(e: *Emit) Error!void {
+    // FragCoord is VARYING_SLOT_POS, the lowest location, so it is first
+    // (nir_assign_io_var_locations in lower_fs_io, v3dv_pipeline.c:1036;
+    // driver_location_compare, nir_to_vir.c:2505-2506, :2519-2520), and
+    // reads no varying (since 1.214).
+    if (readsFragCoord(e.work)) try emitFragcoordInput(e);
+    // VARYING_SLOT_LAYER, below the first generic varying's
+    // VARYING_SLOT_VAR0 (shader_enums.h), so the next (since 1.215).
+    if (readsSystem(e.work, .layer)) try emitLayerInput(e);
     var varying: u32 = 0;
     while (varying < e.work.varyings) : (varying += 1) {
         e.inputs[varying] = try emitFragmentVarying(e, varying);
     }
+}
+
+/// Whether the program reads the system value `which`, whose step
+/// nir_opt_dce left (since 1.215).
+fn readsSystem(work: *const compile.Work, which: compile.SystemValue) bool {
+    for (work.steps[0..work.step_count]) |each| {
+        if (each.tag == .system and each.at == @intFromEnum(which)) return true;
+    }
+    return false;
+}
+
+/// The layer an input attachment is read at, the flat int of
+/// VARYING_SLOT_LAYER that try_lower_intrinsic loads (v3dv_pipeline.c:
+/// 276-280): emit_fragment_input's emit_fragment_varying of it, an
+/// ldvary and its flat flag (nir_to_vir.c:1049-1121), as the first
+/// varying (since 1.215).
+fn emitLayerInput(e: *Emit) Error!void {
+    const c = e.c;
+    const ldvary = try c.addInst(.nop, c.undef, c.undef, c.undef);
+    ldvary.qpu.sig.ldvary = true;
+    const vary = try c.emitDef(ldvary);
+    e.flat_shade_flags |= @as(u32, 1) << @intCast(c.num_inputs);
+    c.num_inputs += 1;
+    e.reads_layer = true;
+    e.system[@intFromEnum(compile.SystemValue.layer)] = try emitFlatVarying(c, vary, vir.reg(.reg, 0));
+}
+
+/// Whether the program reads a float of FragCoord: a load_input of
+/// VARYING_SLOT_POS that nir_opt_dce left, which keeps the variable
+/// (since 1.214).
+fn readsFragCoord(work: *const compile.Work) bool {
+    for (work.steps[0..work.step_count]) |each| {
+        if (each.tag != .system) continue;
+        switch (@as(compile.SystemValue, @enumFromInt(each.at))) {
+            .frag_coord_x, .frag_coord_y, .frag_coord_z, .frag_coord_w => return true,
+            else => {},
+        }
+    }
+    return false;
+}
+
+/// emit_fragcoord_input (nir_to_vir.c:1017-1023): x and y as the add
+/// side's FXCD and FYCD make them, z the payload's, and w the reciprocal
+/// of the payload's W. What the program does not read is dead code
+/// (since 1.214).
+fn emitFragcoordInput(e: *Emit) Error!void {
+    const c = e.c;
+    e.system[@intFromEnum(compile.SystemValue.frag_coord_x)] = try c.add(.fxcd, .{});
+    e.system[@intFromEnum(compile.SystemValue.frag_coord_y)] = try c.add(.fycd, .{});
+    e.system[@intFromEnum(compile.SystemValue.frag_coord_z)] = e.payload_z;
+    e.system[@intFromEnum(compile.SystemValue.frag_coord_w)] = try c.add(.recip, .{e.payload_w});
 }
 
 /// emit_fragment_varying (nir_to_vir.c:1049-1121): the ldvary, and the C
@@ -562,6 +667,9 @@ fn emitStep(e: *Emit, each: Step, at: u16) Error!void {
             .num_work_groups_z => try storeDef(e, at, 0, try c.uniform(.num_work_groups, 2)),
             else => |which| {
                 const loaded = e.system[@intFromEnum(which)];
+                // A load_input of the payload's Z (nir_to_vir.c:2991-2995;
+                // since 1.214).
+                if (which == .frag_coord_z) e.reads_z = true;
                 if (e.web_of[at][0] != no_web)
                     try storeDef(e, at, 0, try c.mul(.mov, .{loaded}))
                 else
@@ -653,6 +761,22 @@ fn emitStep(e: *Emit, each: Step, at: u16) Error!void {
             try emitTex(e, each, at);
             try unpackTexel(e, at);
         },
+        // A storage image's texel read, its two words the steps after it
+        // make floats, which the flush defines, and one written (since
+        // 1.218).
+        .image_load, .image_store => return emitImageLoadStore(e, each, at),
+        .tile_load => try emitTlbColorRead(e, compile.tileTarget(each.at), compile.tileSample(each.at), at),
+        // ntq_emit_image_size (nir_to_vir.c:2653-2679): each size a
+        // uniform of the view's, a 3D image's depth third or an array's
+        // layers, and no level, which is 0 (since 1.219).
+        .image_size => for (0..parts) |k| {
+            const contents: vir.Uniform = switch (k) {
+                0 => .image_width,
+                1 => .image_height,
+                else => if (e.work.samplers[each.at].dim == .layers) .image_array_size else .image_depth,
+            };
+            try storeDef(e, at, k, try c.uniform(contents, each.at));
+        },
         // What passed is where a depth is read, the first half of the
         // first word: one float out, as nir_lower_tex's packing_16 leaves
         // the one component a shadow sample's def has.
@@ -664,12 +788,15 @@ fn emitStep(e: *Emit, each: Step, at: u16) Error!void {
         },
         // ntq_emit_txs (nir_to_vir.c:914-960): the level first, then each
         // size the draw writes of the view as a uniform of its own,
-        // minified to the level but an array's layers (since 1.181).
+        // minified to the level but an array's layers (since 1.181), the
+        // third, which a cube of an array's is too, its cubes (since
+        // 1.235). A cube's gradient asks for the first two alone.
         .texture_size => {
             const level = try getSrc(e, each.from[0], 0);
-            const layers = e.work.samplers[each.at].dim == .layers;
+            const dim = e.work.samplers[each.at].dim;
+            const layers = dim == .layers or dim == .cubes;
             for (0..parts) |k| {
-                const array = layers and k == parts - 1;
+                const array = layers and k == 2;
                 const contents: vir.Uniform = if (array) .texture_array_size else switch (k) {
                     0 => .texture_width,
                     1 => .texture_height,
@@ -750,6 +877,11 @@ fn emitStep(e: *Emit, each: Step, at: u16) Error!void {
                     // (:1575-1578), the MOV of the u2u16 (:1599-1611)
                     // what copy propagation takes out (since 1.200).
                     .pack_half => try c.add(.vfpack, .{ a, b }),
+                    // pack_2x16_to_unorm_2x8_v3d, VFTOUNORM8, and
+                    // pack_4x16_to_4x8_v3d, V8PACK (:1825-1831; since
+                    // 1.218).
+                    .pack_unorm_8 => try c.mul(.vftounorm8, .{a}),
+                    .pack_4x8 => try c.add(.v8pack, .{ a, b }),
                     .half_float => half: {
                         const float = try c.mul(.fmov, .{a});
                         vir.setUnpack(c.defs[float.index].?, 0, .l);
@@ -1202,8 +1334,8 @@ fn fromSsa(e: *Emit) Error!void {
             },
         }
     }
-    if (e.work.stored != compile.none) for (0..steps[e.work.stored].kind.parts()) |k| {
-        endRead(steps, at_end, .{ .step = e.work.stored, .part = @intCast(k) });
+    for (e.work.stored) |stored| if (stored != compile.none) for (0..steps[stored].kind.parts()) |k| {
+        endRead(steps, at_end, .{ .step = stored, .part = @intCast(k) });
     };
 
     for (0..webs.count) |k| for (webs.phisOf(k)) |phi| {
@@ -1788,17 +1920,89 @@ fn unpackTexel(e: *Emit, at: u16) Error!void {
     }
 }
 
-/// ntq_emit_color_write (nir_to_vir.c:3020): the colour moved out of what
-/// the body made it in.
-/// The program writes a colour: Mesa's output_color_var[0], which the
-/// steps have where the module stores one. Every module compiled does,
-/// and the program of no colour (`compileNoColor`) does not.
+/// The configuration of a read of render target `rt`'s colour, of
+/// `components` floats, which a thread switch comes before: the
+/// scoreboard is to be locked before the tile buffer is read, and it is
+/// locked on the last switch, which is after the read where the program
+/// switches again; vir_emit_thrsw then locks it on the first instead
+/// (tlb_read_config, nir_to_vir.c:2682-2727). Read a pixel at a time, or
+/// a sample at a time where the pipeline draws four (since 1.238).
+fn tlbReadConfig(e: *Emit, rt: u32, components: u32) Error!u32 {
+    const c = e.c;
+    if (!c.emitted_tlb_load) {
+        if (!c.last_thrsw_at_top_level) try c.emitThrsw();
+        c.emitted_tlb_load = true;
+    }
+    var config: u32 = 0xffffff00 | if (e.key.msaa) tlb_sample_mode_per_sample else tlb_sample_mode_per_pixel;
+    config |= (7 - rt) << tlb_render_target_shift;
+    if (e.key.f32_color_rb & (@as(u32, 1) << @intCast(rt)) != 0) {
+        config |= tlb_type_f32_color | (components - 1) << tlb_vec_size_minus_1_shift;
+    } else {
+        config |= tlb_type_f16_color | tlb_f16_swap_hi_lo;
+        config |= if (components >= 3) tlb_vec_size_4_f16 else tlb_vec_size_2_f16;
+    }
+    return config;
+}
+
+/// vir_emit_tlb_color_read (nir_to_vir.c:2731-2815): render target
+/// `rt`'s four floats, read out of the tile buffer once and moved into
+/// the step's. A target of 32-bit floats hands one a read, one of
+/// half-floats two, which an FMOV each of the low and the high half
+/// takes apart. The first read is configured, but where its
+/// configuration is the default, 0xffffffff, which a read of render
+/// target 0's four half-floats is: then it reads as the others do, with
+/// no uniform. v3dv swaps no red and blue in
+/// the program (swap_color_rb is 0, v3dv_pipeline.c:1335): the store
+/// does (since 1.237). Where the pipeline draws four samples, the read is
+/// of each in turn, the first read of the first configured, and the
+/// step's are those of `sample` (since 1.238): the tile buffer hands
+/// every sample over whichever the program keeps.
+fn emitTlbColorRead(e: *Emit, rt: u32, sample: u32, at: u16) Error!void {
+    const c = e.c;
+    if (!e.color_read[rt]) {
+        const config = try tlbReadConfig(e, rt, 4);
+        const samples: usize = if (e.key.msaa) compile.tile_samples_most else 1;
+        for (e.color_reads[rt][0..samples], 0..) |*reads, i| {
+            const configured = config != 0xffffffff and i == 0;
+            if (e.key.f32_color_rb & (@as(u32, 1) << @intCast(rt)) != 0) {
+                reads[0] = if (configured) try c.tlbuRead(config) else try c.tlbRead();
+                for (reads[1..]) |*read| read.* = try c.tlbRead();
+            } else {
+                for (0..2) |word| {
+                    const pair = if (word == 0 and configured) try c.tlbuRead(config) else try c.tlbRead();
+                    for ([_]instr.InputUnpack{ .l, .h }, 0..) |half, k| {
+                        const float = try c.mul(.fmov, .{pair});
+                        vir.setUnpack(c.defs[float.index].?, 0, half);
+                        reads[word * 2 + k] = float;
+                    }
+                }
+            }
+        }
+        e.color_read[rt] = true;
+    }
+    for (e.color_reads[rt][sample], 0..) |read, k| try storeDef(e, at, k, try c.mul(.mov, .{read}));
+}
+
+/// The program writes a colour: one of Mesa's output_color_var, which
+/// the steps have where the module stores one. Every module compiled
+/// does, and the program of no colour (`compileNoColor`) does not.
 fn hasColor(e: *const Emit) bool {
     return e.work.output_count != 0;
 }
 
+/// It writes one at location `rt`: output_color_var[rt], stored into
+/// (since 1.231).
+fn hasColorAt(e: *const Emit, rt: u32) bool {
+    return e.work.stored[rt] != compile.none;
+}
+
+/// ntq_emit_color_write (nir_to_vir.c:3020): each colour moved out of what
+/// the body made it in, in the order of their locations.
 fn emitColorWrite(e: *Emit) Error!void {
-    for (&e.outputs, 0..) |*output, k| output.* = try e.c.mul(.mov, .{try getSrc(e, e.work.stored, k)});
+    for (e.work.stored, &e.outputs) |stored, *output| {
+        if (stored == compile.none) continue;
+        for (output, 0..) |*float, k| float.* = try e.c.mul(.mov, .{try getSrc(e, stored, k)});
+    }
 }
 
 /// vir_TMU_WRITE (v3d_tex.c:34).
@@ -1827,10 +2031,11 @@ fn emitTex(e: *Emit, each: Step, at: u16) Error!void {
     const return_words = texel_words;
 
     // get_required_tex_tmu_writes (v3d_tex.c:222): S and T, R or I where
-    // the image has a third float, the comparator's TMUDREF, and a bias's
-    // or a level's TMUB (since 1.180), which a fetch of a sample has not
-    // (since 1.209). The input FIFO has 16 slots across all threads.
-    const tmu_writes: u32 = 2 + @as(u32, @intFromBool(dim != .flat)) + @intFromBool(compared) + @intFromBool(each.lookup.leveled());
+    // the image has a third float, I as well for a cube of an array
+    // (since 1.235), the comparator's TMUDREF, and a bias's or a level's
+    // TMUB (since 1.180), which a fetch of a sample has not (since
+    // 1.209). The input FIFO has 16 slots across all threads.
+    const tmu_writes: u32 = 2 + @as(u32, @intFromBool(dim != .flat)) + @intFromBool(dim == .cubes) + @intFromBool(compared) + @intFromBool(each.lookup.leveled());
     while (tmu_writes > 16 / @as(u32, c.threads)) c.threads /= 2;
 
     // Pipelining it would overflow the TMU's FIFOs: flush what waits.
@@ -1840,13 +2045,26 @@ fn emitTex(e: *Emit, each: Step, at: u16) Error!void {
     // handle_tex_src (v3d_tex.c:85): S starts the lookup, so it is kept
     // for the end, and T is written first; then a 3D texture's and a
     // cube's third float to TMUR (:115-120) and a layer to TMUI
-    // (:122-127), the floats past the image's left unread.
+    // (:122-127), a cube of an array's third to TMUR and which cube, the
+    // last, to TMUI (since 1.235), the floats past the image's left
+    // unread.
+    // A sample of an input attachment of four has its level first, which
+    // v3d_nir_lower_txf_ms leaves before the coordinate it puts last
+    // (v3d_nir_lower_txf_ms.c:42-57; since 1.238). The scheduler may move
+    // TMUB and T past each other (can_reorder_tmu_write,
+    // qpu_schedule.c:226-235), and of the modules tested it does: written
+    // last, the level makes the same programs.
+    if (each.lookup == .fetch_sample_level) _ = try tmuWrite(c, .tmub, try getSrc(e, each.from[0], 0));
     const s = try getSrc(e, each.a, 0);
     _ = try tmuWrite(c, .tmut, try getSrc(e, each.a, 1));
     switch (dim) {
         .flat => {},
         .volume, .cube => _ = try tmuWrite(c, .tmur, try getSrc(e, each.a, 2)),
         .layers => _ = try tmuWrite(c, .tmui, try getSrc(e, each.a, 2)),
+        .cubes => {
+            _ = try tmuWrite(c, .tmur, try getSrc(e, each.a, 2));
+            _ = try tmuWrite(c, .tmui, try getSrc(e, each.a, 3));
+        },
     }
     // The comparator after the coordinate, as NIR's sources come
     // (v3d_tex.c:155-157).
@@ -1854,7 +2072,7 @@ fn emitTex(e: *Emit, each: Step, at: u16) Error!void {
     // A bias, or a level, after it, as vtn orders the sources
     // (spirv_to_nir.c:3420-3438): each one float to TMUB (v3d_tex.c:
     // 129-150; since 1.180).
-    if (each.lookup.leveled()) _ = try tmuWrite(c, .tmub, try getSrc(e, each.from[0], 0));
+    if (each.lookup.leveled() and each.lookup != .fetch_sample_level) _ = try tmuWrite(c, .tmub, try getSrc(e, each.from[0], 0));
 
     // The texture's number in the high bits of the address, for the
     // driver to put the texture's state there (v3d_tex.c:297-301): here
@@ -1875,7 +2093,7 @@ fn emitTex(e: *Emit, each: Step, at: u16) Error!void {
     // in its offset fields, as many as the image's coordinate names but
     // a layer (:158-170), and a cube's level disabling the automatic one,
     // which TMUSLOD does for every other image (:135-150; since 1.180).
-    const p2_packed = texConfigP2(each.offsets, each.lookup == .lod and dim == .cube);
+    const p2_packed = texConfigP2(each.offsets, each.lookup == .lod and dim.cubic());
     const needs_p2 = p2_packed != p2_default;
     if (!each.lookup.fetches()) {
         try wrtmuc(c, .tmu_config_p1, p1_packed | @as(u32, each.at) << 24);
@@ -1893,11 +2111,81 @@ fn emitTex(e: *Emit, each: Step, at: u16) Error!void {
 
     // A fetch's lookup is started at TMUSF (v3d_tex.c:375-377; since
     // 1.182), a sample's too (since 1.209), a cube's at TMUSCM
-    // (:378-379), and one at a level the program gives at TMUSLOD
+    // (:378-379), a cube of an array's too, its sampler_dim a cube's
+    // (since 1.235), and one at a level the program gives at TMUSLOD
     // (:380-381).
-    const retiring = try tmuWrite(c, if (each.lookup.fetches()) .tmusf else if (dim == .cube) .tmuscm else if (each.lookup == .lod) .tmuslod else .tmus, s);
+    const retiring = try tmuWrite(c, if (each.lookup.fetches()) .tmusf else if (dim.cubic()) .tmuscm else if (each.lookup == .lod) .tmuslod else .tmus, s);
     // Mesa's own count, which is the mask of the words rather than how
     // many: the scheduler only holds a lookup back for it.
+    retiring.ldtmu_count = return_words;
+    try addPendingTmuFlush(e, at, return_words);
+}
+
+/// v3d_vir_emit_image_load_store (v3d_tex.c:564-655), for a compute
+/// program's image_load and image_store of an Rgba8 image (since 1.218),
+/// and a fragment program's (since 1.219).
+/// P0 the words to hand back, and the image's number in its high bits for
+/// the driver to put the image's state there (:609-613), as a sample's;
+/// a store hands back none (return_channels_required, :531-561), a load
+/// both words of its four 16-bit floats, the output of an image of 8 bits
+/// a channel (v3d_gl_format_is_return_32,
+/// v3d_nir_lower_image_load_store.c:48-62), whatever the program reads of
+/// them, as a sample does (`texel_words`). P1 has the per-pixel mask and
+/// the 16-bit output (:576-580); P2 the regular operation (:592). Both
+/// are the defaults, p1_unpacked_default's and p2_unpacked_default's, so
+/// neither is written (:645-648), but for a fragment program's load that
+/// reads its helper pixels (ACCESS_SKIP_HELPERS not set, `lanes`): its
+/// mask is off, and P1 the constant 0 of no bit set. Then
+/// vir_image_emit_register_writes (:440-518): the coordinate's y to TMUT,
+/// a 3D image's slice to TMUR and a layer, an array's or a cube's face, to
+/// TMUI; a store's words to TMUD; and x to TMUSF, which starts the lookup,
+/// under the execute mask for a store where the lanes may part (:500-515).
+/// Each source is read once before, as get_required_image_tmu_writes
+/// counts the writes (:521-529), which may flush what the TMU owes; the
+/// threads that leaves room for, and a flush where the output FIFO would
+/// overflow (:629-642). A store leaves the job's caches to be cleaned
+/// (tmu_dirty_rcl, :625-626), and the LDTMUs are owed, or a store's TMUWT
+/// (ntq_add_pending_tmu_flush, :650-654).
+fn emitImageLoadStore(e: *Emit, each: Step, at: u16) Error!void {
+    const c = e.c;
+    const is_store = each.tag == .image_store;
+    const dim = e.work.samplers[each.at].dim;
+    const return_words: u32 = if (is_store) 0 else texel_words;
+    const data: u32 = if (is_store) @intCast(e.work.steps[each.b].kind.parts()) else 0;
+    if (is_store) c.tmu_dirty_rcl = true;
+
+    // The count, each source read as the writes read it.
+    var tmu_writes: u32 = 1;
+    _ = try getSrc(e, each.a, 1);
+    if (dim != .flat) {
+        _ = try getSrc(e, each.a, 2);
+        tmu_writes += 1;
+    }
+    for (0..data) |k| _ = try getSrc(e, each.b, k);
+    tmu_writes += data;
+    _ = try getSrc(e, each.a, 0);
+    tmu_writes += 1;
+    while (tmu_writes > 16 / @as(u32, c.threads)) c.threads /= 2;
+    if (tmuFifoOverflow(e, @popCount(return_words))) try flushTmu(e);
+
+    try wrtmuc(c, .image_tmu_config_p0, return_words | @as(u32, each.at) << 24);
+    const per_pixel = c.stage != .fragment or is_store or e.work.skip_helpers[at];
+    if (!per_pixel) try wrtmuc(c, .constant, 0);
+    _ = try tmuWrite(c, .tmut, try getSrc(e, each.a, 1));
+    switch (dim) {
+        .flat => {},
+        .volume => _ = try tmuWrite(c, .tmur, try getSrc(e, each.a, 2)),
+        .layers => _ = try tmuWrite(c, .tmui, try getSrc(e, each.a, 2)),
+        // A storage cube is its faces' layers, and so is a cube of an
+        // array (`compile.Sampler.storage`).
+        .cube, .cubes => unreachable,
+    }
+    for (0..data) |k| _ = try tmuWrite(c, .tmud, try getSrc(e, each.b, k));
+    const x = try getSrc(e, each.a, 0);
+    const masked = is_store and c.inNonuniformControlFlow();
+    if (masked) c.setPf(try c.mulDest(.mov, vir.nopReg(), .{c.execute}), .pushz);
+    const retiring = try tmuWrite(c, .tmusf, x);
+    if (masked) vir.setCond(retiring, .ifa);
     retiring.ldtmu_count = return_words;
     try addPendingTmuFlush(e, at, return_words);
 }
@@ -2122,7 +2410,9 @@ fn flushTmu(e: *Emit) Error!void {
         if (pending.component_mask > 0) {
             const tag = e.work.steps[pending.step].tag;
             const general = switch (tag) {
-                .ubo, .ubo_indirect, .ssbo, .ssbo_indirect, .ssbo_atomic, .scratch, .scratch_indirect, .shared, .shared_atomic => true,
+                // A storage image's two words too, which are its own
+                // (since 1.218).
+                .ubo, .ubo_indirect, .ssbo, .ssbo_indirect, .ssbo_atomic, .scratch, .scratch_indirect, .shared, .shared_atomic, .image_load => true,
                 else => false,
             };
             for (0..4) |j| {
@@ -2201,26 +2491,35 @@ fn restoreLastThrsw(c: *Compile, restore: Restore) void {
 fn emitFragEnd(e: *Emit) Error!void {
     const c = e.c;
     // Alpha to coverage where the TLB blends (nir_to_vir.c:2056-2065):
-    // the samples FTOC makes of colour 0's alpha, kept of those the pixel
-    // has (since 1.149).
-    if (e.key.sample_alpha_to_coverage and hasColor(e)) {
-        const covered = try c.add(.@"and", .{ try c.add(.msf, .{}), try c.add(.ftoc, .{e.outputs[3]}) });
+    // the samples FTOC makes of location 0's alpha, kept of those the
+    // pixel has (since 1.149); none where the program writes nothing
+    // there.
+    if (e.key.sample_alpha_to_coverage and hasColorAt(e, 0)) {
+        const covered = try c.add(.@"and", .{ try c.add(.msf, .{}), try c.add(.ftoc, .{e.outputs[0][3]}) });
         _ = try c.addDest(.setmsf, vir.nopReg(), .{covered});
     }
-    // A colour the TLB takes: render target 0 is among the key's, and
-    // the program writes it (nir_to_vir.c:2050-2054).
-    const has_any_tlb_color_write = e.key.cbufs & 1 != 0 and hasColor(e);
-    // There is no image or sample mask, so early_fragment_tests is
-    // promoted where a colour is written, no storage buffer is named
-    // (info.num_ssbos, :2074; since 1.168), nothing discards and nothing
+    // A colour the TLB takes: a render target among the key's that the
+    // program writes (nir_to_vir.c:2050-2054).
+    var has_any_tlb_color_write = false;
+    for (0..compile.most_colors) |rt| {
+        if (e.key.cbufs & (@as(u8, 1) << @intCast(rt)) != 0 and hasColorAt(e, @intCast(rt))) has_any_tlb_color_write = true;
+    }
+    // There is no sample mask, so early_fragment_tests is promoted where
+    // a colour is written, no storage buffer is named (info.num_ssbos,
+    // :2074; since 1.168) nor an image, a storage image's or an input
+    // attachment's (info.num_images; since 1.219), nothing discards and nothing
     // covers by alpha (nir_to_vir.c:2073-2081; v3dv has no
     // can_earlyz_with_discard), and where it is not the program writes Z
     // (nir_to_vir.c:2098): a program of no colour always does, its one
     // TLB write, where Mesa also says it discards (:2125-2126), which
     // nothing after reads here. It has no gl_FragDepth, so that Z is the
     // one the rasterizer made, written through as it is.
-    e.early_fragment_tests = has_any_tlb_color_write and !e.work.uses_ssbo and !e.uses_discard and !e.key.sample_alpha_to_coverage;
-    if (!e.early_fragment_tests) {
+    e.early_fragment_tests = has_any_tlb_color_write and !e.work.uses_ssbo and !e.work.uses_images and !e.uses_discard and !e.key.sample_alpha_to_coverage;
+    // A program that reads Z writes it, the V3D 4.2 spec's "If a shader
+    // performs a Z read the 'Fragment shader does Z writes' bit in the
+    // shader record must be enabled" (nir_to_vir.c:2091-2099; since
+    // 1.214).
+    if (!e.early_fragment_tests or e.reads_z) {
         e.writes_z = true;
         const inst = try c.mulDest(.mov, vir.magicReg(.tlbu), .{vir.nopReg()});
         // The spec says PER_PIXEL is ignored for invariant writes, but
@@ -2229,7 +2528,10 @@ fn emitFragEnd(e: *Emit) Error!void {
         inst.uniform = try c.getUniformIndex(.constant, tlb_specifier | 0xffffff00);
         inst.is_tlb_z_write = true;
     }
-    try emitTlbColorWrite(e, 0);
+    // Each render target in turn (nir_to_vir.c:2142-2143), up to this
+    // device's (`compile.most_colors`) where Mesa goes to
+    // V3D_MAX_DRAW_BUFFERS, past which the key has no bit set.
+    for (0..compile.most_colors) |rt| try emitTlbColorWrite(e, @intCast(rt));
 }
 
 /// sched_flags (nir_to_vir.c:4902) for the one block there is: each
@@ -2272,21 +2574,37 @@ fn readsReg(inst: *const Inst, r: Reg) bool {
     return false;
 }
 
-/// vir_emit_tlb_color_write (nir_to_vir.c:1955), for a render target of
-/// 16-bit floats and one sample a pixel: two pairs packed to the tile
-/// buffer, the first with its specifier where it is not the one the
-/// register is preloaded with.
+/// vir_emit_tlb_color_write (nir_to_vir.c:1955), for one sample a pixel:
+/// into a render target of 32-bit channels (the key's `f32_color_rb`,
+/// since 1.228) four words, a channel each, the first to TLBU with its
+/// specifier; into any other two pairs packed as half-floats, the first
+/// with its specifier where it is not the one the register is preloaded
+/// with.
 fn emitTlbColorWrite(e: *Emit, rt: u32) Error!void {
     const c = e.c;
-    if (e.key.cbufs & (@as(u8, 1) << @intCast(rt)) == 0 or !hasColor(e)) return;
+    if (e.key.cbufs & (@as(u8, 1) << @intCast(rt)) == 0 or !hasColorAt(e, rt)) return;
     const num_components = 4;
+    const f32_color = e.key.f32_color_rb & (@as(u8, 1) << @intCast(rt)) != 0;
     var conf: u32 = 0xffffff00;
     conf |= tlb_sample_mode_per_pixel;
     conf |= (7 - rt) << tlb_render_target_shift;
-    conf |= tlb_type_f16_color | tlb_f16_swap_hi_lo;
-    conf |= if (num_components >= 3) tlb_vec_size_4_f16 else tlb_vec_size_2_f16;
+    if (f32_color) {
+        conf |= tlb_type_f32_color;
+        conf |= (num_components - 1) << tlb_vec_size_minus_1_shift;
+    } else {
+        conf |= tlb_type_f16_color | tlb_f16_swap_hi_lo;
+        conf |= if (num_components >= 3) tlb_vec_size_4_f16 else tlb_vec_size_2_f16;
+    }
 
-    const color = e.outputs;
+    const color = e.outputs[rt];
+    if (f32_color) {
+        const inst = try c.mulDest(.mov, vir.magicReg(.tlbu), .{color[0]});
+        inst.uniform = try c.getUniformIndex(.constant, conf);
+        if (num_components >= 2) _ = try c.mulDest(.mov, vir.magicReg(.tlb), .{color[1]});
+        if (num_components >= 3) _ = try c.mulDest(.mov, vir.magicReg(.tlb), .{color[2]});
+        if (num_components >= 4) _ = try c.mulDest(.mov, vir.magicReg(.tlb), .{color[3]});
+        return;
+    }
     const inst = try c.addDest(.vfpack, vir.magicReg(.tlb), .{ color[0], color[1] });
     if (conf != ~@as(u32, 0)) {
         inst.dst = vir.magicReg(.tlbu);

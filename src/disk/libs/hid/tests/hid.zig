@@ -23,6 +23,7 @@ const kexec = host.exec;
 const utility_library = host.utility;
 const hid_init = @import("../hid_init.zig");
 const source = @import("source.zig");
+const layout = @import("../report/layout.zig");
 const HIDLibrary = sdk.interface.hid.HIDBase;
 const ExecBase = sdk.interface.exec.ExecBase;
 
@@ -379,7 +380,7 @@ const retro_vendor = [_]u8{
     0x75, 0x08, 0x15, 0x00, 0x26, 0xFF, 0x00, 0x91, 0x02, 0xC0,
 };
 
-test "the 8BitDo receiver: its keys in report 1 as it sends them, its media keys, its mouse; the vendor's interface refused" {
+test "the 8BitDo receiver: its keys in report 1, and as bits in reports 12 and 10, its media keys, its mouse; the vendor's interface refused" {
     var rig = try Rig.init();
     const keyboard = rig.hb.OpenHID(&retro_keyboard, retro_keyboard.len, null) orelse return error.NotOpened;
     try testing.expectEqual(hid.HIDF_KEYBOARD | hid.HIDF_CONSUMER, keyboard.flags);
@@ -422,6 +423,35 @@ test "the 8BitDo receiver: its keys in report 1 as it sends them, its media keys
     events = KeyboardSource.taken(rig.keyboard);
     try testing.expectEqual(@as(usize, 1), events.len);
     try testing.expectEqual(kb.RAWKEY_VOLUMEUP | ie.IECODE_UP_PREFIX, events[0].code);
+
+    // What the receiver sends on a Raspberry Pi 4: every key as a bit, in
+    // report 12 - the modifiers' byte, then usages 0 to 0x77. a (usage 4),
+    // then the left Shift with it, then both let go; then b in report 10.
+    const bits_typed = [_][17]u8{
+        .{ 0x0C, 0x00, 0x10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+        .{ 0x0C, 0x02, 0x10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+        .{ 0x0C, 0x00, 0x00, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+        .{ 0x0A, 0x00, 0x20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+        .{ 0x0A, 0x00, 0x00, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+    };
+    const bits_codes = [_]u32{
+        0x20, // a
+        0x60, // the left Shift
+        0x20 | ie.IECODE_UP_PREFIX,
+        0x60 | ie.IECODE_UP_PREFIX,
+        0x35, 0x35 | ie.IECODE_UP_PREFIX, // b
+    };
+    seen = 0;
+    for (bits_typed) |report| {
+        input(&rig, keyboard, &report);
+        for (KeyboardSource.taken(rig.keyboard)) |event| {
+            try testing.expect(seen < bits_codes.len);
+            try testing.expectEqual(ie.IECLASS_RAWKEY, event.class);
+            try testing.expectEqual(bits_codes[seen], event.code);
+            seen += 1;
+        }
+    }
+    try testing.expectEqual(bits_codes.len, seen);
     rig.hb.CloseHID(keyboard);
 
     // The mouse: right by 5, up by 3, the left button down.
@@ -437,5 +467,88 @@ test "the 8BitDo receiver: its keys in report 1 as it sends them, its media keys
 
     // The vendor's interface is nothing the library drives.
     try testing.expect(rig.hb.OpenHID(&retro_vendor, retro_vendor.len, null) == null);
+    try rig.deinit();
+}
+
+/// Where the receiver's first keyboard collection, report 1's, ends: its
+/// End Collection is the descriptor's 67th byte.
+const report_1_end = 67;
+
+test "the 8BitDo receiver's keyboards: reports 1, 12 and 10, in that order, report 1's with its slots and its LEDs; a collection given twice read once" {
+    var found: [layout.KEYBOARDS_MOST]layout.KeyboardLayout = undefined;
+    try testing.expectEqual(@as(usize, 3), layout.keyboardLayouts(&retro_keyboard, &found));
+    try testing.expectEqual(@as(u8, 1), found[0].report_id);
+    try testing.expectEqual(@as(u8, 6), found[0].slots.count);
+    try testing.expect(found[0].leds);
+    try testing.expectEqual(@as(u8, 12), found[1].report_id);
+    try testing.expectEqual(@as(u8, 0), found[1].slots.size);
+    try testing.expect(found[1].bits_count != 0);
+    try testing.expectEqual(@as(u8, 10), found[2].report_id);
+    try testing.expectEqual(@as(u8, 0xC0), retro_keyboard[report_1_end - 1]);
+    const report_1_twice = retro_keyboard[0..report_1_end].* ++ retro_keyboard[0..report_1_end].*;
+    try testing.expectEqual(@as(usize, 1), layout.keyboardLayouts(&report_1_twice, &found));
+}
+
+test "the 8BitDo receiver: a key held in report 12 down through reports 10 and 1, one held in two reports up once both let go, Caps Lock in report 12 lighting report 1's LEDs" {
+    var rig = try Rig.init();
+    var sent: Sent = .{};
+    var hook = utility.Hook{ .entry = &Sent.hookEntry, .data = &sent };
+    const tags = [_]utility.TagItem{
+        .{ .tag = hid.HIDA_OutputHook, .data = @intFromPtr(&hook) },
+        .{ .tag = utility.TAG_DONE, .data = 0 },
+    };
+    const keyboard = rig.hb.OpenHID(&retro_keyboard, retro_keyboard.len, &tags) orelse return error.NotOpened;
+    // Reports 12 and 10: the modifiers, then a bit for each key from usage
+    // 0 on - A's (4) in the third byte, Caps Lock's (0x39) in the tenth.
+    const a_in_12 = [17]u8{ 0x0C, 0x00, 0x10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+    const a_in_10 = [17]u8{ 0x0A, 0x00, 0x10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+    const caps_in_12 = [17]u8{ 0x0C, 0x00, 0, 0, 0, 0, 0, 0, 0, 0x02, 0, 0, 0, 0, 0, 0, 0 };
+    const none_in_12 = [17]u8{ 0x0C, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+    const none_in_10 = [17]u8{ 0x0A, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+    const none_in_1 = [9]u8{ 0x01, 0, 0, 0, 0, 0, 0, 0, 0 };
+
+    // A down in report 12; reports 10 and 1 holding nothing leave it down.
+    input(&rig, keyboard, &a_in_12);
+    var events = KeyboardSource.taken(rig.keyboard);
+    try testing.expectEqual(@as(usize, 1), events.len);
+    try testing.expectEqual(@as(u32, 0x20), events[0].code);
+    input(&rig, keyboard, &none_in_10);
+    try testing.expectEqual(@as(usize, 0), KeyboardSource.taken(rig.keyboard).len);
+    input(&rig, keyboard, &none_in_1);
+    try testing.expectEqual(@as(usize, 0), KeyboardSource.taken(rig.keyboard).len);
+    input(&rig, keyboard, &none_in_12);
+    events = KeyboardSource.taken(rig.keyboard);
+    try testing.expectEqual(@as(usize, 1), events.len);
+    try testing.expectEqual(@as(u32, 0x20) | ie.IECODE_UP_PREFIX, events[0].code);
+
+    // A held in reports 12 and 10: down once, up once both let go.
+    input(&rig, keyboard, &a_in_12);
+    try testing.expectEqual(@as(usize, 1), KeyboardSource.taken(rig.keyboard).len);
+    input(&rig, keyboard, &a_in_10);
+    try testing.expectEqual(@as(usize, 0), KeyboardSource.taken(rig.keyboard).len);
+    input(&rig, keyboard, &none_in_12);
+    try testing.expectEqual(@as(usize, 0), KeyboardSource.taken(rig.keyboard).len);
+    input(&rig, keyboard, &none_in_10);
+    events = KeyboardSource.taken(rig.keyboard);
+    try testing.expectEqual(@as(usize, 1), events.len);
+    try testing.expectEqual(@as(u32, 0x20) | ie.IECODE_UP_PREFIX, events[0].code);
+
+    // Caps Lock in report 12: its light on, through report 1's LEDs.
+    input(&rig, keyboard, &caps_in_12);
+    events = KeyboardSource.taken(rig.keyboard);
+    try testing.expectEqual(@as(usize, 1), events.len);
+    try testing.expectEqual(@as(u32, 0x62), events[0].code);
+    try testing.expectEqual(@as(u32, 1), sent.calls);
+    try testing.expectEqual(@as(u8, 1), sent.id);
+    try testing.expectEqual(hid.HIDREPORT_OUTPUT, sent.kind);
+    try testing.expectEqual(@as(u32, 1), sent.length);
+    try testing.expectEqual(@as(u8, 0x02), sent.bytes[0]);
+    // Let go: the light stays.
+    input(&rig, keyboard, &none_in_12);
+    events = KeyboardSource.taken(rig.keyboard);
+    try testing.expectEqual(@as(usize, 1), events.len);
+    try testing.expectEqual(@as(u32, 0x62) | ie.IECODE_UP_PREFIX, events[0].code);
+    try testing.expectEqual(@as(u32, 1), sent.calls);
+    rig.hb.CloseHID(keyboard);
     try rig.deinit();
 }

@@ -149,7 +149,7 @@ and sampled as of 1.119 and a view of another format of an image as of
 pixel in 1.148 and 1.149 (item 61's V1 to V6), and a subpass of no
 colour attachment, a pipeline of no fragment stage and a subpass of no
 attachment at four in 1.150 (items 43 and 85, and V8) - so the
-magenta item 52 is about now belongs to item 54 alone, item 28's
+magenta item 52 is about now belongs to item 54 alone (done in 1.235), item 28's
 remainder is a QPU back end that refuses the operand at pipeline
 creation, item 17's is a vertex program that keeps its varyings in
 registers and so stops at eight, item 22's is a render list played once
@@ -1238,6 +1238,7 @@ and the V3D's dispatcher (`V3D_MAX_CSD_WG_COUNT`, v3d_limits.h:81) - with a
 test that the largest dispatch the limits admit can be counted. The V3D's
 1 for maxFragmentOutputAttachments and maxFragmentCombinedOutputResources,
 under Vulkan's 4, is item 55's: a QPU fragment program writes one colour.
+Since 1.233 they are 4 and v3dv's sum (item 55).
 
 ### 30. Fill the limits that may conformantly stay at their unsupported values, and decide the tessellation and geometry numbers
 
@@ -1334,7 +1335,7 @@ Found independently by: formats (2 items), semantics (1 item) — 3 overlapping 
 
 ### 35. Add a wider depth format and a conformant combined depth+stencil format
 
-*formats / depth-stencil* &mdash; conformance-blocking, large
+*formats / depth-stencil* &mdash; conformance-blocking, large &mdash; **done in 1.222-1.225: X8_D24_UNORM_PACK32 and D24_UNORM_S8_UINT drawn on both devices**; D32_SFLOAT and the V3D's sampled D24_UNORM_S8_UINT left out
 
 Vulkan requires DEPTH_STENCIL_ATTACHMENT for at least one of X8_D24_UNORM_PACK32 and D32_SFLOAT, and for at least one of D24_UNORM_S8_UINT and D32_SFLOAT_S8_UINT. facet has none of the four. Its three depth formats are d16_unorm, s8_uint and d16_unorm_s8_uint, and of those only D16_UNORM is in the spec's table at all — S8_UINT and D16_UNORM_S8_UINT are explicitly optional in 1.0, so they earn no credit. Both "at least one of" rules therefore fail. The work reaches the whole depth path: the tile's depth plane is 16 bits (colour 16 KiB plus depth 8 KiB for a 64x64 tile), stored depth rows are 2 bytes a pixel, the V3D's STORE_Z writes the top 16 bits of a deeper hardware number, and sampled depth reads texture.Format.d16. A 24- or 32-bit plane doubles the tile's depth budget, which is the same cache argument that blocks multisampling.
 
@@ -1342,9 +1343,123 @@ Vulkan requires DEPTH_STENCIL_ATTACHMENT for at least one of X8_D24_UNORM_PACK32
 
 Found independently by: formats, semantics, conformance-path (3 strands).
 
+**The port, in four steps.** Both Mesa drivers have X8_D24_UNORM_PACK32
+and D24_UNORM_S8_UINT (v3dvx_formats.c:206, :209; lavapipe's every depth
+format, lvp_formats.c:93-104), and those are the two facet takes: one of
+each "at least one of" pair. They are one word a pixel, the depth in its
+top 24 bits and the stencil or nothing in its low byte, which is the V3D's
+own D24S8 ("X low, D high", v3d_packet.xml:357; v3dv turns the word round
+on a copy, v3dvx_meta_common.c:436-445), so the V3D can store and sample
+facet's image where it lies. Step 1 makes them images, step 2 has the
+cores draw them, step 3 the V3D, and step 4 holds DEPTH_STENCIL_ATTACHMENT
+for D16_UNORM_S8_UINT too (item 94).
+
+**Step 1, in 1.222: the two as images.** `texture.Format.d24` is a texel
+of the word's top 24 bits, compared at all 24 by a shadow sample and read
+as (D, 0, 0, 1) of its top 8 by one that does not; the V3D samples it as
+DEPTH24_X8 (v3dvx_formats.c:206; `tiling.Texels.d24`). Each aspect is
+copied as Vulkan has it lie in a buffer (`_image.laneOf`): a D24 depth in
+the low 24 bits of 4 bytes, the top one nothing, and a stencil in 1, as
+lavapipe moves an aspect (`handle_copy_image_to_buffer2`,
+lvp_execute.c:2442-2449; `copy_depth_rect`, lvp_image.c:1246-1292). That
+fixes D16_UNORM_S8_UINT as well, whose copies moved a pixel's four bytes
+whichever aspect they named: 2 bytes of depth, 1 of stencil now. A copy
+between images and a clear of one aspect leave the other's bytes, and
+CmdClearDepthStencilImage keeps a depth at the format's width
+(`_render.depthOfBits`). X8_D24 is blitted as D16_UNORM is. Both formats
+say SAMPLED where the device samples a depth (the one with a stencil
+where it samples a stencil too, which the V3D does not), the transfers,
+and no DEPTH_STENCIL_ATTACHMENT; CreateImage holds that usage to the
+feature (`shapeFor`, every format but D16_UNORM_S8_UINT, item 94) and
+CreateRenderPass refuses an attachment of a format without it but for
+the two drawn in the tiles alone. A depth image need not be an
+attachment since: one only sampled, which Vulkan's SAMPLED_IMAGE on
+D16_UNORM lets a program make, or only copied into, is made. Three host
+tests are new and three changed, and six mutations each fail one.
+FacetProbe 1.50 samples an X8_D24 copied into and cleared at all 24 bits,
+a reference three quarters of a step nearer passing and one a quarter
+further not. On the CM5 (package f227) it is 947 of 947, the V3D's
+DEPTH24_X8 among them, and FacetBoth's 316 cases are each as at 1.221.
+
+**Step 2, in 1.223: the cores draw them.** Both are depth attachments
+where the device says `Capabilities.depth24`, the cores, tested, stored
+and loaded at all 24 bits, as llvmpipe takes a fragment's z to its
+format's own width before testing it (`lp_build_depth_stencil_test`,
+lp_bld_depth.c:1067-1095). The tile keeps a depth at its attachment's
+width (`Attachments.Depth.bits`): a D16 one in 16 bits as before and a
+D24 one in 32, the buffer having room for the wider so that a D16 frame
+touches the cache it did. `setup.Depth` carries its buffer's units,
+65535 or 16777215, and the bias's unit, the clamp and the bounds are in
+those, llvmpipe's unit being 1 / (2^bits - 1) of the format's bits
+(`util_get_depth_format_mrd`, u_format.c:387-412). The walk is made at
+compile time for either width (`batched.Rasterize`'s `Kept`). A store
+writes a word's top three bytes and leaves its stencil byte; a clear
+value, a framebuffer's later layers and CmdClearAttachments past the
+first layer keep a depth at its width (`_render.Part.depth_bits`,
+`raster.fillDepth`), and an input attachment reads one as
+`shader.TexelFormat.d24`. Three host tests are new and four grew to the
+two formats (four samples a pixel with a cut-out, the depth pre-pass,
+the depth input attachment). FacetProbe 1.51 draws an X8_D24 on the
+cores, reads it back and samples it at all 24 bits.
+
+**Step 3, in 1.224: the V3D draws them.** Its tiles keep a depth of 24
+bits where the attachment's format has one (`cl.renderingCommon`'s
+"Internal Depth Type", depth_24 1 against depth_16 2), as v3dv sets it
+from its view (`get_internal_depth_type`, v3dvx_formats.c:555-570, at
+v3dvx_cmd_buffer.c:997). Either format is stored and loaded as D24S8
+(`cl.OUTPUT_D24S8`, 43; v3dvx_formats.c:206, 209), through the buffer of
+the planes each op keeps: Z, STENCIL, or both at once, ZSTENCIL (11),
+the load's planes and the store's picked apart as v3dv picks them
+(`v3dv_zs_buffer`, v3dvx_cmd_buffer.c:213-223, 331-334, 594-599;
+`frames.Kept.loaded`). A pass that loads the depth of a D24S8, clears
+its stencil and stores both loads Z and stores ZSTENCIL; over a render
+area a tile sticks out of, each plane stored is loaded and the ones the
+op did not load are drawn over inside, plane by plane. The depth bias
+needs nothing: v3dv scales its units by 256 for a D16 on V3D 4.2 alone
+(v3dvx_cmd_buffer.c:1529-1532). `stored_both` is D16_UNORM_S8_UINT's
+alone now, which the V3D still keeps neither plane of; CreateRenderPass
+holds a D24S8 to its feature. One host test is new (the frame's loads
+and stores and its depth type), and three grew (the packet's fields,
+the format answer of a device with `depth24` and no `stored_both`, and
+such a device keeping a D24S8). FacetProbe 1.52 draws an
+X8_D24 on both devices, stores a D24S8's two planes in one store, loads
+its depth alone with the stencil cleared and stores both again, and
+stores and loads a D24S8's stencil alone; on the CM5 (package f230) it is
+997 of 997, and FacetBoth's 316 cases are each as at 1.223.
+
+**Step 4, in 1.225: DEPTH_STENCIL_ATTACHMENT held for every format.**
+`_image.shapeFor` holds the usage to the feature for D16_UNORM_S8_UINT
+too, as lavapipe and v3dv hold every usage (lvp_formats.c:394-435,
+v3dv_formats.c:512-551), and CreateRenderPass refuses an attachment of
+any format without it (VUID-VkSubpassDescription-pDepthStencilAttachment-02650):
+the V3D's D16_UNORM_S8_UINT, which it drew in its tiles alone where the
+pass kept neither plane, and S8_UINT where a device keeps no stencil. The
+check that refused a D16_UNORM_S8_UINT kept on a device without
+`stored_both` goes, the feature saying the same. FacetBoth 1.80 draws its
+eighteen stencil cases with a stencil beside a depth on
+D24_UNORM_S8_UINT, which both devices store and draw. Two host tests are
+turned round (the device without `stored_both` refusing a D16S8 in the
+tiles alone and its image, and a device without `stored_stencil`
+refusing an S8_UINT pass first for its format) and three mutations each
+fail one. FacetProbe 1.53 checks the V3D refuses both. On the CM5
+(package f231) FacetProbe is 998 of 998 and FacetBoth's 316 cases are
+each as at 1.224, the eighteen on D24_UNORM_S8_UINT. Item 35 is done.
+
+Still left out. Each is marked *facet-wide* or *V3D-only*:
+- **The V3D samples no D24_UNORM_S8_UINT**, nor reads one as an input
+  attachment: it samples no stencil (`sampled_stencil`), so CreateImage
+  refuses SAMPLED and INPUT_ATTACHMENT on a format that holds one, and
+  the format says no SAMPLED_IMAGE. v3dv samples its depth aspect as
+  DEPTH24_X8 (v3dvx_formats.c:209) and its stencil aspect as the word
+  read as RGBA8UI (v3dv_image.c:781-790). X8_D24_UNORM_PACK32 is sampled
+  on both. *V3D-only*.
+- **D32_SFLOAT is not here**, which Vulkan has sampled and blitted
+  unconditionally, and neither is D32_SFLOAT_S8_UINT; lavapipe has both,
+  v3dv D32_SFLOAT alone (v3dvx_formats.c:205). *Facet-wide*.
+
 ### 36. Make the mandatory colour-attachment formats drawable
 
-*formats / colour attachments* &mdash; conformance-blocking, large
+*formats / colour attachments* &mdash; conformance-blocking, large &mdash; **done in 1.226-1.229, four steps: the cores and the V3D draw all thirty-five**
 
 Vulkan mandates COLOR_ATTACHMENT for 38 formats and COLOR_ATTACHMENT_BLEND for 14. facet provides 3 of each, hard-coded in a two-line `drawable()` and enforced by CreateImage. The missing 35 are the integer attachments, the three sRGB words, the half- and single-float forms, a2b10g10r10 both ways, a8b8g8r8_*_pack32 and a1r5g5b5. This is the largest piece in the formats strand: the tile buffer keeps 8 bits a channel of BGRA, dithered to 565 on store, so each new format needs a tile representation, a store, a load, a clear and — for the 11 blendable ones — a blend unit at that width. On the V3D the render-target config packets must name the format too. The same fix closes the colour-input-attachment gap, since an input attachment must be of a format rowFormat knows, which is the same three. Since 1.126 (item 32) BLIT_DST rides on this as well, set beside COLOR_ATTACHMENT as v3dv sets it: each format made an attachment here becomes a blit's destination, so the blit, which carries 8 bits a channel, has to write it at its own width - a float as a float, a whole number as it is. Since 1.127 (item 31) the A8B8G8R8 whole numbers are their R8G8B8A8 forms under another name, so each follows its form here with one name more; A1R5G5B5 is unpacked as it is copied in, so its attachment needs a tile format of its own and a store that packs it.
 
@@ -1352,11 +1467,317 @@ Vulkan mandates COLOR_ATTACHMENT for 38 formats and COLOR_ATTACHMENT_BLEND for 1
 
 Found independently by: formats, conformance-path, semantics (3 strands).
 
+**The port, in four steps.** Mesa's two drivers draw every one of the 38
+(lvp_formats.c:176-181, COLOR_ATTACHMENT for each render target format
+and BLEND for each that is not whole numbers; v3dvx_formats.c:124-201,
+each format with an `rt_type`). llvmpipe draws into a surface of the
+format's own bytes and blends a fragment's colour against what it reads
+back of them, converted to floats, sRGB through its transfer function, and
+written back at the format's width (`generate_unswizzled_blend`,
+src/gallium/drivers/llvmpipe/lp_state_fs.c); the V3D's tile buffer keeps
+each render target at one of nine internal types, 8 bits, 16-bit floats,
+32-bit floats or whole numbers of 8, 16 and 32 bits, sRGB and 10-bit
+formats among the 16-bit floats, and converts at the tile's store and
+load (`get_internal_type_bpp_for_output_format`, v3dvx_formats.c:
+338-468). The steps, in lines of facet:
+
+- **Step 1, the cores draw the fourteen of 0 to 1 and of floats**
+  (R8_UNORM, R8G8_UNORM, A8B8G8R8_UNORM_PACK32, the three sRGB words,
+  A2B10G10R10_UNORM_PACK32, A1R5G5B5_UNORM_PACK16, and the three of 16-bit
+  floats and of 32-bit), about 1,500: a fragment function that writes
+  floats rather than 0xAARRGGBB (`shader.Written`, `Fragments.values`),
+  each attachment's plane of the tile in the format's own bytes, blended
+  in floats as llvmpipe blends, cleared, loaded, stored, resolved, cleared
+  past the first layer and read as an input attachment there, the clear
+  values carried at their own width, and the blit and CmdClearColorImage
+  writing each one where it lies.
+- **Step 2, the cores draw the twenty-one of whole numbers**, about 700:
+  a function that writes them (`Written.sints`, `.uints`), their clears
+  read as `int32` and `uint32`, no blend (no BLEND, and a pipeline that
+  blends one refused, VUID-VkGraphicsPipelineCreateInfo-blendEnable-04717),
+  a resolve that keeps sample 0 as lavapipe's nearest blit does
+  (lvp_execute.c:1802), and a blit between two of one sign.
+- **Step 3, the V3D draws the fourteen**, about 900: its render target
+  of each type and size, the clear colour packed for it, the tile size
+  its bits a pixel give (`v3d_choose_tile_size`), its stores and loads of
+  each output format, a program writing 32 bits a channel into a target
+  of 32-bit floats (`vir_emit_tlb_color_write`, nir_to_vir.c), and
+  blending held to the types of 8 bits and of 16-bit floats
+  (`format_supports_blending`, v3dvx_formats.c:494-517).
+- **Step 4, the V3D draws the twenty-one**, about 600: the six whole
+  number types, their clears and their writes, and those images kept as
+  their numbers lie.
+
+**Step 1, in 1.226: the cores draw the fourteen.** About 1,530 lines, 590
+of them host tests. Each is COLOR_ATTACHMENT, its BLEND, BLIT_DST and
+both copies where the device says `Capabilities.texel_targets`, the
+cores (driver/_format.zig), and the image is kept in rows of its own
+bytes, as llvmpipe draws into a surface of the format's
+(`_image.targetTexels`, which names the `shader.TexelFormat` of each;
+A1R5G5B5 is `.a1rgb5`, new). A fragment function may say what it writes
+(`shader.fragmentWriting`, `Entry.written()`): 0xAARRGGBB as before, or
+four floats a pixel into `Fragments.values`, the part's room for them in
+the tile (`Tile.batch_values`). A pipeline keeps its function's
+(`Pipeline.written`). The tile keeps such an attachment in a plane of its
+format's bytes, 16 a pixel of room (`Tile.texelPlane`, `texel_plane_words`),
+cleared, loaded and stored a row at a time as they are
+(`clearTexels`, `loadTexels`, `storeTexels`). A batch's fragments are
+put into it through `shader.Texels`, the format's own encoder: floats
+as they are written, or a colour's bytes over 255, and blended in floats
+as llvmpipe blends against what it reads back
+(`generate_unswizzled_blend`, lp_state_fs.c; `lp_build_blend_aos`,
+lp_bld_blend_aos.c): the source and the constants held to 0 to 1 for a
+format of 0 to 1 and not for floats, sRGB read and written through its
+curve, a ZERO or ONE factor multiplying nothing
+(`pipeline.Mixing.mixedFloats`). Floats written into an attachment of 8
+bits a channel are held to 0 to 1 and rounded, as Vulkan converts a
+float to UNORM. A clear value is carried at its own width
+(`BeginRenderPass.clear_values`, `ClearAttachment.words`) and encoded
+for the format once a pass (`Target.clear_texels`); CmdClearAttachments
+draws its words as floats (`_draw.clearValues`), past the first layer
+as well. Four samples resolve as the mean of their floats, in a pass
+and in CmdResolveImage (`raster.resolveTexels`,
+`_transfer.resolveRectangle`). A subpass reads its own attachment of the format, or
+one an earlier subpass drew, through the tile's plane or the image's
+rows as the format's texels. CmdClearColorImage and the blit write each
+format where it lies (`_transfer.partsTexel`), and A1R5G5B5 is read as
+it lies (`_image.colorOfBytes`). An image of one of them both sampled
+and drawn is R8_UNORM, R8G8_UNORM, or of floats of one or four
+channels: a sampler reads none of the others where they lie yet.
+CreateRenderPass holds a colour attachment and an input attachment to
+the format's COLOR_ATTACHMENT (VUID-VkSubpassDescription-pColorAttachments-02648,
+-pInputAttachments-02647), so the V3D, which says it of none of them,
+refuses each. Four host tests are new (each of the fourteen cleared,
+drawn, added on, masked, cleared in the pass and outside it, read back
+by hand; four samples resolved by the pass and by CmdResolveImage,
+of halves and of one float; two layers; an input attachment of
+halves read by the next subpass and by its own; floats into
+B8G8R8A8_UNORM; the V3D refusing all fourteen) and seven were turned to
+formats still refused. FacetProbe 1.54 checks each format's features and
+pass on both devices, and on the cores draws R16G16B16A16_SFLOAT past 1
+and below 0, added on, and R8G8B8A8_SRGB through its curve; its check of
+1.48 that R8_UNORM is no attachment is turned round on the cores. Sixteen
+of seventeen mutations each fail a test; the one left, blending where the
+pipeline does not, is ONE, ZERO and ADD, which gives back the source. On
+the CM5 (packages f232 and f233) FacetProbe is 1004 of 1004 and
+FacetBoth's 316 cases are each as at 1.225.
+
+**Step 2, in 1.227: the cores draw the twenty-one.** The integer
+formats are COLOR_ATTACHMENT, BLIT_DST and both copies, and no BLEND,
+where the device says `texel_targets`, as lavapipe leaves BLEND off a
+pure integer format (lvp_formats.c:176-181); where a texture keeps them
+(`whole_textures`) they are a blit's source too, as v3dv sets BLIT_SRC
+with SAMPLED_IMAGE (v3dv_formats.c:169-173). Each is kept in rows of its
+numbers (`_image.targetTexels`, `_image.wholeTarget`), A8B8G8R8 as the
+R8G8B8A8 bytes and A2B10G10R10_UINT_PACK32 as `.rgb10a2u`. A fragment
+function writes them as four words a pixel (`Written.uints`, `.sints`),
+which the tiles take as the numbers they are, signed where the format
+is, and hold to what each channel holds (`Batch.putWholes`), as
+llvmpipe takes a pure integer format's outputs, "ints or uints
+disguised as floats" (lp_state_fs.c:2738-2753). They are never blended:
+CreateGraphicsPipelines refuses a blend into a format without
+COLOR_ATTACHMENT_BLEND (VUID-VkGraphicsPipelineCreateInfo-blendEnable-04717),
+where lavapipe turns it off (lp_state_fs.c:4688-4690); the colour mask
+keeps the channels it leaves out. A clear is read as `uint32` or
+`int32` (`raster.encodeWords`), in the pass, by CmdClearAttachments and
+by CmdClearColorImage. Four samples resolve by keeping the first, in a
+pass and in CmdResolveImage, as Vulkan has an integer format's resolve
+select one sample and lavapipe's nearest blit does (`resolve_color`,
+lvp_execute.c:1802). An input attachment of one is read as its numbers
+(`shader.Attachment.intAt`, `subpassLoad` of a `usubpassInput`). A blit
+carries the numbers, nearest alone and into whole numbers of the same
+sign alone (VUID-vkCmdBlitImage-srcImage-00229, -00230, -filter-02001),
+held to the destination's channels as Vulkan converts one. One both
+drawn and sampled is rows a texture reads the numbers out of. Three host
+tests are new (the twenty-one cleared, drawn, masked, refused a blend,
+cleared in the pass and outside it; four samples resolved, an input
+attachment read, a texture over drawn rows, blits; the V3D refusing all
+twenty-one) and four old ones are turned round (the whole numbers now
+attachments and blits both ways). FacetProbe 1.55 checks the
+twenty-one's features and passes on both devices and, on the cores,
+draws R32G32B32A32_UINT with 2^24 + 1 and R8G8_SINT below 0 and held,
+and is refused a pipeline that blends either. Thirteen mutations each
+fail a test: the mask ignored, a signed word read unsigned, a clear's
+words taken as floats, both resolves averaging, a blit into another
+sign or filtered, a blend taken, the formats said to be no attachment
+or their rows refused, the numbers sent the colours' way, an input
+attachment's numbers lost, and a blit's numbers carried as colours.
+On the CM5 (packages f234 and f235) FacetProbe is 1012 of 1012 and
+FacetBoth's 316 cases are each as at 1.226.
+
+**Step 3, in 1.228: the V3D draws the fourteen.** About 1,040 lines,
+280 of them host tests and 320 FacetProbe's. Each is COLOR_ATTACHMENT, BLIT_DST and both
+copies on the V3D as on the cores, and its BLEND but for the three of
+32-bit floats (`Capabilities.float32_blend`), as v3dv leaves BLEND off a
+format the TLB does not mix (`format_supports_blending`,
+v3dvx_formats.c:486-512). `v3d.target` (driver/v3d/target.zig) is
+v3dv's table for them (v3dvx_formats.c:124-196): the output image format
+the tiles store and load each as, red and blue swapped where its swizzle
+has them so, sRGB or not, and whether it has an alpha. `cl.internalOf`
+gives the internal type and the bits a pixel of each
+(`get_internal_type_bpp_for_output_format`, v3dvx_formats.c:338-465):
+bytes at 32 bits for R8, R8G8, A8B8G8R8 and A1R5G5B5; 16-bit floats at
+64 for the sRGB words, A2B10G10R10 and the three of halves, R16 and
+R16G16 among them so that the TLB keeps an alpha; 32-bit floats at 32,
+64 and 128. The tile is chosen by those bits (v3dv_pass.c:365-371).
+Render target 0's config takes the type and its clamp, the 16-bit floats
+of sRGB held to 0 to 1 (`cl.typeClamp`, v3dvx_cmd_buffer.c:856-884), and
+the clear packed as v3dv packs it, bytes from the floats, halves, or the
+clear's own words (`cl.clearColor`, `get_hw_clear_color`,
+v3dvx_device.c:289-334), in the one, two or three packets its bits need
+(`cl.renderTarget`, v3dvx_cmd_buffer.c:1151-1185). A colour into a
+target of 32-bit floats is written to the TLB a float at a time under
+the F32 specifier: from Mesa's back end by the key's f32_color_rb
+(`vir_emit_tlb_color_write`, nir_to_vir.c:1955; v3dv_pipeline.c:
+1240-1243), keyed from the format each part of the subpass draws
+(`Pipeline.part_formats`), and from the fixed forms by seven programs of
+their own, each the half-float one with its packs turned into four moves
+and the specifier read as its last uniform (`qpu.wide`,
+`driver.Programs.wide`). A format with no alpha blends a destination's
+alpha as 1 (`dst_alpha_one`, v3dvx_pipeline.c:121). Four samples of
+bytes or half-floats resolve in the tiles; those of 32-bit floats on the
+CPU after the frame, as v3dv resolves what the TLB cannot with a job of
+its own (`format_supports_tlb_resolve`, v3dvx_formats.c:468-483). A
+subpass whose parts draw 32-bit floats beside another width is refused a
+compiled program: one program draws every part. The twenty-one hang on a
+capability of their own, `whole_targets`, the cores'; `texel_targets` is
+the fourteen's alone. An image of the fourteen both drawn and read back,
+sampled or as an input attachment, is refused on the V3D, whose TMU
+reads none of them where its tiles stored them
+(`Capabilities.target_reads`). One host test is new (a device shaped as
+the V3D: the fourteen attachments, three of them unblended and a
+pipeline that blends one refused, the part's format kept, and their
+images drawn and read back refused), as are four of the V3D module's
+(the packets of 64 and 128 bits; the internal types, clamps and clear
+packing; v3dv's table; the wide programs' tails and uniforms) and one of
+the compile (a colour through Mesa's back end into 32-bit floats: one
+move to TLBU under 0xFFFFFF3F and three to TLB, nothing packed); four
+old ones are turned to `whole_targets`. FacetProbe 1.56 draws eight of
+the fourteen on both devices by the fixed colour form (R16G16B16A16 past
+1 and below 0 and added on, R32G32B32A32, R32, R16G16, R8, A1R5G5B5,
+A2B10G10R10 and B8G8R8A8_SRGB, each byte as it should be) and three by a
+program compiled from the SPIR-V its module ships (R32G32B32A32, R32 and
+R16G16B16A16), checks the three unblended floats, the refused read-back
+and the twenty-one still the cores', and reads `kept_floats` off the
+halves' STORAGE_IMAGE, their transfer bits now set on every device that
+draws them. Seventeen mutations each fail a test: a packet of the 64
+or 128 bits dropped or its clear shifted, the halves of a clear swapped,
+sRGB unclamped, R16G16B16A16 kept at 32 bits, halves written as
+32-bit floats, a byte target cleared to the clear's words, B8G8R8A8_SRGB
+unswapped, R16 given an alpha, the wide programs' uniform not counted,
+Mesa's first write to TLB or its fourth lost, the part's format lost, an
+input attachment read back taken, the whole numbers or the floats'
+blend put back on `texel_targets`. On the CM5 (packages f236 to f238) FacetProbe is
+1038 of 1038 and FacetBoth's 316 cases are each as at 1.227.
+
+**Step 4, in 1.229: the V3D draws the twenty-one.** About 620 lines,
+180 of them host tests, 140 FacetProbe's and 160 glslc's words. Each is
+COLOR_ATTACHMENT, BLIT_DST and both copies on the V3D as on the cores,
+never blended (`Capabilities.whole_targets`, now both devices').
+`v3d.target` takes v3dv's rows for them (v3dvx_formats.c:133-197): each
+its own output image format, none with red and blue swapped,
+A8B8G8R8 as its R8G8B8A8 form; `cl.internalOf` their six internal types
+at 32, 64 or 128 bits a pixel, A2B10G10R10_UINT at 16-bit whole numbers
+(`get_internal_type_bpp_for_output_format`, v3dvx_formats.c:338-465).
+The tiles hold what is written to the channel's range by the clamped
+type v3dv gives each (`cl.typeClamp`,
+`V3D_RENDER_TARGET_TYPE_CLAMP_*_CLAMPED`, v3dvx_cmd_buffer.c:856-884),
+as the cores hold it (`Batch.putWholes`), and a pass clears to the
+clear's words cut to the channel (`cl.clearColor`,
+`get_hw_clear_color`, v3dvx_device.c:289-334). A program's colour of
+whole numbers is its words, written to the TLB a word at a time under
+the F32 specifier, as v3dv keys a pure integer target with f32_color_rb
+(v3dv_pipeline.c:1253-1256; `Target.wide`) and Mesa's back end moves
+them without a conversion (`vir_emit_tlb_color_write`, nir_to_vir.c:
+1955): the SPIR-V front end now takes a fragment output of integers,
+which it refused since 1.165. A clear drawn as a rectangle, by
+CmdClearAttachments or over a render area the tiles stick out of, into
+any target taken a word a channel is a program of its own that moves
+four uniforms to the TLB untouched (`qpu.words_fragment`,
+`driver.Programs.words`), as v3dv clears with a fragment shader that
+stores its push constants (`get_color_clear_rect_fs`,
+v3dv_meta_clear.c:421-440): the vertices' colour passed each word
+through the varyings' FMUL and FADD, which flush a whole number below
+2^23 to 0 as a denormal and may change a NaN's bits. Four samples
+resolve on the CPU after the frame, keeping the first
+(`_transfer.resolveRectangle`, as on the cores since 1.227). One host
+test is new (a device shaped as the V3D: the twenty-one attachments,
+never blended, their pipelines keeping the format, their images drawn
+and read back refused), as are two of the V3D module's (v3dv's rows of
+the twenty-one, their types, clamps, clears and alpha, and each its own
+output format; the clear program's four uniforms, moves and specifier)
+and one of the compile (glslc's uvec4 and ivec4 of push constants
+through Mesa's back end: four push uniforms, one move to TLBU under
+0xFFFFFF3F and three to TLB, nothing packed or converted), and one old
+compile test is turned round (an integer colour out, refused until now,
+compiles). FacetProbe 1.57 draws six of the twenty-one on both devices
+from SPIR-V beside the cores' functions (R32G32B32A32_UINT with 2^24 +
+1, R8G8_SINT below 0 and held, R8G8B8A8_UINT and R16G16B16A16_UINT
+held, A2B10G10R10_UINT and R32_SINT at -2^31), each cleared by the
+pass and over a square of it by CmdClearAttachments, and reads
+`whole_textures` off SAMPLED_IMAGE, the V3D now saying the twenty-one's
+attachment features without sampling them. Fourteen mutations each
+fail a test: an output format of the other sign, of fewer channels or
+normalized, two formats given one output, the whole numbers written as
+halves, a clear of them packed as bytes, a type taken for no whole
+numbers, an alpha where there is none, the clear program's first move
+not to TLBU, a uniform uncounted, a word moved as a float or one not
+loaded, and the integer colour refused again. On the CM5
+(packages f239 and f240) FacetProbe is 1070 of 1070 and FacetBoth's
+316 cases are each as at 1.227.
+
+Still left out after step 4. Each is marked *facet-wide* or *V3D-only*:
+- **The V3D reads back none of the thirty-five it drew**: an image of one
+  both drawn and sampled, or read as an input attachment, is refused
+  (`target_reads`), the TMU's texture state knowing none of their
+  formats where the tiles store them (`tiling.writeTextureState`, item
+  57). *V3D-only*.
+- **The V3D's fixed colour form writes the vertices' floats as they
+  are, the cores' bytes held to 0 to 1**: into a float target the two
+  draw a colour past 0 to 1, or between two bytes, differently. A fixed
+  form is the library's own and Vulkan has no word for it; a program
+  compiled from SPIR-V writes the floats on both. *Facet-wide*: the
+  cores' `shader.smooth` writes 0xAARRGGBB.
+- **A copy out of a sampled image of a format the device unpacks writes
+  nothing**, though the format says TRANSFER_SRC: A1R5G5B5 on both
+  devices (since 1.226), and on the V3D R16G16B16A16_SFLOAT,
+  R32G32B32A32_SFLOAT and R32_SFLOAT, a sampled image of which it keeps
+  in 8 bits a channel (item 57). What is drawn into, or
+  only copied, is rows of the format's own bytes and copies out as it
+  lies. *Facet-wide* for A1R5G5B5, *V3D-only* for the floats.
+- **A2B10G10R10_UINT_PACK32 is not sampled**, as A2B10G10R10_UNORM is
+  not (items 34 and 37), so it is no blit's source. *Facet-wide*.
+- **Alpha to coverage reads no alpha of whole numbers**: Vulkan leaves
+  it undefined for an integer colour attachment 0, and the cores take
+  the coverage as it is. *Facet-wide*.
+- **A fixed form into whole numbers writes its floats' words**: the
+  fixed forms are the library's own and write floats, which Vulkan
+  leaves undefined in an integer attachment (the Fragment Output
+  Interface's "do not match"); the V3D's wide programs move the floats'
+  bits, the cores' bytes go their own way. A program compiled from
+  SPIR-V with an integer output writes the numbers on both.
+  *Facet-wide*.
+- **A subpass drawn in parts takes one compiled program**: parts of a
+  target taken a word a channel beside one of half-floats are refused
+  the program (`driver.compiled`), until a subpass draws its parts
+  together (item 55). *V3D-only*. **Done in 1.233**: the V3D draws the
+  subpass together, each render target keyed by its own format.
+- **A format of the fourteen that a sampler does not read where it
+  lies** (the sRGB words, A1R5G5B5, A2B10G10R10, R16_SFLOAT,
+  R16G16_SFLOAT, R32G32_SFLOAT) may not be both sampled and drawn into:
+  CreateImage refuses SAMPLED beside COLOR_ATTACHMENT, until items 34
+  and 37 sample them. *Facet-wide*.
+- **The cores blend these a pixel at a time** through `shader.Texels`,
+  where llvmpipe blends a whole row of four in vectors at the format's
+  width: correct, and slower than the three formats of 8 bits a channel
+  the tile blends a quad at a time. *Facet-wide* in that a Radeon blends
+  in its own hardware; the cores' alone.
+
 ### 37. Sample the _snorm and half-float formats, and fill the storage-image gaps
 
 *formats / sampled and storage images* &mdash; conformance-blocking, medium
 
-R8_SNORM, R8G8_SNORM and R8G8B8A8_SNORM are mandatory for SAMPLED_IMAGE, BLIT_SRC and FILTER_LINEAR (and since 1.127 A8B8G8R8_SNORM_PACK32, the same bytes, follows R8G8B8A8_SNORM with one name more); R16_SFLOAT and R16G16_SFLOAT for those plus COLOR_ATTACHMENT, BLIT_DST and BLEND. All five exist in the enum and report texel-buffer features only. The read path exists for texel buffers, so what is missing is texture.Format entries and the sample/filter path — and for _snorm a signed -1..1 channel the tile's 8-bit unsigned colour cannot hold, so the wide-channel machinery has to take signed channels. Separately 16 formats must report STORAGE_IMAGE and the cores miss two: R8G8B8A8_SNORM and R32G32_SFLOAT, the latter sharing an arm with r32g32b32_sfloat that reports 0 in both tilings, so no image of two floats exists on either device although four of the other float formats do.
+R8_SNORM, R8G8_SNORM and R8G8B8A8_SNORM are mandatory for SAMPLED_IMAGE, BLIT_SRC and FILTER_LINEAR (and since 1.127 A8B8G8R8_SNORM_PACK32, the same bytes, follows R8G8B8A8_SNORM with one name more); R16_SFLOAT and R16G16_SFLOAT for those plus COLOR_ATTACHMENT, BLIT_DST and BLEND. All five exist in the enum and report texel-buffer features only. The read path exists for texel buffers, so what is missing is texture.Format entries and the sample/filter path — and for _snorm a signed -1..1 channel the tile's 8-bit unsigned colour cannot hold, so the wide-channel machinery has to take signed channels. Separately 16 formats must report STORAGE_IMAGE and the cores miss two: R8G8B8A8_SNORM and R32G32_SFLOAT, the latter sharing an arm with r32g32b32_sfloat that reports 0 in both tilings, so no image of two floats exists on either device although four of the other float formats do. On the V3D, since 1.220, three more are missing: R16G16B16A16_SFLOAT, R32G32B32A32_SFLOAT and R32_SFLOAT, which it unpacks into 8 bits a channel (item 57).
 
 > Verified: driver/_format.zig:136 `.r32g32_sfloat, .r32g32b32_sfloat => .{ .linear_tiling_features = 0, .optimal_tiling_features = 0, .buffer_features = vertices | texels }`; :181-207 put r16_sfloat, r16g16_sfloat, r8_snorm, r8g8_snorm, r8g8b8a8_snorm and the three 16-bit _snorm forms in the texel-only arm; image/_image.zig:178-183 wideChannels() covers only the four _unorm wide formats. Noted: docs/facet-gaps.md:770-771 ("There is no r16_sfloat or r16g16") is stale and contradicts the same document twenty lines earlier.
 
@@ -1773,7 +2194,7 @@ The store and the load were in place already. They took a Memory Format and a He
 - **The transfers.** A copy, a blit, a resolve and a copy to or from a buffer already went texel by texel through `_image.readTexel` and `writeTexel`, which find a device-laid texel where the device keeps it. CmdClearColorImage filled a level's span, and for such an image `_transfer.spanOf` gave the rows, which are not there. It gives the device's level now. The new host test found that.
 
 Still left out. Each is marked *facet-wide* or *V3D-only*, as above:
-- **An image sampled and read as an input attachment at once**, refused on the V3D, which reads no input attachment (item 56). The query answers `error_format_not_supported`: answering the 1 bit alone would break the rule that a sampled image's counts hold `sampledImageColorSampleCounts`. *V3D-only*.
+- **An image sampled and read as an input attachment at once**, refused on the V3D, which read no input attachment (item 56). The query answered `error_format_not_supported`: answering the 1 bit alone would break the rule that a sampled image's counts hold `sampledImageColorSampleCounts`. *V3D-only*. Made since 1.216, with both counts (item 56, step 3).
 - **A colour attachment that is sampled and written through as a storage image at once**, refused on both devices, as since 1.119 (`not_sampled` in `_image.shapeFor`). *Facet-wide*.
 - **CmdClearColorImage of such an image** is the CPU's fill of the level where the V3D keeps it, as every V3D clear has been since 1.142, not v3dv's clear through the TLB (v3dv_meta_clear.c:70-193). It gives the same texels. *V3D-only*.
 
@@ -1867,7 +2288,7 @@ In facet, which attachment a fragment function reads is the descriptor it reads 
 
 ### 52. Carry sampler state into the IR, so a compiled shader honours the bound sampler instead of painting magenta **[critical path]**
 
-*samplers / shader compiler* &mdash; conformance-blocking, large
+*samplers / shader compiler* &mdash; conformance-blocking, large &mdash; **done: the cores' half in 1.83, the V3D's as item 54 (1.140 to 1.235)**
 
 After: nothing — it is the compiler path that exists today
 
@@ -1908,7 +2329,7 @@ Found independently by: semantics, features.
 
 ### 53. V3D: discard, lowered onto the flag registers **[critical path]**
 
-*V3D compiler* &mdash; conformance-blocking, medium
+*V3D compiler* &mdash; conformance-blocking, medium &mdash; **done in 1.236 (a module's own discard in 1.139, the fixed form in 1.236)**
 
 After: qpu.zig growing condition codes and flag pushes
 
@@ -1920,9 +2341,33 @@ Found independently by: features, semantics, doc-staleness (3 strands).
 
 **A module's own discard is done in 1.139** (item 59, "Then discards"): the flags, SETMSF and the Z write are Mesa's, ported. The fixed form `texture_cutout` is what remains here.
 
+**Then the fixed form, in 1.236: `texture_cutout` on the V3D, and with it the item.** It was the last fixed form the V3D refused. Its programs are the ones Mesa's back end makes of facet's own cut-out shader (`compile.zig`'s `Cutout`), held to it word for word by a host test, as the program of no colour is held to the noop shader's.
+
+- **The programs.** The texel is sampled as `texture_fragment` samples it. FCMP of its alpha, the second word's high half, with 0.5 pushes N (ntq_emit_comparison's flt, nir_to_vir.c:1727). SETMSF of 0 where that holds clears the pixel's mask (terminate_if, nir_to_vir.c:3833-3850). Z is written through before the colour, and early Z is off (emit_frag_end, nir_to_vir.c:2073-2134). The last thread switch lies on that write, with the colour in its delay slots.
+- **Three of them**, keyed as v3dv keys a subpass:
+  - `qpu.cutout_fragment` for half-floats.
+  - `qpu.wide_cutout_fragment` for 32-bit floats (f32_color_rb). Its four writes are scheduled around the last switch, which `qpu.wide` cannot do.
+  - `qpu.colorless_cutout_fragment` for a frame of no render target 0 (cbufs 0). Every other fixed form draws there with the program of no colour, which would drop nothing.
+- **The draw.** Each program is kept as a compiled program is (`Hardware.cutout`, `driver.fixedShader`), so the shader record says it writes Z and that early Z is off, as Mesa says. The uniforms are P0, then P1 with the per-pixel mask Mesa's stream sets (v3d_tex.c:313-321), then the depth's specifier, and for floats the colour's. `discarding_fragment_forms` is true on the V3D.
+
+The tests:
+
+- Two host tests are new. One holds the three programs to Mesa's words, flags and uniform streams for the three keys. The other is qpu's own check of their registers, their one SETMSF and their tile-buffer writes.
+- 4575 of the 4578 pass, 3 skipped, and each of 8 mutants of the programs and their flags fails them.
+- FacetProbe 1.61 draws the fixed cut-out of four texels on both devices, into 8888 and into R32G32B32A32_SFLOAT. They are red opaque, blue clear, green at an alpha of 128 and white at 127: the first byte kept and the last dropped.
+- FacetBoth 1.84 draws it over the quad, in front of the far triangle, and into a shadow map in a pass of the depth alone.
+
+On the board (package f248):
+
+- FacetProbe 1.61 passes 1088 of 1088 (1084 at 1.235).
+- FacetBoth 1.84's 328 cases of 1.83 are each as at 1.235.
+- Its three new ones are each 0 of 230400 pixels apart. "In front" is 1 at worst, so no dropped pixel kept its depth. The shadow map was drawn by the program of no colour.
+
+Nothing of this item is left out. Every fixed form is drawn on the V3D, but in a pipeline of four samples with alpha to coverage, which a fixed form's hand-written program does not cover by: `makePipeline` refuses that, and the cores draw it (item 61). *V3D-only*: the cores have drawn the cut-out since it was a form.
+
 ### 54. V3D: a QPU program that reads the bound sampler for every form, with unnormalized coordinates and anisotropy **[critical path]**
 
-*V3D compiler and TMU* &mdash; conformance-blocking, large
+*V3D compiler and TMU* &mdash; conformance-blocking, large &mdash; **done in 1.235 (the sampler state in 1.140, the fixed forms in 1.141, the cube of an array in 1.234 and 1.235)**
 
 After: The SPIR-V -> QPU compiler; its 1.77-1.79 sampler path is the beachhead
 
@@ -1979,9 +2424,49 @@ FacetProbe 1.45 checks all three and passes its 864 checks, 362 of them on the V
 
 Found independently by: features (3 items: samplers, unnormalized, anisotropy), semantics (2 items) — 5 findings merged.
 
+**Then the cube of an array, in 1.234: the fixed forms' half of what was left, and with it `samplers`.** v3dv has imageCubeArray (v3dv_device.c:331), and the TMU reads a cube of an array with no help from the library. Three pieces were missing, each ported:
+
+- **The program.** `qpu.cube_array_fragment` is the cube's program with a fourth varying, which cube, written to TMUI after TMUR. That is how handle_tex_src writes an array's index after the coordinate's other floats (v3d_tex.c:108-127). The direction is normalized as a cube's, and the index is left as it is, as nir_normalize_cubemap_coords leaves it (nir_normalize_cubemap_coords.c:59-65). The lookup starts at TMUSCM (:378-379). `texture_cube_array` runs it, and so does `texture_cube_array_sampled` with the TMU told the bound sampler, as the other sampled forms are since 1.141. Both have a variant for 32-bit floats (`qpu.wide_cube_array_fragment`).
+- **The view.** A view of type `cube_array` says so (`ImageView.cubes`). The TMU is told it as many cubes deep where it is sampled, and as many layers deep where it is read as a storage image. v3dv packs a cube array's two states the same way (v3dvx_image.c:89-93, :171-174). A size query answers its cubes either way (v3dv_uniforms.c:402-407). The TMU holds the index to the depth, so a cube past the last reads as the last, as on the cores.
+- **The capabilities.** `cube_arrays` is true, so Vulkan's imageCubeArray is true on the V3D. `samplers` is true too, since every fixed form that reads a sampler is now drawn there. `samplesHere`, which picked the ones that were, is gone.
+
+FacetProbe's checks of both forms, which were left out on the V3D, now run there unchanged: which cube, a face of the second cube, past the last, and a view from layer 6. Its `samplers` field, which said "the cores", is gone with the gate it was.
+
+On the board (package f246):
+
+- FacetProbe 1.60 passes 1084 of 1084 (1075 at 1.233): the nine checks of cubes of an array that were left out on the V3D pass there.
+- FacetBoth 1.82's 318 cases of 1.81 are each as at 1.233.
+- Its 8 new cases read an image of two cubes, the second's faces the first's backwards. 6 are 0 of 230400 pixels apart. The two across an edge of the second cube are 14 apart, and 12 through a sampler. Those are the seam pixels where the one cube's same cases are 14 apart, their first pixels the same.
+- Once, after the update and a first FacetProbe that passed, the VideoCore firmware stopped answering its mailbox, so the V3D could not start. A reboot cured it, and it did not come back over two runs of each program in the same order. The same was seen on 26.11.2026, during an update.
+
+Still left out at 1.234: a compiled shader that samples a cube of an array, the compiler's half. It was done in 1.235, below.
+
+**Then the compiled shader's cube of an array, in 1.235: the compiler's half, and with it the item.** The back end takes SampledCubeArray and ImageCubeArray, as v3dv has imageCubeArray (v3dv_device.c:331). The SDK's `spirv.Capability` names them (34 and 45). Each piece is ported:
+
+- **The sample.** A sampled cube of an array is a sampler of its own, `SamplerDim.cubes`, of four floats. Its direction is normalized as a cube's. The fourth float, which cube, is left as it is, as nir_normalize_cubemap_coords leaves an array's index (nir_normalize_cubemap_coords.c:56-65). handle_tex_src writes the third float to TMUR and the fourth to TMUI (v3d_tex.c:108-127), and the lookup starts at TMUSCM, a cube's (:378-379). TMUI counts among the lookup's writes for the threads the input FIFO has room for (v3d_tex.c:222). At a level, P2 disables the automatic level, as for a cube (:142-148). A gradient is lower_gradient_cube_map's level of the direction (nir_lower_tex.c:707-852).
+- **The size.** It is three integers, the third its cubes, QUNIFORM_TEXTURE_ARRAY_SIZE (nir_to_vir.c:929-930). The draw has answered in cubes since 1.234 (v3dv_uniforms.c:402-407).
+- **A storage image.** A storage cube of an array is read and written as its faces' layers, as a storage cube is, its third word to TMUI (v3d_tex.c:449-480). The draw tells the TMU its layers there (v3dvx_image.c:171-174).
+- **What stays refused.** A fetch of a cube of an array and a texel offset, as for a cube: SPIR-V gives a cube neither.
+
+The tests:
+
+- Six glslc -O modules are new: a cube of an array sampled, compared, at a level, with a gradient, its size, and a storage one read and written.
+- Six host tests take them, in place of the one that said a cube of an array was refused. A seventh refuses one sampled at three floats.
+- The writes before a lookup's start are checked in any order, as can_reorder_tmu_write lets the scheduler place them (qpu_schedule.c:226).
+- 4573 of the 4576 pass, 3 skipped, and each of 13 mutants of the port fails them.
+- FacetBoth 1.83 draws glslc's sample, `shipped_cubes`, compiled on the V3D, at the fixed form's two cases through a sampler.
+
+On the board (package f247):
+
+- FacetProbe 1.60 passes 1084 of 1084, as at 1.234.
+- FacetBoth 1.83's 326 cases of 1.82 are each as at 1.234.
+- Its two new ones draw as the fixed form does on the V3D. The second cube's +z is 0 of 230400 pixels apart. Across an edge it is 12 apart, 33 at worst, the first at 320,86 as the fixed form's: the seam pixels the V3D's TMU reads, which the cores alone would not differ at.
+
+Nothing of this item is left out. Every fixed form that reads a sampler is drawn on the V3D, and every sampled image the profile names compiles there: 2D, a 2D array, 3D, a cube and a cube of an array. *V3D-only* throughout: the cores have no SPIR-V back end (item 71), and draw the fixed forms as they always have.
+
 ### 55. V3D: a fragment program that writes several colour attachments in one call **[critical path]**
 
-*V3D compiler* &mdash; conformance-blocking, large
+*V3D compiler* &mdash; conformance-blocking, large &mdash; **done in 1.233 (steps 1 to 3 in 1.231 to 1.233)**
 
 After: The SPIR-V -> QPU compiler; qpu.zig tile-buffer writes
 
@@ -1989,9 +2474,28 @@ several_outputs is false on the V3D: each fragment program writes one colour, so
 
 > Verified: driver/v3d/driver.zig:202 `.several_outputs = false`; compile.zig:140-141 `Outputs` ("More than one colour out (`several_outputs`), or none"); refusals at render/createrenderpass.zig:283 and creategraphicspipelines.zig:265.
 
+**Step 1 of 3 done in 1.231: several colour outs in the V3D's fragment programs.** The compiler takes a colour out of four floats at each location 0 to 3 (`compile.most_colors`, facet's colour attachments a subpass; V3D_MAX_RENDER_TARGETS is 4 at 4.2 and 8 at 7.1, v3d_limits.h:44), each its render target's output_color_var (ntq_setup_outputs, nir_to_vir.c:2580-2602), and refuses one past them or two at one location (`Error.Location`). emit_frag_end writes each render target the key's cbufs has and the program has a colour out at, from 0 up (nir_to_vir.c:2142-2143), each by vir_emit_tlb_color_write's specifier, which names it by 7 - rt (:1965-1985): render target 0's of half-floats is the one the register is preloaded with, any other's a uniform of its own, and one of 32-bit channels (the key's f32_color_rb) is four words, the first to TLBU. Alpha to coverage reads location 0's alpha alone (:2056-2065), and early fragment tests are promoted where any render target is written (:2050-2054). An output nothing is stored into is not written, where Mesa writes the 0 its temporary holds (nir_lower_undef_to_zero, :2353): what is written there is undefined in Vulkan either way. The plan's compile (V3DTest's GENERATED) still takes one colour, at location 0. Nothing draws with it yet: the V3D keys its pipelines with render target 0 alone (`cbufs` 1), and a fragment shader of several outputs is still refused there (`several_outputs`) until step 3. Step 2 is the frame of several render targets: a TILE_RENDERING_MODE_CFG_RENDER_TARGET of each, at its base address in the tile buffer, and each loaded, stored and resolved (cmd_buffer_emit_render_pass_rcl, v3dvx_cmd_buffer.c:1077-1184; cmd_buffer_render_pass_emit_loads and _stores, :226-340 and :460-702). Step 3 is the draw: a subpass of several drawn as one frame, each render target's blend and write mask (cmd_buffer_emit_blend and _color_write_mask, :1622-1697), CmdClearAttachments of each, the key's cbufs and f32_color_rb for each, and `several_outputs`. Four host tests are new, of five modules glslc made (`glslc_reference.zig`): three colour outs stored out of their order, each render target packed from its own location's floats; one at location 1 alone; the refusals; and the optimizations seeing every colour, a sum another colour reads not contracted, two colours nir_opt_cse makes one both written, and a float a colour reads past a kept selection live to the end. Of 18 mutants of the new code 16 fail them; the other 2 were in code nothing reached, which is gone (a `usesOf` nothing called, and `armCost`'s look at the colours, which it makes before they are read). On the CM5 (package f243) FacetProbe is 1074 of 1074 and FacetBoth's 316 cases are each as at 1.230.
+
+**Step 2 of 3 done in 1.232: frames of several render targets.** `frame.Frame` has a render target of each colour attachment a subpass has, the unused among them (`Frame.colors`, `Frame.targets`), each with its own image, format, target, load, clear inside the area and resolve (`frame.Color`). The common packet counts them, MAX2(color_count, 1) (v3dvx_cmd_buffer.c:975); each target is configured by its number, in its number's order, its packets each naming it and the first carrying its base address in the tile buffer, the next one's past its tile's rows, tile_height * stride / 8 (`cl.renderTarget`, :1077-1185), and an unused one with a stride of 1 and no room (`cl.unusedRenderTarget`, :1080-1086). A tile loads each target that loads from its own buffer, RENDER_TARGET_0 + i, before the depth, and stores the depth first, then each target with its resolve before it, then clears them all (`cmd_buffer_render_pass_emit_loads` and `_stores`, :236-340 and :480-699); the list of the tiles a cleared area covers whole leaves out only the loads of the targets that clear inside it. The tile is chosen from every target's bytes, as v3dv sums total_color_bpp (v3dv_pass.c:353-371). Nothing draws several yet: the V3D still plays each colour attachment of a subpass as a part of its own, a frame of render target 0. Three host tests are new: a frame of four render targets with an unused one among them, each target's packets, base address, load and store worked by hand, and RGBA32F resolved at four samples; frames of unused attachments alone, of none, and of one at 1 behind an unused 0; and a target of four floats in a tile that is not square. Each of 20 mutants of the new code fails them. On the CM5 (package f244) FacetProbe is 1074 of 1074 and FacetBoth's 316 cases are each as at 1.231.
+
+**Step 3 of 3 done in 1.233: a subpass of several colour attachments drawn together on the V3D.** `several_outputs` is true there, so such a subpass is one part, and its frame draws each plane into the render target its location names, as v3dv's render target i is the subpass's colour attachment i, an unused one configured unused (v3dvx_cmd_buffer.c:1077-1086, 1189-1197; `_play.beginRenderPass`). maxFragmentOutputAttachments is 4, v3dv's max_rts (v3dv_device.c:1135), and maxFragmentCombinedOutputResources the sum of those, the storage buffers and the storage images a stage has, as v3dv sums them (:1137-1139): the item's two rows of the limits. The parts:
+- **The key.** A pipeline keeps its subpass's colour formats by location (`Pipeline.color_formats`, which replaces 1.228's `part_formats`), and the V3D compiles for them: cbufs a bit for each drawn location, f32_color_rb one for each the TLB takes a word a channel (`target.colorKey`; v3dv_pipeline.c:2137-2146, 1240-1257). The refusal of a subpass whose parts are of both widths is gone.
+- **Blending and write masks.** Each render target's: BLEND_ENABLES a bit for each blended, a BLEND_CFG of each naming it in its render target mask, one BLEND_CONSTANT_COLOR, the first blended one's (`cl.blend`; `cmd_buffer_emit_blend`, v3dvx_cmd_buffer.c:1621-1668; v3dvx_pipeline.c:85-160). COLOR_WRITE_MASKS has four bits a target, a set bit a channel left alone, a target without an image 0 (`frame.unwrittenOf`; `cmd_buffer_emit_color_write_mask`, :1672-1694). A target past the program's outputs writes no channel, as since 1.230.
+- **Clears.** CmdClearAttachments and the clear inside a render area that is not the framebuffer's whole draw a rectangle of each colour into its render target, every other target's channels left alone, as v3dv's meta clear draws each attachment by a pipeline that writes it alone (v3dv_meta_clear.c:623-628, 1259-1265). Into a target of half-floats but 0 by `qpu.targeted_color_fragment`, the colour of the vertices' program with its first VFPACK sent to TLBU, reading the target's specifier as a uniform (`qpu.f16Specifier`), as Mesa's back end aims a write at a render target but 0 (nir_to_vir.c:1966-1985, 2026-2037); into one taken a word a channel by `qpu.words_fragment` with that target's `qpu.f32Specifier`. A depth or a stencil cleared alone is drawn by the program of no colour; inside the area they go with the first colour's rectangle, as they went with the one colour before, where v3dv draws them by one of their own (:1266-1271): the same pixels.
+- **The player.** What it draws of each target is a `_play.Drawn`: the image's range for the caches either side of the job, its layer, its target and its resolve, which the tiles or the CPU do for each, and each image drawn is shown.
+- **The fixed forms** write location 0 alone, render target 0, and in a frame without it draw with the program of no colour.
+
+Four host tests are new: the targeted program, one VFPACK aimed at TLBU and a uniform more, and each target's specifier; a draw blending render targets 0 and 3 by a BLEND_CFG of each, the first one's constants, and the write masks of four targets, one without an image; the key of formats at their locations; and a pipeline keeping its subpass's formats by location, an unused one undefined, the subpass one part whose planes name locations 0 and 2. The test of a draw's packets fitting `roomOnList` has four blended targets. 4568 of the 4571 pass, 3 skipped. Each of 16 mutants of the new code the host tests reach fails them (one once the draw test gave its target without an image no channels, as `_play.mixingsOf` does); `_play.zig` the host tests do not compile through, and the board holds it. FacetBoth 1.81 draws glslc's two colour outs into the subpass of two attachments, laid over and then added (`shipped two colours`), and asks a program that stores in such a subpass made on both devices; FacetProbe 1.59 has the V3D make a plain subpass of three together, refuse one that reads two of its own, and refuse a function of the program's own of three colours. On the CM5 (package f245) FacetProbe 1.59 is 1075 of 1075. FacetBoth 1.81's 316 cases of 1.80 are each as at 1.232, and the program that stores in the subpass of two colours is made on the V3D where it was refused; its two new ones, "shipped two colours, first" and "second", are each 11 of 230400 pixels apart, at the quad's edge, where the two rasterizers' edges differ as in the other cases: inside it, and over the triangle added, both render targets match the cores'.
+
+Still left out. Each is marked *facet-wide* or *V3D-only*:
+- **Eight render targets.** V3D 7.1 has 8 (V3D_MAX_RENDER_TARGETS, v3d_limits.h:44), and v3dv's maxColorAttachments and maxFragmentOutputAttachments on the BCM2712 are 8 (v3dv_device.c:1029). facet has 4 colour attachments a subpass on every device (`_render.most_colors`), Vulkan's least. *Facet-wide*.
+- **The blend constants of one attachment.** The hardware has the one BLEND_CONSTANT_COLOR, and Vulkan the one blendConstants. facet's own CmdSetBlendConstantsAt sets them for one attachment: in a frame of several blended targets whose constants differ, every one takes the first's. The cores blend each with its own. The API is facet's, not Vulkan's, and is the thing to remove. *Facet-wide*.
+- **A colour out of fewer than four floats** is refused by the V3D's compile (`Error.Type`), where Mesa writes the components it has (`vir_emit_tlb_color_write`, nir_to_vir.c:2007-2037). Such a pipeline is drawn by the cores. *V3D-only*.
+- **The fixed forms write location 0 alone.** They are facet's own programs, not Vulkan's: a pipeline whose shader writes several is compiled and writes each. *V3D-only*.
+
 ### 56. V3D: input attachments, through SubpassData in the compiler's profile **[critical path]**
 
-*V3D compiler* &mdash; conformance-blocking, large
+*V3D compiler* &mdash; conformance-blocking, large &mdash; **done in 1.214 to 1.216, the read of an attachment the subpass draws into in 1.237, and SubpassDataMS in 1.238**; two entries left out, V3D-only but the 32-bit return
 
 After: SubpassData in the compiler's profile
 
@@ -2001,6 +2505,84 @@ input_attachments is false on the V3D, so both a set layout with the kind and a 
 
 Found independently by: features, semantics (both conformance-blocking).
 
+**Step 1 of 3 done in 1.214: gl_FragCoord in the V3D's fragment programs**, which a subpassLoad is made of (`try_lower_input_load`, nir_lower_input_attachments.c; v3dv lowers its coordinate to the input of VARYING_SLOT_POS, `try_lower_intrinsic`, v3dv_pipeline.c:263-286). FXCD, FYCD, the payload's Z and the reciprocal of its W, as emit_fragcoord_input reads them (nir_to_vir.c:1017-1023); a program that reads Z writes it (:2091-2099). Step 2 is the subpassLoad itself, a txf at the pixel's place through the input attachment's texture; step 3 the descriptor, the image laid out for the TMU, the pass storing what a later subpass reads, and `can.input_attachments`.
+
+**Step 2 of 3 done in 1.215: subpassLoad in the V3D's fragment programs.** SubpassData, OpImageRead and the InputAttachment capability in the SDK and the V3D's profile. The read is try_lower_input_load's txf (nir_lower_input_attachments.c:57-156) at FragCoord's x and y made integers and the layer, the flat input of VARYING_SLOT_LAYER that v3dv loads for it (v3dv_pipeline.c:263-286): the program's first ldvary, which the vertex program is keyed by and writes 0 to. Left out, V3D-only: SubpassDataMS (the txf_ms's level is written to TMUB before the coordinate once v3d_nir_lower_txf_ms has run, which `emitTex` has no order for); the 32-bit return v3dv picks for a variable not RelaxedPrecision (facet-wide on the V3D: every TMU read returns 16-bit floats); a vertex function on the CPU, whose record has no layer (the cores draw such a pipeline). Step 3 is the descriptor, the image laid out for the TMU, the pass storing what a later subpass reads, and `can.input_attachments`.
+
+**Step 3 of 3 done in 1.216: input attachments on the V3D.** `can.input_attachments` is true there, and maxPerStageDescriptorInputAttachments and maxDescriptorSetInputAttachments are 4, v3dv's MAX_INPUT_ATTACHMENTS (v3dv_limits.h:52; v3dv_device.c:1092, :1107), which closes the item's two rows of the limits. Nothing of it has run on the board yet: the host tests give it a device of the V3D's layout (QuadLayout), and the V3D's own tests hold the compiler. FacetBoth 1.75's "shipped input attachment" is the board's case: a first subpass draws into an image the pass does not keep, and a second reads it through glslc's subpassLoad, mixed with a varying. The parts:
+- **The image.** One made IMAGE_USAGE_INPUT_ATTACHMENT lies as a sampled one does, in the TMU's layout (`_image.shapeFor`, `deviceLaid`). v3dv reads an input attachment as a texture (try_lower_input_load's txf; the texture map, v3dv_pipeline.c:601-606) and keeps every optimal image in its own tiling (v3dv_image.c:481-483). So it is of a format the TMU reads, in optimal tiling, as v3dv asks by SAMPLED_IMAGE (v3dv_formats.c:163-172). One of four samples is kept in quads, as one sampled is, so the format query answers 1 and 4, the framebufferColorSampleCounts a colour attachment's count must hold; Vulkan 1.0 has no feature to refuse an input attachment of four under (K6b). That closes item 48's entry for an image sampled and read as an input attachment at once.
+- **The descriptor.** An input attachment's slot holds the view's texture, as a sampled image's does (`UpdateDescriptorSets`).
+- **The draw.** The TMU reads it through a sampler state of its own, the nearest texel, held to the edges: v3dv binds a default sampler state to a txf, which has none (v3dv_pipeline.c:833-841, :1877-1891; `_play.sampledBy`).
+- **The pass.** Nothing new. A subpass with attachments of its own already makes a frame of its own at CmdNextSubpass, which stores its colour where the next subpass reads it, and the engine invalidates the caches before each job.
+
+Still left out. Each is marked *facet-wide* or *V3D-only*:
+- **A subpass that reads an attachment it draws into**, refused at CreateRenderPass with `error_feature_not_present` on a device without `can.tile_inputs`, which the V3D lacked. *V3D-only*. **Done in 1.237**, below.
+- **SubpassDataMS**, from step 2: an input attachment of four is made and stored, and a pipeline that reads it is refused. *V3D-only*. **Done in 1.238**, below.
+- **A stencil read as an input attachment**, refused as a sampled stencil is (`can.sampled_stencil`, item 58). *V3D-only*.
+- **The 32-bit return** for a variable not RelaxedPrecision, from step 2. *Facet-wide* on the V3D.
+
+The three *V3D-only* entries are the V3D port's own gaps, so the list for the Radeon's has nothing new from them.
+
+**Then the first of them, in 1.237: an input attachment the subpass draws into, read out of the V3D's tile buffer.** Vulkan 1.0 has no feature for such a loop. It is v3dv's way, ported:
+
+- **The subpass.** It says which of its colour locations each input attachment is, by its index, where it draws into it as well. That is `_render.Subpass.tile_inputs`, v3dv's tlb_input_attachment_location (subpass_setup_tlb_input_attachments, v3dv_pass.c:97-135), of the first four indices. A pipeline carries its subpass's (`Pipeline.tile_inputs`), and the V3D keys its fragment program on them (`compile.Key.tile_inputs`; v3dv_pipeline.c:2125-2135).
+- **The compiler.** It reads OpDecorate InputAttachmentIndex (`Sampler.input_index`). A subpassLoad whose index the key gives a render target becomes a `tile_load` of that render target, with no fetch. That is lower_tlb_input_attachment_instr's load_tile_image (v3dv_pipeline.c:301-356) and lower_tlb_load's load_tlb_color_brcm (v3d_nir_lower_load_output.c:26-98). The fetch's place, layer and texture unit go with it. The variable is still counted in info.num_images (pipeline_lower_nir, v3dv_pipeline.c:1875), so Z is still written through.
+- **The back end.** It reads the tile buffer as vir_emit_tlb_color_read does (nir_to_vir.c:2731-2815; `to_vir.emitTlbColorRead`):
+  - A thread switch comes before the first read. Where another switch follows it, the scoreboard is locked on the first switch (tlb_read_config, :2682-2727).
+  - A uniform configures the read, unless the configuration is the default 0xffffffff, as render target 0's four half-floats are.
+  - Half-floats come back two to a word, each half taken apart by an FMOV. 32-bit floats come back one to a read.
+  - Each render target is read once, however often the program reads it. Two loads of one are one step before that, as nir_opt_cse makes them in v3d_optimize_nir (v3dv_pipeline.c:386, :413), so the back end's cache of them, c->color_reads (nir_to_vir.c:2745-2812), is ported but not reached from a module: taken out, it fails no test.
+- **The pass.** `can.tile_inputs` is true on the V3D, and so is the new `can.every_tile_input`. A subpass that reads two of its own attachments is drawn together there, each read out of its own render target; the cores draw it a part for each.
+
+The tests:
+
+- Five host tests are new. Four hold the programs:
+  - glslc's subpassLoad read out of render target 0: twelve instructions, two LDTLB and no uniform.
+  - Render target 1's read, configured by 0xfffffff7, and a 32-bit target's, configured by 0xffffff3f and read a float at a time.
+  - The read beside a varying, after the last thread switch.
+  - Two reads of the attachment, which nir_opt_cse makes one, so the tile buffer is read once.
+- The fifth holds the subpass's side:
+  - the subpass's locations;
+  - a joined subpass after it, which reads none;
+  - an index past four, left out;
+  - a subpass reading two of its own drawn as one part on a device of `every_tile_input`;
+  - and the pipeline carrying the locations.
+- 4580 of the 4583 pass, 3 skipped.
+- FacetProbe 1.62 has the V3D make a subpass that reads two of its own attachments.
+- FacetBoth 1.85's "shipped input attachment of its own" draws the clockwise quad and the glass, then a barrier by region. Then the rectangle goes over them through glslc's subpassLoad of the attachment the subpass draws into, and a second subpass reads that attachment into the picture. It clears the attachment to a colour of its own: "shipped input attachment" leaves the same picture stored in it, which a fetch through the TMU would read and match.
+- On the board (f249, f250): FacetProbe 1088 of 1088. The new case is 11 of 230400 apart, 112 at worst, at the edge pixels "shipped input attachment" has (11 apart, from 154,70). The other 331 cases are as in 1.236.
+
+Left out of it, *V3D-only*:
+- **A depth or stencil the subpass tests and reads**, which v3dv reads out of the tile buffer too (FRAG_RESULT_DEPTH, v3dv_pass.c:123-124; vir_emit_tlb_ds_read, nir_to_vir.c:2817-2841). CreateRenderPass refuses it on every device (item 92).
+- **An index past four**, which v3dv fetches through the TMU (v3dv_pass.c:111-114), as facet does. The V3D's maxPerStageDescriptorInputAttachments is 4, but a subpass may name more input attachments than a stage reads.
+
+Found doing it, *V3D-only*:
+- **An input a fragment program declares and never reads is still a varying.** The walk takes each input variable at its declaration (`readModule`'s inputs), where nir_remove_dead_variables leaves Mesa none of an unread one. The read-twice test's module, glslc's with its varying's load made a second read, keeps four. The vertex program writes them all the same, so nothing is drawn wrongly: the cost is the ldvarys.
+
+**Then the second, in 1.238: an input attachment of four samples, read through SubpassDataMS.** The V3D made such an image and stored it, and refused the pipeline that read it. Both of v3dv's ways are ported:
+
+- **The read.** OpTypeImage SubpassData of MS 1 is GLSL_SAMPLER_DIM_SUBPASS_MS (spirv_to_nir.c:2428-2435). Its OpImageRead's Sample is the load's sample (:3905-3911). vtn gives a read without one an undef; facet refuses it, as SPIR-V's validation does.
+- **Through the TMU**, where the subpass does not draw into the attachment:
+  - nir_lower_input_attachments makes the read a txf_ms of that sample, at the pixel's place and layer and of level 0 (nir_lower_input_attachments.c:133-147).
+  - v3d_nir_lower_txf_ms makes that the texel of the pixel's quad (v3d_nir_lower_txf_ms.c:42-57; `sampleTexelOf`, as a sampler2DMS's since 1.209).
+  - That pass puts the coordinate last, so the level goes before it: TMUB is written before T. This is the new `Lookup.fetch_sample_level`. The scheduler may move TMUB and T past each other (can_reorder_tmu_write, qpu_schedule.c:226-235), and in the modules tested it does: with the level written last, the programs are the same, and that mutant fails no test.
+- **Out of the tile buffer**, where it draws into the attachment:
+  - lower_tlb_load (v3d_nir_lower_load_output.c:26-98) loads each of the four samples and keeps the one asked for, through a bcsel of each later one on the ieq of the sample and its number (:71-79). Of a constant sample, nir_opt_constant_folding leaves that sample's load alone.
+  - The pipeline's key says it draws four samples (`Key.msaa`, v3dv_pipeline.c:2115). So the back end reads a sample at a time, in TLB_SAMPLE_MODE_PER_SAMPLE: all four, with only the first read configured (tlb_read_config, nir_to_vir.c:2705-2706; vir_emit_tlb_color_read, :2757-2805).
+  - A tile load's sample is in its `at`, beside the render target (`tileAt`), so nir_opt_cse does not take two loads of different samples for one.
+
+The tests:
+
+- Three host tests are new, of two glslc modules: one reads sample 2, the other the sample the two lowest bits of the pixel's x pick.
+  - The TMU's fetch: nineteen instructions with the level at TMUB, and the picked sample's and and shift.
+  - The tile buffer's reads: eight, configured by 0xfffffffb, with sample 2's words the ones halved. A sample past the fourth reads the first's, and at one sample a pixel there are two reads.
+  - The picked sample out of the tile buffer: three ieqs and twelve conditional moves, over four loads, each of its own sample.
+- 4583 of the 4586 pass, 3 skipped. Of 12 mutants, 10 fail a test. One survives as above. The other is the driver keying a pipeline of four samples `msaa`, which no host test reaches. The board's "... of its own" case runs that pipeline keyed and matches the cores, but the mutant was not run on the board: a read a pixel at a time out of a tile buffer of four samples is not one Mesa makes.
+- FacetBoth 1.86 has two new cases. Both draw the quad and the glass at four samples and read them through glslc's subpassLoad of a subpassInputMS, at the sample the pixel's x picks:
+  - "shipped input attachment of four samples" reads them in a later subpass of one sample;
+  - "... of its own" reads them in the subpass that draws into the attachment, then again in a later one, over a clear of its own so that a read of what the first case left stored would show.
+- On the board (f251): FacetProbe 1088 of 1088. Both new cases are 11 of 230400 apart, 140 and 103 at worst, as many as the cases of one sample. The other 332 cases are as in 1.237.
+
 ### 57. V3D: storage images, in the layout the TMU reads **[critical path]**
 
 *V3D* &mdash; conformance-blocking, large
@@ -2008,6 +2590,48 @@ Found independently by: features, semantics (both conformance-blocking).
 storage_images is false on the V3D, so a storage_image descriptor layout is refused there. VK_DESCRIPTOR_TYPE_STORAGE_IMAGE is a mandatory Vulkan 1.0 descriptor type and maxPerStageDescriptorStorageImages >= 4 has no gating feature — only shader *writes* are gated, by the optional fragmentStoresAndAtomics and vertexPipelineStoresAndAtomics — so refusing the layout outright is a conformance block even though refusing writes would not be. The stated reason is that a V3D texture lies the way its TMU reads it, which is not the layout the library writes, so a function writing texels would write the wrong layout. Either the library learns to encode and decode the V3D's layout, or a storage image there gets a linear shadow copy. Note the compiler's profile also has no image-write opcode and no storage class that could express one.
 
 > Verified: driver/v3d/driver.zig:216 `.storage_images = false,` with the comment at :213-215 ("A V3D texture lies the way its TMU reads it, which is not the layout the library writes"); refusal at descriptor/createdescriptorsetlayout.zig:107; compile.zig:188-206 has no image write and storage classes only input/output/function/uniform_constant.
+
+In three steps, as v3dv has a storage image. Step 1 is the image itself on the V3D, written by the functions the cores run beside it. Step 2 is imageLoad and imageStore in the V3D's compute programs: v3d_nir_lower_image_load_store's packing of a texel (v3d_nir_lower_image_load_store.c:423-451), v3d_vir_emit_image_load_store's TMU writes (v3d_tex.c:564-655; ntq_emit_intrinsic, nir_to_vir.c:3670-3683), the IMAGE_TMU_CONFIG_P0 uniform v3dv writes as it writes a texture's (write_tmu_p0, v3dv_uniforms.c:139, :563-567), and the profile's storage image type with OpImageRead and OpImageWrite. Step 3 is the same in fragment programs, the writes where `can.fragment_stores` is, and OpImageQuerySize (ntq_emit_image_size, nir_to_vir.c:2654; the IMAGE_WIDTH to IMAGE_ARRAY_SIZE uniforms, v3dv_uniforms.c:574-577).
+
+**Step 1 of 3 done in 1.217: storage images on the V3D, through the cores.** `can.storage_images` is true there. maxPerStageDescriptorStorageImages is v3dv's MAX_STORAGE_IMAGES, 4 (v3dv_limits.h:51; v3dv_device.c:1091). maxDescriptorSetStorageImages is Vulkan's 24: v3dv reports its four stages' 4 apiece (v3dv_device.c:1105-1106), 16, which is under what Vulkan 1.0 asks, and a set's descriptors are the library's to hold. storageImageSampleCounts is 1, as v3dv's is (v3dv_device.c:1188), where it said 0. That lifts the item's conformance block, the set layout, and its three rows of the limits. Of the two ways this item named, it is the first: the library learns the V3D's layout. Nothing of it has run on the board yet. The parts:
+- **The texels.** A view of an image that lies as its device's textures do (`deviceLaid`) has a texture whose every texel is where the device keeps it. The SDK's `texture.Texture` has a `place`, which `placeOf` asks first, so every read and write of a texel one at a time goes through it: `colorAt`, `partsAt`, `wholesAt`, `setColor` and the rest, and a sample through `sampleLayer`. The library points it at the driver's `texture_offset` (`_image.deviceTexels`, `texelPlace`), the op a copy has reached the V3D's tiles through since 1.141, as Mesa's v3d driver moves a mapped texture through v3d_tiling.c's places. Its format is the image's bytes as they lie (`lyingFormat`), which is what a copy moves there. So a compute function or a vertex function run on the cores beside the V3D reads a texture where its TMU reads it, and writes a storage image where its TMU will. Until 1.217 such a view's texture read the library's own blocks out of the device's tiles: every texture a function of the program's read on the V3D gave it the wrong texels, and read past the image where those blocks are larger, which this item did not name.
+- **The caches.** After a dispatch whose function ran on the cores, the V3D sends what it wrote through a storage image out of the CPU's caches before anything of its own reads it, as it does after a copy or a clear (`_play.onCores`, `writtenToGpu`, `texturesToGpu`).
+- **The image.** Nothing new: one made IMAGE_USAGE_STORAGE was already laid out as a sampled texture is (`_image.shapeFor`). Only the set layout refused it.
+- **The QPUs.** Nothing yet. `spirv.look` refuses a storage image's type (Sampled 2 that is not SubpassData), so a compute pipeline whose shipped shader uses one runs its function on the cores, and a graphics pipeline is refused there and drawn by the cores.
+- **The tests.** One new: on a device of the V3D's layout (QuadLayout), a compute function reads level 1 of layer 1 of an R8G8B8A8 texture and writes each texel, red and blue swapped, into the same level and layer of a B8G8R8A8 storage image. What a copy puts into the one, a copy reads back out of the other, byte for byte. One changed: the V3D's sample counts keep the 1 bit for a storage image. Five mutations each fail the new one. The caches have no host test, the bench's dispatch being the cores' own: FacetBoth 1.76's "stored by a function" is the board's case, a compute function writing a texture a group a texel and a draw sampling it.
+
+**Step 2 of 3 done in 1.218: imageLoad and imageStore in the V3D's compute programs.** A compute shader that reads or writes an R8G8B8A8 storage image runs on the QPUs, its TMU reading and writing each texel where the texture lies. Nothing of it has run on the board yet. The parts:
+- **The format.** `spirv.look` takes a storage image, Sampled 2 and not SubpassData, of a format the profile names (`Profile.storage_formats`), and OpImageRead and OpImageWrite. The V3D's profile names Rgba8 alone: v3dv's table keeps R8G8B8A8_UNORM as RGBA8, of 16-bit returns (v3dvx_formats.c:131). B8G8R8A8 and R5G6B5 have no SPIR-V format, and R8 asks for StorageImageExtendedFormats, which the profile does not take. An image of four samples is refused, as `shader_storage_image_multisample` is false, and a cube array asks for ImageCubeArray, which `look` refuses.
+- **The walk.** An OpImageRead of a storage image is an `image_load` step: two words, each two halves, which v3d_nir_lower_image_load makes four floats (v3d_nir_lower_image_load_store.c:397-420). Each is an FMOV of a half, the high one through try_opt_extract_h16 (vir_opt_alu.c:62), and copy propagation hands the unpack to the instruction that reads it. An OpImageWrite is an `image_store` of its texel packed as v3d71_nir_lower_image_store packs an Rgba8 one (:354-394; pack_xbit and pack_8bit, :153-274): VFPACK of each pair, VFTOUNORM8, V8PACK. Constant channels fold, `_mesa_float_to_unorm`'s even of two as near (format_utils.h:69-79). Both are kept in an arm, as nir_opt_peephole_select keeps them (nir_opt_peephole_select.c:109-129).
+- **The TMU.** `to_vir.emitImageLoadStore` is v3d_vir_emit_image_load_store (v3d_tex.c:564-655; vir_image_emit_register_writes, :440-518). P0 is the unit and the words back, through QUNIFORM_IMAGE_TMU_CONFIG_P0. y goes to TMUT, an array's layer or a cube's face to TMUI, a 3D image's slice to TMUR, the data to TMUD, and x last to TMUSF, under the execute mask where the lanes differ. A store waits at a TMUWT and marks the job tmu_dirty_rcl. P1 and P2 are left at a compute program's defaults, as Mesa leaves them.
+- **The driver.** A compute pipeline whose units are all storage images keeps them (`driver.ComputeShader.samplers`). A dispatch writes each unit's texture state, the one a draw samples the view through, as v3dv writes a storage image's (v3dv_descriptor_set.c:1146-1159; only a cube array's differs, :1153-1155). The words back go in P0's low bits (`_play.storageBy`, the stream's `.image` word; write_tmu_p0, v3dv_uniforms.c:139-185). Where one is not bound where the V3D keeps it, the function runs on the cores. After the dispatch the TMU's writes are cleaned out, and the image's memory dropped from the CPU's caches, as a storage buffer's is.
+- **The tests.** Two programs from glslc compile to Mesa's code instruction for instruction: a store of a texel made of the place (`glslc_storage_store`), and a copy from one image into another, red and blue swapped (`glslc_storage_copy`). The packings fold as nir_opcodes.py has them (:1817-1828). A fragment program's store (`glslc_storage_fragment`), an image of four samples, an Rgba32f image and an image operand are refused. Seven mutations each fail one. FacetBoth 1.77's "shipped stored" is the board's case: "stored"'s texels written by glslc's imageStore into an R8G8B8A8 image, an 8x8 workgroup at a time, then sampled.
+
+**Step 3 of 3 done in 1.219: imageLoad, imageStore and imageSize in the V3D's fragment programs.** A fragment shader that reads or writes an R8G8B8A8 storage image is drawn by the QPUs, and a compute or fragment shader may ask a storage image's size. Nothing of it has run on the board yet. The parts:
+- **The stage.** The walk takes a fragment program's OpImageRead and OpImageWrite as a compute program's (`takesStorage`). A store is written under the TMU's per-pixel mask, its P1 the default, so a helper pixel writes nothing (p1_unpacked_default, v3d_tex.c:64-66).
+- **The helper pixels.** A load leaves them out where nothing derived from it wants them. nir_opt_load_skip_helpers marks an image_load through v3d's intrinsic_try_skip_helpers (vir.c:1937-1951), and an image_load has no offset to want them (nir_get_io_offset_src_number, nir_lower_io.c:1002-1135). `lanes` marks one as it marks a sample. A load that keeps them, its texel a sample's coordinate say, writes P1 with the per-pixel mask off, the constant 0 (v3d_tex.c:576-579, :645-646).
+- **The size.** OpImageQuerySize of a storage image is an `image_size` step: ntq_emit_image_size's IMAGE_WIDTH, IMAGE_HEIGHT, and IMAGE_DEPTH of a 3D image or IMAGE_ARRAY_SIZE of an array (nir_to_vir.c:2653-2679). Its level is 0. The stream answers them as a texture's sizes, as v3dv does (get_texture_size_from_image_view, v3dv_uniforms.c:378-416).
+- **The early test.** A program that loads a storage image or an input attachment has info.num_images not 0, so emit_frag_end does not promote early_fragment_tests, and the program writes the rasterizer's Z through TLBU (nir_to_vir.c:2073-2137; `Work.uses_images`). nir_shader_gather_info counts the image variables vtn keeps (nir_gather_info.c:1086-1099), before v3dv lowers them to units (v3dv_pipeline.c:1875). An input attachment's is one (glsl_image_type of Sampled 2, spirv_to_nir.c:2445-2447). So 1.215's subpassLoad program writes Z too, where it promoted the test.
+- **A constant texel.** Each channel of a constant vector stored is a constant of its own, so the texel folds to one word, as nir_opt_constant_folding folds a vec of constants.
+- **The driver.** A draw's storage image is bound as a dispatch's (`_play.sampledBy` hands it to `storageBy`, which reads the job's own sets). It is kept to be dropped from the CPU's caches after the frame, which tmu_dirty_rcl cleans.
+- **The tests.** Four new tests and two changed, from glslc's programs. A fragment program's store of a constant texel at FragCoord (`glslc_storage_fragment`), and two loads: one a sample's coordinate, which keeps the helper pixels (`glslc_storage_helpers`), and one the colour, which skips them (`glslc_storage_read`). imageSize of a 2D array and of a 3D image (`glslc_storage_size`), and a size of the wrong width refused. A vertex program's store (`glslc_storage_vertex`) is refused, where the refusal test had the fragment program's. The subpassLoad test writes Z now. Eight mutations each fail one, the one that lets a vertex program's store through by an abort (below). The draw's binding of its storage image has no host test. FacetBoth 1.78's "shipped drawn stored" is the board's case: "stored"'s texels written by a draw over the quad, each pixel the texel at its place modulo 64, then sampled.
+
+**On the CM5, in 1.220.** Steps 1 to 3 ran on the board for the first time, with exec 1.46:
+- **FacetBoth 1.79.** "stored by a function", "shipped stored" and "shipped drawn stored" are each 0 of 230400 pixels apart, and "shipped input attachment" (item 56) is 11 apart, the edge every case of its geometry has. Of the 316 cases, three are over one in a thousand, each as recorded at 1.180 and 1.182: textureLod at the nearest level (270), the bias (3660, at most 5 a channel) and textureGrad at the nearest (429). FacetBoth 1.75 to 1.78 had run nowhere: a side's table of 40 memory blocks filled at `upInput` and said "not enough memory". 1.79 has 64, and says so when they are full.
+- **FacetProbe 1.49, 923 of 923.** Three of 1.48's checks ran on the V3D for the first time and expected the cores' answers: every float format a storage one, a subpass that reads what it draws made (refused there since 1.216, item 56), and an input attachment in rows made (the V3D keeps one in its texture layout, v3dv_formats.c:512-516). The first was the V3D's own fault, below.
+- **A float storage image.** The float formats said STORAGE_IMAGE on the V3D, which unpacks a float texture into 8 bits a channel (`kept_floats` false), so a storage image of R32G32B32A32_SFLOAT held 1.5 as 1. Since 1.220 a float format says STORAGE_IMAGE only where the floats are kept (`_format.describe`'s `float_storage`). CreateImage and the query still make one with SAMPLED beside STORAGE, unpacked, as they make a compressed one: item 94's.
+
+Still left out. Each is marked *facet-wide* or *V3D-only*:
+- **A float storage image on the V3D.** v3dv keeps R16G16B16A16_SFLOAT, R32G32B32A32_SFLOAT and R32_SFLOAT in their own formats (RGBA16F, RGBA32F, R32F; v3dvx_formats.c:136, :142, :181) and writes them through (v3dv_formats.c:188-202). The V3D here keeps no float texture (`kept_floats`), so the three are missing from item 37's 16 storage formats there, and so is the TMU's sample of a float texture as it lies. *V3D-only*.
+- **A store in a vertex program**: vertexPipelineStoresAndAtomics is false on every device (instance/getphysicaldevicefeatures.zig:223), where v3dv reports it true (v3dv_device.c:359). *Facet-wide*.
+- **A load in a vertex program**, which asks for no feature, is refused with the store, and the cores draw. Let through (a mutation of 1.219), a vertex program's store stops the back end in `to_qpu` on an instruction with a source it never set, where the same store compiles in a compute or a fragment program: the vertex path wants its own look first. *V3D-only*.
+- **The size of a cube's storage image**: a cube is its faces' layers in the walk, as a 2D array is, so a size of two integers or of three is taken for either; the third, where there is one, is the layers. *V3D-only*.
+- **Formats beyond Rgba8**: R8 and the float formats, whose returns are 32-bit and packed otherwise (v3d_nir_lower_image_load_store.c:48-62, :354-394). *V3D-only*.
+- **The words a load asks for**: always both. Mesa asks only for those of the channels read (nir_def_components_read, v3d_tex.c:549-560). *V3D-only*.
+- **The order of image accesses**: neither an image_load nor an image_store is moved, where nir_opt_access marks a load of an image nothing writes CAN_REORDER (`computes`). *V3D-only*.
+- **A vector operation of a vector partly constant** is kept whole, and so is not folded channel by channel: nir_lower_alu_to_scalar makes each float its own (v3dv_pipeline.c:404), and nir_opt_constant_folding folds the constant ones. In "shipped stored" and "shipped drawn stored", `vec4(red, green, 128.0, 255.0) / 255.0` multiplies its blue and alpha at run time, where Mesa packs them to a constant word. The words are the same. *V3D-only*.
+- **A view of an image of four samples kept in quads** keeps the library's texture, so a function's fetch of a sample of such an image reads the wrong place. A storage image is of one sample (`shader_storage_image_multisample` is false). *Facet-wide*, for any device of a layout of its own: `deviceTexels` would need the sample as well as the place.
+- **The fast samplers** (`texture.sample`, `sampleAt`) read the library's blocks alone: a fragment function of the cores draws with them, and none draws on a device of a layout of its own. *Facet-wide*, likewise.
 
 ### 58. V3D: a sampled depth image through the TMU **[critical path]**
 
@@ -2288,7 +2912,7 @@ glslc_atomics is 43 instructions: ten atomics, ten TMUD writes, ten TMUAU, ten L
 **Then fragmentStoresAndAtomics on the V3D**, facet.library 1.170.
 
 - **Matrices stored.** A whole matrix stored into a storage buffer is its columns, each a store of its own at its MatrixStride, as _vtn_variable_load_store walks a matrix for a store as for a load (vtn_variables.c:763-780). A whole array or struct stays refused: the walk holds no value of many kinds.
-- **The replay guarded.** A subpass of several colour attachments is drawn a part for each, its commands played again (items 80 and 87), so a program that writes memory would write once for each part, and an atomic would count as many times. The V3D refuses such a pipeline with error_feature_not_present when its program writes. v3dv draws the subpass once, its program writing every render target (item 55), and that lifts the refusal.
+- **The replay guarded.** A subpass of several colour attachments is drawn a part for each, its commands played again (items 80 and 87), so a program that writes memory would write once for each part, and an atomic would count as many times. The V3D refuses such a pipeline with error_feature_not_present when its program writes. v3dv draws the subpass once, its program writing every render target (item 55), and that lifts the refusal. **Lifted in 1.233**: the V3D draws such a subpass once, a render target for each colour attachment (item 55), and FacetBoth 1.81 has the program that stores made there.
 - **The feature.** GetPhysicalDeviceFeatures says fragment_stores_and_atomics on the V3D. Its programs store and do atomics through the TMU, a pixel's lookup that a helper pixel and a discarded one take no part in: each discard flushes the TMU before its SETMSF (nir_to_vir.c:3815-3852), and SETMSF orders the TMU writes after it (qpu_schedule.c:407-410). Early Z is off for such programs (1.168), and the caches are cleaned after a job that wrote. The cores compile no SPIR-V, so the feature is false there. vertex_pipeline_stores_and_atomics stays false on both, and no shader writes a storage image (item 39).
 
 glslc_placed stores a mat4 and a std430 mat3x2, the latter's columns 8 bytes apart; a constant 16 in place of the stride fails its test. On the CM5, FacetBoth 1.38 asks each device for a writing program in a subpass of two colours: the V3D refuses it and makes a reading one, and the cores make both. The 232 cases are unchanged, and FacetProbe is 890 of 890.
@@ -2467,7 +3091,7 @@ FacetProbe is 890 of 890. The board's cube has one level, so P2's disable_autolo
 - **What is read.** The profile takes the capability ImageQuery, and OpImage, OpImageQuerySizeLod and OpImageQueryLevels. vtn makes them txs with its lod and query_levels (spirv_to_nir.c:3089-3096, :3119-3135, :3384-3386).
 - **The steps.** A `texture_size` step has as many integers as nir_tex_instr_dest_size gives the image: two for a 2D image and a cube, three for a 3D one and a 2D array. A `texture_levels` step has one. The level is a source the passes read, rename and replace as any other.
 - **The code.** ntq_emit_txs reads the draw's word of each axis, QUNIFORM_TEXTURE_WIDTH, _HEIGHT and _DEPTH. ntq_minify makes each the MAX of its SHR by the level and 1. An array's last is QUNIFORM_TEXTURE_ARRAY_SIZE, not minified (nir_to_vir.c:895-960). query_levels is QUNIFORM_TEXTURE_LEVELS (:972-975).
-- **The words.** `compile.Word.texture_size` is a unit and a field. The draw answers it as get_texture_size_from_image_view does (v3dv_uniforms.c:378-414): the view's first level's sides, a 3D image's slices as its depth, its layers and its levels.
+- **The words.** `compile.Word.texture_size` is a unit and a field. The draw answers it as get_texture_size_from_image_view does (v3dv_uniforms.c:378-416): the view's first level's sides, a 3D image's slices as its depth, its layers and its levels.
 - **The unit.** A query reads no sampler state. It takes the unit a sample of its set and binding has, a comparison in it or not, or one of its own (descriptor_map_add, v3dv_pipeline.c:516-561). In a selection's arm it keeps the arm, as any tex does.
 - **The plan.** Its `compile` refuses both.
 - **The stack.** A pipeline is made on a stack of its own, 128 KiB from exec's NewStackRun. The back end holds about 24 KiB of frames at once, and with FacetBoth's own frames that came to the end of the stack it ran on as a shell command.
@@ -3422,7 +4046,7 @@ Still left out. Each is marked *facet-wide* or *V3D-only*, as above:
 - **OpImageQuerySize and OpImageQuerySamples**, textureSize and textureSamples of an image of four. The profile takes neither, for any image. v3d answers textureSamples with a uniform (QUNIFORM_TEXTURE_SAMPLES, nir_to_vir.c:976-978), and textureSize through ntq_emit_txs (:980-982). *Facet-wide*.
 - **A ConstOffset on a fetch of four**, refused (Error.Operands). GLSL has no texelFetchOffset of a sampler2DMS, so glslc writes none. *Facet-wide*.
 - **An image of four that is sampled and a colour attachment**, refused as one of one is, until item 48's V3D half. The format query holds the 1 bit wherever it holds the 4, so the two go together. *V3D-only*. Made since 1.210.
-- **An input attachment of four**, refused until item 56. *V3D-only*.
+- **An input attachment of four**, refused until item 56. *V3D-only*. Made since 1.216; a pipeline that reads one through SubpassDataMS is still refused (item 56).
 
 The two *V3D-only* entries are the V3D port's own gaps, not the hardware's, so the list for the Radeon's has nothing new from them. The first *facet-wide* entry is on it.
 
@@ -3465,7 +4089,7 @@ Found independently by: features (3 items), semantics (3 items) — 6 findings m
 - sparse, about 400, behind item 12 and an exec call that maps pages;
 - V3D pipeline statistics, 0, which Mesa does not have.
 
-All optional in Vulkan 1.0, all absent, each a clean capability to add rather than a conformance bug — recorded so they are not mistaken for debt. geometryShader: no SHADER_STAGE_GEOMETRY bit at all; needs the stage, an entry kind, and a primitive stream the binner takes from somewhere other than the vertex array. textureCompressionASTC_LDR: no format and no decoder anywhere in the tree. sparseBinding and the residency bits: memory is exec's and bound whole. robustBufferAccess: nothing in the tree, and with it absent out-of-bounds access is undefined, which Vulkan permits. pipelineStatisticsQuery on the V3D: nothing counts what its QPUs were given, so the kind is refused there; needs the binner's and renderer's perfmon counters read as the frame is drawn, the way the occlusion counter already is — not compiler work, which the to-do document's unlock table miscredits. imageCubeArray on the V3D: no QPU program reads the fourth coordinate, so a cube_array view and texture_cube_array are refused; needs Dim::Cube and arrayed images in the profile.
+All optional in Vulkan 1.0, all absent, each a clean capability to add rather than a conformance bug — recorded so they are not mistaken for debt. geometryShader: no SHADER_STAGE_GEOMETRY bit at all; needs the stage, an entry kind, and a primitive stream the binner takes from somewhere other than the vertex array. textureCompressionASTC_LDR: no format and no decoder anywhere in the tree. sparseBinding and the residency bits: memory is exec's and bound whole. robustBufferAccess: nothing in the tree, and with it absent out-of-bounds access is undefined, which Vulkan permits. pipelineStatisticsQuery on the V3D: nothing counts what its QPUs were given, so the kind is refused there; needs the binner's and renderer's perfmon counters read as the frame is drawn, the way the occlusion counter already is — not compiler work, which the to-do document's unlock table miscredits. imageCubeArray on the V3D: no QPU program reads the fourth coordinate, so a cube_array view and texture_cube_array are refused; needs Dim::Cube and arrayed images in the profile. *(Done for the fixed forms in 1.234, under item 54: imageCubeArray is true on the V3D. The compiler's half is item 54's next step.)*
 
 > Verified: BlendFactor and the stage bits as above; `grep -i astc` across sdk/ and src/disk/libs/facet/ hits only prose at facet_version.zig:1075; `grep -i robust` across both trees returns nothing; driver/v3d/driver.zig:166 `.pipeline_statistics_queries = false` (occlusion is true on both, driver.zig:165 and cpu.zig:128), :192 `.cube_arrays = false`; refusals at createquerypool.zig:83-84 and driver.zig:460.
 
@@ -3632,7 +4256,7 @@ multiple of 16, which was taken, is refused now, Vulkan forbidding it.
 
 ### 80. A Vulkan subpass with several colour attachments is drawn in several parts, so one fragment function may write one colour
 
-*render passes / fragment outputs* &mdash; conformance-blocking, large
+*render passes / fragment outputs* &mdash; conformance-blocking, large &mdash; **done in 1.230, on the cores; the V3D's half is item 55, done in 1.233**
 
 Found while filling `maxFragmentOutputAttachments` for item 16, and it is
 the cores' half of item 55.
@@ -3669,6 +4293,103 @@ right. lavapipe clears whichever attachment `colorAttachment` names
 > `outputs > 1` on `can.several_outputs`.
 > `sdk/libs/facet/facet.zig`'s `SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER` is bit
 > 31, where Vulkan reserves the high flag bits.
+
+**Done in 1.230**, in about 340 lines of the library (most of them its
+documentation) and 440 of host tests and FacetProbe. A Vulkan subpass of
+several colour attachments is now what the flag meant, on the cores, and
+a fragment function's outputs are at their locations, as a SPIR-V
+shader's are:
+
+- **The flag and `shader.Resources.output` are gone from the SDK.** A
+  subpass flag of any kind is `error_validation_failed`
+  (VUID-VkSubpassDescription-flags-parameter), bit 31 among them.
+- **The cores draw every subpass of several together**, one part with a
+  plane of the tiles for each colour attachment, as lavapipe hands
+  llvmpipe a subpass's colour buffers at once. Each plane has a location,
+  its attachment's place among the subpass's (`_render.Part.locations`),
+  which its blend state is at and which it takes the function's colour
+  from.
+- **A fragment entry writes any count of colours, at locations 0
+  upwards** (`shader.fragmentOutputs`), whatever the subpass has: the
+  count no longer has to be the part's (CreateGraphicsPipelines). A plane
+  at a location past the function's colours is left as it is, as llvmpipe
+  blends colour buffer i only where it blends, has a logic op, or the
+  shader has an output there (`generate_fragment`,
+  lp_state_fs.c:3618-3623), facet blending no colour it was not given;
+  v3d likewise writes no render target its shader has no output for
+  (`vir_emit_tlb_color_write`, nir_to_vir.c:1958). A colour past the
+  attachments goes nowhere. So a `fragment` entry's one colour, and a
+  fixed form's, is the first attachment's alone, where until now every
+  attachment took it.
+- **`ATTACHMENT_UNUSED` among colours drawn together** has no plane, and
+  those after it keep their locations, as 1.118 had them where it was
+  drawn apart: refused with `error_feature_not_present` until now.
+- **An input attachment of its own:** the one a subpass reads is put first
+  among the part's planes, that being the plane whose pixels a fragment
+  function is given (`Fragments.input`); the first alone could be read
+  until now. A subpass that reads two of its own is drawn once for each,
+  and there a function of several colours draws each part from its own
+  location.
+- **The tiles keep a batch's room for four colours a part**, whatever the
+  frame's planes (`Tile.extra_colors`, `Tile.batch_values`): 20 KiB a part
+  more at most, against the 4 of one plane before.
+- **CmdClearAttachments clears the attachment it names** inside a part
+  that draws several: its plane alone takes the clear's colour
+  (`_draw.clearedLocations`), in that plane's format, the words as given
+  for one the tiles keep in its own bytes, and on the framebuffer's other
+  layers its own image (`_play.clearRectangle`) - the fault 1.91 found,
+  and lavapipe's `handle_clear_attachments` clearing whichever
+  `colorAttachment` names.
+- **The V3D draws a subpass of several once for each, as before**, its
+  programs writing location 0 alone (item 55). A part past location 0
+  now writes no colour channel (`mixingOf`'s channels), as v3d writes no
+  render target its shader has none for, where until now every part took
+  the one colour. FacetBoth's subpasses of two colours change so on both
+  devices alike.
+
+One host test is new (CmdClearAttachments in a subpass drawn together,
+of bytes and of floats, on both layers), and 4557 of the 4560 pass, 3
+skipped. Of 23 mutants of the new code, 22 failed the host tests; the
+one that lived found a blend state's format by its plane, not its
+location, and the together test now blends a subpass of bytes beside
+whole numbers each way round, plain and reading the whole numbers, which
+fails it. FacetProbe 1.58 draws a plain subpass of three together on the
+cores, by location, with a function of one colour and one of three, and
+the same subpass reading two of its own once for each; on the V3D it
+checks the subpass is made in parts and a function of three refused. Its
+blend check's second attachment, at a location the fixed function writes
+nothing at, keeps its clear. FacetProbe 1.58 as first built (package
+f241) still wanted the second of two attachments to take a function's
+one colour, and two refusals that are gone; mended (f242), it is 1074 of
+1074 on the CM5. FacetBoth's 316 cases are each as at 1.227 but for the
+two whose second picture a subpass of two colours draws with a function
+of one: that picture keeps what was there on both devices, "two
+attachments, second" 0 of 230400 pixels apart where it was 11,
+"subpasses, second picture" 5 where it was 8.
+
+Still left out after 1.230:
+
+- **The V3D draws a subpass of several in parts**, each part played over
+  from the subpass's begin, its programs writing one colour at location
+  0: a Vulkan fragment shader of several outputs is refused there, and an
+  attachment past location 0 keeps what it held. *V3D-only*: item 55,
+  Mesa's v3d writing the TLB for each render target it has an output for
+  (`emit_frag_end`, nir_to_vir.c:2142-2143, `vir_emit_tlb_color_write`
+  :1955) and v3dv configuring a render target for each colour attachment
+  of the subpass (`cmd_buffer_emit_render_pass_rcl`,
+  v3dvx_cmd_buffer.c:1085-1095). **Done in 1.233** (item 55): one frame,
+  a render target for each.
+- **A subpass that reads two of its own colour attachments is drawn in
+  parts on the cores**: the tile gives a fragment function the pixels of
+  one plane (`Fragments.target`). *Facet-wide*: a Radeon's subpass input
+  is read from memory, so it would want none of this either way, but
+  facet's own tile reads would need a `target` for each attachment.
+- **A part at a location past its function's colours is still played**,
+  on either device: the vertices worked and the depth and the stencil
+  tested again for no colour. *Facet-wide*, the parts path.
+- **`attachment_constants` and `CmdSetBlendConstantsAt` stay facet's
+  own** (item 51's list): blend constants for each attachment where
+  Vulkan has one set. *Facet-wide*.
 
 ### 81. error_feature_not_present is returned from calls Vulkan does not list it for
 
@@ -4083,7 +4804,7 @@ facet's own.
   image behind it, and the tile target has no colour that loads and
   stores nothing; llvmpipe's tile maps no memory for it
   (lp_rast.c:126-131). That is item 80's to bring, once every subpass on
-  the cores draws its colours together.
+  the cores draws its colours together (done in 1.230).
 - **The V3D draws every subpass apart**, and reads a part's location the
   same way (driver/v3d/_play.zig). This is unchecked on the board. A
   subpass whose every reference is unused is one of none, which the V3D
@@ -4123,7 +4844,9 @@ it once for all of them, so a draw is tested once and counted once
 (`vis_counter`, lp_rast.c:123 and 635-675). The replay is facet's own
 until item 80 has every subpass on the cores draw its colours together,
 and until item 55 gives the V3D a fragment program of several outputs.
-Until then it has to be faithful.
+Until then it has to be faithful. (Item 80 did in 1.230 and item 55 in
+1.233; what is left of it is a subpass on the cores that reads two of its
+own attachments, which the V3D does not make.)
 
 **Done in 1.116**, in 6 lines of code and 146 of tests:
 
@@ -4667,7 +5390,8 @@ first half found, and the review of this half beside it:
 - A fragment function that writes as many colours as its subpass has, in a
   subpass without `SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER`, is refused with
   `error_invalid_shader_nv`. Vulkan allows it: `error_feature_not_present`
-  under item 80, which draws such a subpass in parts. On the V3D, whose
+  under item 80, which draws such a subpass in parts (taken since 1.230,
+  on the cores: item 80 is done). On the V3D, whose
   `max_fragment_output_attachments` is 1, a function of more colours
   breaks VUID-RuntimeSpirv-Location-06272: `error_validation_failed` there.
 - AllocateDescriptorSets past the pool's sets answers
@@ -4920,9 +5644,9 @@ the third were found in the check of this item:
   texture a function writes through (:826), as tests/draw.zig:3262-3274
   has it, while those formats' features hold no STORAGE_IMAGE
   (driver/_format.zig:168-192), which Vulkan has STORAGE want. A float
-  format is unpacked on the V3D as well and says STORAGE_IMAGE, being
-  written through as 8888 there, so it is the feature that is to be
-  asked, not the unpacking.
+  format is unpacked on the V3D as well, and since 1.220 says no
+  STORAGE_IMAGE there (item 57), while CreateImage still makes one, so it
+  is the feature that is to be asked, not the unpacking.
 - **An input attachment of a float or BC format, on the cores.** Such an
   image is made and answered, kept in rows or, for blocks, in a texture's
   layout (image/_image.zig:816-819 asks nothing of its format), while the
@@ -4937,6 +5661,30 @@ Holding each usage to its feature in `_image.shapeFor`, as both drivers
 do, mends all three: about 8 lines, with tests/draw.zig:3262-3274 turned
 round and the host's device without `stored_both` asked the D16S8 depth
 attachment.
+
+**Done in 1.221, but for the depth attachment.** `_image.shapeFor` holds
+SAMPLED, STORAGE, COLOR_ATTACHMENT and INPUT_ATTACHMENT to the format's
+features in the image's tiling (`viewable`, as lvp_formats.c:394-435 and
+v3dv_formats.c:512-551 hold them), before it lays the image out, so the
+query says the same. A storage image of a BC, ETC2, EAC, B4G4R4A4 or
+A1R5G5B5 format is refused on either device, and of a float format on the
+V3D, which says no STORAGE_IMAGE of one since 1.220. An input attachment of
+a float or BC format is refused on the cores. The test of the compressed
+storage image is turned round, with the input attachments and a device
+that unpacks floats beside it. Three mutations each fail it: the check
+gone, and STORAGE or INPUT_ATTACHMENT left out of it. On the CM5,
+FacetBoth's 316 cases are each as they were at 1.219, and FacetProbe is
+923 of 923.
+
+Still left out. Each is marked *facet-wide* or *V3D-only*:
+- ~~**DEPTH_STENCIL_ATTACHMENT is not held for D16_UNORM_S8_UINT.**~~
+  Held since 1.225 (item 35, step 4): the V3D draws D24_UNORM_S8_UINT
+  since 1.224, and FacetBoth's eighteen stencil cases with it.
+- **The transfers are not held.** Both drivers hold TRANSFER_SRC and
+  TRANSFER_DST to their features (lvp_formats.c:418-428). Vulkan 1.0 has
+  no feature for either, which VK_KHR_maintenance1 brings, and held here
+  they would refuse every format the cores blit out of but never read
+  back (tests/draw.zig's BLIT_SRC test). *Facet-wide*.
 
 > instance/getphysicaldeviceimageformatproperties.zig; image/_image.zig
 > `laidOut`; the spec's VkImageFormatProperties, the query's body and

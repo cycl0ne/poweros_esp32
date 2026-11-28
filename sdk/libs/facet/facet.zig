@@ -1157,8 +1157,12 @@ pub const Format = enum(u32) {
     r32g32b32a32_sfloat = 109,
     /// 16 bits of depth: 0 nearest.
     d16_unorm = 124,
+    /// 24 bits of depth, in the top of a word whose low byte holds
+    /// nothing, and the same with a stencil there (since 1.222).
+    x8_d24_unorm_pack32 = 125,
     s8_uint = 127,
     d16_unorm_s8_uint = 128,
+    d24_unorm_s8_uint = 129,
     /// As textures: kept in 8 bits a channel, cut to 0 to 1.
     b10g11r11_ufloat_pack32 = 122,
     e5b9g9r9_ufloat_pack32 = 123,
@@ -1472,22 +1476,6 @@ pub const IMAGE_CREATE_CUBE_COMPATIBLE: u32 = 1 << 4;
 /// false, and on an image that is neither sampled nor a storage image.
 /// (Since 1.48.)
 pub const IMAGE_CREATE_PACKED_TEXELS: u32 = 1 << 31;
-
-/// facet.library's own, in `SubpassDescription.flags`: the subpass's
-/// colour attachments are drawn **together**, in one pass over the tiles,
-/// by a fragment function that writes all of them in the one call
-/// (`shader.fragmentOutputs`, `shader.Fragments.colorsOf`). Without it a
-/// subpass of several colour attachments is drawn once for each, every
-/// command of the pass played again with `shader.Resources.output` saying
-/// which - the vertices worked and the triangles binned over again - and
-/// a fragment function writing the one colour.
-///
-/// Refused with `error_feature_not_present` where
-/// `Capabilities.several_outputs` is false, and with
-/// `error_invalid_shader_nv` for a pipeline of such a subpass whose
-/// fragment entry does not write exactly the subpass's colour
-/// attachments. (Since 1.51.)
-pub const SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER: u32 = 1 << 31;
 
 pub const ImageCreateInfo = extern struct {
     flags: u32 = 0,

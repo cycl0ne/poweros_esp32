@@ -150,8 +150,9 @@ pub const Capabilities = extern struct {
     /// two, eight or sixteen samples, nor four in a storage image; an
     /// input attachment of four is read a sample at a time since 1.111.
     /// The cores have it since 1.112, the V3D since 1.148
-    /// (docs/facet-vulkan10.md item 61, V5), which samples no image of
-    /// four yet and says so in its own masks.
+    /// (docs/facet-vulkan10.md item 61, V5), which fetches a sample of an
+    /// image of four since 1.209 (V7) and makes one an input attachment
+    /// since 1.216, though no pipeline of it reads one yet (item 56).
     multisampling: bool = false,
     /// `PipelineColorBlendStateCreateInfo.logic_op_enable`.
     logic_ops: bool = false,
@@ -188,21 +189,80 @@ pub const Capabilities = extern struct {
     /// depth as it does their colour - one plane an image, so `stored_both`
     /// is what a pass keeping depth and stencil together asks for.
     stored_depth: bool = false,
+    /// A depth of 24 bits is drawn into: X8_D24_UNORM_PACK32, and
+    /// D24_UNORM_S8_UINT with its stencil, are depth attachments
+    /// (FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT), tested, stored and loaded
+    /// at all 24 bits, which Vulkan has one of each pair hold
+    /// (docs/facet-vulkan10.md item 35). The cores have it since 1.223,
+    /// keeping it in their tiles at 32 bits a pixel; the V3D since 1.224,
+    /// its tiles' depth of 24 bits stored a word a pixel with the stencil
+    /// in the low byte, either plane or both. False where neither is an
+    /// attachment and CreateRenderPass refuses one.
+    depth24: bool = false,
+    /// The colour attachments of 0 to 1 and of floats past the three of 8
+    /// bits a channel a display has (`_image.targetTexels`): R8_UNORM,
+    /// R8G8_UNORM, A8B8G8R8_UNORM_PACK32, the three sRGB words,
+    /// A2B10G10R10_UNORM_PACK32, A1R5G5B5_UNORM_PACK16, and the half-float
+    /// and float formats of one channel, two and four, which Vulkan has
+    /// every device draw (docs/facet-vulkan10.md item 36). The tiles keep
+    /// each in its own bytes, a fragment's colour blended against what
+    /// they hold in floats and written back at the format's width, as
+    /// llvmpipe draws into a surface of its format. The cores have it since
+    /// 1.226, and the V3D since 1.228, its tiles keeping each as v3dv's
+    /// do (`v3d.target`). False where none of them is an attachment.
+    texel_targets: bool = false,
+    /// The twenty-one colour attachments of whole numbers of
+    /// docs/facet-vulkan10.md item 36, which the tiles keep as the numbers
+    /// they are and never blend: the cores since 1.227. Until 1.228 this
+    /// was `texel_targets`. False where none of them is an attachment.
+    whole_targets: bool = false,
+    /// A colour attachment of 32-bit floats is blended
+    /// (COLOR_ATTACHMENT_BLEND), as llvmpipe blends every float target.
+    /// False on the V3D, whose tiles blend normalized bytes and
+    /// half-floats alone, as v3dv says (`format_supports_blending`,
+    /// v3dvx_formats.c:486-512), so that a pipeline that blends one is
+    /// refused. (Since 1.228.)
+    float32_blend: bool = false,
+    /// What the tiles drew of the fourteen, or of the twenty-one, is read
+    /// back by the device: sampled where it lies, or read as an input
+    /// attachment. The cores read the rows they drew; the V3D's TMU knows
+    /// none of these formats' texels where its tiles stored them yet, so
+    /// on it an image of one of them that is sampled as well as drawn, or
+    /// read as an input attachment, is refused (since 1.228).
+    target_reads: bool = false,
     /// `input_attachment` descriptors and `SubpassDescription`'s
     /// `input_attachments`: an attachment a later subpass reads pixel by
     /// pixel, out of the image's memory, which is how a deferred pass
     /// reads what the pass before it drew (`shader.Resources.input`).
     /// False where a set layout with the kind, and a subpass with input
-    /// attachments, are both refused. The cores have it since 1.37; on
-    /// the V3D no fragment program reads one.
+    /// attachments, are both refused. The cores have it since 1.37, the
+    /// V3D since 1.216, whose fragment programs read one through the TMU
+    /// where the pass stored it.
     input_attachments: bool = false,
+    /// An input attachment the same subpass draws into: the fragment's
+    /// own pixel, read out of the tile (`shader.Fragments.input`, since
+    /// 1.64). The cores have it, and the V3D since 1.237, which reads
+    /// such an attachment out of the tile buffer as v3dv does
+    /// (lower_tlb_input_attachment_instr, v3dv_pipeline.c:301-356): its
+    /// pipelines are keyed by the subpass's `tile_inputs`. False where
+    /// CreateRenderPass refuses such a subpass (since 1.216).
+    tile_inputs: bool = false,
+    /// A subpass may read several of the colour attachments it draws into
+    /// and still be drawn together, each read out of its own render
+    /// target: v3dv's TLB reads, one of each render target
+    /// (vir_emit_tlb_color_read, nir_to_vir.c:2731-2815). The V3D has it
+    /// (since 1.237). The cores have not: a fragment function is given
+    /// the pixels of one plane, so a subpass that reads two of its own is
+    /// drawn a part for each.
+    every_tile_input: bool = false,
     /// Whether a render pass may keep its stencil attachment: the stencil
     /// load and store ops, a plane of the image's rows beside the depth's
     /// (`s8_uint`, `d16_unorm_s8_uint`), so a stencil outlives its pass
     /// and can be read back, written and cleared. The cores have it since
-    /// 1.38, the V3D since 1.47 for a stencil of its own (`s8_uint`); a
-    /// pass that keeps both planes of `d16_unorm_s8_uint` asks for
-    /// `stored_both` as well, which the V3D has not.
+    /// 1.38, the V3D since 1.47 for a stencil of its own (`s8_uint`), and
+    /// since 1.224 for D24_UNORM_S8_UINT's (`depth24`); a pass that keeps
+    /// a plane of `d16_unorm_s8_uint` asks for `stored_both` as well,
+    /// which the V3D has not.
     stored_stencil: bool = false,
     /// A depth attachment's image may be sampled where it lies: an image
     /// of `d16_unorm` with IMAGE_USAGE_SAMPLED, kept in rows as a depth
@@ -225,7 +285,9 @@ pub const Capabilities = extern struct {
     /// (v3dvx_formats.c:204, v3dv_formats.c:273-276), and the V3D here
     /// with it (since 1.142).
     filtered_depth: bool = false,
-    /// `storage_image` descriptors, and the texel buffer kinds.
+    /// `storage_image` descriptors: every device since 1.217, the V3D's
+    /// written by the functions the cores run beside it, where its TMU
+    /// reads them (`_image.deviceTexels`). And the texel buffer kinds.
     storage_images: bool = false,
     texel_buffers: bool = false,
     /// `uniform_buffer_dynamic` and `storage_buffer_dynamic`: a buffer
@@ -243,8 +305,9 @@ pub const Capabilities = extern struct {
     /// levels round a point mixed, a bias on the level and a clamp,
     /// mirrored and bordered edges, and a comparison with a reference. A
     /// device without it refuses such a pipeline, as with a dropping form,
-    /// or some of them: the V3D draws the 2D, array, cube and 3D ones
-    /// since 1.141 and refuses the shadow one and the cube of an array. Samplers are made and
+    /// or some of them: the V3D drew the 2D, array, cube and 3D ones
+    /// since 1.141, the shadow one since 1.142 and the cube of an array
+    /// since 1.234, and has it since. Samplers are made and
     /// written into sets on either. This one differs
     /// between the devices of a machine, though it is down here: a field is
     /// added at the end so that none already there moves.
@@ -321,8 +384,9 @@ pub const Capabilities = extern struct {
     /// (`shader.FixedKind.texture_cube_array`, varyings x, y, z and which
     /// cube, and since 1.53 `texture_cube_array_sampled`, the same through
     /// a sampler). False where both the view and such a pipeline are
-    /// refused - Vulkan's `imageCubeArray`. The cores have it since 1.46;
-    /// no QPU program of the V3D reads the fourth coordinate.
+    /// refused - Vulkan's `imageCubeArray`. The cores have it since 1.46,
+    /// the V3D since 1.234, its program writing which cube to TMUI
+    /// (`qpu.cube_array_fragment`).
     cube_arrays: bool = false,
     /// ETC2 and EAC: `etc2_r8g8b8_unorm_block`,
     /// `etc2_r8g8b8a1_unorm_block`, `etc2_r8g8b8a8_unorm_block`,
@@ -332,13 +396,15 @@ pub const Capabilities = extern struct {
     /// block where it lies, so this is true on every device from 1.46 and
     /// says only that the formats are taken.
     etc2_textures: bool = false,
-    /// Whether a format that holds a depth **and** a stencil may keep
-    /// either of them in its image's rows (`stored_depth`,
-    /// `stored_stencil`): the cores write each pixel's planes where they
-    /// lie in its four bytes, while a device that stores the whole of a
-    /// tile buffer writes one plane's pixels one after another and so
-    /// keeps only a format of that plane alone - `d16_unorm` or
-    /// `s8_uint`. False on the V3D, where GetPhysicalDeviceFormatProperties
+    /// Whether D16_UNORM_S8_UINT, a format that holds a depth **and** a
+    /// stencil, may keep either of them in its image's rows
+    /// (`stored_depth`, `stored_stencil`): the cores write each pixel's
+    /// planes where they lie in its four bytes, while a device that stores
+    /// the whole of a tile buffer writes one plane's pixels one after
+    /// another and so keeps only a format of that plane alone -
+    /// `d16_unorm` or `s8_uint`. D24_UNORM_S8_UINT asks for `depth24`
+    /// instead since 1.224, the V3D storing its word whole. False on the
+    /// V3D, where GetPhysicalDeviceFormatProperties
     /// gives `d16_unorm_s8_uint` no DEPTH_STENCIL_ATTACHMENT and a load or
     /// a store op of it is `error_validation_failed` (CreateRenderPass;
     /// `error_feature_not_present` until 1.135). (Since 1.47.)
@@ -357,17 +423,20 @@ pub const Capabilities = extern struct {
     /// and has never spread an 8888 texel, so the flag costs it nothing
     /// and changes nothing there. (Since 1.48.)
     small_texels: bool = false,
-    /// A fragment function may write all the colour attachments of its
-    /// subpass in the one call, the subpass drawn once rather than once
-    /// for each of them (`shader.fragmentOutputs`,
-    /// SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER): a G-buffer's three or four
-    /// planes cost one pass over the vertices, one binning and one call a
-    /// quad instead of as many as there are attachments. True on the
-    /// cores, where the tiles hold a colour plane for each attachment of
-    /// such a subpass. False on the V3D, whose fragment programs are the
-    /// fixed forms and each writes the one colour: there a subpass of
-    /// several is drawn once for each, as it was before, and the flag is
-    /// `error_feature_not_present` (CreateRenderPass). (Since 1.51.)
+    /// A fragment function may write several colours in the one call, at
+    /// locations 0 upwards (`shader.fragmentOutputs`), and a subpass of
+    /// several colour attachments is drawn once rather than once for each
+    /// of them: a G-buffer's three or four planes cost one pass over the
+    /// vertices, one binning and one call a quad instead of as many as
+    /// there are attachments. True on the cores, where the tiles hold a
+    /// colour plane for each attachment of such a subpass, which draw
+    /// every subpass of several so since 1.230 (one carrying facet's own
+    /// SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER until then). False on the
+    /// V3D, whose fragment programs each write the one colour, at
+    /// location 0: there a subpass of several is drawn once for each, and
+    /// a pipeline whose function writes several is
+    /// `error_feature_not_present` (CreateGraphicsPipelines;
+    /// docs/facet-vulkan10.md item 55). (Since 1.51.)
     several_outputs: bool = false,
     /// A texture may keep channels of its own rather than the 8888 colour
     /// a sample makes of them: an image of `r8g8_unorm`, two bytes a
@@ -598,20 +667,13 @@ pub const limits: facet.PhysicalDeviceLimits = .{
     // --- the fragment stage ---
     .max_fragment_input_components = max_vertex_output_components,
     // What one fragment function may write, which on this rasterizer is
-    // every colour a subpass may hold (`can.several_outputs`).
-    //
-    // **There is a catch, and it is a defect and not this number.** A
-    // subpass gives each colour attachment a part of its own unless it
-    // carries facet's own SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER, and
-    // CreateGraphicsPipelines refuses a fragment function whose output count
-    // is not the part's (pipeline/creategraphicspipelines.zig). So a program
-    // using Vulkan's own surface, which has no such flag, is held to one
-    // colour a function however many the subpass has - the same
-    // inconsistency `max_color_attachments` already carries by saying a
-    // subpass may hold four while the pass is drawn in four parts. Saying 1
-    // here would move that inconsistency rather than remove it, and would
-    // leave the two devices indistinguishable. docs/facet-vulkan10.md item
-    // 80 is the defect; item 55 is the V3D's side of it.
+    // every colour a subpass may hold (`can.several_outputs`): a subpass of
+    // several is drawn together, each attachment taking the function's
+    // colour at its location (since 1.230, docs/facet-vulkan10.md item 80;
+    // until then only where the subpass carried facet's own
+    // SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER, and a function was held to one
+    // colour otherwise). The V3D's side of it, whose programs write one,
+    // is item 55.
     .max_fragment_output_attachments = _render.most_colors,
     // No blend factor reads a second source colour, so Vulkan's value for a
     // device without `dual_src_blend` is 0.

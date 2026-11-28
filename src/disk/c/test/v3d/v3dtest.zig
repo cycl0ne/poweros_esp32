@@ -175,15 +175,12 @@ fn clearTest(sys: *ExecBase, dl: *DosBase, space: *v3d.Space, engine: *v3d.Engin
     const frame = v3d.frame.Frame{
         .width = test_width,
         .height = test_height,
-        .image = image.address,
-        .stride = stride,
-        .swap_rb = false,
-        .clear = test_clear,
+        .colors = .{ .{ .image = image.address, .stride = stride, .target = .{ .clear = .{ test_clear, 0, 0, 0 } } }, null, null, null },
         .tile_lists = lists.address,
         .binned = false,
     };
     var tile_list = v3d.cl.List{ .at = lists.cpu, .address = lists.address };
-    v3d.frame.writeTileList(&tile_list, &frame, frame.load);
+    v3d.frame.writeTileList(&tile_list, &frame, false);
     var render_list = v3d.cl.List{ .at = lists.cpu + 1024, .address = lists.address + 1024 };
     v3d.frame.writeRender(&render_list, &frame, .{ .start = tile_list.address, .end = tile_list.here() }, null);
     space.toGpu(&lists);
@@ -321,15 +318,12 @@ fn triangleTest(sys: *ExecBase, dl: *DosBase, space: *v3d.Space, engine: *v3d.En
     const frame = v3d.frame.Frame{
         .width = test_width,
         .height = test_height,
-        .image = if (how.unmapped_image) unmapped_address else image.address,
-        .stride = stride,
-        .swap_rb = false,
-        .clear = background,
+        .colors = .{ .{ .image = if (how.unmapped_image) unmapped_address else image.address, .stride = stride, .target = .{ .clear = .{ background, 0, 0, 0 } } }, null, null, null },
         .tile_lists = tile_lists.address,
         .binned = true,
     };
     var tile_list = v3d.cl.List{ .at = lists.cpu, .address = lists.address };
-    v3d.frame.writeTileList(&tile_list, &frame, frame.load);
+    v3d.frame.writeTileList(&tile_list, &frame, false);
     var render_list = v3d.cl.List{ .at = lists.cpu + 1024, .address = lists.address + 1024 };
     v3d.frame.writeRender(&render_list, &frame, .{ .start = tile_list.address, .end = tile_list.here() }, null);
     var bin_list = v3d.cl.List{ .at = lists.cpu + 8192, .address = lists.address + 8192 };

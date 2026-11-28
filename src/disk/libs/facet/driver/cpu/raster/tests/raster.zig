@@ -541,7 +541,7 @@ fn madeOf(vertices: []const Deep.Vertex, viewport: raster.Viewport, target: *con
     var projected: [3]setup.Projected = undefined;
     for (&projected, vertices) |*p, vertex| p.* = setup.project(.{ vertex.position[0], vertex.position[1], vertex.position[2], 1 }, viewport);
     const triangle = setup.onSurface(projected, .none, .clockwise, target.areaBounds(), 1) orelse return null;
-    return .{ .triangle = triangle, .depth = .of(&triangle, &projected) };
+    return .{ .triangle = triangle, .depth = .of(&triangle, &projected, setup.Depth.units16) };
 }
 
 /// The same vertices for another kind of pipeline.

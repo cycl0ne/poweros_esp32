@@ -153,14 +153,9 @@ pub const Scene = struct {
         scene.frame = .{
             .width = width,
             .height = height,
-            .image = scene.image.address,
-            .stride = stride,
-            .swap_rb = false,
-            .clear = how.clear,
+            .colors = .{ .{ .image = scene.image.address, .stride = stride, .target = .{ .clear = .{ how.clear, 0, 0, 0 } }, .load = how.load, .clear_inside = how.clear_inside }, null, null, null },
             .tile_lists = scene.tile_lists.address,
             .binned = true,
-            .load = how.load,
-            .clear_inside = how.clear_inside,
             .depth = how.depth,
             .clear_depth = how.clear_depth,
             .area = how.area,
@@ -233,7 +228,7 @@ pub const Scene = struct {
         v3d.frame.writeDrawState(&scene.bin, &scene.frame, &.{
             .clip = how.clip,
             .cfg = how.cfg,
-            .mixing = how.mixing,
+            .mixings = .{ how.mixing, .{}, .{}, .{} },
             .x = 0,
             .y = 0,
             .width = width,
@@ -247,11 +242,11 @@ pub const Scene = struct {
     fn finish(scene: *Scene) bool {
         v3d.frame.endBin(&scene.bin);
         var tile_list = cl.List{ .at = scene.lists.cpu, .address = scene.lists.address };
-        v3d.frame.writeTileList(&tile_list, &scene.frame, scene.frame.load);
+        v3d.frame.writeTileList(&tile_list, &scene.frame, false);
         var inside: ?v3d.frame.TileList = null;
-        if (scene.frame.clear_inside) {
+        if (scene.frame.clearsInside()) {
             var plain = cl.List{ .at = scene.lists.cpu + 512, .address = scene.lists.address + 512 };
-            v3d.frame.writeTileList(&plain, &scene.frame, false);
+            v3d.frame.writeTileList(&plain, &scene.frame, true);
             inside = .{ .start = plain.address, .end = plain.here() };
         }
         var render = cl.List{ .at = scene.lists.cpu + 1024, .address = scene.lists.address + 1024 };
@@ -786,7 +781,7 @@ pub fn blendTest(scene: *Scene) i32 {
     // Half the red over what is there, which is what `want` below works out:
     // without the factors said, the hardware takes all of the source and
     // none of the destination, and blending is switched on to no effect.
-    const over = cl.Mixing{ .src_color = src_alpha, .dst_color = one_minus_src_alpha, .src_alpha = src_alpha, .dst_alpha = one_minus_src_alpha };
+    const over = cl.Mixing{ .enabled = true, .src_color = src_alpha, .dst_color = one_minus_src_alpha, .src_alpha = src_alpha, .dst_alpha = one_minus_src_alpha };
     scene.draw(.{ .fragment = qpu.flat_fragment, .uniforms = &half_red, .vertices = &corners, .cfg = .{ .blend = true }, .mixing = over });
     if (!scene.finish()) return dos.RETURN_FAIL;
     var tally = Tally{};
@@ -922,8 +917,8 @@ fn compiled(back: Back, work: *compile.Work, words: []const u32, stream: *[compi
         // library's pipelines make it), nor does one ask a view's sizes,
         // which the library's draws measure (since 1.181), nor of a
         // compute program's work groups (since 1.194) or its shared memory
-        // (since 1.203).
-        .push, .ubo, .ssbo, .viewport, .first_vertex, .num_work_groups, .work_group_base, .spill_offset, .spill_size_per_thread, .texture_size, .shared_offset => return null,
+        // (since 1.203), nor reads a storage image (facet 1.218).
+        .push, .ubo, .ssbo, .viewport, .first_vertex, .num_work_groups, .work_group_base, .spill_offset, .spill_size_per_thread, .texture_size, .shared_offset, .image => return null,
     };
     return .{
         .{

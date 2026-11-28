@@ -675,3 +675,38 @@ test "a texel kept smaller than its colour: one word of 8888, and one byte of re
     try testing.expectEqual(@as(u32, 0x8012_3456), in_words.colorAt(0, 0, 1, 1));
     try testing.expectEqual(@as(u32, 0xFF12_0000), in_bytes.colorAt(0, 0, 1, 1));
 }
+
+test "a depth of 24 bits: kept in the top of its word, the byte below left alone, compared at all 24 bits and read as a grey of the top 8 (since 1.222)" {
+    const side = 4;
+    var words: [side * side]u32 = undefined;
+    // A stencil in each low byte, and depths one 24-bit step apart on
+    // either side: no 16-bit depth tells 0x200000 from 0x200001.
+    for (0..side) |y| for (0..side) |x| {
+        const depth: u32 = if (x < side / 2) 0x20_0000 else 0x20_0001;
+        words[y * side + x] = depth << 8 | @as(u32, @intCast(y * side + x));
+    };
+    var made = Texture.linear(.d24, side, side, side * 4, @ptrCast(&words));
+    try testing.expect(texture.Format.d24.depth());
+    try testing.expectEqual(@as(u32, 4), texture.Format.d24.bytes());
+    try testing.expectEqual(@as(u32, 0x20_0001), made.peekLayer(0, 0, 3, 1));
+    // A texel put is the 24 bits, and the stencil beside it stays.
+    made.putLayer(0, 0, 1, 2, 0xAB_CDEF);
+    try testing.expectEqual(@as(u32, 0xABCD_EF00 | 9), words[2 * side + 1]);
+    made.putLayer(0, 0, 1, 2, 0x20_0000);
+
+    const white: u32 = 0xFFFF_FFFF;
+    const black: u32 = 0xFF00_0000;
+    var sampler = texture.Sampler{ .mag_filter = .nearest, .min_filter = .nearest, .compare = .less };
+    // Half a step above the nearer of the two: nearer than the right
+    // half's, and farther than the left's.
+    const between: f32 = @floatCast((0x20_0000 + 0.5) / @as(f64, 0xFF_FFFF));
+    try testing.expectEqual(white, texture.sampleBy(&made, &sampler, 0, .{ .u = 0.8, .v = 0.5, .reference = between }));
+    try testing.expectEqual(black, texture.sampleBy(&made, &sampler, 0, .{ .u = 0.2, .v = 0.5, .reference = between }));
+    sampler.compare = .greater;
+    try testing.expectEqual(white, texture.sampleBy(&made, &sampler, 0, .{ .u = 0.2, .v = 0.5, .reference = between }));
+
+    // Read as a colour, a grey of its top 8 bits; the furthest is white.
+    try testing.expectEqual(@as(u32, 0xFF20_2020), made.colorAt(0, 0, 0, 0));
+    made.putLayer(0, 0, 0, 0, 0xFF_FFFF);
+    try testing.expectEqual(white, made.colorAt(0, 0, 0, 0));
+}

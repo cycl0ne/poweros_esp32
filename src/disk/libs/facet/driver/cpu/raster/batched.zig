@@ -93,8 +93,12 @@ comptime {
     // (`Tile.extra_colors`): it has to be a batch's worth exactly.
     if (target_zig.batch_color_words != batch_quads * 4) @compileError("a tile's batch colours are not a batch's");
     // And for a batch's depths at four samples a pixel
-    // (`Tile.batch_depths`, since 1.105): sixteen 16-bit ones a quad.
-    if (target_zig.batch_depth_words != batch_quads * 16 / 2) @compileError("a tile's batch depths are not a batch's");
+    // (`Tile.batch_depths`, since 1.105): sixteen 32-bit ones a quad
+    // (16-bit until 1.223).
+    if (target_zig.batch_depth_words != batch_quads * 16) @compileError("a tile's batch depths are not a batch's");
+    // And for a batch's four words a pixel of each colour attachment
+    // (`Tile.batch_values`, since 1.226): sixteen a quad.
+    if (target_zig.batch_value_words != batch_quads * 16) @compileError("a tile's batch values are not a batch's");
 }
 
 /// How a depth is compared with the one kept: the pixel passes where it
@@ -153,19 +157,19 @@ pub const StencilFace = struct {
 /// is given in place of a test of its own.
 const keeping = StencilFace{ .compare = .always, .compare_mask = 0, .write_mask = 0 };
 
-/// Two depths, 0 to 1, in the units the depth attachment holds: what the
-/// walk compares a pixel's with. Held inside the range, and the wrong way
-/// round where the two are, which then keeps nothing.
-fn boundsOf(asked: [2]f32) [2]u64 {
-    const whole: f32 = 65535;
-    const low = @round(std.math.clamp(asked[0], 0, 1) * whole);
-    const high = @round(std.math.clamp(asked[1], 0, 1) * whole);
+/// Two depths, 0 to 1, in `whole`, the units the depth attachment holds
+/// (`setup.Depth.units`; 65535 alone until 1.223): what the walk compares
+/// a pixel's with. Held inside the range, and the wrong way round where
+/// the two are, which then keeps nothing.
+fn boundsOf(asked: [2]f32, whole: f64) [2]u64 {
+    const low = @round(std.math.clamp(@as(f64, asked[0]), 0, 1) * whole);
+    const high = @round(std.math.clamp(@as(f64, asked[1]), 0, 1) * whole);
     return .{ @intFromFloat(low), @intFromFloat(high) };
 }
 
 /// Whether a stored depth lies between the bounds; nothing lies between
 /// them where they are the wrong way round, as in Vulkan.
-inline fn within(there: u16, bounds: [2]u64) bool {
+inline fn within(there: u32, bounds: [2]u64) bool {
     return there >= bounds[0] and there <= bounds[1];
 }
 
@@ -219,14 +223,23 @@ pub const State = struct {
     blend: pipeline.Blend = .off,
     /// How it mixes, with `.general`.
     mixing: pipeline.Mixing = .{},
-    /// The blend and the mixing of the colour attachments past the first,
-    /// where the draw writes several together (`color_count`, since
-    /// 1.51): `blend` and `mixing` are the first's.
+    /// The blend and the mixing of the frame's planes past the first,
+    /// where it has several (`color_count`, since 1.51): `blend` and
+    /// `mixing` are the first's. Each plane's are those of its location.
     more_blends: [target_zig.most_colors - 1]pipeline.Blend = @splat(.off),
     more_mixings: [target_zig.most_colors - 1]pipeline.Mixing = @splat(.{}),
-    /// The colour attachments the fragment function writes in the one
-    /// call: 1, and `blend` and `mixing` alone are used. (Since 1.51.)
+    /// The frame's planes the draw is drawn into: 1, and `blend` and
+    /// `mixing` alone are used. (Since 1.51; what the fragment function
+    /// wrote too, until 1.230.)
     color_count: u32 = 1,
+    /// The colours the fragment function writes in the one call, at
+    /// locations 0 upwards (`shader.Fragments.output_count`, since 1.230).
+    output_count: u32 = 1,
+    /// Each plane's location: the colour of the function's it takes. A
+    /// plane whose location is `output_count` or past it is left as it
+    /// is, as llvmpipe blends only a colour buffer the shader has an
+    /// output for (lp_state_fs.c:3618-3623). (Since 1.230.)
+    locations: [target_zig.most_colors]u8 = .{ 0, 1, 2, 3 },
     /// The stencil test on a target with stencil: the front's, the back's.
     stencil: ?[2]StencilFace = null,
     /// The depth pre-pass, where the depth test is less or less or equal,
@@ -251,6 +264,10 @@ pub const State = struct {
     /// tile: a subpass that reads the attachment it draws into
     /// (`shader.Fragments.keptAt`, since 1.64).
     reads_target: bool = false,
+    /// What the fragment function writes (`shader.Written`): 0xAARRGGBB
+    /// into `Fragments.colors`, or four words a pixel into
+    /// `Fragments.values`. (Since 1.226.)
+    written: shader.Written = .colors,
     /// Where the pixels that passed the tests and were not dropped are
     /// counted - an occlusion query's samples - and where the pixels the
     /// fragment function was called for are. Null for a draw nothing is
@@ -292,13 +309,15 @@ const Shading = struct {
     depth_write: bool,
     blend: pipeline.Blend,
     mixing: pipeline.Mixing,
-    /// Those of the colour attachments past the first, where several go
-    /// together (`color_count`, since 1.51).
+    /// Those of the planes past the first, where the frame has several
+    /// (`color_count`, since 1.51).
     more_blends: [target_zig.most_colors - 1]pipeline.Blend,
     more_mixings: [target_zig.most_colors - 1]pipeline.Mixing,
-    /// The colour attachments the fragment function writes at once: 1 for
-    /// every draw but one into a subpass whose attachments go together.
+    /// The planes drawn into: the frame's, none for a subpass of none.
     color_count: u32,
+    /// `State.output_count` and `State.locations`. (Since 1.230.)
+    output_count: u32,
+    locations: [target_zig.most_colors]u8,
     /// The depth is tested, with a stencil test.
     has_depth: bool,
     stencil: [2]StencilFace,
@@ -336,6 +355,8 @@ const Shading = struct {
     /// knows that descriptor (since 1.65). Null where the part does not
     /// read what it draws.
     drawn: ?[*]const u8,
+    /// `State.written`. (Since 1.226.)
+    written: shader.Written,
 };
 
 /// A triangle set up for the tiles: its planes follow it.
@@ -426,12 +447,18 @@ test "a clip bucket holds what it is asked for, and the narrowest is what 1.89 c
 const Test = enum { off, less, less_or_equal, masked, second, second_or_equal, stencil };
 
 /// A triangle in the pre-pass: its depth alone, then its quads tested as
-/// `second` says. Only at one sample a pixel: the pre-pass's walk is of
-/// pixels (`walk.runs`).
-fn TwoPasses(comptime second: Test) type {
+/// `second` says, in a tile that keeps its depth as `Kept`. Only at one
+/// sample a pixel: the pre-pass's walk is of pixels (`walk.runs`).
+fn TwoPasses(comptime second: Test, comptime Kept: type) type {
     return struct {
-        const passes = bins.Prepass{ .depth = &prepass.DepthOnly(Triangle).raster, .shade = &Rasterize(second, 1).raster };
+        const passes = bins.Prepass{ .depth = &prepass.DepthOnly(Triangle, Kept).raster, .shade = &Rasterize(second, 1, Kept).raster };
     };
+}
+
+/// How a tile keeps a depth of `bits`: 16 bits in a `u16`, and 24 in a
+/// `u32` (since 1.223).
+fn KeptOf(comptime bits: u32) type {
+    return if (bits == 24) u32 else u16;
 }
 
 /// `State.sample_mask`'s four samples, each bit spread over the four
@@ -461,8 +488,9 @@ fn setUpAll(target: *Target, state: *const State, vertices: []const f32, stride:
     // the viewport's range. Either goes by the pixel at a time way, as a
     // stencil test does, and a draw with none of the three keeps its fast
     // path untouched.
-    const bounds: ?[2]u64 = if (state.depth_bounds) |asked| boundsOf(asked) else null;
-    const clamp: ?[2]u64 = if (state.depth_clamp) boundsOf(.{ state.min_depth, state.max_depth }) else null;
+    const whole = setup.Depth.unitsOf(target.attachments.depth.bits);
+    const bounds: ?[2]u64 = if (state.depth_bounds) |asked| boundsOf(asked, whole) else null;
+    const clamp: ?[2]u64 = if (state.depth_clamp) boundsOf(.{ state.min_depth, state.max_depth }, whole) else null;
     // The bounds test is of the depth already there, which a pass with a
     // depth attachment has whether this draw tests it or not, as in
     // Vulkan.
@@ -489,6 +517,8 @@ fn setUpAll(target: *Target, state: *const State, vertices: []const f32, stride:
         // Never more than the frame has planes and surfaces for: none in a
         // subpass of no colour attachment (since 1.113).
         .color_count = @min(@max(state.color_count, 1), target.colorCount()),
+        .output_count = @min(@max(state.output_count, 1), target_zig.most_colors),
+        .locations = state.locations,
         .has_depth = depth,
         // A draw that goes by pixel without a stencil test of its own has
         // a test that passes and writes nothing.
@@ -505,24 +535,33 @@ fn setUpAll(target: *Target, state: *const State, vertices: []const f32, stride:
         // of that attachment points there, and the fragment function is
         // given the tile for it instead (since 1.65).
         .drawn = if (state.reads_target and target.surface_count > 0) target.surfaceAt(0).pixels else null,
+        .written = state.written,
     };
     const test_kind: Test = if (by_pixel) .stencil else if (!depth) .off else switch (compare) {
         .less => .less,
         .less_or_equal => .less_or_equal,
         else => .masked,
     };
+    // A tile keeps a depth of 24 bits in 32 (since 1.223), and a draw
+    // that tests none walks it the one way whatever the frame keeps.
+    const wide = target.attachments.depth.bits == 24;
     const raster = switch (samples) {
         inline 1, 4 => |n| switch (test_kind) {
-            inline .off, .less, .less_or_equal, .masked, .stencil => |kind| &Rasterize(kind, n).raster,
+            .off => &Rasterize(.off, n, u16).raster,
+            inline .less, .less_or_equal, .masked, .stencil => |kind| switch (wide) {
+                inline else => |is_wide| &Rasterize(kind, n, KeptOf(if (is_wide) 24 else 16)).raster,
+            },
             .second, .second_or_equal => unreachable,
         },
         else => unreachable,
     };
     const two = samples == 1 and state.prepass and shading.depth_write and state.blend == .off;
-    const passes: ?*const bins.Prepass = if (!two) null else switch (test_kind) {
-        .less => &TwoPasses(.second).passes,
-        .less_or_equal => &TwoPasses(.second_or_equal).passes,
-        else => null,
+    const passes: ?*const bins.Prepass = if (!two) null else switch (wide) {
+        inline else => |is_wide| switch (test_kind) {
+            .less => &TwoPasses(.second, KeptOf(if (is_wide) 24 else 16)).passes,
+            .less_or_equal => &TwoPasses(.second_or_equal, KeptOf(if (is_wide) 24 else 16)).passes,
+            else => null,
+        },
     };
     const codes = target.arena.alloc(u8, count) orelse return error.OutOfMemory;
     const guard = setup.Guard.of(state.viewport);
@@ -687,7 +726,7 @@ const SetUp = struct {
                 .prepass = set.prepass,
             },
             .shading = set.shading,
-            .depth = if (set.depth) depthOf(&made, projected, state) else undefined,
+            .depth = if (set.depth) depthOf(&made, projected, state, setup.Depth.unitsOf(target.attachments.depth.bits)) else undefined,
             .least_inverse_w = @min(projected[0].inverse_w, projected[1].inverse_w, projected[2].inverse_w),
             .face = faceOf(&projected, state.front),
         };
@@ -705,8 +744,9 @@ fn faceOf(p: *const [3]setup.Projected, front: setup.Winding) u8 {
     return @intFromBool(clockwise != (front == .clockwise));
 }
 
-/// The depth of a triangle, its vertices' z moved into the depth range.
-fn depthOf(made: *const setup.Triangle, projected: [3]setup.Projected, state: *const State) setup.Depth {
+/// The depth of a triangle, its vertices' z moved into the depth range, in
+/// the units of the frame's depth, `whole` of them (since 1.223).
+fn depthOf(made: *const setup.Triangle, projected: [3]setup.Projected, state: *const State, whole: f64) setup.Depth {
     var ranged = projected;
     if (state.min_depth != 0 or state.max_depth != 1) {
         // A draw that clamps keeps the triangle's own plane: what lies
@@ -717,7 +757,7 @@ fn depthOf(made: *const setup.Triangle, projected: [3]setup.Projected, state: *c
             vertex.z = if (state.depth_clamp) moved else std.math.clamp(moved, 0, 1);
         }
     }
-    const depth: setup.Depth = .of(made, &ranged);
+    const depth: setup.Depth = .of(made, &ranged, whole);
     return if (state.depth_bias) |bias| depth.biased(bias) else depth;
 }
 
@@ -742,8 +782,11 @@ fn planeOf(made: *const setup.Triangle, values: [3]f64) shader.Plane {
 
 /// How the tiles draw a draw's triangles, testing the depth as `kind`
 /// says, at `samples` samples a pixel: 1, or 4 (since 1.103), each
-/// tested at its own depth in its own planes (since 1.105).
-fn Rasterize(comptime kind: Test, comptime samples: u32) type {
+/// tested at its own depth in its own planes (since 1.105), against a
+/// tile that keeps its depth as `Kept`, at the attachment's own width as
+/// llvmpipe tests one (lp_bld_depth.c:1067-1095): `u16` for 16 bits,
+/// `u32` for 24 (since 1.223).
+fn Rasterize(comptime kind: Test, comptime samples: u32, comptime Kept: type) type {
     return struct {
         // On a cache line, as a segment is loaded on one: placed wherever
         // the code before it ended, the quads' loops took the cube up to
@@ -765,7 +808,7 @@ fn Rasterize(comptime kind: Test, comptime samples: u32) type {
             // themselves (`Shading.late`, `flush`).
             batch.deferred_depth = triangle.shading.discards and tested_here and !second_here and triangle.shading.depth_write;
             walk.quads(samples, tile, header, Walker{ .tile = tile, .batch = &batch, .depth = triangle.depth, .shading = triangle.shading, .face = triangle.face }, Walker.run);
-            batch.flush(samples);
+            batch.flush(samples, Kept);
         }
 
         /// A row's runs as the walk hands them on: its one, or one for
@@ -814,7 +857,7 @@ fn Rasterize(comptime kind: Test, comptime samples: u32) type {
                 // pixel and from where its own run starts (since 1.105).
                 var z_upper: Depths = if (tested) (if (samples == 1) walker.rowDepth(upper, x, y, free) else walker.sampleDepths(upper_runs, x, y, free)) else no_depths;
                 var z_lower: Depths = if (tested) (if (samples == 1) walker.rowDepth(lower, x, y + 1, free) else walker.sampleDepths(lower_runs, x, y + 1, free)) else no_depths;
-                const depths = walker.tile.depthRow(y);
+                const depths = walker.tile.depthRow(Kept, y);
                 const second = kind == .second or kind == .second_or_equal;
                 const write = tested and !second and walker.shading.depth_write;
                 // The batch's count held here while the row is walked:
@@ -883,7 +926,7 @@ fn Rasterize(comptime kind: Test, comptime samples: u32) type {
                     count += 1;
                     if (count == batch_quads) {
                         batch.count = count;
-                        batch.flush(samples);
+                        batch.flush(samples, Kept);
                         count = 0;
                     }
                 }
@@ -902,7 +945,7 @@ fn Rasterize(comptime kind: Test, comptime samples: u32) type {
                 return start -% @as(i64, span.left - x) *% walker.depth.step;
             }
 
-            inline fn passes(walker: Walker, near: u64, kept: u16) bool {
+            inline fn passes(walker: Walker, near: u64, kept: Kept) bool {
                 return switch (kind) {
                     .off => true,
                     .less => near < kept,
@@ -945,7 +988,7 @@ fn Rasterize(comptime kind: Test, comptime samples: u32) type {
                     const bits: u4 = @truncate(mask >> (4 * sample));
                     if (bits != 0) {
                         const near = walker.nearOf(z_upper[sample], z_lower[sample], step, tested);
-                        const depths = walker.tile.depthRowOf(sample, y);
+                        const depths = walker.tile.depthRowOf(Kept, sample, y);
                         var kept = bits;
                         if (kind == .stencil) {
                             const holding = &walker.tile.batch_depths.?[count];
@@ -997,7 +1040,9 @@ fn Rasterize(comptime kind: Test, comptime samples: u32) type {
 /// four samples a pixel (since 1.105), and `seen` the triangle's face. A
 /// depth that passes is written with `write_depth`; without, it is held
 /// for after the fragment function (`Batch.putDepths`, since 1.107).
-inline fn stenciled(shading: *const Shading, seen: u8, x: u32, covered: u4, near: [4]u64, values: [*]u8, depths: [*]u16, write_depth: bool) u4 {
+/// `depths` are the tile's as it keeps them, of 16 bits or of 32 (since
+/// 1.223).
+inline fn stenciled(shading: *const Shading, seen: u8, x: u32, covered: u4, near: [4]u64, values: [*]u8, depths: anytype, write_depth: bool) u4 {
     const face = &shading.stencil[seen];
     var kept: u4 = 0;
     inline for (0..4) |i| {
@@ -1067,8 +1112,9 @@ const Batch = struct {
     /// Each quad's four depths, held while the fragment function runs where
     /// it may drop pixels: written after it, for those it left. At one
     /// sample a pixel; at four the tile's `batch_depths` hold sixteen a
-    /// quad (since 1.105).
-    depths: [batch_quads][4]u16,
+    /// quad (since 1.105). In the depth's units, 32 bits each (since
+    /// 1.223).
+    depths: [batch_quads][4]u32,
     /// Whether that is what happens, worked out once a triangle.
     deferred_depth: bool,
     /// The face of the triangle seen, for the tests made after the
@@ -1115,16 +1161,22 @@ const Batch = struct {
             .y = tile.y,
             .exact = !(least > 0 and change <= least * newton_change),
             .resources = shading.resources,
-            // One at least: what a function writes as its one colour has
-            // its batch's room still where a frame has no colour
-            // attachment, and goes no further (since 1.113).
-            .output_count = @max(shading.color_count, 1),
+            // What the function writes, whatever the planes: what it
+            // writes as its one colour has its batch's room still where a
+            // frame has no colour attachment, and goes no further (since
+            // 1.113); and so does one past the frame's planes (since
+            // 1.230).
+            .output_count = shading.output_count,
         };
-        // A function that writes several colour attachments at once
-        // writes them one after another, so they go in the one run the
-        // tile keeps for its part; the one colour a draw usually writes
-        // stays on the stack, where it always was. (Since 1.51.)
-        if (shading.color_count > 1) batch.fragments.colors = tile.extra_colors.?;
+        // A function that writes several colours at once writes them one
+        // after another, so they go in the one run the tile keeps for its
+        // part; the one colour a draw usually writes stays on the stack,
+        // where it always was. (Since 1.51.)
+        if (shading.output_count > 1) batch.fragments.colors = tile.extra_colors.?;
+        // Where a function that writes floats or whole numbers writes
+        // them: the part's room for them, every attachment's after the one
+        // before (since 1.226).
+        if (tile.batch_values) |values| batch.fragments.values = values;
         // A subpass that reads the attachment it draws into is given the
         // tile's own pixels for it, where they already are: the first
         // plane, which is what the function writes as `colors`. Its rows
@@ -1132,6 +1184,26 @@ const Batch = struct {
         // on the attachment, as it is for one an earlier subpass drew.
         // (Since 1.64, through `shader.Fragments.input` since 1.65.)
         if (shading.drawn) |pixels| {
+            // One the tiles keep in its own bytes is read as those, from
+            // its own plane (since 1.226).
+            if (tile.texels[0] != .none) {
+                const bytes = tile.texels[0].bytes();
+                batch.target = .{
+                    .bytes = tile.texelPlane(0, 0),
+                    .pitch = tile_size * bytes,
+                    .width = tile_size,
+                    .height = tile_size,
+                    .format = tile.texels[0],
+                    .left = tile.x,
+                    .top = tile.y,
+                    .samples = tile.samples,
+                    .sample_bytes = target_zig.texel_plane_words * @sizeOf(u32),
+                    .others = if (tile.samples > 1) tile.texelPlane(0, 1) else null,
+                };
+                batch.fragments.drawn = pixels;
+                batch.fragments.target = &batch.target;
+                return;
+            }
             batch.target = .{
                 .bytes = @ptrCast(tile.plane(0)),
                 .pitch = tile_size * @sizeOf(u32),
@@ -1154,30 +1226,163 @@ const Batch = struct {
     /// The quads gathered coloured by the fragment function, and the
     /// pixels kept put into the tile: into each of its `samples`
     /// samples' planes, at more than one, under that sample's bits.
-    fn flush(batch: *Batch, comptime samples: u32) void {
+    fn flush(batch: *Batch, comptime samples: u32, comptime Kept: type) void {
         if (batch.count == 0) return;
         batch.fragments.count = batch.count;
         batch.shading.fragment(&batch.fragments);
         if (batch.shading.alpha_to_coverage) batch.coverByAlpha(samples);
         // After it, not before: the quads' `kept` is what the function left.
         if (batch.shading.late) {
-            batch.testLate(samples);
-        } else if (batch.deferred_depth) batch.putDepths(samples);
+            batch.testLate(samples, Kept);
+        } else if (batch.deferred_depth) batch.putDepths(samples, Kept);
         if (batch.shading.fragments != null or batch.shading.samples != null) batch.countPixels(samples);
-        // The colours the function wrote: each attachment's `count` of
-        // them after the one before (`shader.Fragments.colorsOf`), and
-        // each blended its own way into its own plane of the tile
-        // (since 1.51).
-        const written = batch.fragments.colors;
+        // The colours the function wrote: each location's `count` of them
+        // after the one before (`shader.Fragments.colorsOf`), and each
+        // plane given its location's, blended its own way (since 1.51).
         // None where the frame has no colour attachment: llvmpipe's
         // blending is a loop over its colour buffers, of which there are
-        // none (lp_state_fs.c:3618-3622, since 1.113).
-        if (batch.shading.color_count > 0) batch.putAt(samples, 0, batch.shading.blend, &batch.shading.mixing, written);
-        var output: u32 = 1;
-        while (output < batch.shading.color_count) : (output += 1) {
-            batch.putAt(samples, output, batch.shading.more_blends[output - 1], &batch.shading.more_mixings[output - 1], written + output * batch.count);
+        // none (lp_state_fs.c:3618-3622, since 1.113). And none into a
+        // plane whose location the function writes nothing at: llvmpipe
+        // blends colour buffer i only where it blends, has a logic op, or
+        // the shader has an output there (lp_state_fs.c:3618-3623), facet
+        // having it blend no colour it was not given (since 1.230; every
+        // plane past the function's took its last until then).
+        var plane: u32 = 0;
+        while (plane < batch.shading.color_count) : (plane += 1) {
+            const location = batch.shading.locations[plane];
+            if (location >= batch.shading.output_count) continue;
+            const blend = if (plane == 0) batch.shading.blend else batch.shading.more_blends[plane - 1];
+            const mixing = if (plane == 0) &batch.shading.mixing else &batch.shading.more_mixings[plane - 1];
+            batch.putOutput(samples, plane, location, blend, mixing);
         }
         batch.count = 0;
+    }
+
+    /// The colours the function wrote at `location`, 0xAARRGGBB or four
+    /// words a pixel, put into plane `output` of the tile (the location
+    /// being the plane's own until 1.230): one the tile
+    /// keeps in its own bytes blended in floats (`putTexels`), and one it
+    /// keeps as 0xAARRGGBB given the function's floats as that where it
+    /// wrote floats. (Since 1.226; `putAt` alone until then.)
+    inline fn putOutput(batch: *Batch, comptime samples: u32, output: u32, location: u32, blend: pipeline.Blend, mixing: *const pipeline.Mixing) void {
+        // Floats, or whole numbers (since 1.227): four words a pixel
+        // either way, which the attachment's format says how to read.
+        // What the function wrote at the plane's location (since 1.230).
+        const floats = batch.shading.written != .colors;
+        const colors = batch.fragments.colors + location * batch.count;
+        const values = batch.fragments.values + location * batch.count;
+        if (batch.tile.texels[output] != .none) return batch.putTexels(samples, output, blend, mixing, colors, values, floats);
+        if (floats) colorsOfValues(values, colors, batch.count);
+        batch.putAt(samples, output, blend, mixing, colors);
+    }
+
+    /// `count` quads' four floats a pixel as 0xAARRGGBB, each held to 0 to
+    /// 1 and rounded to the nearest of 255, as Vulkan converts a float to
+    /// an 8-bit UNORM channel ("Conversion from Floating-Point to
+    /// Normalized Fixed-Point"). (Since 1.226.)
+    fn colorsOfValues(values: [*]const [4][4]u32, colors: [*][4]u32, count: u32) void {
+        for (values[0..count], colors[0..count]) |*quad, *into| {
+            for (quad, into) |words, *color| {
+                var made: u32 = 0;
+                for (words, [4]u5{ 16, 8, 0, 24 }) |word, shift| made |= byteOf(@bitCast(word)) << shift;
+                color.* = made;
+            }
+        }
+    }
+
+    /// A float as a byte of 0 to 255, held to 0 to 1 and a NaN as 0.
+    /// (Since 1.226.)
+    inline fn byteOf(value: f32) u32 {
+        const inside = if (value >= 0) @min(value, 1) else 0;
+        return @intFromFloat(@round(inside * 255));
+    }
+
+    /// Colour attachment `output`'s pixels into its plane the tile keeps
+    /// in its own bytes (`Tile.texels`), at each of its samples: what is
+    /// there read as floats, the function's colour - its floats, or its
+    /// 0xAARRGGBB as 0 to 1 - blended against it as the mixing says, and
+    /// the result written back in the format. That is llvmpipe's blend
+    /// into a surface of its own format: the destination fetched and
+    /// converted, the blend in floats, and the result converted back and
+    /// stored under the colour mask (`generate_unswizzled_blend`,
+    /// src/gallium/drivers/llvmpipe/lp_state_fs.c), the source and the
+    /// constant held to 0 to 1 first for a format of those, and an sRGB
+    /// one blended in linear terms. (Since 1.226.)
+    fn putTexels(batch: *Batch, comptime samples: u32, output: u32, blend: pipeline.Blend, mixing: *const pipeline.Mixing, colors: [*][4]u32, values: [*][4][4]u32, floats: bool) void {
+        const tile = batch.tile;
+        const format = tile.texels[output];
+        if (target_zig.wholeTexels(format)) return batch.putWholes(samples, output, blend, mixing, colors, values, floats);
+        const of_one = format.kind() != .sfloat;
+        inline for (0..samples) |sample| {
+            for (batch.quads[0..batch.count], 0..) |quad, k| {
+                const bits = batch.bitsOf(samples, sample, k);
+                if (bits == 0) continue;
+                inline for (0..4) |i| {
+                    if (bits >> i & 1 != 0) {
+                        const down: u32 = i >> 1;
+                        const across: u32 = i & 1;
+                        var row = shader.Texels{ .bytes = tile.texelRow(output, sample, @as(u32, quad.y) + down), .count = tile_size, .format = format, .writable = true };
+                        const x = @as(u32, quad.x) + across;
+                        const given = if (floats) floatsOfWords(values[k][i]) else partsOfColor(colors[k][i]);
+                        row.set(x, if (blend == .off) given else mixing.mixedFloats(given, row.at(x), of_one));
+                    }
+                }
+            }
+        }
+    }
+
+    /// The same for an attachment of whole numbers: the function's four
+    /// words taken as the numbers they are, signed where the format is,
+    /// as llvmpipe takes a pure integer format's outputs, which were
+    /// "ints or uints disguised as floats" (lp_state_fs.c:2738-2753), and
+    /// put into the format held to what each channel holds. A function
+    /// that writes 0xAARRGGBB gives its bytes as the numbers 0 to 255.
+    /// Never blended (CreateGraphicsPipelines refuses that, as lavapipe
+    /// turns it off), and the colour mask kept: a channel it leaves out
+    /// keeps the number it had. (Since 1.227.)
+    fn putWholes(batch: *Batch, comptime samples: u32, output: u32, blend: pipeline.Blend, mixing: *const pipeline.Mixing, colors: [*][4]u32, values: [*][4][4]u32, words: bool) void {
+        const tile = batch.tile;
+        const format = tile.texels[output];
+        const signed = format.kind() == .sint;
+        inline for (0..samples) |sample| {
+            for (batch.quads[0..batch.count], 0..) |quad, k| {
+                const bits = batch.bitsOf(samples, sample, k);
+                if (bits == 0) continue;
+                inline for (0..4) |i| {
+                    if (bits >> i & 1 != 0) {
+                        const down: u32 = i >> 1;
+                        const across: u32 = i & 1;
+                        var row = shader.Texels{ .bytes = tile.texelRow(output, sample, @as(u32, quad.y) + down), .count = tile_size, .format = format, .writable = true };
+                        const x = @as(u32, quad.x) + across;
+                        var given: [4]i64 = undefined;
+                        if (words) {
+                            for (&given, values[k][i]) |*whole, word| whole.* = if (signed) @as(i32, @bitCast(word)) else word;
+                        } else {
+                            for (&given, [4]u5{ 16, 8, 0, 24 }) |*whole, shift| whole.* = colors[k][i] >> shift & 0xFF;
+                        }
+                        if (blend != .off) {
+                            const under = row.intAt(x);
+                            inline for (0..4, [4]u32{ 0x00FF_0000, 0x0000_FF00, 0x0000_00FF, 0xFF00_0000 }) |c, mask_bits| {
+                                if (mixing.mask & mask_bits == 0) given[c] = under[c];
+                            }
+                        }
+                        row.setInt(x, given);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Four words as the floats they hold. (Since 1.226.)
+    inline fn floatsOfWords(words: [4]u32) [4]f32 {
+        return .{ @bitCast(words[0]), @bitCast(words[1]), @bitCast(words[2]), @bitCast(words[3]) };
+    }
+
+    /// 0xAARRGGBB as red, green, blue and alpha, 0 to 1. (Since 1.226.)
+    inline fn partsOfColor(color: u32) [4]f32 {
+        var parts: [4]f32 = undefined;
+        for (&parts, [4]u5{ 16, 8, 0, 24 }) |*part, shift| part.* = @as(f32, @floatFromInt(color >> shift & 0xFF)) / 255;
+        return parts;
     }
 
     /// What a query counts of a batch: the pixels the fragment function was
@@ -1222,14 +1427,14 @@ const Batch = struct {
     /// `batch_depths`, as llvmpipe writes each sample's depth after its
     /// shader under that sample's mask ANDed with the shader's
     /// (lp_state_fs.c:1321-1334, :1426-1440; since 1.105).
-    inline fn putDepths(batch: *Batch, comptime samples: u32) void {
+    inline fn putDepths(batch: *Batch, comptime samples: u32, comptime Kept: type) void {
         @setRuntimeSafety(false);
         if (samples == 1) {
-            const depths: [*]u16 = &batch.tile.buffer.depth;
+            const depths = batch.tile.depthPlane(Kept, 0);
             for (batch.quads[0..batch.count], batch.depths[0..batch.count]) |quad, near| {
                 const at = depths + @as(u32, quad.y) * tile_size + quad.x;
                 inline for (0..4) |i| {
-                    if (quad.kept >> i & 1 != 0) at[offset(i)] = near[i];
+                    if (quad.kept >> i & 1 != 0) at[offset(i)] = @truncate(near[i]);
                 }
             }
             return;
@@ -1237,10 +1442,10 @@ const Batch = struct {
         const kept_depths = batch.tile.batch_depths.?;
         for (batch.quads[0..batch.count], 0..) |quad, k| {
             inline for (0..samples) |sample| {
-                const at = batch.tile.depthPlane(sample) + @as(u32, quad.y) * tile_size + quad.x;
+                const at = batch.tile.depthPlane(Kept, sample) + @as(u32, quad.y) * tile_size + quad.x;
                 const bits = batch.bitsOf(samples, sample, k);
                 inline for (0..4) |i| {
-                    if (bits >> i & 1 != 0) at[offset(i)] = kept_depths[k][4 * sample + i];
+                    if (bits >> i & 1 != 0) at[offset(i)] = @truncate(kept_depths[k][4 * sample + i]);
                 }
             }
         }
@@ -1259,6 +1464,9 @@ const Batch = struct {
     fn coverByAlpha(batch: *Batch, comptime samples: u32) void {
         @setRuntimeSafety(false);
         const colors = batch.fragments.colors;
+        // Or of the floats a function wrote, as the byte they come to
+        // (since 1.226).
+        const floats = batch.shading.written == .floats;
         for (batch.quads[0..batch.count], 0..) |*quad, k| {
             // A quad's column on the surface is even - the grid's left is
             // on a cache line (target.zig, `Grid.over`) - and its row is
@@ -1266,7 +1474,7 @@ const Batch = struct {
             const row = batch.fragments.y + quad.y;
             var keep: u16 = 0;
             inline for (0..4) |i| {
-                const alpha = colors[k][i] >> 24;
+                const alpha = if (floats) byteOf(@bitCast(batch.fragments.values[k][i][3])) else colors[k][i] >> 24;
                 const parity = (i & 1) | ((row + (i >> 1)) & 1) << 1;
                 inline for (0..samples) |sample| {
                     if (8 * samples * alpha > 255 * dither[parity] + 2040 * sample) keep |= @as(u16, 1) << (4 * sample + i);
@@ -1284,13 +1492,13 @@ const Batch = struct {
     /// quad's mask cut to those that pass. As llvmpipe's late test, under
     /// the mask the shader left and at the depths taken in the walk
     /// (lp_state_fs.c:1331-1334, :1366-1424). (Since 1.107.)
-    fn testLate(batch: *Batch, comptime samples: u32) void {
+    fn testLate(batch: *Batch, comptime samples: u32, comptime Kept: type) void {
         @setRuntimeSafety(false);
         const tile = batch.tile;
         if (samples == 1) {
             for (batch.quads[0..batch.count], batch.depths[0..batch.count]) |*quad, near| {
                 const depths = [4]u64{ near[0], near[1], near[2], near[3] };
-                quad.kept = stenciled(batch.shading, batch.face, quad.x, @truncate(quad.kept), depths, tile.stencilRow(quad.y), tile.depthRow(quad.y), true);
+                quad.kept = stenciled(batch.shading, batch.face, quad.x, @truncate(quad.kept), depths, tile.stencilRow(quad.y), tile.depthRow(Kept, quad.y), true);
             }
             return;
         }
@@ -1302,7 +1510,7 @@ const Batch = struct {
                 if (bits != 0) {
                     const near = kept_depths[k][4 * sample ..][0..4];
                     const depths = [4]u64{ near[0], near[1], near[2], near[3] };
-                    passed |= @as(u16, stenciled(batch.shading, batch.face, quad.x, @truncate(bits), depths, tile.stencilRowOf(sample, quad.y), tile.depthRowOf(sample, quad.y), true)) << (4 * sample);
+                    passed |= @as(u16, stenciled(batch.shading, batch.face, quad.x, @truncate(bits), depths, tile.stencilRowOf(sample, quad.y), tile.depthRowOf(Kept, sample, quad.y), true)) << (4 * sample);
                 }
             }
             batch.masks[k] = passed;

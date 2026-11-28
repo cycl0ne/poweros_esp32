@@ -37,10 +37,9 @@ const _instance = @import("../instance/_instance.zig");
 /// and one fragment function of the same varyings or none (since 1.115),
 /// with or without a tessellation control and evaluation function, whose
 /// varyings then the fragment function's have to be, or for a fragment
-/// function that writes other
-/// than the subpass's colour attachments (`shader.fragmentOutputs`, since
-/// 1.51), or for a fragment entry whose `varyings` word names no fixed
-/// form (since 1.75); `error_feature_not_present`
+/// entry whose `varyings` word names no fixed form (since 1.75; and from
+/// 1.51 to 1.229 for a fragment function that wrote other than the
+/// subpass's part's colour attachments); `error_feature_not_present`
 /// for state Vulkan allows and facet.library does not draw (see BEHAVIOR),
 /// among it a stage whose `specialization_info` names a constant (since
 /// 1.80); `error_validation_failed` for state Vulkan does not allow on the
@@ -219,11 +218,12 @@ const _instance = @import("../instance/_instance.zig");
 /// less than any other mixing.
 ///
 /// The fragment entry says how many colours its function writes in the
-/// one call: one, or the subpass's colour attachments where the subpass
-/// draws them together (SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER,
-/// `shader.fragmentOutputs`, since 1.51). It has to come to exactly what
-/// the subpass has either way, and a function of several wants a device
-/// whose `several_outputs` is true.
+/// one call, at locations 0 upwards (`shader.fragmentOutputs`, since
+/// 1.51): any count since 1.230, an attachment past them left as it is
+/// and an output past the attachments going nowhere; until then exactly
+/// what the subpass's part had, one where it was played over for each
+/// attachment. A function of several wants a device whose
+/// `several_outputs` is true.
 ///
 /// BUGS:
 /// None known.
@@ -354,14 +354,19 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
     // of (VUID-VkGraphicsPipelineCreateInfo-renderPass-07609, since 1.118).
     const colors = subpass.color_count;
     // The fragment entry says how many colours it writes in the one call
-    // (`shader.fragmentOutputs`): the subpass's own count where they go
-    // together, and one where they do not - and one in a subpass of
-    // none, where what it writes goes nowhere, llvmpipe's blending being
-    // a loop over no colour buffer (lp_state_fs.c:3618-3622, since 1.113).
-    // The function of no fragment stage has the room of as many as the
-    // subpass has, and writes none of them.
-    const outputs = if (fragment == null) @max(pass.parts[subpass.first_part].color_count, 1) else fragment_entry.outputCount();
-    if (outputs != @max(pass.parts[subpass.first_part].color_count, 1)) return .error_invalid_shader_nv;
+    // (`shader.fragmentOutputs`), at locations 0 upwards, whatever the
+    // subpass has: Vulkan has an output past its colour attachments
+    // discarded and an attachment past its outputs left undefined, which
+    // here is left as it is, as llvmpipe blends only a colour buffer the
+    // shader has an output for (lp_state_fs.c:3618-3623). Until 1.230 the
+    // count had to be the part's, one where a subpass was played over for
+    // each attachment and its count where they went together
+    // (docs/facet-vulkan10.md item 80). In a subpass of none what it
+    // writes goes nowhere (since 1.113). The function of no fragment stage
+    // writes none: one, which its mixing masks out below (the part's
+    // count until 1.230). Several want a device whose functions write
+    // several: the V3D's since 1.233 (item 55).
+    const outputs = if (fragment == null) 1 else fragment_entry.outputCount();
     if (outputs > 1 and !device.physical.can.several_outputs) return .error_feature_not_present;
 
     made.* = .{
@@ -402,7 +407,12 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
         .line_width = 1,
         .mixings = @splat(.{}),
         .outputs = outputs,
+        // What it writes, which the function of no fragment stage is
+        // 0xAARRGGBB of, writing none (since 1.226).
+        .written = if (fragment == null) .colors else fragment_entry.written(),
         .colorless = pass.parts[subpass.first_part].color_count == 0,
+        .color_formats = colorFormats(pass, subpass),
+        .tile_inputs = subpass.tile_inputs,
         .replayed = subpass.part_count > 1,
         .fragment_stage = fragment != null,
         .viewport = null,
@@ -622,6 +632,14 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
             const mixing = &made.mixings[index];
             mixing.mask = attachment.color_write_mask & facet.COLOR_COMPONENT_ALL;
             if (attachment.blend_enable) {
+                // Not into a format that is not blended, the whole numbers
+                // (VUID-VkGraphicsPipelineCreateInfo-blendEnable-04717,
+                // since 1.227): lavapipe turns such a blend off
+                // (lp_state_fs.c:4688-4690), which Vulkan has the program
+                // not ask for.
+                if (colorFormatOf(pass, subpass, @intCast(index))) |format| {
+                    if (device.physical.ops.format_properties(device.physical, format).optimal_tiling_features & facet.FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND == 0) return .error_validation_failed;
+                }
                 const factors = [4]facet.BlendFactor{ attachment.src_color_blend_factor, attachment.dst_color_blend_factor, attachment.src_alpha_blend_factor, attachment.dst_alpha_blend_factor };
                 // A second source's factors want `dual_src_blend`, which no
                 // device has (VUID-VkPipelineColorBlendAttachmentState-srcColorBlendFactor-00608
@@ -690,4 +708,28 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
         if (!dynamic_scissor) made.scissor = (view.scissors orelse return .error_validation_failed)[0];
     }
     return .success;
+}
+
+/// The format of colour attachment `index` of the subpass, as Vulkan
+/// counts them, or null where it is ATTACHMENT_UNUSED: the plane at that
+/// location of the part that draws it, one a colour or all of them
+/// together. (Since 1.227; by the planes' locations since 1.230.)
+fn colorFormatOf(pass: *const _render.RenderPass, subpass: _render.Subpass, index: u32) ?facet.Format {
+    for (pass.parts[subpass.first_part..][0..subpass.part_count]) |part| {
+        for (part.locations[0..part.color_count], part.color_formats[0..part.color_count]) |location, format| {
+            if (location == index) return format;
+        }
+    }
+    return null;
+}
+
+/// The format of each colour attachment of `subpass` by its location,
+/// undefined for an unused one and past the last
+/// (`Pipeline.color_formats`).
+fn colorFormats(pass: *const _render.RenderPass, subpass: _render.Subpass) [_render.most_colors]facet.Format {
+    var formats: [_render.most_colors]facet.Format = @splat(.undefined);
+    for (formats[0..@min(subpass.color_count, _render.most_colors)], 0..) |*format, index| {
+        if (colorFormatOf(pass, subpass, @intCast(index))) |found| format.* = found;
+    }
+    return formats;
 }

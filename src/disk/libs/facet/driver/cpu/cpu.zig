@@ -164,6 +164,18 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // A pixel's depth and its stencil are written where they lie in
         // its four bytes, so a format of both keeps either (since 1.47).
         .stored_both = true,
+        // A depth of 24 bits, kept in the tiles at 32 bits a pixel and
+        // tested at all 24 (since 1.223).
+        .depth24 = true,
+        // And the colour attachments of 0 to 1 and of floats past the
+        // three of 8 bits a channel, each kept in the tiles in its own
+        // bytes (since 1.226).
+        .texel_targets = true,
+        // The twenty-one of whole numbers (since 1.227), floats of 32
+        // bits blended, and what was drawn read back (since 1.228).
+        .whole_targets = true,
+        .float32_blend = true,
+        .target_reads = true,
         // Both go by the pixel at a time way the stencil test goes by:
         // the clamp holds a pixel's depth inside the viewport's range,
         // and the bounds test reads the depth already there.
@@ -178,8 +190,10 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // without them is its compute functions, run on the cores.
         .texel_buffers = true,
         // An input attachment is read by a fragment function of the
-        // program's, out of the image's rows (`shader.Attachment`).
+        // program's, out of the image's rows (`shader.Attachment`), and
+        // one the subpass draws into out of the tile.
         .input_attachments = true,
+        .tile_inputs = true,
         // A dynamic buffer descriptor is a pointer and a range, shifted
         // by what the bind gave: the function that reads it is the
         // program's, so every device takes one.

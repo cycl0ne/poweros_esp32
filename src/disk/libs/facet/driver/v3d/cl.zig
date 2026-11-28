@@ -52,16 +52,92 @@ pub const TILE_RENDERING_MODE_CFG: u8 = 121;
 
 pub const OUTPUT_RGBA8: u64 = 27;
 pub const OUTPUT_BGR565: u64 = 7;
+/// The other colours a render target is stored and loaded as, by
+/// v3d_packet.xml's "Output Image Format": the formats v3dv draws the
+/// fourteen of docs/facet-vulkan10.md item 36 as (v3dvx_formats.c:124-196;
+/// since 1.228).
+pub const OUTPUT_SRGB8_ALPHA8: u64 = 0;
+pub const OUTPUT_RGB10_A2: u64 = 3;
+pub const OUTPUT_RGBA32F: u64 = 9;
+pub const OUTPUT_RG32F: u64 = 10;
+pub const OUTPUT_R32F: u64 = 11;
+pub const OUTPUT_RGBA16F: u64 = 18;
+pub const OUTPUT_RG16F: u64 = 19;
+pub const OUTPUT_R16F: u64 = 20;
+pub const OUTPUT_RG8: u64 = 29;
+pub const OUTPUT_R8: u64 = 30;
+pub const OUTPUT_RGBA5551: u64 = 45;
+/// The output image formats of whole numbers (since 1.229).
+pub const OUTPUT_RGB10_A2UI: u64 = 2;
+pub const OUTPUT_RGBA32I: u64 = 12;
+pub const OUTPUT_RG32I: u64 = 13;
+pub const OUTPUT_R32I: u64 = 14;
+pub const OUTPUT_RGBA32UI: u64 = 15;
+pub const OUTPUT_RG32UI: u64 = 16;
+pub const OUTPUT_R32UI: u64 = 17;
+pub const OUTPUT_RGBA16I: u64 = 21;
+pub const OUTPUT_RG16I: u64 = 22;
+pub const OUTPUT_R16I: u64 = 23;
+pub const OUTPUT_RGBA16UI: u64 = 24;
+pub const OUTPUT_RG16UI: u64 = 25;
+pub const OUTPUT_R16UI: u64 = 26;
+pub const OUTPUT_RGBA8I: u64 = 31;
+pub const OUTPUT_RG8I: u64 = 32;
+pub const OUTPUT_R8I: u64 = 33;
+pub const OUTPUT_RGBA8UI: u64 = 34;
+pub const OUTPUT_RG8UI: u64 = 35;
+pub const OUTPUT_R8UI: u64 = 36;
 /// How a depth or a stencil plane lies in memory, for a store or a load of
 /// the tiles' own (since 1.47).
 pub const OUTPUT_D16: u64 = 42;
 pub const OUTPUT_S8: u64 = 44;
+/// A depth of 24 bits and a stencil beside it, one word a pixel, the
+/// stencil in the low byte: how v3dv stores and loads X8_D24_UNORM_PACK32
+/// and D24_UNORM_S8_UINT, a store of either plane alone or of both
+/// (v3dvx_formats.c:206, 209; v3d_packet.xml's "d24s8"; since 1.224).
+pub const OUTPUT_D24S8: u64 = 43;
 pub const STORE_NONE: u64 = 8;
 pub const STORE_RENDER_TARGET_0: u64 = 0;
+
+/// The render targets a frame has here: facet's colour attachments a
+/// subpass (`_render.most_colors`), V3D_MAX_RENDER_TARGETS being 8 at 7.1
+/// (v3d_limits.h:44), each of a buffer of its own (since 1.232).
+pub const most_render_targets: u32 = 4;
+
+/// Render target `number`'s buffer of the tiles, loaded or stored:
+/// "Render target 0" to 7 are 0 to 7 (v3d_packet.xml), as v3dv names each
+/// RENDER_TARGET_0 + i (v3dvx_cmd_buffer.c:278-279, 669-686).
+pub fn renderTargetBuffer(number: u32) u64 {
+    std.debug.assert(number < most_render_targets);
+    return STORE_RENDER_TARGET_0 + number;
+}
 /// The tiles' depth and their stencil, which are stored and loaded as the
 /// render target is.
 pub const STORE_Z: u64 = 9;
 pub const STORE_STENCIL: u64 = 10;
+/// Both at once, of a format that holds both: v3dv's ZSTENCIL, which it
+/// loads and stores where both planes are (`v3dv_zs_buffer`,
+/// v3dvx_cmd_buffer.c:213-223; since 1.224).
+pub const STORE_ZSTENCIL: u64 = 11;
+
+/// The tiles' buffer of these planes: Z, STENCIL, both, or NONE, as
+/// v3dv picks one for a load and one for a store (`v3dv_zs_buffer`,
+/// v3dvx_cmd_buffer.c:213-223; since 1.224).
+pub fn planes(depth: bool, stencil: bool) u64 {
+    if (depth and stencil) return STORE_ZSTENCIL;
+    if (depth) return STORE_Z;
+    if (stencil) return STORE_STENCIL;
+    return STORE_NONE;
+}
+
+/// Whether a buffer of `planes` holds the depth, and the stencil.
+pub fn holdsDepth(buffer: u64) bool {
+    return buffer == STORE_Z or buffer == STORE_ZSTENCIL;
+}
+
+pub fn holdsStencil(buffer: u64) bool {
+    return buffer == STORE_STENCIL or buffer == STORE_ZSTENCIL;
+}
 pub const LIST_TRIANGLES: u8 = 2;
 /// The first block of each tile's list and the next ones, as 128 and 64
 /// bytes: what the binner is told and the renderer too.
@@ -88,7 +164,11 @@ pub fn log2Tile(pixels: u32) u32 {
 }
 
 /// The common part: first of the rendering mode's packets. A depth buffer
-/// of 16 bits, in the tiles alone, or none. The coarse early test stays off:
+/// of 16 bits, or since 1.224 of 24 where `depth24` says, or none: v3dv
+/// sets the tiles' depth from its attachment's format
+/// (`get_internal_depth_type`, v3dvx_formats.c:555-570, at
+/// v3dvx_cmd_buffer.c:997; v3d_packet.xml's "Internal Depth Type",
+/// depth_24 1 and depth_16 2). The coarse early test stays off:
 /// each pixel is still tested before its program runs. That is also what
 /// GFXH-1918 asks of a frame that loads a depth of 16 bits at four
 /// samples, whose early test may read wrong depths (v3dvx_cmd_buffer.c:
@@ -96,37 +176,198 @@ pub fn log2Tile(pixels: u32) u32 {
 /// "Multisample Mode (4x)" bit at 42, as v3dv sets it from its frame's
 /// tiling (v3dvx_cmd_buffer.c:977): the tiles then hold four samples a
 /// pixel, which is also why they are smaller (`v3d_choose_tile_size`,
-/// v3d_util.c:170-171).
-pub fn renderingCommon(list: *List, width: u32, height: u32, tile: Tile, depth: bool, four: bool) void {
+/// v3d_util.c:170-171). `targets` is "Number of Render Targets", at 4 and
+/// one less: v3dv's MAX2(color_count, 1), a subpass's colour attachments
+/// the unused among them, and one for none (v3dvx_cmd_buffer.c:975; since
+/// 1.232, 1 before).
+pub fn renderingCommon(list: *List, width: u32, height: u32, tile: Tile, depth: bool, depth24: bool, four: bool, targets: u32) void {
+    std.debug.assert(targets >= 1 and targets <= most_render_targets);
     const log2_width = @as(u64, log2Tile(tile.width));
     const log2_height = @as(u64, log2Tile(tile.height));
     const multisample: u64 = @as(u64, @intFromBool(four)) << 42;
     const no_depth_buffer: u64 = @as(u64, @intFromBool(!depth)) << 44;
-    const depth_16: u64 = 2 << 47;
+    const depth_type: u64 = @as(u64, if (depth24) 1 else 2) << 47;
     list.byte(TILE_RENDERING_MODE_CFG);
-    list.double(@as(u64, width) << 8 | @as(u64, height) << 24 | multisample | no_depth_buffer | 1 << 46 | depth_16 |
+    list.double(@as(u64, targets - 1) << 4 | @as(u64, width) << 8 | @as(u64, height) << 24 | multisample | no_depth_buffer | 1 << 46 | depth_type |
         log2_width << 52 | log2_height << 55);
 }
 
-/// Render target 0, at 32 bits a pixel and 8 bits of normalized channel,
-/// and the colour it clears to. Its stride is the tile's width alone, in
-/// 128 bits for two rows, at four samples as at one
-/// (`v3d_compute_rt_row_row_stride_128_bits`, v3d_util.c:316-325, as
-/// v3dvx_cmd_buffer.c:1155-1157 calls it).
-pub fn renderTarget0(list: *List, tile_width: u32, clear: u32) void {
-    const stride: u64 = tile_width / 2;
-    const type_8: u64 = 8;
-    list.byte(TILE_RENDERING_MODE_CFG);
-    list.double(2 | (stride - 1) << 18 | type_8 << 27 | @as(u64, clear) << 32);
+/// How the tile buffer holds a render target's channels: v3d_packet.xml's
+/// "Internal Type" (since 1.228).
+pub const InternalType = enum(u4) {
+    int8 = 0,
+    uint8 = 1,
+    /// 8 bits of a channel normalized to 0 to 1, which every colour of
+    /// 1.227 was drawn at.
+    unorm8 = 2,
+    int16 = 4,
+    uint16 = 5,
+    float16 = 6,
+    int32 = 8,
+    uint32 = 9,
+    float32 = 10,
+};
+
+/// The bits a pixel of a render target takes in the tile buffer:
+/// "Internal BPP", 32 << its value.
+pub const Bpp = enum(u2) {
+    @"32" = 0,
+    @"64" = 1,
+    @"128" = 2,
+
+    /// Its 32-bit words (`v3d_internal_bpp_words`, v3d_util.c:257-269).
+    pub fn words(bpp: Bpp) u32 {
+        return @as(u32, 1) << @intFromEnum(bpp);
+    }
+};
+
+pub const Internal = struct { kind: InternalType, bpp: Bpp };
+
+/// What the tile buffer keeps a render target stored and loaded as
+/// `output` in: `get_internal_type_bpp_for_output_format`
+/// (v3dvx_formats.c:338-465), its default for a format it does not name -
+/// RGBA5551 among them - included. sRGB is kept in half-floats and turned
+/// to sRGB as a tile is stored, as Mesa notes there; a half-float of one
+/// channel or two at 64 bits all the same, so that alpha is not dropped
+/// before an alpha test.
+pub fn internalOf(output: u64) Internal {
+    return switch (output) {
+        27, 28, 29, 30, 6, 7, 4 => .{ .kind = .unorm8, .bpp = .@"32" },
+        31, 32, 33 => .{ .kind = .int8, .bpp = .@"32" },
+        34, 35, 36 => .{ .kind = .uint8, .bpp = .@"32" },
+        0, 1, 3, 8, 18, 19, 20 => .{ .kind = .float16, .bpp = .@"64" },
+        21 => .{ .kind = .int16, .bpp = .@"64" },
+        22, 23 => .{ .kind = .int16, .bpp = .@"32" },
+        2, 24 => .{ .kind = .uint16, .bpp = .@"64" },
+        25, 26 => .{ .kind = .uint16, .bpp = .@"32" },
+        12 => .{ .kind = .int32, .bpp = .@"128" },
+        13 => .{ .kind = .int32, .bpp = .@"64" },
+        14 => .{ .kind = .int32, .bpp = .@"32" },
+        15 => .{ .kind = .uint32, .bpp = .@"128" },
+        16 => .{ .kind = .uint32, .bpp = .@"64" },
+        17 => .{ .kind = .uint32, .bpp = .@"32" },
+        9 => .{ .kind = .float32, .bpp = .@"128" },
+        10 => .{ .kind = .float32, .bpp = .@"64" },
+        11 => .{ .kind = .float32, .bpp = .@"32" },
+        else => .{ .kind = .unorm8, .bpp = .@"32" },
+    };
 }
 
-/// The render target of a frame of no colour: one is still configured,
-/// flagged unused by a stride of 1, which packs to 0 (v3dvx_cmd_buffer.c:
-/// 1189-1197; v3d_packet.xml's Stride is minus_one), its other fields 0
-/// (since 1.150).
-pub fn unusedRenderTarget(list: *List) void {
+/// The internal type and the clamp of a render target, the one field
+/// 7.1 has for both ("Render Target Type Clamp"): 7.1's
+/// `clamp_for_format_and_type` (v3dvx_cmd_buffer.c:856-884). Whole
+/// numbers are held to the format's range, an sRGB colour's half-floats to
+/// 0 to 1, and nothing else is held. `snorm` is for a 16-bit integer
+/// target standing for a signed normalized format, which facet draws none
+/// of.
+pub fn typeClamp(kind: InternalType, srgb: bool, snorm: bool) u5 {
+    return switch (kind) {
+        .int8 => 16,
+        .uint8 => 20,
+        .unorm8 => 8,
+        .int16 => if (snorm) 1 else 17,
+        .uint16 => 21,
+        .float16 => if (srgb) 24 else 9,
+        .int32 => 18,
+        .uint32 => 22,
+        .float32 => 10,
+    };
+}
+
+/// The tile buffer blends a render target of 8 bits a channel normalized,
+/// or of half-floats, and no other: `format_supports_blending`
+/// (v3dvx_formats.c:486-512), which v3dv gives COLOR_ATTACHMENT_BLEND by.
+/// It averages the samples of the same two, and no other, as a tile is
+/// stored (`format_supports_tlb_resolve`, v3dvx_formats.c:468-483).
+pub fn tilesBlend(kind: InternalType) bool {
+    return kind == .unorm8 or kind == .float16;
+}
+
+/// A render target's clear colour as the tile buffer holds it, from the
+/// four words of a ClearColorValue: `get_hw_clear_color`
+/// (v3dvx_device.c:289-334). Normalized bytes are packed as R8G8B8A8
+/// from the floats, red lowest, as `util_pack_color` packs them; half-
+/// floats as R16G16B16A16; whole numbers of 8 or 16 bits cut to the
+/// channel's width; 32-bit words as they are. What the target's bits do
+/// not hold is 0.
+pub fn clearColor(kind: InternalType, words: [4]u32) [4]u32 {
+    var hw: [4]u32 = @splat(0);
+    switch (kind) {
+        .unorm8 => {
+            for (words, 0..) |word, k| hw[0] |= @as(u32, unorm8(@bitCast(word))) << @intCast(8 * k);
+        },
+        .int8, .uint8 => {
+            for (words, 0..) |word, k| hw[0] |= (word & 0xFF) << @intCast(8 * k);
+        },
+        .float16 => {
+            for (words, 0..) |word, k| hw[k / 2] |= @as(u32, @as(u16, @bitCast(@as(f16, @floatCast(@as(f32, @bitCast(word))))))) << @intCast(16 * (k % 2));
+        },
+        .int16, .uint16 => {
+            hw[0] = (words[0] & 0xFFFF) | words[1] << 16;
+            hw[1] = (words[2] & 0xFFFF) | words[3] << 16;
+        },
+        .int32, .uint32, .float32 => hw = words,
+    }
+    return hw;
+}
+
+/// A float held to 0 to 1 and rounded to a byte: `float_to_ubyte`, which
+/// `util_pack_color` packs R8G8B8A8_UNORM with. Not-a-number is 0.
+fn unorm8(value: f32) u8 {
+    if (!(value > 0)) return 0;
+    if (value >= 1) return 255;
+    return @intFromFloat(@round(value * 255));
+}
+
+/// What a render target is: its bits a pixel, its type and clamp, and
+/// the colour it clears to, `clearColor`'s. The defaults are what every
+/// colour was drawn at until 1.228: 32 bits of normalized bytes.
+pub const RenderTarget = struct {
+    bpp: Bpp = .@"32",
+    type_clamp: u5 = 8,
+    clear: [4]u32 = @splat(0),
+};
+
+/// Render target `number`, at `base` in the tile buffer, by 7.1's three
+/// packets of it (v3dvx_cmd_buffer.c:1151-1185): the first with its
+/// stride, its bits a pixel, its type and clamp, its base address and the
+/// clear colour's low 32 bits; the second, of a target of 64 bits or more,
+/// the next 40; the third, of one of 128, the last 56; each naming it.
+/// Its stride is in 128 bits for two rows of the tile, at four samples as
+/// at one (`v3d_compute_rt_row_row_stride_128_bits`, v3d_util.c:316-325,
+/// as v3dvx_cmd_buffer.c:1155-1157 calls it). `base` is in 512 bits; what
+/// is returned is the next target's, past the tile's rows of this one, as
+/// v3dv adds `tile_height * stride / 8` after each (:1159-1166). The
+/// first target is at 0. Since 1.232 the target's number and base: render
+/// target 0 alone, at 0, before.
+pub fn renderTarget(list: *List, tile: Tile, number: u32, base: u32, target: RenderTarget) u32 {
+    std.debug.assert(number < most_render_targets);
+    const stride: u32 = tile.width * target.bpp.words() / 2;
+    const clear = target.clear;
+    const named: u64 = @as(u64, number) << 3;
     list.byte(TILE_RENDERING_MODE_CFG);
-    list.double(2);
+    list.double(2 | named | @as(u64, base) << 7 | @as(u64, stride - 1) << 18 | @as(u64, @intFromEnum(target.bpp)) << 25 | @as(u64, target.type_clamp) << 27 | @as(u64, clear[0]) << 32);
+    if (target.bpp != .@"32") {
+        list.byte(TILE_RENDERING_MODE_CFG);
+        list.double(3 | named | (@as(u64, clear[1]) | @as(u64, clear[2] & 0xFF) << 32) << 24);
+    }
+    if (target.bpp == .@"128") {
+        list.byte(TILE_RENDERING_MODE_CFG);
+        list.double(4 | named | (@as(u64, clear[2] >> 8) | @as(u64, clear[3]) << 24) << 8);
+    }
+    return base + tile.height * stride / 8;
+}
+
+/// A render target that is configured and unused: of a frame of no colour,
+/// or of an unused attachment a subpass has before others (since 1.232).
+/// It is flagged unused by a stride of 1, which packs to 0
+/// (v3dvx_cmd_buffer.c:1080-1086, 1189-1197; v3d_packet.xml's Stride is
+/// minus_one), named, its other fields 0, and takes no room in the tile
+/// buffer: v3dv moves no base address past it (since 1.150).
+pub fn unusedRenderTarget(list: *List, number: u32) void {
+    std.debug.assert(number < most_render_targets);
+    list.byte(TILE_RENDERING_MODE_CFG);
+    list.double(2 | @as(u64, number) << 3);
 }
 
 /// The last of the rendering mode's packets: depth and stencil's clear.
@@ -346,9 +587,14 @@ pub fn depthBounds(list: *List, least: f32, most: f32) void {
     list.word(@bitCast(most));
 }
 
-/// How render target 0 is written: factors and modes as facet.library
-/// numbers them, which is as the hardware does.
+/// How a render target is written: factors and modes as facet.library
+/// numbers them, which is as the hardware does (render target 0's alone
+/// until 1.233).
 pub const Mixing = struct {
+    /// It is blended (`blend`): its bit of BLEND_ENABLES, as v3dv sets
+    /// one for each attachment of the pipeline that blends
+    /// (v3dvx_pipeline.c:121-131; since 1.233).
+    enabled: bool = false,
     src_color: u32 = 1,
     dst_color: u32 = 0,
     color_mode: u32 = 0,
@@ -361,28 +607,48 @@ pub const Mixing = struct {
     channels: u32 = 0xF,
 };
 
-/// Render target 0 blended as `mixing` says.
-pub fn blend(list: *List, mixing: *const Mixing) void {
+/// Each render target whose mixing is `enabled` blended as it says, as
+/// v3dv emits a pipeline's blend (`cmd_buffer_emit_blend`,
+/// v3dvx_cmd_buffer.c:1621-1668): BLEND_ENABLES with a bit for each, then
+/// a BLEND_CFG of each naming it in its "Render Target Mask"
+/// (v3dvx_pipeline.c:131-134), then the one constant colour the hardware
+/// has, Vulkan's one blendConstants: the first blended target's (render
+/// target 0 alone until 1.233).
+pub fn blend(list: *List, mixings: []const Mixing) void {
+    std.debug.assert(mixings.len <= most_render_targets);
+    var enables: u8 = 0;
+    for (mixings, 0..) |mixing, rt| {
+        if (mixing.enabled) enables |= @as(u8, 1) << @intCast(rt);
+    }
     list.byte(83);
-    list.byte(1);
-    list.byte(84);
-    const color = mixing.dst_color << 4 | mixing.src_color;
-    const alpha = mixing.dst_alpha << 4 | mixing.src_alpha;
-    list.word(1 << 24 | color << 16 | mixing.color_mode << 12 | alpha << 4 | mixing.alpha_mode);
+    list.byte(enables);
+    var constants: ?[4]f32 = null;
+    for (mixings, 0..) |mixing, rt| if (mixing.enabled) {
+        list.byte(84);
+        const color = mixing.dst_color << 4 | mixing.src_color;
+        const alpha = mixing.dst_alpha << 4 | mixing.src_alpha;
+        list.word(@as(u32, 1) << @intCast(24 + rt) | color << 16 | mixing.color_mode << 12 | alpha << 4 | mixing.alpha_mode);
+        if (constants == null) constants = mixing.constants;
+    };
+    const color = constants orelse @as([4]f32, @splat(0));
     list.byte(86);
-    list.word(half(mixing.constants[0]) | half(mixing.constants[1]) << 16);
-    list.word(half(mixing.constants[2]) | half(mixing.constants[3]) << 16);
+    list.word(half(color[0]) | half(color[1]) << 16);
+    list.word(half(color[2]) | half(color[3]) << 16);
 }
 
 fn half(value: f32) u32 {
     return @as(u16, @bitCast(@as(f16, @floatCast(value))));
 }
 
-/// The channels of render target 0 written, red in bit 0, and all of the
-/// others: a bit here says not to.
-pub fn colorWriteMasks(list: *List, channels: u32) void {
+/// The channels not written: four bits a render target, render target 0
+/// lowest, red first, each set bit one left alone - v3dv's
+/// `color_write_mask`, the attachments' write masks inverted
+/// (v3dvx_pipeline.c:105-106; `cmd_buffer_emit_color_write_mask`,
+/// v3dvx_cmd_buffer.c:1672-1694). Since 1.233 the word; render target 0's
+/// channels written before.
+pub fn colorWriteMasks(list: *List, unwritten: u32) void {
     list.byte(87);
-    list.word(~channels & 0xF);
+    list.word(unwritten);
 }
 
 /// A face's stencil test, the operations and compare as the hardware numbers
@@ -694,7 +960,7 @@ test "the packets have Mesa's lengths and its fields" {
     var memory: [64]u8 = undefined;
     var list = List{ .at = &memory, .address = 0x1000 };
 
-    renderingCommon(&list, 1280, 720, .{ .width = 64, .height = 64 }, false, false);
+    renderingCommon(&list, 1280, 720, .{ .width = 64, .height = 64 }, false, false, false, 1);
     try std.testing.expectEqual(@as(u32, 9), list.used);
     // Image size at 8 and 24, early-Z off at 46, log2 of the tile at 52, 55.
     try std.testing.expectEqual(@as(u8, 121), memory[0]);
@@ -704,6 +970,19 @@ test "the packets have Mesa's lengths and its fields" {
     try std.testing.expectEqual(@as(u64, 1), common >> 46 & 1);
     try std.testing.expectEqual(@as(u64, 3), common >> 52 & 7);
     try std.testing.expectEqual(@as(u64, 3), common >> 55 & 7);
+    // The tiles' depth of 16 bits at 47, and of 24 where asked (since 1.224).
+    try std.testing.expectEqual(@as(u64, 2), common >> 47 & 0xF);
+    list.used = 0;
+    renderingCommon(&list, 1280, 720, .{ .width = 64, .height = 64 }, true, true, false, 1);
+    const deep = std.mem.readInt(u64, memory[1..9], .little);
+    try std.testing.expectEqual(@as(u64, 1), deep >> 47 & 0xF);
+    try std.testing.expectEqual(@as(u64, 0), deep >> 44 & 1);
+    try std.testing.expectEqual(common & ~(@as(u64, 0xF) << 47 | @as(u64, 1) << 44), deep & ~(@as(u64, 0xF) << 47));
+    // Which buffer holds which plane.
+    try std.testing.expectEqual(STORE_ZSTENCIL, planes(true, true));
+    try std.testing.expectEqual(STORE_Z, planes(true, false));
+    try std.testing.expectEqual(STORE_STENCIL, planes(false, true));
+    try std.testing.expectEqual(STORE_NONE, planes(false, false));
 
     list.used = 0;
     store(&list, STORE_RENDER_TARGET_0, OUTPUT_RGBA8, true, 0x12345000, 5120, MEMORY_RASTER, .sample_0);
@@ -738,7 +1017,7 @@ test "the 4x fields lie where v3d_packet.xml has them, and one sample's packets 
 
     // COMMON: the multisample bit at 42, and the tile's log2 width at 52
     // and height at 55 apart, 32 x 16 being one of v3d_choose_tile_size's.
-    renderingCommon(&list, 800, 600, .{ .width = 32, .height = 16 }, true, true);
+    renderingCommon(&list, 800, 600, .{ .width = 32, .height = 16 }, true, false, true, 1);
     const four = std.mem.readInt(u64, memory[1..9], .little);
     try std.testing.expectEqual(@as(u64, 1), four >> 42 & 1);
     try std.testing.expectEqual(@as(u64, 0), four >> 44 & 1);
@@ -747,7 +1026,7 @@ test "the 4x fields lie where v3d_packet.xml has them, and one sample's packets 
     try std.testing.expectEqual(@as(u64, 800), four >> 8 & 0xFFFF);
     try std.testing.expectEqual(@as(u64, 600), four >> 24 & 0xFFFF);
     list.used = 0;
-    renderingCommon(&list, 800, 600, .{ .width = 32, .height = 16 }, true, false);
+    renderingCommon(&list, 800, 600, .{ .width = 32, .height = 16 }, true, false, false, 1);
     const one = std.mem.readInt(u64, memory[1..9], .little);
     try std.testing.expectEqual(four & ~(@as(u64, 1) << 42), one);
 
@@ -763,11 +1042,14 @@ test "the 4x fields lie where v3d_packet.xml has them, and one sample's packets 
     try std.testing.expectEqual(@as(u64, 799), bin >> 32 & 0xFFFF);
     try std.testing.expectEqual(@as(u64, 599), bin >> 48 & 0xFFFF);
 
-    // The render target's stride, from the width alone.
+    // The render target's stride, from the width alone, and what 1.227
+    // wrote for every colour: one packet, normalized bytes at 32 bits.
     list.used = 0;
-    renderTarget0(&list, 32, 0);
+    try std.testing.expectEqual(@as(u32, 32 * 16 / 8), renderTarget(&list, .{ .width = 32, .height = 32 }, 0, 0, .{ .clear = .{ 0x8040_20FF, 0, 0, 0 } }));
+    try std.testing.expectEqual(@as(u32, 9), list.used);
     const target = std.mem.readInt(u64, memory[1..9], .little);
     try std.testing.expectEqual(@as(u64, 15), target >> 18 & 0x7F);
+    try std.testing.expectEqual(@as(u64, 2 | 15 << 18 | 8 << 27 | 0x8040_20FF << 32), target);
 
     // Decimate at 10 on a store and a load, and nothing else moved.
     list.used = 0;
@@ -946,4 +1228,117 @@ test "a compiled vertex program's and coordinate program's ids lie where the Dra
     try std.testing.expectEqual(@as(u8, 43), memory[0]);
     try std.testing.expectEqual(@as(u32, 0), std.mem.readInt(u32, memory[1..5], .little));
     try std.testing.expectEqual(@as(u32, 7), std.mem.readInt(u32, memory[5..9], .little));
+}
+
+test "render targets of 64 and 128 bits: their stride, their type and clamp, and the clear colour over three packets (since 1.228)" {
+    var memory: [64]u8 = undefined;
+    var list = List{ .at = &memory, .address = 0 };
+
+    // Half-floats of RGBA16F: two packets, the stride twice a 32-bit
+    // target's, 64 bits (1) at 25, 16f (9) at 27.
+    const halves = clearColor(.float16, .{ @bitCast(@as(f32, 1.5)), @bitCast(@as(f32, -2)), @bitCast(@as(f32, 0.25)), @bitCast(@as(f32, 4)) });
+    try std.testing.expectEqual([4]u32{ 0xC000_3E00, 0x4400_3400, 0, 0 }, halves);
+    _ = renderTarget(&list, .{ .width = 32, .height = 16 }, 0, 0, .{ .bpp = .@"64", .type_clamp = typeClamp(.float16, false, false), .clear = halves });
+    try std.testing.expectEqual(@as(u32, 18), list.used);
+    const first = std.mem.readInt(u64, memory[1..9], .little);
+    try std.testing.expectEqual(@as(u64, 2), first & 7);
+    try std.testing.expectEqual(@as(u64, 31), first >> 18 & 0x7F);
+    try std.testing.expectEqual(@as(u64, 1), first >> 25 & 3);
+    try std.testing.expectEqual(@as(u64, 9), first >> 27 & 0x1F);
+    try std.testing.expectEqual(@as(u64, 0xC000_3E00), first >> 32);
+    try std.testing.expectEqual(TILE_RENDERING_MODE_CFG, memory[9]);
+    const second = std.mem.readInt(u64, memory[10..18], .little);
+    try std.testing.expectEqual(@as(u64, 3), second & 7);
+    try std.testing.expectEqual(@as(u64, 0x4400_3400), second >> 24);
+
+    // Four floats of RGBA32F: three packets, the clear's 128 bits split
+    // 32, 40 and 56, 32f (10) and 128 bits (2).
+    list.used = 0;
+    const floats = [4]u32{ 0x1122_3344, 0x5566_7788, 0x99AA_BBCC, 0xDDEE_FF00 };
+    try std.testing.expectEqual(floats, clearColor(.float32, floats));
+    _ = renderTarget(&list, .{ .width = 16, .height = 8 }, 0, 0, .{ .bpp = .@"128", .type_clamp = typeClamp(.float32, false, false), .clear = floats });
+    try std.testing.expectEqual(@as(u32, 27), list.used);
+    const one = std.mem.readInt(u64, memory[1..9], .little);
+    const two = std.mem.readInt(u64, memory[10..18], .little);
+    const three = std.mem.readInt(u64, memory[19..27], .little);
+    try std.testing.expectEqual(@as(u64, 31), one >> 18 & 0x7F);
+    try std.testing.expectEqual(@as(u64, 2), one >> 25 & 3);
+    try std.testing.expectEqual(@as(u64, 10), one >> 27 & 0x1F);
+    try std.testing.expectEqual(@as(u64, 0x1122_3344), one >> 32);
+    try std.testing.expectEqual(@as(u64, 0xCC_5566_7788), two >> 24);
+    try std.testing.expectEqual(@as(u64, 4), three & 7);
+    try std.testing.expectEqual(@as(u64, 0xDDEE_FF00_99AA_BB), three >> 8);
+    // The three put back together are the four words.
+    const back = [4]u32{ @truncate(one >> 32), @truncate(two >> 24), @truncate(two >> 56 | (three >> 8 & 0xFF_FFFF) << 8), @truncate(three >> 32) };
+    try std.testing.expectEqual(floats, back);
+
+    // A target of 32 bits of floats is one packet still.
+    list.used = 0;
+    _ = renderTarget(&list, .{ .width = 64, .height = 64 }, 0, 0, .{ .type_clamp = typeClamp(.float32, false, false), .clear = .{ @bitCast(@as(f32, -3)), 0, 0, 0 } });
+    try std.testing.expectEqual(@as(u32, 9), list.used);
+}
+
+test "a render target names its number in each of its packets and its base address in the first, the next one past its tile's rows, and the common packet counts them (since 1.232)" {
+    var memory: [64]u8 = undefined;
+    var list = List{ .at = &memory, .address = 0 };
+    // Four floats in a tile of 64 by 32: a stride of 128 (64 pixels of
+    // four words, two rows in 128 bits), 32 rows of it in 512 bits after
+    // it, 32 * 128 / 8 (v3dvx_cmd_buffer.c:1159-1166).
+    const floats = RenderTarget{ .bpp = .@"128", .type_clamp = typeClamp(.float32, false, false) };
+    try std.testing.expectEqual(@as(u32, 100 + 512), renderTarget(&list, .{ .width = 64, .height = 32 }, 3, 100, floats));
+    try std.testing.expectEqual(@as(u32, 27), list.used);
+    for (0..3) |k| {
+        const fields = std.mem.readInt(u64, memory[1 + 9 * k ..][0..8], .little);
+        try std.testing.expectEqual(@as(u64, 2 + k), fields & 7);
+        try std.testing.expectEqual(@as(u64, 3), fields >> 3 & 7);
+    }
+    const first = std.mem.readInt(u64, memory[1..9], .little);
+    try std.testing.expectEqual(@as(u64, 100), first >> 7 & 0x7FF);
+    try std.testing.expectEqual(@as(u64, 127), first >> 18 & 0x7F);
+    // A word a pixel in a tile of 32 by 16: 16 rows of a stride of 16.
+    list.used = 0;
+    try std.testing.expectEqual(@as(u32, 7 + 16 * 16 / 8), renderTarget(&list, .{ .width = 32, .height = 16 }, 1, 7, .{}));
+    // The unused one, named and nothing else.
+    list.used = 0;
+    unusedRenderTarget(&list, 2);
+    try std.testing.expectEqual(@as(u64, 2 | 2 << 3), std.mem.readInt(u64, memory[1..9], .little));
+    // "Number of Render Targets" at 4, minus one; nothing else moves.
+    list.used = 0;
+    renderingCommon(&list, 800, 600, .{ .width = 32, .height = 16 }, true, false, false, 4);
+    const four = std.mem.readInt(u64, memory[1..9], .little);
+    try std.testing.expectEqual(@as(u64, 3), four >> 4 & 0xF);
+    list.used = 0;
+    renderingCommon(&list, 800, 600, .{ .width = 32, .height = 16 }, true, false, false, 1);
+    try std.testing.expectEqual(four & ~(@as(u64, 0xF) << 4), std.mem.readInt(u64, memory[1..9], .little));
+    try std.testing.expectEqual(@as(u64, 2), renderTargetBuffer(2));
+}
+
+test "the tile buffer's type for each output, the clamp v3dv gives it, and a clear packed as v3dv packs it (since 1.228)" {
+    try std.testing.expectEqual(Internal{ .kind = .unorm8, .bpp = .@"32" }, internalOf(OUTPUT_RGBA8));
+    try std.testing.expectEqual(Internal{ .kind = .unorm8, .bpp = .@"32" }, internalOf(OUTPUT_R8));
+    try std.testing.expectEqual(Internal{ .kind = .unorm8, .bpp = .@"32" }, internalOf(OUTPUT_RG8));
+    try std.testing.expectEqual(Internal{ .kind = .unorm8, .bpp = .@"32" }, internalOf(OUTPUT_BGR565));
+    try std.testing.expectEqual(Internal{ .kind = .unorm8, .bpp = .@"32" }, internalOf(OUTPUT_RGBA5551));
+    try std.testing.expectEqual(Internal{ .kind = .float16, .bpp = .@"64" }, internalOf(OUTPUT_SRGB8_ALPHA8));
+    try std.testing.expectEqual(Internal{ .kind = .float16, .bpp = .@"64" }, internalOf(OUTPUT_RGB10_A2));
+    try std.testing.expectEqual(Internal{ .kind = .float16, .bpp = .@"64" }, internalOf(OUTPUT_R16F));
+    try std.testing.expectEqual(Internal{ .kind = .float16, .bpp = .@"64" }, internalOf(OUTPUT_RGBA16F));
+    try std.testing.expectEqual(Internal{ .kind = .float32, .bpp = .@"32" }, internalOf(OUTPUT_R32F));
+    try std.testing.expectEqual(Internal{ .kind = .float32, .bpp = .@"64" }, internalOf(OUTPUT_RG32F));
+    try std.testing.expectEqual(Internal{ .kind = .float32, .bpp = .@"128" }, internalOf(OUTPUT_RGBA32F));
+    try std.testing.expectEqual(Internal{ .kind = .uint32, .bpp = .@"128" }, internalOf(15));
+    try std.testing.expectEqual(Internal{ .kind = .int16, .bpp = .@"32" }, internalOf(22));
+    try std.testing.expectEqual(@as(u5, 24), typeClamp(.float16, true, false));
+    try std.testing.expectEqual(@as(u5, 9), typeClamp(.float16, false, false));
+    try std.testing.expectEqual(@as(u5, 8), typeClamp(.unorm8, false, false));
+    try std.testing.expectEqual(@as(u5, 22), typeClamp(.uint32, false, false));
+    try std.testing.expect(tilesBlend(.unorm8) and tilesBlend(.float16));
+    try std.testing.expect(!tilesBlend(.float32) and !tilesBlend(.uint8));
+
+    // Bytes from floats, held and rounded, red lowest; 0.5 rounds to 128.
+    const bytes = clearColor(.unorm8, .{ @bitCast(@as(f32, 1)), @bitCast(@as(f32, 0.5)), @bitCast(@as(f32, -1)), @bitCast(@as(f32, 2)) });
+    try std.testing.expectEqual([4]u32{ 0xFF00_80FF, 0, 0, 0 }, bytes);
+    // Whole numbers of 8 and 16 bits cut to their width.
+    try std.testing.expectEqual([4]u32{ 0x0403_2C01, 0, 0, 0 }, clearColor(.uint8, .{ 0x101, 300, 3, 4 }));
+    try std.testing.expectEqual([4]u32{ 0x0002_FFFF, 0x0004_0003, 0, 0 }, clearColor(.int16, .{ 0xFFFF_FFFF, 2, 3, 4 }));
 }
