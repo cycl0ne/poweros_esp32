@@ -195,12 +195,17 @@ const Graph = struct {
 
     /// The module a constant names, from where it is used: `qualifier` is
     /// what stands before it (`timer` in `timer.TIMERNAME`), `aliases` what
-    /// the file's own constants stand for.
-    fn resolve(graph: *const Graph, qualifier: []const u8, name: []const u8, aliases: *const std.StringHashMapUnmanaged([]const u8)) ?[]const u8 {
+    /// the file's own constants stand for. A qualifier that is one of the
+    /// module's own files names only what that file holds: the same name
+    /// elsewhere is another constant (`power_init.RESOURCE_NAME` is not
+    /// ps2.resource's).
+    fn resolve(graph: *const Graph, qualifier: []const u8, name: []const u8, aliases: *const std.StringHashMapUnmanaged(Alias)) ?[]const u8 {
         const definitions = (graph.constants.get(name) orelse return null).items;
+        const alias = aliases.get(qualifier);
+        if (alias) |known| if (known.own_file) return sameValue(definitions, known.stem);
         if (sameValue(definitions, null)) |value| return value;
         if (sameValue(definitions, qualifier)) |value| return value;
-        if (aliases.get(qualifier)) |stem| return sameValue(definitions, stem);
+        if (alias) |known| return sameValue(definitions, known.stem);
         return null;
     }
 };
@@ -434,12 +439,12 @@ fn scanModule(io: Io, arena: Allocator, graph: *Graph, module: Module) !void {
         const source = try cwd.readFileAllocOptions(io, file, arena, .unlimited, .of(u8), 0);
         const tokens = try withoutTests(arena, try tokenize(arena, source));
 
-        var aliases: std.StringHashMapUnmanaged([]const u8) = .empty;
+        var aliases: std.StringHashMapUnmanaged(Alias) = .empty;
         for (tokens, 0..) |token, i| {
             if (token.tag != .keyword_const or i + 1 >= tokens.len or tokens[i + 1].tag != .identifier) continue;
             const equal = nextTag(tokens, i + 2, .equal) orelse continue;
             const end = nextTag(tokens, equal + 1, .semicolon) orelse continue;
-            if (aliasOf(source, tokens[equal + 1 .. end])) |stem| try aliases.put(arena, text(source, tokens[i + 1]), stem);
+            if (aliasOf(source, tokens[equal + 1 .. end])) |alias| try aliases.put(arena, text(source, tokens[i + 1]), alias);
         }
 
         for (tokens, 0..) |token, i| {
@@ -513,16 +518,23 @@ fn nextTag(tokens: []const Token, start: usize, tag: Token.Tag) ?usize {
     return null;
 }
 
-/// What a constant stands for, as a file's stem: the last name in its
-/// value (`sdk.devices.timer` is `timer`), or the file it imports.
-fn aliasOf(source: [:0]const u8, value: []const Token) ?[]const u8 {
+/// What a constant stands for: a file's stem, and whether it is a file
+/// of the module's own, which the constant imports by its path.
+const Alias = struct { stem: []const u8, own_file: bool = false };
+
+/// What a constant stands for: the last name in its value
+/// (`sdk.devices.timer` is `timer`), or the file it imports.
+fn aliasOf(source: [:0]const u8, value: []const Token) ?Alias {
     var i = value.len;
     while (i > 0) {
         i -= 1;
-        if (value[i].tag == .identifier) return text(source, value[i]);
+        if (value[i].tag == .identifier) return .{ .stem = text(source, value[i]) };
     }
     for (value, 0..) |token, j| {
-        if (token.tag == .builtin) if (importOf(source, value, j)) |imported| return path.stem(imported);
+        if (token.tag == .builtin) if (importOf(source, value, j)) |imported| return .{
+            .stem = path.stem(imported),
+            .own_file = mem.endsWith(u8, imported, ".zig"),
+        };
     }
     return null;
 }
