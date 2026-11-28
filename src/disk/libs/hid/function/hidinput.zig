@@ -38,14 +38,14 @@ const Function = _function.Function;
 /// BEHAVIOR:
 /// A report one of the keyboard's layouts reads becomes the key-ups and
 /// then the key-downs from the keys its reports held to the keys they
-/// hold with this one, each a RAWKEY event; a report of too many keys at once changes
-/// nothing. When Caps Lock goes down, the keyboard's Caps Lock light
-/// changes: its LEDs' output report goes to HIDA_OutputHook. A report the
-/// consumer control's layout reads becomes the media keys that went up
-/// and then down since its last report, each a RAWKEY event. A report the
-/// mouse's layout reads becomes a move - or a tablet's place - each
-/// button that changed, and the wheel's notches. The events go to their
-/// source in one request. A report of an ID none reads is let go.
+/// hold with this one, each a RAWKEY event; a report of too many keys at
+/// once changes nothing. When Caps Lock goes down, the keyboard's Caps
+/// Lock light changes: its LEDs' output report goes to HIDA_OutputHook. A
+/// report the consumer control's layout reads becomes the media keys that
+/// went up and then down since its last report, each a RAWKEY event. A
+/// report the mouse's layout reads becomes a move - or a tablet's place -
+/// each button that changed, and the wheel's notches. The events go to
+/// their source in one request. A report of an ID none reads is let go.
 ///
 /// CONTEXT:
 /// - Waits: yes, while a source takes the events, and in the hook.
@@ -95,9 +95,9 @@ fn keys(base: *HIDBase, record: *Function, bytes: []const u8) void {
     // The keyboard report this is, of those its collections send: what it
     // holds now, and what all of them hold together.
     const layouts = 1 + @as(usize, record.more_count);
-    const which = for (0..layouts) |i| {
-        const one = if (i == 0) &record.keyboard else &record.more_keyboards[i - 1];
-        if (one.owns(bytes)) break i;
+    const which = for (0..layouts) |index| {
+        const one = if (index == 0) &record.keyboard else &record.more_keyboards[index - 1];
+        if (one.owns(bytes)) break index;
     } else return;
     const one = if (which == 0) &record.keyboard else &record.more_keyboards[which - 1];
     record.held[which] = report_file.keysOf(one, bytes) orelse return;

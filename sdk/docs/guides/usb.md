@@ -415,9 +415,12 @@ than the boot one (a mouse 16-bit moves, a keyboard a bit for every
 key, or its keys in a report of their own, a receiver a keyboard and a
 mouse in one) and do not switch when asked; only one whose descriptor
 says nothing the library can use is put in the boot protocol
-(`HIDF_BOOT`). A keyboard's Caps Lock light comes back from the library
-as an output report (`HIDA_OutputHook`), which the driver sends with
-SET_REPORT.
+(`HIDF_BOOT`). A keyboard that describes its keys more than once - a
+receiver six at a time in one report, and a bit for each in two
+others - is read in each of those reports, up to four, and a key is
+down while any of them holds it. A keyboard's Caps Lock light comes
+back from the library as an output report (`HIDA_OutputHook`), which
+the driver sends with SET_REPORT.
 
 A device's name in exec is its name after the last `/`: a driver in
 `DEVS:usb/` must not be called as a device in the ROM is -

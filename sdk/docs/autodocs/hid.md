@@ -99,14 +99,14 @@ None.
 
 A report one of the keyboard's layouts reads becomes the key-ups and
 then the key-downs from the keys its reports held to the keys they
-hold with this one, each a RAWKEY event; a report of too many keys at once changes
-nothing. When Caps Lock goes down, the keyboard's Caps Lock light
-changes: its LEDs' output report goes to HIDA_OutputHook. A report the
-consumer control's layout reads becomes the media keys that went up
-and then down since its last report, each a RAWKEY event. A report the
-mouse's layout reads becomes a move - or a tablet's place - each
-button that changed, and the wheel's notches. The events go to their
-source in one request. A report of an ID none reads is let go.
+hold with this one, each a RAWKEY event; a report of too many keys at
+once changes nothing. When Caps Lock goes down, the keyboard's Caps
+Lock light changes: its LEDs' output report goes to HIDA_OutputHook. A
+report the consumer control's layout reads becomes the media keys that
+went up and then down since its last report, each a RAWKEY event. A
+report the mouse's layout reads becomes a move - or a tablet's place -
+each button that changed, and the wheel's notches. The events go to
+their source in one request. A report of an ID none reads is let go.
 
 **CONTEXT**
 

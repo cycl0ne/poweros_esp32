@@ -150,7 +150,7 @@ pub fn OpenHID(base: *HIDBase, descriptor: ?[*]const u8, length: u32, tags: ?[*]
     }
     if (keyboard) |found| {
         function.keyboard = found;
-        for (keyboards[1..keyboard_count], 0..) |more, i| function.more_keyboards[i] = more;
+        for (keyboards[1..keyboard_count], 0..) |more, index| function.more_keyboards[index] = more;
         function.more_count = @intCast(keyboard_count -| 1);
         flags |= hid.HIDF_KEYBOARD;
     }
