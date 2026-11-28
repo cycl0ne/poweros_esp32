@@ -18465,6 +18465,34 @@ test "an image made for views of another format: its texels kept as they lie, ea
     }
 }
 
+// --- 1.240: a stencil read as an input attachment where the TMU reads it --
+
+test "a device of a layout of its own that samples D24_UNORM_S8_UINT's stencil alone makes that one an input attachment, and refuses S8_UINT and D16_UNORM_S8_UINT, which it would read through its texture unit (since 1.240)" {
+    // The V3D reads an input attachment through its TMU, so a stencil
+    // read as one is a sampled stencil there: CreateImage asks
+    // `_image.stencilSampled` of it where the device has
+    // `texture_memory`, as for SAMPLED, whose format query refuses it
+    // first. The cores read their own rows.
+    var bench = try Bench.on(&OwnLayout.ops);
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const held = _objects.of(_instance.PhysicalDevice, bench.physical);
+    held.can.sampled_stencil = false;
+    held.can.sampled_word_stencil = true;
+    const usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_INPUT_ATTACHMENT;
+    var image: ?*facet.Image = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateImage(bench.device, &.{ .format = .d24_unorm_s8_uint, .extent = .{ .width = 8, .height = 8 }, .usage = usage }, &image));
+    fb.DestroyImage(bench.device, image);
+    for ([_]facet.Format{ .s8_uint, .d16_unorm_s8_uint }) |format| {
+        image = null;
+        try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImage(bench.device, &.{ .format = format, .extent = .{ .width = 8, .height = 8 }, .usage = usage }, &image));
+        try testing.expect(image == null);
+    }
+    // Without the capability, D24_UNORM_S8_UINT as well.
+    held.can.sampled_word_stencil = false;
+    try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImage(bench.device, &.{ .format = .d24_unorm_s8_uint, .extent = .{ .width = 8, .height = 8 }, .usage = usage }, &image));
+}
+
 // --- 1.132: copies between formats of one size (item 90) -------------------
 
 test "CmdCopyImage between two formats of one size moves the bits, whatever each image keeps them as: 8888 into a whole number and back, wide channels and whole numbers into a float (item 90)" {

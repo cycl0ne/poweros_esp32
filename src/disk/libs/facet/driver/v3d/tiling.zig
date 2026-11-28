@@ -256,6 +256,10 @@ const TEXTURE_DEPTH_COMP16: u64 = 21;
 /// high"), as v3dv samples it and D24_UNORM_S8_UINT's depth
 /// (v3dvx_formats.c:206, :209; v3d_packet.xml:357). (Since 1.222.)
 const TEXTURE_DEPTH24_X8: u64 = 24;
+/// R8G8B8A8_UINT's, which v3dv reads a view of D24_UNORM_S8_UINT's
+/// stencil as, the word's low byte its red (v3dv_image.c:781-800;
+/// v3d_packet.xml:407). (Since 1.240.)
+const TEXTURE_RGBA8UI: u64 = 101;
 
 const SWIZZLE_ZERO: u64 = 0;
 const SWIZZLE_ONE: u64 = 1;
@@ -284,10 +288,16 @@ pub const Texels = enum {
     /// way: v3dv's DEPTH24_X8 and SWIZ_X001 for X8_D24_UNORM_PACK32
     /// (v3dvx_formats.c:206; since 1.222).
     d24,
+    /// The stencil below those 24 bits, the word read as four whole
+    /// numbers of a byte each and their first alone kept, (stencil, 0, 0,
+    /// 1): v3dv's view of D24_UNORM_S8_UINT's stencil aspect, R8G8B8A8_UINT
+    /// with SWIZ_X001 under the view's swizzle (v3dv_image.c:781-800;
+    /// since 1.240).
+    stencil,
 
     pub fn bytes(texels: Texels) u32 {
         return switch (texels) {
-            .rgba, .bgra, .d24 => 4,
+            .rgba, .bgra, .d24, .stencil => 4,
             .rgb565, .d16 => 2,
             .r8 => 1,
         };
@@ -315,16 +325,17 @@ pub fn writeTextureState(into: []u8, layout: *const Layout, texels: Texels, pick
         .r8 => TEXTURE_R8,
         .d16 => TEXTURE_DEPTH_COMP16,
         .d24 => TEXTURE_DEPTH24_X8,
+        .stencil => TEXTURE_RGBA8UI,
     };
     // Which channel of the texel each of the four comes out of: a 565
     // texel has no alpha and an R8 one has red alone, so those read 1 and
     // 0, as Vulkan reads a format that is short of a channel. A depth is
-    // red alone too.
+    // red alone too, and so is a stencil (since 1.240).
     const red: u64 = if (texels == .bgra) SWIZZLE_BLUE else SWIZZLE_RED;
-    const green: u64 = if (texels == .r8 or texels == .d16 or texels == .d24) SWIZZLE_ZERO else SWIZZLE_GREEN;
+    const green: u64 = if (texels == .r8 or texels == .d16 or texels == .d24 or texels == .stencil) SWIZZLE_ZERO else SWIZZLE_GREEN;
     const blue: u64 = switch (texels) {
         .bgra => SWIZZLE_RED,
-        .r8, .d16, .d24 => SWIZZLE_ZERO,
+        .r8, .d16, .d24, .stencil => SWIZZLE_ZERO,
         .rgba, .rgb565 => SWIZZLE_BLUE,
     };
     const alpha: u64 = if (texels == .rgba or texels == .bgra) SWIZZLE_ALPHA else SWIZZLE_ONE;
@@ -743,6 +754,29 @@ test "a view's swizzle over the format's own: a channel the view takes read from
     try std.testing.expectEqual(SWIZZLE_ZERO, second >> (111 - 64) & 7);
     try std.testing.expectEqual(SWIZZLE_RED, second >> (114 - 64) & 7);
     try std.testing.expectEqual(SWIZZLE_RED, second >> (117 - 64) & 7);
+}
+
+test "a D24S8's stencil is its word read as R8G8B8A8_UINT, the stencil's byte red alone, (S, 0, 0, 1) under the view's swizzle, as v3dv reads it (since 1.240)" {
+    // v3dv_image.c:781-800: RGBA8UI, and SWIZ_X001 composed with the
+    // view's. Its depth is the same word as DEPTH24_X8, red alone too.
+    var state: [texture_state_bytes]u8 = undefined;
+    const layout = layoutOf(4, 64, 64, 1, 1, false);
+    writeTextureState(&state, &layout, .stencil, own_picks, 0x10_0000, 0, 0, 1, 0);
+    var second = std.mem.readInt(u64, state[8..16], .little);
+    try std.testing.expectEqual(TEXTURE_RGBA8UI, second >> (100 - 64) & 0x7F);
+    try std.testing.expectEqual(SWIZZLE_RED, second >> (108 - 64) & 7);
+    try std.testing.expectEqual(SWIZZLE_ZERO, second >> (111 - 64) & 7);
+    try std.testing.expectEqual(SWIZZLE_ZERO, second >> (114 - 64) & 7);
+    try std.testing.expectEqual(SWIZZLE_ONE, second >> (117 - 64) & 7);
+    // A view of it as its alpha, its red, its green and 0: the 1 of
+    // X001's alpha, the stencil, X001's 0 and the constant.
+    writeTextureState(&state, &layout, .stencil, .{ .alpha, .red, .green, .zero }, 0x10_0000, 0, 0, 1, 0);
+    second = std.mem.readInt(u64, state[8..16], .little);
+    try std.testing.expectEqual(SWIZZLE_ONE, second >> (108 - 64) & 7);
+    try std.testing.expectEqual(SWIZZLE_RED, second >> (111 - 64) & 7);
+    try std.testing.expectEqual(SWIZZLE_ZERO, second >> (114 - 64) & 7);
+    try std.testing.expectEqual(SWIZZLE_ZERO, second >> (117 - 64) & 7);
+    try std.testing.expectEqual(@as(u32, 4), Texels.stencil.bytes());
 }
 
 test "an image of four is a texture of twice the width and the height to the TMU, its level 0 in UIF" {

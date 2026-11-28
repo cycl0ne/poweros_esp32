@@ -484,7 +484,19 @@ pub const Sampler = struct {
     /// sampler's as 32-bit ones (lower_tex_src's sampler_is_32b,
     /// v3dv_pipeline.c:771-787; `wideOf`; since 1.239).
     relaxed: bool = false,
+    /// Of whole numbers: an image whose Sampled Type is an OpTypeInt,
+    /// signed where its Signedness is 1, which vtn gives a dest_type of
+    /// nir_type_int or nir_type_uint, the result's, which has to be of
+    /// the image's base type (vtn_handle_texture, spirv_to_nir.c:
+    /// 3566-3578; since 1.240). Its 32-bit texel is four
+    /// words of them as they come; its 16-bit one two words of two halves,
+    /// each taken out by shifts (`to_vir.unpackTexel`).
+    whole: Whole = .none,
 };
+
+/// What an image's texels are: floats, or whole numbers of one sign or
+/// the other (`Sampler.whole`; since 1.240).
+pub const Whole = enum(u2) { none, unsigned, signed };
 
 /// What a sampled image's coordinate names, as a nir_tex_instr's
 /// sampler_dim and is_array have it, and so which of the TMU's registers
@@ -1748,6 +1760,12 @@ pub const Work = struct {
     /// keeps every other value at its own width (vtn_value_needs_mediump_16bit,
     /// vtn_private.h:1167-1171).
     relaxed: std.StaticBitSet(most_ids) = .initEmpty(),
+    /// An image type whose Sampled Type is an integer, and a sampled
+    /// image type of one (since 1.240).
+    whole_image: std.StaticBitSet(most_ids) = .initEmpty(),
+    /// An OpTypeInt of Signedness 1, and an image type or a sampled image
+    /// type of one (since 1.240).
+    signed: std.StaticBitSet(most_ids) = .initEmpty(),
     /// Which step a value id answers.
     step_of: [most_ids]u16 = @splat(none),
     /// `member_pointer`: which float of the member it names, or `whole`
@@ -2880,12 +2898,13 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 work.thing[try idOf(operands[0])] = .boolean;
             },
             .type_int => {
-                // 32 bits, signed or not: `look` has held the width. It
-                // is read as an access chain's index and nowhere else.
+                // 32 bits, signed or not: `look` has held the width. Its
+                // sign is an image's of whole numbers (since 1.240).
                 if (operands.len < 3) return Error.Body;
                 const id = try idOf(operands[0]);
                 if (operands[1] != 32) return Error.Type;
                 work.thing[id] = .int;
+                if (operands[2] == 1) work.signed.set(id);
             },
             .type_struct => {
                 // A block, or a struct in one. Each member is a float, a
@@ -3043,9 +3062,19 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 // sample compares is its opcode's, not the type's, as
                 // SPIR-V has it, and a depth image is read as any texture
                 // is.
+                // Its Sampled Type is a float, or since 1.240 a 32-bit
+                // integer, an image of whole numbers (`Sampler.whole`).
                 if (operands.len < 8) return Error.Body;
                 const id = try idOf(operands[0]);
-                if (work.thing[try idOf(operands[1])] != .float) return Error.Type;
+                const sampled_type = try idOf(operands[1]);
+                switch (work.thing[sampled_type]) {
+                    .float => {},
+                    .int => {
+                        work.whole_image.set(id);
+                        work.signed.setValue(id, work.signed.isSet(sampled_type));
+                    },
+                    else => return Error.Type,
+                }
                 if (operands[3] > 2 or operands[4] > 1 or operands[5] > 1) return Error.Refused;
                 const dim: spirv.Dim = @enumFromInt(operands[2]);
                 const arrayed = operands[4] == 1;
@@ -3062,6 +3091,9 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 // cubes (v3dvx_image.c:89-93, :171-174).
                 if (operands[6] == 2 and dim != .subpass_data) {
                     if (operands[5] == 1) return Error.Refused;
+                    // A format of whole numbers is none of the profile's
+                    // (`spirv.ImageFormat`), and an Rgba8 one holds floats.
+                    if (work.whole_image.isSet(id)) return Error.Refused;
                     work.sampler_dim[id] = switch (dim) {
                         .dim_2d => if (arrayed) .layers else .flat,
                         .dim_3d => if (arrayed) return Error.Refused else .volume,
@@ -3108,6 +3140,8 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 work.points[id] = image;
                 work.sampler_dim[id] = work.sampler_dim[image];
                 work.multisampled.setValue(id, work.multisampled.isSet(image));
+                work.whole_image.setValue(id, work.whole_image.isSet(image));
+                work.signed.setValue(id, work.signed.isSet(image));
             },
             .type_pointer => {
                 if (operands.len < 3) return Error.Body;
@@ -3273,7 +3307,7 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     work.thing[id] = .variable;
                     work.class[id] = @intCast(@intFromEnum(class));
                     work.sampler_of[id] = @intCast(work.sampler_count);
-                    work.samplers[work.sampler_count] = .{ .set = work.set[id], .binding = work.binding[id], .dim = work.sampler_dim[pointee], .multisampled = work.multisampled.isSet(pointee), .input_attachment = subpass, .input_index = if (subpass) work.attachment_index[id] else no_tile, .storage = storage, .relaxed = work.relaxed.isSet(id) };
+                    work.samplers[work.sampler_count] = .{ .set = work.set[id], .binding = work.binding[id], .dim = work.sampler_dim[pointee], .multisampled = work.multisampled.isSet(pointee), .input_attachment = subpass, .input_index = if (subpass) work.attachment_index[id] else no_tile, .storage = storage, .relaxed = work.relaxed.isSet(id), .whole = wholeOf(work, pointee) };
                     work.sampler_count += 1;
                     continue;
                 }
@@ -11329,6 +11363,23 @@ fn isConstant(work: *const Work, id: u16) bool {
 }
 
 /// Whether `type_id` is an integer or a vector of them (since 1.165).
+/// The whole numbers an image type or a sampled image type holds, or
+/// `none` of floats (since 1.240).
+fn wholeOf(work: *const Work, type_id: u16) Whole {
+    if (!work.whole_image.isSet(type_id)) return .none;
+    return if (work.signed.isSet(type_id)) .signed else .unsigned;
+}
+
+/// Whether a read's result type, a vector, is of an image's base type:
+/// floats of floats, or integers of its sign (vtn_handle_texture,
+/// spirv_to_nir.c:3571-3576; since 1.240).
+fn resultOf(work: *const Work, type_id: u16, whole: Whole) bool {
+    if (whole == .none) return !isIntegerType(work, type_id);
+    if (work.thing[type_id] != .vector) return false;
+    const component = work.points[type_id];
+    return work.thing[component] == .int and work.signed.isSet(component) == (whole == .signed);
+}
+
 fn isIntegerType(work: *const Work, type_id: u16) bool {
     return switch (work.thing[type_id]) {
         .int => true,
@@ -11381,6 +11432,10 @@ fn readSample(work: *Work, op: spirv.Op, operands: []const u32) Error!void {
     if (try kindOf(work, type_id) != if (compared) Kind.f32x1 else Kind.f32x4) return Error.Type;
     const which = work.sampler_of[try idOf(operands[2])];
     if (which == none) return Error.Body;
+    // A depth comparison of whole numbers is no SPIR-V (OpImageSampleDref*:
+    // its Sampled Type a float), nor any Vulkan format.
+    if (compared and work.samplers[which].whole != .none) return Error.Type;
+    if (!compared and !resultOf(work, type_id, work.samplers[which].whole)) return Error.Type;
     const dim = work.samplers[which].dim;
     if (fetch and dim.cubic()) return Error.Body;
     const multisampled = work.samplers[which].multisampled;
@@ -11483,6 +11538,7 @@ fn readSubpass(work: *Work, operands: []const u32) Error!void {
     if (try kindOf(work, type_id) != .f32x4) return Error.Type;
     const which = work.sampler_of[try idOf(operands[2])];
     if (which == none or !work.samplers[which].input_attachment) return Error.Body;
+    if (!resultOf(work, type_id, work.samplers[which].whole)) return Error.Type;
     const multisampled = work.samplers[which].multisampled;
     var ms_index: ?u16 = null;
     if (multisampled) {
@@ -11500,6 +11556,11 @@ fn readSubpass(work: *Work, operands: []const u32) Error!void {
     // (since 1.237). Its sample goes to the load, or 0 (:341-343).
     const index = work.samplers[which].input_index;
     if (index < work.tile_inputs.len and work.tile_inputs[index] != no_tile) {
+        // Whole numbers out of the tile buffer are refused: the read here
+        // is of floats, and the V3D keeps no attachment of whole numbers
+        // it reads back (`target_reads`), so none reaches it (since
+        // 1.240).
+        if (work.samplers[which].whole != .none) return Error.Refused;
         work.step_of[id] = try tileLoadOf(work, work.tile_inputs[index], ms_index);
         return;
     }
@@ -24291,6 +24352,132 @@ test "a subpassLoad of a RelaxedPrecision input attachment is the fetch of half-
         .{ .sampler = .{ .bits = per_pixel_mask | output_type_32_bit } },
         .{ .ubo = .{ .set = 0, .binding = 1, .offset = 0 } },
     }, member.stream());
+}
+
+test "a stencil read as an input attachment, glslc's usubpassInput, is the fetch of four 32-bit whole numbers, its bits taken by integer ops (since 1.240)" {
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_stencil_input);
+    try testing.expectEqual(Whole.unsigned, work.samplers[0].whole);
+    try testing.expectEqual(@as(usize, 4), countOf(code, "ldtmu"));
+    // P1 the constant of its 32 bits, the per-pixel mask beside it, and
+    // P2 the default's after it, as glslc_subpass's (since 1.215).
+    try expectStream(&.{ wideTexture(0), wordOf(per_pixel_mask | output_type_32_bit), wordOf(0xFFFF_FF84) }, code.stream());
+    // The first word alone is read: its lowest bit by AND, the next by a
+    // shift and an AND, the rest by a shift, each made a float by UTOF.
+    try expectText(code, &.{
+        text("fycd rf5", "nop", "ldvary.rf6; wrtmuc"),
+        text("fxcd rf4", "nop", "wrtmuc"),
+        text("ftoiz rf9, rf5", "mov rf7, rf0", ""),
+        text("ftoiz rf8, rf4", "mov tmub, 0", ""),
+        text("nop", "mov tmut, rf9", "thrsw"),
+        text("nop", "mov tmui, rf7", "thrsw"),
+        text("nop", "mov tmusf, rf8", ""),
+        text("nop", "mov tlbu, rf5", "ldtmu.rf10"),
+        text("shr rf16, rf10, 1", "nop", ""),
+        text("and rf14, rf10, 1", "nop", ""),
+        text("shr rf19, rf10, 2", "nop", ""),
+        text("and rf17, rf16, 1", "nop", ""),
+        text("utof rf15, rf14", "nop", "ldtmu.rf11"),
+        text("utof rf20, rf19", "nop", "ldtmu.rf12"),
+        text("utof rf18, rf17", "fmul rf21, rf20, 0x3e800000", ""),
+        text("vfpack tlb, rf15, rf18", "nop", "thrsw; ldtmu.rf13"),
+        text("vfpack tlb, rf21, 0x3f800000", "nop", ""),
+        text("nop", "nop", ""),
+    });
+}
+
+test "texelFetch of a usampler2D hands back four whole numbers as they come; of a mediump one two words, each half taken out by shifts of a uniform 16, down a shift of the sign for an isampler2D (since 1.240)" {
+    var work: Work = .{};
+    const wide = try throughMesa(&work, &reference.glslc_whole_fetch);
+    try testing.expectEqual(@as(usize, 4), countOf(wide, "ldtmu"));
+    try testing.expectEqual(@as(usize, 0), countOf(wide, "shl"));
+    // Each word made a float as it is, UTOF, and multiplied by 1/255.
+    try expectText(wide, &.{
+        text("nop", "nop", "ldvary.rf4; wrtmuc"),
+        text("nop", "fmul rf5, rf4, rf3", "ldvary.rf7; wrtmuc"),
+        text("fadd rf6, rf0, rf5", "fmul rf8, rf7, rf3", "ldunifrf.rf22"),
+        text("fadd rf9, rf0, rf8", "fmul rf10, rf6, 0x42800000", ""),
+        text("ftoiz rf12, rf10", "fmul rf11, rf9, 0x42800000", ""),
+        text("ftoiz rf13, rf11", "mov tmub, 0", ""),
+        text("nop", "mov tmut, rf13", "thrsw; ldunif"),
+        text("nop", "mov tmusf, rf12", "thrsw"),
+        text("nop", "nop", ""),
+        text("nop", "nop", "ldtmu.rf14"),
+        text("utof rf18, rf14", "nop", "ldtmu.rf15"),
+        text("utof rf19, rf15", "fmul rf23, rf18, rf22", "ldtmu.rf16"),
+        text("utof rf20, rf16", "fmul rf24, rf19, rf0", "ldtmu.rf17"),
+        text("utof rf21, rf17", "fmul rf25, rf20, rf22", ""),
+        text("vfpack tlb, rf23, rf24", "fmul rf26, rf21, rf22", ""),
+        text("vfpack tlb, rf25, rf26", "nop", "thrsw"),
+        text("nop", "nop", ""),
+        text("nop", "nop", ""),
+    });
+    work = .{};
+    const half = try throughMesa(&work, &reference.glslc_whole_fetch_mediump);
+    try testing.expectEqual(@as(usize, 2), countOf(half, "ldtmu"));
+    try testing.expectEqual(@as(usize, 2), countOf(half, "shl"));
+    try testing.expectEqual(@as(usize, 4), countOf(half, "shr"));
+    try testing.expectEqual(@as(usize, 0), countOf(half, "asr"));
+    // The 16, a uniform, then the two of 1/255.
+    try expectStream(&.{ halfTexture(0), wordOf(16), wordOf(0x3B80_8081), wordOf(0x3B80_8081) }, half.stream());
+    // The 16 read once into rf0, each low half shifted up and down by it
+    // and each high one down.
+    try expectText(half, &.{
+        text("nop", "nop", "ldvary.rf4; wrtmuc"),
+        text("nop", "fmul rf5, rf4, rf3", "ldvary.rf7"),
+        text("fadd rf6, rf0, rf5", "fmul rf8, rf7, rf3", ""),
+        text("fadd rf9, rf0, rf8", "fmul rf10, rf6, 0x42800000", ""),
+        text("ftoiz rf12, rf10", "fmul rf11, rf9, 0x42800000", ""),
+        text("ftoiz rf13, rf11", "mov tmub, 0", ""),
+        text("nop", "mov tmut, rf13", "thrsw; ldunif"),
+        text("nop", "mov tmusf, rf12", "thrsw; ldunifrf.rf26"),
+        text("nop", "nop", ""),
+        text("nop", "nop", "ldtmu.rf14"),
+        text("shl rf16, rf14, rf0", "nop", "ldtmu.rf15"),
+        text("shl rf19, rf15, rf0", "nop", ""),
+        text("shr rf18, rf14, rf0", "nop", ""),
+        text("shr rf21, rf15, rf0", "nop", ""),
+        text("shr rf17, rf16, rf0", "nop", ""),
+        text("shr rf20, rf19, rf0", "nop", "ldunif"),
+        text("utof rf23, rf18", "nop", ""),
+        text("utof rf22, rf17", "fmul rf28, rf23, rf0", ""),
+        text("utof rf25, rf21", "fmul rf27, rf22, rf26", ""),
+        text("utof rf24, rf20", "fmul rf30, rf25, rf26", ""),
+        text("vfpack tlb, rf27, rf28", "fmul rf29, rf24, rf26", ""),
+        text("vfpack tlb, rf29, rf30", "nop", "thrsw"),
+        text("nop", "nop", ""),
+        text("nop", "nop", ""),
+    });
+    work = .{};
+    const signed = try throughMesa(&work, &reference.glslc_signed_fetch_mediump);
+    try testing.expectEqual(Whole.signed, work.samplers[0].whole);
+    try testing.expectEqual(@as(usize, 2), countOf(signed, "shl"));
+    try testing.expectEqual(@as(usize, 4), countOf(signed, "asr"));
+    try testing.expectEqual(@as(usize, 0), countOf(signed, "shr"));
+}
+
+test "a texel read into a result not of its image's base type is refused, as vtn refuses it, and so is a read of whole numbers out of the tile buffer (since 1.240)" {
+    var work: Work = .{};
+    // The image of unsigned whole numbers read into a vector of signed
+    // ones: the fetch's result, %27, made a vector of %22, the int the
+    // coordinate is of, declared before it.
+    try expectRefusal(Error.Type, throughMesa(&work, &comptime patched(&reference.glslc_whole_fetch, .type_vector, 3, 1, 22)));
+    // An image of floats, %6, read into the uvec4.
+    work = .{};
+    try expectRefusal(Error.Type, throughMesa(&work, &comptime patched(&reference.glslc_whole_fetch, .type_image, 0, 1, 6)));
+    // A SampledType of an id declared after the image, %22, which SPIR-V
+    // has not: no type yet.
+    work = .{};
+    try expectRefusal(Error.Type, throughMesa(&work, &comptime patched(&reference.glslc_whole_fetch, .type_image, 0, 1, 22)));
+    // A comparison of whole numbers: glslc's shadow sample compiles, and
+    // its image made one of the int %10, declared before it, does not.
+    work = .{};
+    _ = try throughMesa(&work, &reference.glslc_counted_shadow);
+    work = .{};
+    try expectRefusal(Error.Type, throughMesa(&work, &comptime patched(&reference.glslc_counted_shadow, .type_image, 0, 1, 10)));
+    // The stencil input attachment taken for one the subpass draws into.
+    work = .{};
+    try expectRefusal(Error.Refused, throughMesaKeyed(&work, &reference.glslc_stencil_input, .{ .tile_inputs = .{ 0, no_tile, no_tile, no_tile } }));
 }
 
 test "through Mesa's back end, a fragment program's imageLoad that a sample's coordinate is keeps the quad's helper pixels, P1 the constant 0, and one that is the colour leaves them out, P1 the default" {

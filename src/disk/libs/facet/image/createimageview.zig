@@ -293,7 +293,7 @@ pub fn CreateImageView(base: *FacetBase, device: *facet.Device, info: *const fac
     // (src/broadcom/vulkan/v3dvx_image.c:68, :79-80).
     const held = if (image.volume) image.layers else layers;
     const made = _objects.create(base.sys_base, ImageView) orelse return .error_out_of_host_memory;
-    made.* = .{ .image = image, .format = info.format, .base_level = range.base_mip_level, .level_count = count, .base_layer = range.base_array_layer, .layer_count = held, .swizzle = swizzle, .cubes = info.view_type == .cube_array };
+    made.* = .{ .image = image, .format = info.format, .base_level = range.base_mip_level, .level_count = count, .base_layer = range.base_array_layer, .layer_count = held, .swizzle = swizzle, .cubes = info.view_type == .cube_array, .stencil = image.kind == .depth and range.aspect_mask == facet.IMAGE_ASPECT_STENCIL };
     // A level of a 3D image has half the slices of the one before
     // (`texture.Texture.slicesAt`), and the view's texture begins at the
     // level it names, so it has that level's slices (since 1.135), as

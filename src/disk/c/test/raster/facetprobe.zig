@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetProbe";
-const VERSION_STRING = "\x00$VER: FacetProbe 1.62 (27.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetProbe 1.63 (28.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "CORES/S,V3D/S,QUIET/S";
@@ -3123,6 +3123,28 @@ fn sampledDepthChecks(probe: *Probe) void {
             fb.CmdClearDepthStencilImage(commands, held, .undefined, &filled, 1, @ptrCast(&planes));
             if (!probe.submit()) return probe.check(false, "the plane cleared");
             probe.checkEqual(white, sampledWith(probe, plane, sampler.?, sets[0].?, layout.?, reading, onto, shade, vertex_buffer, vertex_bytes, pixels, pitch, 0.5), "the depth plane of such an image sampled at 16 bits");
+        }
+    }
+
+    // --- 1.63: D24_UNORM_S8_UINT sampled, and read as an input
+    // attachment: its depth plane and its stencil each through a view of
+    // that aspect. On both devices, wherever a depth is sampled: the cores
+    // sample every stencil, and the V3D since facet 1.240 this one's
+    // alone, the word read as R8G8B8A8_UINT as v3dv reads it, where
+    // D16_UNORM_S8_UINT above stays refused.
+    {
+        var word_format: facet.FormatProperties = undefined;
+        fb.GetPhysicalDeviceFormatProperties(probe.physical, .d24_unorm_s8_uint, &word_format);
+        const said = word_format.optimal_tiling_features & facet.FORMAT_FEATURE_SAMPLED_IMAGE != 0;
+        probe.check(said == probe.can.sampled_depth, if (probe.can.sampled_depth) "D24_UNORM_S8_UINT says SAMPLED_IMAGE wherever a depth is sampled" else "and nothing of it where none is");
+        const word = probe.bound(.{ .format = .d24_unorm_s8_uint, .extent = extent, .usage = usage | facet.IMAGE_USAGE_INPUT_ATTACHMENT }, 0);
+        probe.check((word != null) == said, if (said) "a D24_UNORM_S8_UINT made sampled and read as an input attachment" else "and refused where it is not");
+        if (word) |held| {
+            for ([2]u32{ facet.IMAGE_ASPECT_STENCIL, facet.IMAGE_ASPECT_DEPTH }) |aspect| {
+                var plane: ?*facet.ImageView = null;
+                probe.check(fb.CreateImageView(device, &.{ .image = held, .format = .d24_unorm_s8_uint, .subresource_range = .{ .aspect_mask = aspect } }, &plane) == .success, if (aspect == facet.IMAGE_ASPECT_STENCIL) "a view of its stencil alone" else "and of its depth");
+                fb.DestroyImageView(device, plane);
+            }
         }
     }
 

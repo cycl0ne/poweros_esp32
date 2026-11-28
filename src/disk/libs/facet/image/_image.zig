@@ -187,6 +187,11 @@ pub const ImageView = struct {
     /// image, as v3dv packs a view of VK_IMAGE_VIEW_TYPE_CUBE_ARRAY
     /// (v3dvx_image.c:89-93, :171-174; since 1.234).
     cubes: bool = false,
+    /// Whether it is of a depth image's stencil alone, IMAGE_ASPECT_STENCIL
+    /// of a format holding one: what the V3D's TMU reads as R8G8B8A8_UINT
+    /// where the image is D24_UNORM_S8_UINT, as v3dv reads it
+    /// (v3dv_image.c:781-800; since 1.240).
+    stencil: bool = false,
     /// `texture`: the levels it takes, as a sample reads them.
     texels: texture.Texture = undefined,
     /// Its component swizzle, which its texels apply (since 1.120): kept
@@ -708,6 +713,14 @@ pub fn readAs(texels: texture.Texture, image: *const Image, format: facet.Format
 
 /// Whether an image is a depth attachment's that may also be sampled: its
 /// rows are the texture, so nothing is copied and nothing kept twice.
+/// Whether a device samples the stencil of `format`: every format's where
+/// it samples a stencil at all (`sampled_stencil`), and the one in a word
+/// beside a depth of 24 bits where it samples that one's
+/// (`sampled_word_stencil`; since 1.240).
+pub fn stencilSampled(can: _instance.Capabilities, format: facet.Format) bool {
+    return can.sampled_stencil or format == .d24_unorm_s8_uint and can.sampled_word_stencil;
+}
+
 pub fn sampledDepth(image: *const Image) bool {
     return image.kind == .depth and image.usage & facet.IMAGE_USAGE_SAMPLED != 0;
 }
@@ -941,7 +954,9 @@ fn laidOut(physical: *_instance.PhysicalDevice, info: *const facet.ImageCreateIn
         // A stencil sampled where the device samples one (since 1.142):
         // the V3D samples a depth of its own alone, and reads an input
         // attachment through the same texture unit (since 1.216).
-        if ((sampled or read_back and physical.ops.texture_memory != null) and hasStencil(info.format) and !physical.can.sampled_stencil) return null;
+        // D24_UNORM_S8_UINT's stencil where it samples that one's alone
+        // (since 1.240).
+        if ((sampled or read_back and physical.ops.texture_memory != null) and hasStencil(info.format) and !stencilSampled(physical.can, info.format)) return null;
         var allowed = depth_usage;
         if (sampled) allowed |= facet.IMAGE_USAGE_SAMPLED;
         if (read_back) allowed |= facet.IMAGE_USAGE_INPUT_ATTACHMENT;

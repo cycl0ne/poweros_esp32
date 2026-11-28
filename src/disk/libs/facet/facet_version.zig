@@ -8069,4 +8069,51 @@ pub const LIBRARY_VERSION = 1;
 /// apart, the mediump one 62236, 4 at worst; five cases of filtered
 /// samples come closer to the cores, "shipped bias, -1 to 1, levels
 /// mixed" 3576 apart where it was 3660; the other 329 are as in 1.238.
-pub const LIBRARY_REVISION = 239;
+/// 240: **A D24_UNORM_S8_UINT's stencil read as an input attachment on
+/// the V3D, and sampled (docs/facet-vulkan10.md item 56, its last entry
+/// left out, V3D-only).** v3dv's one format of a stencil is D24S8
+/// (v3dvx_formats.c:209), its depth aspect read as DEPTH24_X8 and its
+/// stencil aspect as the word re-read as R8G8B8A8_UINT under SWIZ_X001,
+/// the byte below the depth its red (v3dv_image.c:781-800). Ported:
+/// - **The compiler.** OpTypeInt keeps its signedness, and OpTypeImage
+///   takes a sampled type of int beside float (`Sampler.whole`). The
+///   result is a vector of the image's base type, as vtn asks
+///   (spirv_to_nir.c:3566-3578), else `Error.Type`, and so is a
+///   comparison of whole numbers; an integer storage image is refused.
+/// - **The back end.** At 32 bits the words are the integers as they
+///   are. At 16 bits each word holds two halves, unpacked as
+///   nir_lower_tex's packing_16 does through nir_format_unpack_uint and
+///   _sint (nir_lower_tex.c:1182-1205; nir_format_convert.c:57-96): the
+///   low half shifted up 16 and back down, the high half down 16, SHR or
+///   ASR by the sign; 16 is a uniform.
+/// - **The texture.** `tiling.Texels.stencil`, texture type RGBA8UI, 101
+///   (v3d_packet.xml:407), its channels (red, 0, 0, 1).
+/// - **The view.** One of IMAGE_ASPECT_STENCIL alone says so
+///   (`ImageView.stencil`), and the draw takes D24S8's stencil or its
+///   depth by it (`_play.tmuConfiguration`).
+/// - **The capability.** `sampled_word_stencil`, true on the V3D: the
+///   format says SAMPLED_IMAGE, unfiltered, and CreateImage takes SAMPLED
+///   and INPUT_ATTACHMENT on it. S8_UINT and D16_UNORM_S8_UINT, which
+///   v3dv has not, stay refused there.
+///
+/// Still left out, V3D-only: textures of whole numbers other than the
+/// stencil (`whole_textures`), and whole numbers out of the tile buffer
+/// (`Error.Refused`).
+///
+/// Six host tests are new and one grows: three of five glslc modules
+/// (the usubpassInput of the stencil, whole fetches at 32 and 16 bits
+/// unsigned and signed, and the refusals: a result of the other sign, a
+/// float image, a comparison of whole numbers, a whole tile input), the
+/// stencil's texture, the format's SAMPLED_IMAGE on such a device,
+/// CreateImage and the views of each plane and both on it, and the
+/// input attachment on a device of a layout of its own, which asks
+/// `_image.stencilSampled` where the format query has nothing to say.
+/// 4597 of the 4600 pass, 3 skipped; of 14 mutants, all fail a test.
+/// FacetProbe 1.63 checks D24S8 says SAMPLED_IMAGE wherever a depth is
+/// sampled, and makes the image and a view of each plane. FacetBoth
+/// 1.88's "shipped stencil input attachment" marks the stencil in a first
+/// subpass and reads it through glslc's usubpassInput in the second, its
+/// bits the colour mixed with the rectangle's. On the board FacetProbe
+/// passes 1096 of 1096; the new case is 17 of 230400 apart, at the
+/// triangles' edges, and the other 336 are as in 1.239.
+pub const LIBRARY_REVISION = 240;

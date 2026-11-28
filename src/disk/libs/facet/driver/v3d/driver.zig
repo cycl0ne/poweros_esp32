@@ -365,10 +365,15 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // 1.142, the format query leaving the sampled bits out since 1.80.
         // Unfiltered, as v3dv has D16_UNORM here (v3dvx_formats.c:204, its
         // filtering false, so v3dv_formats.c:273-276 gives no
-        // FILTER_LINEAR), and no stencil: v3dv's one format of both is
-        // D24_UNORM_S8_UINT (v3dvx_formats.c:209), which is not here.
+        // FILTER_LINEAR), and of the stencils D24_UNORM_S8_UINT's alone,
+        // v3dv's one format of both (v3dvx_formats.c:209; since 1.240).
         .sampled_depth = true,
         .sampled_stencil = false,
+        // But D24_UNORM_S8_UINT's stencil, the word read as
+        // R8G8B8A8_UINT under SWIZ_X001, as v3dv reads a view of that
+        // aspect (v3dv_image.c:781-800; `tiling.Texels.stencil`; since
+        // 1.240).
+        .sampled_word_stencil = true,
         .filtered_depth = false,
         // Its TMU is fed texels the library unpacked, so a compressed or a
         // float image is unpacked on the copy here as before.
