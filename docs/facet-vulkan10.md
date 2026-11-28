@@ -2495,7 +2495,7 @@ Still left out. Each is marked *facet-wide* or *V3D-only*:
 
 ### 56. V3D: input attachments, through SubpassData in the compiler's profile **[critical path]**
 
-*V3D compiler* &mdash; conformance-blocking, large &mdash; **done in 1.214 to 1.216, the read of an attachment the subpass draws into in 1.237, and SubpassDataMS in 1.238**; two entries left out, V3D-only but the 32-bit return
+*V3D compiler* &mdash; conformance-blocking, large &mdash; **done in 1.214 to 1.216, the read of an attachment the subpass draws into in 1.237, SubpassDataMS in 1.238, and the 32-bit return in 1.239**; one entry left out, V3D-only
 
 After: SubpassData in the compiler's profile
 
@@ -2519,7 +2519,7 @@ Still left out. Each is marked *facet-wide* or *V3D-only*:
 - **A subpass that reads an attachment it draws into**, refused at CreateRenderPass with `error_feature_not_present` on a device without `can.tile_inputs`, which the V3D lacked. *V3D-only*. **Done in 1.237**, below.
 - **SubpassDataMS**, from step 2: an input attachment of four is made and stored, and a pipeline that reads it is refused. *V3D-only*. **Done in 1.238**, below.
 - **A stencil read as an input attachment**, refused as a sampled stencil is (`can.sampled_stencil`, item 58). *V3D-only*.
-- **The 32-bit return** for a variable not RelaxedPrecision, from step 2. *Facet-wide* on the V3D.
+- **The 32-bit return** for a variable not RelaxedPrecision, from step 2. *Facet-wide* on the V3D. **Done in 1.239**, below.
 
 The three *V3D-only* entries are the V3D port's own gaps, so the list for the Radeon's has nothing new from them.
 
@@ -2582,6 +2582,35 @@ The tests:
   - "shipped input attachment of four samples" reads them in a later subpass of one sample;
   - "... of its own" reads them in the subpass that draws into the attachment, then again in a later one, over a clear of its own so that a read of what the first case left stored would show.
 - On the board (f251): FacetProbe 1088 of 1088. Both new cases are 11 of 230400 apart, 140 and 103 at worst, as many as the cases of one sample. The other 332 cases are as in 1.237.
+
+**Then the facet-wide one, in 1.239: a texel read as four 32-bit floats where its variable is not RelaxedPrecision.** The TMU handed back every texel as half-floats, two words of two, which v3dv asks for of a mediump sampler alone. v3dv's rule is ported:
+
+- **The decoration.** OpDecorate RelaxedPrecision of a variable is vtn's GLSL_PRECISION_MEDIUM (apply_var_decoration, vtn_variables.c:1367-1369), which a sampler's variable keeps (`Sampler.relaxed`). Of anything else it is nothing to the V3D, a struct's member among them (struct_member_decoration_cb, spirv_to_nir.c:1622-1626).
+- **The width.** lower_tex_src's sampler_is_32b is the variable's precision not medium (v3dv_pipeline.c:775-787).
+  - A sample takes its sampler's entry in the map. descriptor_map_add makes it 32-bit where any variable of that set and binding is (:516-556), and the key carries it (:1086-1093).
+  - A fetch has no sampler, so it takes its own variable's (`compile.wideOf`).
+- **The TMU's words.**
+  - P0 asks for the four words of a 32-bit return, 0xF, and P1 sets its output type of 32 bits (v3d_tex.c:240-331). A comparison asks for its one word at either width.
+  - A fetch writes P1 as a constant where it is 32-bit, as v3d does (:240-243, :313).
+  - The four floats are the def as they come, packing_none (vir.c:632-641; nir_lower_tex.c:1179-1180), with no FMOV.
+  - The program's stream says the words (`compile.Word.texture`'s bits), and the draw puts them in P0 over the texture state's (`tiling.parameter0Of`).
+- **The fixed forms** stay 16-bit, as a mediump sampler is (`tiling.parameter0`).
+
+The tests:
+
+- Four host tests are new, three of them of five glslc modules:
+  - A sampler RelaxedPrecision compiles to the listing of before 1.239, word for word. The decoration moved onto the sample's result leaves the sampler 32-bit: four LDTMU, P0 0xF and P1's output bit.
+  - Two variables at one set and binding, one RelaxedPrecision, sample as one unit of 32 bits. A fetch through the RelaxedPrecision one keeps its half-floats beside a sample through the other.
+  - A subpassLoad of a RelaxedPrecision input attachment is the fetch of half-floats of before 1.239, and a member decorated RelaxedPrecision is nothing.
+  - P0 as a program's stream has it: the texture state's address, with two words, four or one (`tiling`).
+- 41 old compile tests are turned round, glslc's modules having no RelaxedPrecision: four LDTMU where there were two FMOVs a word, and a comparison's word whole. The fixed forms' cut-out test compiles its shader mediump, as those forms are.
+- 4588 of the 4591 pass, 3 skipped. Of 12 mutants, all fail a test. Taken out first, the draw's words in P0 failed none: `_play` has no host test, so the words went into `tiling.parameter0Of` and its test.
+- FacetBoth 1.87 has two new cases: the texture's texel times 61, its fractions. An 8-bit texel n/255 makes 61n mod 255 a whole level, which a 32-bit float lands on and a half-float misses by up to four. "shipped fine texel" samples through a sampler that is not mediump, "... mediump" through glslc's mediump one, and the cores run one function for both.
+- On the board (f252, f253): FacetProbe 1088 of 1088. "shipped fine texel" is 0 of 230400 apart; "... mediump" 62236, 4 at worst. Five cases of filtered samples come closer to the cores: "shipped bias, -1 to 1, levels mixed" 3576 apart where it was 3660, three others a pixel or two fewer, and "shipped twice" 0 at worst where it was 1. The other 329 are as in 1.238.
+  - The new cases first ran after "blit: into a texture, then drawn", which rewrites the texture by a linear blit. The two devices' blits can be a level apart, which the ×61 makes 61 or 194 levels: 1498 apart. Run before it, they are as above.
+
+Left out, *V3D-only*:
+- **The words a sample asks for**: all four of a 32-bit return, both of half-floats. Mesa asks only for the channels read (nir_def_components_read, v3d_tex.c:253-255).
 
 ### 57. V3D: storage images, in the layout the TMU reads **[critical path]**
 

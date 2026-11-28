@@ -478,6 +478,12 @@ pub const Sampler = struct {
     /// (pipeline_get_descriptor_map, v3dv_pipeline.c:601-606; since
     /// 1.218).
     storage: bool = false,
+    /// The variable decorated RelaxedPrecision, which vtn makes
+    /// GLSL_PRECISION_MEDIUM (apply_var_decoration, vtn_variables.c:
+    /// 1367-1369): its texels come back as 16-bit floats, and any other
+    /// sampler's as 32-bit ones (lower_tex_src's sampler_is_32b,
+    /// v3dv_pipeline.c:771-787; `wideOf`; since 1.239).
+    relaxed: bool = false,
 };
 
 /// What a sampled image's coordinate names, as a nir_tex_instr's
@@ -1355,8 +1361,10 @@ pub const Word = union(enum) {
     /// it: Mesa's QUNIFORM_TMU_CONFIG_P0, the unit in its high bits
     /// (v3d_tex.c:297-303), which the draw writes as the texture's state
     /// there (write_tmu_p0, v3dv_uniforms.c:139-185). `Code.sampled` says
-    /// where each unit is bound (since 1.173).
-    texture: u8,
+    /// where each unit is bound (since 1.173). `bits` are the words the
+    /// TMU hands back, in P0's low bits: a texel's two of half-floats, its
+    /// four of 32-bit floats, or a comparison's one (since 1.239).
+    texture: SamplerWord,
     /// The state of a unit's sampler, as the second takes it
     /// (QUNIFORM_TMU_CONFIG_P1, v3d_tex.c:341-348; write_tmu_p1,
     /// v3dv_uniforms.c:187-232).
@@ -1431,13 +1439,45 @@ pub const TextureSize = struct {
 
 /// A `.sampler` word: the unit, and the bits the program sets of the
 /// sampler's state, `per_pixel_mask` where helper pixels skip the sample
-/// (v3d_tex.c:313-321; since 1.167), else none.
+/// (v3d_tex.c:313-321; since 1.167) and `output_type_32_bit` where its
+/// texels come back as 32-bit floats (since 1.239), else none. A
+/// `.texture` word's and an `.image` word's bits are the words the TMU
+/// hands back.
 pub const SamplerWord = struct { unit: u8 = 0, bits: u32 = 0 };
 
 /// TMU Config Parameter 1's Per-pixel mask enable (v3d_packet.xml:1544):
 /// the lookup made for the pixels the quad covers alone, its helper
 /// pixels left out (since 1.167).
 pub const per_pixel_mask: u32 = 1 << 2;
+
+/// TMU Config Parameter 1's Output Type 32-bit (v3d_packet.xml:1545):
+/// each word the TMU hands back a float of the texel, where it hands back
+/// two half-floats a word otherwise (since 1.239).
+pub const output_type_32_bit: u32 = 1 << 0;
+
+/// Whether a lookup through the sampler the module declares `which`th
+/// hands back 32-bit floats: Mesa's key->sampler_is_32b (v3d_tex.c:
+/// 240-245), and nir_lower_tex's packing_none where it does
+/// (lower_tex_packing_cb, vir.c:632-642; since 1.239).
+///
+/// v3dv asks for them of a variable not RelaxedPrecision (lower_tex_src,
+/// v3dv_pipeline.c:771-787). A fetch has no sampler, so its default one
+/// is picked by its texture's variable alone (lower_sampler, :835-841);
+/// a sample's is the sampler map's, of 32 bits where any sample of that
+/// set and binding is through a variable not RelaxedPrecision
+/// (descriptor_map_add, :535-541).
+pub fn wideOf(work: *const Work, which: u32, fetches: bool) bool {
+    const declared = work.samplers[which];
+    if (!declared.relaxed) return true;
+    if (fetches) return false;
+    for (work.program()) |each| {
+        if (each.tag != .sample and each.tag != .sample_compared) continue;
+        if (each.lookup.fetches()) continue;
+        const other = work.samplers[each.at];
+        if (other.set == declared.set and other.binding == declared.binding and !other.relaxed) return true;
+    }
+    return false;
+}
 
 /// What a `.viewport` step reads, as v3dv writes QUNIFORM_VIEWPORT_X_SCALE,
 /// _Y_SCALE, _Z_OFFSET and _Z_SCALE (v3dv_uniforms.c:526-552): the
@@ -1703,6 +1743,11 @@ pub const Work = struct {
     /// An image type of Sampled 2 and a format, a storage image's (since
     /// 1.218).
     storage_image: std.StaticBitSet(most_ids) = .initEmpty(),
+    /// An id decorated RelaxedPrecision (since 1.239). Only a sampler's
+    /// variable is read for it: v3dv sets no mediump_16bit_alu, so vtn
+    /// keeps every other value at its own width (vtn_value_needs_mediump_16bit,
+    /// vtn_private.h:1167-1171).
+    relaxed: std.StaticBitSet(most_ids) = .initEmpty(),
     /// Which step a value id answers.
     step_of: [most_ids]u16 = @splat(none),
     /// `member_pointer`: which float of the member it names, or `whole`
@@ -2227,13 +2272,18 @@ fn compileRead(work: *Work, allocator: std.mem.Allocator, compiler: *const vir.C
         work.stream[at] = switch (contents) {
             .constant => .{ .float = @bitCast(data) },
             // The draw's own words, which `tiling.parameter0` and
-            // `parameter1` write as these are: both words of a unit's
-            // texture, and its sampler, with the per-pixel mask the
-            // program sets of it (since 1.167). The unit `to_vir` puts in
-            // the high bits is the sampler the module declares, made the
-            // program's own here (since 1.173).
-            .tmu_config_p0 => if (vir.unitDataGetOffset(data) == to_vir.texel_words) .{ .texture = try units.at(vir.unitDataGetUnit(data)) } else return Error.Invalid,
-            .tmu_config_p1 => if (vir.unitDataGetOffset(data) & ~per_pixel_mask == 0) .{ .sampler = .{ .unit = try units.at(vir.unitDataGetUnit(data)), .bits = vir.unitDataGetOffset(data) } } else return Error.Invalid,
+            // `parameter1` write as these are: a unit's texture, with the
+            // words the TMU hands back (since 1.239), and its sampler,
+            // with the per-pixel mask the program sets of it (since 1.167)
+            // and the output of 32 bits (since 1.239). The unit `to_vir`
+            // puts in the high bits is the sampler the module declares,
+            // made the program's own here (since 1.173).
+            .tmu_config_p0 => texture: {
+                const bits = vir.unitDataGetOffset(data);
+                if (bits != to_vir.texel_words and bits != to_vir.wide_texel_words and bits != to_vir.compared_words) return Error.Invalid;
+                break :texture .{ .texture = .{ .unit = try units.at(vir.unitDataGetUnit(data)), .bits = bits } };
+            },
+            .tmu_config_p1 => if (vir.unitDataGetOffset(data) & ~(per_pixel_mask | output_type_32_bit) == 0) .{ .sampler = .{ .unit = try units.at(vir.unitDataGetUnit(data)), .bits = vir.unitDataGetOffset(data) } } else return Error.Invalid,
             // A storage image's: the words a load hands back, or a
             // store's none (since 1.218).
             .image_tmu_config_p0 => image: {
@@ -2696,6 +2746,15 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                         continue;
                     },
                     .location, .descriptor_set, .binding => {},
+                    // A precision of medium, which carries no literal
+                    // (since 1.239): of a sampler's variable, its texels
+                    // in 16-bit floats (`Sampler.relaxed`); of anything
+                    // else, nothing.
+                    .relaxed_precision => {
+                        if (operands.len != 2) return Error.Refused;
+                        work.relaxed.set(id);
+                        continue;
+                    },
                     // An input attachment's index in its subpass, which
                     // v3dv reads only to read the attachment from the
                     // tile buffer, where the subpass draws into it too
@@ -2778,6 +2837,13 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     const block = try blockOf(work, id);
                     block.member_builtin[operands[1]] = @intCast(operands[3]);
                     block.per_vertex = true;
+                    continue;
+                }
+                // A member's precision, which vtn does nothing with
+                // (struct_member_decoration_cb, spirv_to_nir.c:1622-1626;
+                // since 1.239).
+                if (what == .relaxed_precision) {
+                    if (operands.len != 3) return Error.Refused;
                     continue;
                 }
                 if (what != .offset and what != .matrix_stride and what != .col_major and what != .non_writable) return Error.Refused;
@@ -3207,7 +3273,7 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     work.thing[id] = .variable;
                     work.class[id] = @intCast(@intFromEnum(class));
                     work.sampler_of[id] = @intCast(work.sampler_count);
-                    work.samplers[work.sampler_count] = .{ .set = work.set[id], .binding = work.binding[id], .dim = work.sampler_dim[pointee], .multisampled = work.multisampled.isSet(pointee), .input_attachment = subpass, .input_index = if (subpass) work.attachment_index[id] else no_tile, .storage = storage };
+                    work.samplers[work.sampler_count] = .{ .set = work.set[id], .binding = work.binding[id], .dim = work.sampler_dim[pointee], .multisampled = work.multisampled.isSet(pointee), .input_attachment = subpass, .input_index = if (subpass) work.attachment_index[id] else no_tile, .storage = storage, .relaxed = work.relaxed.isSet(id) };
                     work.sampler_count += 1;
                     continue;
                 }
@@ -12090,7 +12156,7 @@ fn sample(work: *Work, each: Step, at: u16) Error!void {
     const t = try plain(work, coordinate[1]);
     try wait(work, &.{ s, t }, 0);
     try act(work, .{ .tmu = .{ .which = .t, .from = t } });
-    try streamed(work, .{ .texture = 0 });
+    try streamed(work, .{ .texture = .{ .bits = to_vir.texel_words } });
     try act(work, .config);
     try streamed(work, .{ .sampler = .{} });
     try act(work, .config);
@@ -12679,6 +12745,28 @@ fn patched(comptime words: []const u32, comptime op: spirv.Op, comptime at: u32,
     }
 }
 
+/// `words` with the variable its `at`th DescriptorSet decorates decorated
+/// RelaxedPrecision as well, as glslc decorates a `mediump sampler2D`:
+/// an OpDecorate of two operands put after that one (since 1.239).
+fn relaxedAt(comptime words: []const u32, comptime at: u32) [words.len + 3]u32 {
+    comptime {
+        @setEvalBranchQuota(100_000);
+        var seen: u32 = 0;
+        var k: usize = 5;
+        while (k < words.len) : (k += words[k] >> 16) {
+            if (words[k] >> 16 == 0) @compileError("a word count of zero");
+            if (words[k] & 0xFFFF != @intFromEnum(spirv.Op.decorate) or words[k + 2] != @intFromEnum(spirv.Decoration.descriptor_set)) continue;
+            if (seen == at) {
+                const after = k + (words[k] >> 16);
+                const decoration = [_]u32{ @as(u32, 3) << 16 | @intFromEnum(spirv.Op.decorate), words[k + 1], @intFromEnum(spirv.Decoration.relaxed_precision) };
+                return words[0..after].* ++ decoration ++ words[after..words.len].*;
+            }
+            seen += 1;
+        }
+        @compileError("no such DescriptorSet to put it after");
+    }
+}
+
 /// `words` with its colour out, its one Output variable, decorated at
 /// `location` instead (since 1.231).
 fn colourAt(comptime words: []const u32, comptime location: u32) [words.len]u32 {
@@ -13021,6 +13109,23 @@ const qpu_instr = @import("qpu/instr.zig");
 const qpu_pack = @import("qpu/pack.zig");
 const validator = @import("compiler/validate.zig");
 
+/// A test's `.texture` word of unit `unit`: four words of 32-bit floats,
+/// as a sampler not RelaxedPrecision hands back (since 1.239).
+fn wideTexture(unit: u8) Word {
+    return .{ .texture = .{ .unit = unit, .bits = to_vir.wide_texel_words } };
+}
+
+/// Two words of half-floats, as a RelaxedPrecision one hands back, and
+/// the plan's every sample.
+fn halfTexture(unit: u8) Word {
+    return .{ .texture = .{ .unit = unit, .bits = to_vir.texel_words } };
+}
+
+/// A comparison's one word.
+fn comparedTexture(unit: u8) Word {
+    return .{ .texture = .{ .unit = unit, .bits = to_vir.compared_words } };
+}
+
 test "the interpolated colour comes to the program that was written by hand, word for word" {
     var work: Work = .{};
     const code = try compile(&work, Smooth.words);
@@ -13281,7 +13386,7 @@ test "a texture sampled at a varying is the hand-written program, with the texel
     try testing.expectEqualSlices(u64, &want, code.words);
     // Nothing of its own in the stream: the two words are the TMU's, and
     // only a draw knows what they are.
-    try testing.expectEqualSlices(Word, &[_]Word{ .{ .texture = 0 }, .{ .sampler = .{} } }, code.stream());
+    try testing.expectEqualSlices(Word, &[_]Word{ halfTexture(0), .{ .sampler = .{} } }, code.stream());
 }
 
 test "a texture times the colour the vertices carry comes to the program that was written by hand, word for word" {
@@ -13294,7 +13399,7 @@ test "a texture times the colour the vertices carry comes to the program that wa
     // as it does in the hand-written program - and each product is
     // written over the colour that went into it, which dies at it.
     try testing.expectEqualSlices(u64, qpu.texture_color_fragment.code, code.words);
-    try testing.expectEqualSlices(Word, &[_]Word{ .{ .texture = 0 }, .{ .sampler = .{} } }, code.stream());
+    try testing.expectEqualSlices(Word, &[_]Word{ halfTexture(0), .{ .sampler = .{} } }, code.stream());
 }
 
 test "a texel added to is read out of its pair first, by a 1 loaded before the splice" {
@@ -13309,7 +13414,7 @@ test "a texel added to is read out of its pair first, by a 1 loaded before the s
     // (nir_opt_algebraic.py:236; since 1.174).
     try testing.expectEqualSlices(Word, &[_]Word{
         .{ .float = 1 },   .{ .float = 0.1 }, .{ .float = 0.2 },
-        .{ .float = 0.3 }, .{ .texture = 0 }, .{ .sampler = .{} },
+        .{ .float = 0.3 }, halfTexture(0),    .{ .sampler = .{} },
     }, code.stream());
     var halves: u32 = 0;
     var adds: u32 = 0;
@@ -13774,6 +13879,10 @@ fn text(comptime add: []const u8, comptime mul: []const u8, comptime sig: []cons
 }
 
 fn expectText(code: Code, expected: []const []const u8) !void {
+    errdefer for (code.words, 0..) |word, at| {
+        var buffer: [disasm.most_text]u8 = undefined;
+        std.debug.print("found {d}: {s}\n", .{ at, disasm.disasm(word, &buffer).? });
+    };
     try testing.expectEqual(expected.len, code.words.len);
     for (code.words, expected) |word, line| {
         var buffer: [disasm.most_text]u8 = undefined;
@@ -13845,9 +13954,11 @@ test "through Mesa's back end, a texture: the lookup started in the delay slots 
     const code = try throughMesa(&work, Textured.words);
     try testing.expectEqual(@as(u32, 2), code.varyings);
     try testing.expectEqual(Sampler{ .set = 0, .binding = 0 }, code.sampled()[0]);
-    // The draw's two words, as the hand-written program reads them.
-    try testing.expectEqualSlices(Word, &[_]Word{ .{ .texture = 0 }, .{ .sampler = .{ .bits = per_pixel_mask } } }, code.stream());
-    try testing.expectEqual(@as(u32, 12), code.registers);
+    // The draw's two words: the texture's, asking for four words back,
+    // and the sampler's, with the per-pixel mask and the output of 32
+    // bits, as the variable is not RelaxedPrecision (since 1.239).
+    try testing.expectEqualSlices(Word, &[_]Word{ wideTexture(0), .{ .sampler = .{ .bits = per_pixel_mask | output_type_32_bit } } }, code.stream());
+    try testing.expectEqual(@as(u32, 14), code.registers);
     try expectText(code, &.{
         // The configuration first: the scheduler lets the two wrtmuc go
         // ahead of T, as long as S, which starts the lookup, comes last.
@@ -13855,21 +13966,25 @@ test "through Mesa's back end, a texture: the lookup started in the delay slots 
         text("nop", "fmul rf5, rf4, rf3", "ldvary.rf7; wrtmuc"),
         text("fadd rf6, rf0, rf5", "fmul rf8, rf7, rf3", ""),
         // The last thread switch is the one the sample waits at: the
-        // lookup is started in its delay slots, and both words are read
-        // after it. vir_emit_last_thrsw added a pair of its own, taken
-        // out again when nothing spilled.
+        // lookup is started in its delay slots, and the four words are
+        // read after it. vir_emit_last_thrsw added a pair of its own,
+        // taken out again when nothing spilled.
         text("fadd rf9, rf0, rf8", "nop", "thrsw"),
         text("nop", "mov tmut, rf9", "thrsw"),
         text("nop", "mov tmus, rf6", ""),
-        // The thread end's signal goes into the first ldtmu, and the
-        // halves are packed back for the tile buffer in its delay slots.
-        text("nop", "nop", "thrsw; ldtmu.rf10"),
-        text("vfpack tlb, rf10.l, rf10.h", "nop", "ldtmu.rf11"),
-        text("vfpack tlb, rf11.l, rf11.h", "nop", ""),
+        // A float a word, red and green packed into half-floats for the
+        // tile buffer as the program writes them (vir_VFPACK of the
+        // colour, nir_to_vir.c); the thread end's signal goes into the
+        // third ldtmu, the last two in its delay slots.
+        text("nop", "nop", "ldtmu.rf10"),
+        text("nop", "nop", "ldtmu.rf11"),
+        text("vfpack tlb, rf10, rf11", "nop", "thrsw; ldtmu.rf12"),
+        text("nop", "nop", "ldtmu.rf13"),
+        text("vfpack tlb, rf12, rf13", "nop", ""),
     });
 }
 
-test "through Mesa's back end, a depth compared: the reference to TMUDREF after T and before S, and what passed the first word's low half" {
+test "through Mesa's back end, a depth compared: the reference to TMUDREF after T and before S, and what passed the first word, a 32-bit float" {
     var work: Work = .{};
     const code = try throughMesa(&work, Shadowed.words);
     try testing.expectEqual(@as(u32, 3), code.varyings);
@@ -13877,13 +13992,15 @@ test "through Mesa's back end, a depth compared: the reference to TMUDREF after 
     // sampler's comparison and a depth.
     try testing.expectEqual(Sampler{ .set = 0, .binding = 0, .compared = true }, code.sampled()[0]);
     // v3d_tex.c's order: the coordinate's T, the comparator, then S last,
-    // which starts the lookup; and both words read back, as P0 asks.
+    // which starts the lookup; and the first word read back alone, as P0
+    // asks of the one float a comparison answers (since 1.239).
     var buffer: [disasm.most_text]u8 = undefined;
     var t_at: ?usize = null;
     var dref_at: ?usize = null;
     var s_at: ?usize = null;
     var ldtmu: u32 = 0;
-    var read_low = false;
+    var read_whole = false;
+    var read_half = false;
     var first_word: ?[]const u8 = null;
     var named: [16]u8 = undefined;
     for (code.words, 0..) |word, at| {
@@ -13892,26 +14009,28 @@ test "through Mesa's back end, a depth compared: the reference to TMUDREF after 
         if (std.mem.indexOf(u8, line, "mov tmudref,") != null) dref_at = at;
         if (std.mem.indexOf(u8, line, "mov tmus,") != null) s_at = at;
         if (first_word) |register| {
-            if (std.mem.indexOf(u8, line, register) != null) read_low = true;
+            if (std.mem.indexOf(u8, line, register) != null) read_whole = true;
+            if (std.mem.indexOf(u8, line, named[0 .. register.len + 2]) != null) read_half = true;
         }
         if (std.mem.indexOf(u8, line, "ldtmu.")) |found| {
             ldtmu += 1;
-            // The first word's register, as an operand of its low half:
-            // `rfN.l`.
+            // The first word's register, and it as an operand of its
+            // low half, `rfN.l`, after it.
             if (first_word == null) {
                 const start = found + "ldtmu.".len;
                 var end = start;
                 while (end < line.len and line[end] != ' ' and line[end] != ';') end += 1;
-                first_word = try std.fmt.bufPrint(&named, "{s}.l", .{line[start..end]});
+                const half = try std.fmt.bufPrint(&named, "{s}.l", .{line[start..end]});
+                first_word = half[0 .. half.len - 2];
             }
         }
     }
     try testing.expect(t_at.? < dref_at.? and dref_at.? < s_at.?);
-    try testing.expectEqual(@as(u32, 2), ldtmu);
-    // What passed is the first word's low half, read where it is used:
-    // vir_opt_alu folds the unpacking fmov into the product, as Mesa
-    // does (`fmul rf15, 0x3f800000, rf13.l`).
-    try testing.expect(read_low);
+    try testing.expectEqual(@as(u32, 1), ldtmu);
+    // What passed is the first word, a 32-bit float read whole where it
+    // is used, packing_none leaving no unpacking (since 1.239; its low
+    // half before, which vir_opt_alu folded into the product).
+    try testing.expect(read_whole and !read_half);
     // The plan has no program to hold it to.
     var planned: Work = .{};
     try testing.expectError(Error.Samplers, compile(&planned, Shadowed.words));
@@ -14185,12 +14304,12 @@ test "a cube of an array's gradient is the level lower_gradient_cube_map makes o
     // an array (v3dv_uniforms.c:402-407).
     var grad: Work = .{};
     const grad_code = try throughMesa(&grad, &reference.glslc_cubes_grad);
-    const sampler: Word = .{ .sampler = .{ .bits = per_pixel_mask } };
+    const sampler: Word = .{ .sampler = .{ .bits = per_pixel_mask | output_type_32_bit } };
     const width: Word = .{ .texture_size = .{ .field = .width } };
     const p2: Word = .{ .float = @bitCast(@as(u32, 0x00F00002)) };
     const stream = grad_code.stream();
     try testing.expectEqual(width, stream[0]);
-    try testing.expectEqualSlices(Word, &[_]Word{ .{ .texture = 0 }, sampler, p2 }, stream[stream.len - 3 ..]);
+    try testing.expectEqualSlices(Word, &[_]Word{ wideTexture(0), sampler, p2 }, stream[stream.len - 3 ..]);
     for (stream) |word| try testing.expect(!std.meta.eql(word, Word{ .texture_size = .{ .field = .array_size } }) and !std.meta.eql(word, Word{ .texture_size = .{ .field = .height } }));
     try testing.expectEqual(Lookup.lod, (try onlySample(&grad)).lookup);
     try expectTmuWritesEnding(grad_code, &.{ "tmut", "tmur", "tmui", "tmub" }, "tmuscm");
@@ -14225,7 +14344,7 @@ test "a storage cube of an array, of ImageCubeArray, is read and written as its 
 /// The uniform stream of a sample whose P2 is `p2`: its texture, its
 /// sampler with the per-pixel mask, and the constant P2 after them.
 fn sampledStream(p2: ?u32) [3]Word {
-    return .{ .{ .texture = 0 }, .{ .sampler = .{ .bits = per_pixel_mask } }, .{ .float = @bitCast(p2 orelse 0) } };
+    return .{ wideTexture(0), .{ .sampler = .{ .bits = per_pixel_mask | output_type_32_bit } }, .{ .float = @bitCast(p2 orelse 0) } };
 }
 
 /// That `code` writes the TMU registers `expected`, each once, in any
@@ -14284,7 +14403,7 @@ test "a sample at a level the program gives writes the level to TMUB and starts 
     try testing.expectEqual(Tag.constant, shadow.steps[compared.from[0]].tag);
     try testing.expectEqual(@as(f32, 1.0), shadow.pool[shadow.steps[compared.from[0]].at]);
     try expectTmuWritesEnding(shadow_code, &.{ "tmut", "tmudref", "tmub" }, "tmuslod");
-    try testing.expectEqualSlices(Word, sampledStream(null)[0..2], shadow_code.stream());
+    try testing.expectEqualSlices(Word, &.{ comparedTexture(0), sampledStream(null)[1] }, shadow_code.stream());
 }
 
 test "a bias is written to TMUB, the level the quad gives biased by it, and the lookup started at TMUS" {
@@ -14369,7 +14488,7 @@ test "a cube of depths compared with a bias is five TMU writes, which two thread
     try testing.expectEqual(@as(u16, 1), work.steps[sampled.from[0]].at);
     try expectTmuWritesEnding(code, &.{ "tmut", "tmur", "tmudref", "tmub" }, "tmuscm");
     try testing.expectEqual(@as(u8, 2), code.threads);
-    try testing.expectEqualSlices(Word, sampledStream(null)[0..2], code.stream());
+    try testing.expectEqualSlices(Word, &.{ comparedTexture(0), sampledStream(null)[1] }, code.stream());
 }
 
 test "a level and a bias are reads the passes rename as any other: nir_opt_cse's takes the level computed again and renumbers the bias after it" {
@@ -14432,8 +14551,8 @@ test "a sample at a level the program gives wants no helper pixels for its coord
         samples += 1;
     };
     try testing.expectEqual(@as(usize, 2), samples);
-    const sampler: Word = .{ .sampler = .{ .bits = per_pixel_mask } };
-    try testing.expectEqualSlices(Word, &.{ .{ .texture = 0 }, sampler, .{ .texture = 0 }, sampler }, code.stream());
+    const sampler: Word = .{ .sampler = .{ .bits = per_pixel_mask | output_type_32_bit } };
+    try testing.expectEqualSlices(Word, &.{ wideTexture(0), sampler, wideTexture(0), sampler }, code.stream());
     try testing.expectEqual(@as(usize, 1), countOf(code, "tmuslod"));
     try testing.expectEqual(@as(usize, 1), countOf(code, "mov tmus,"));
 }
@@ -14569,8 +14688,8 @@ test "a query and a sample of one texture are one unit, a comparison in it or no
     var work: Work = .{};
     const code = try throughMesa(&work, &reference.glslc_size_sampled);
     try testing.expectEqual(@as(usize, 1), code.sampled().len);
-    const sampler: Word = .{ .sampler = .{ .bits = per_pixel_mask } };
-    try testing.expectEqualSlices(Word, &(sizesOf(&.{ .width, .height }) ++ [_]Word{ .{ .texture = 0 }, sampler }), code.stream());
+    const sampler: Word = .{ .sampler = .{ .bits = per_pixel_mask | output_type_32_bit } };
+    try testing.expectEqualSlices(Word, &(sizesOf(&.{ .width, .height }) ++ [_]Word{ wideTexture(0), sampler }), code.stream());
     // A unit a comparison is in: the query reads no sampler state, so it
     // is no other sampler's. The width alone is read, and the height's
     // SHR, MAX and uniform are dead (vir_opt_dead_code).
@@ -14578,14 +14697,14 @@ test "a query and a sample of one texture are one unit, a comparison in it or no
     const shadow_code = try throughMesa(&shadow, &reference.glslc_size_shadow);
     try testing.expectEqual(@as(usize, 1), shadow_code.sampled().len);
     try testing.expect(shadow_code.sampled()[0].compared);
-    try testing.expectEqualSlices(Word, &[_]Word{ .{ .texture = 0 }, sampler, .{ .texture_size = .{ .field = .width } } }, shadow_code.stream());
+    try testing.expectEqualSlices(Word, &[_]Word{ comparedTexture(0), sampler, .{ .texture_size = .{ .field = .width } } }, shadow_code.stream());
     try testing.expectEqual(@as(usize, 1), countOf(shadow_code, "shr "));
     // Two variables at one set and binding are one unit, the query's
     // the sample's (descriptor_map_add, v3dv_pipeline.c:516-561).
     var aliased: Work = .{};
     const aliased_code = try throughMesa(&aliased, &reference.glslc_size_aliased);
     try testing.expectEqual(@as(usize, 1), aliased_code.sampled().len);
-    try testing.expectEqualSlices(Word, &[_]Word{ .{ .texture = 0 }, sampler, .{ .texture_size = .{ .field = .width } } }, aliased_code.stream());
+    try testing.expectEqualSlices(Word, &[_]Word{ wideTexture(0), sampler, .{ .texture_size = .{ .field = .width } } }, aliased_code.stream());
 }
 
 test "a query in a selection's arm keeps the arm, as any tex instruction does" {
@@ -14641,7 +14760,9 @@ test "a texel at a level is vtn's txf, its integers to TMUT and TMUB and its loo
         fetches += 1;
     };
     try testing.expectEqual(@as(usize, 1), fetches);
-    try testing.expectEqualSlices(Word, &[_]Word{.{ .texture = 0 }}, code.stream());
+    // P0, and P1 the constant of 32-bit floats and the per-pixel mask
+    // (v3d_tex.c:312-354; since 1.239).
+    try testing.expectEqualSlices(Word, &[_]Word{ wideTexture(0), .{ .float = @bitCast(per_pixel_mask | output_type_32_bit) } }, code.stream());
     try testing.expectEqual(@as(usize, 1), countOf(code, "mov tmub, 1"));
     try testing.expectEqual(@as(usize, 1), countOf(code, "mov tmut, "));
     try testing.expectEqual(@as(usize, 1), countOf(code, "mov tmusf, "));
@@ -14714,14 +14835,16 @@ test "a sample of a texture of four is vtn's txf_ms, which v3d_nir_lower_txf_ms 
         fetches += 1;
     };
     try testing.expectEqual(@as(usize, 1), fetches);
-    try testing.expectEqualSlices(Word, &[_]Word{.{ .texture = 0 }}, code.stream());
+    // P0, and P1 the constant of 32-bit floats and the per-pixel mask
+    // (v3d_tex.c:312-354; since 1.239).
+    try testing.expectEqualSlices(Word, &[_]Word{ wideTexture(0), .{ .float = @bitCast(per_pixel_mask | output_type_32_bit) } }, code.stream());
     try testing.expectEqual(@as(usize, 0), countOf(code, "tmub"));
     try testing.expectEqual(@as(usize, 1), countOf(code, "mov tmut, "));
     try testing.expectEqual(@as(usize, 1), countOf(code, "mov tmusf, "));
     try testing.expectEqual(@as(usize, 2), opsOf(code, "shl"));
     try testing.expectEqual(@as(usize, 1), opsOf(code, "add"));
     try testing.expectEqual(@as(usize, 0), opsOf(code, "and"));
-    try testing.expectEqual(@as(usize, 15), code.words.len);
+    try testing.expectEqual(@as(usize, 17), code.words.len);
     try testing.expect(!Lookup.fetch_sample.derived() and !Lookup.fetch_sample.leveled() and Lookup.fetch_sample.fetches());
     // The four samples a loop fetches, unrolled: x << 1 and y << 1 made
     // once, each with 1 added where the sample's bit says (nir_opt_cse).
@@ -14730,8 +14853,8 @@ test "a sample of a texture of four is vtn's txf_ms, which v3d_nir_lower_txf_ms 
     try testing.expectEqual(@as(usize, 4), countOf(four_code, "mov tmusf, "));
     try testing.expectEqual(@as(usize, 0), countOf(four_code, "tmub"));
     try testing.expectEqual(@as(usize, 2), countOf(four_code, "shl "));
-    try testing.expectEqual(@as(usize, 8), countOf(four_code, "ldtmu"));
-    try testing.expectEqual(@as(usize, 33), four_code.words.len);
+    try testing.expectEqual(@as(usize, 16), countOf(four_code, "ldtmu"));
+    try testing.expectEqual(@as(usize, 39), four_code.words.len);
     // A sample the program computes, of an array's layer: the bits taken
     // with ANDs and a shift, and the layer to TMUI as it is.
     var layers: Work = .{};
@@ -14742,7 +14865,7 @@ test "a sample of a texture of four is vtn's txf_ms, which v3d_nir_lower_txf_ms 
     try testing.expectEqual(@as(usize, 1), countOf(layers_code, "shr "));
     try testing.expectEqual(@as(usize, 1), countOf(layers_code, "mov tmusf, "));
     try testing.expectEqual(@as(usize, 0), countOf(layers_code, "tmub"));
-    try testing.expectEqual(@as(usize, 21), layers_code.words.len);
+    try testing.expectEqual(@as(usize, 23), layers_code.words.len);
 }
 
 /// glslc_fetch's fetch at a Sample, glslc_fetch_sample's at a Lod and a
@@ -14786,23 +14909,27 @@ test "an image of four is fetched with its Sample alone, and a Sample is an imag
 
 test "a texel a constant offset away has P2 after the default P1, both constants, and no sampler state" {
     // needs_p2_config with no sampler: P1 is p1_unpacked_default, the
-    // per-pixel mask, then P2 (v3d_tex.c:355-371; since 1.182).
+    // per-pixel mask, then P2 (v3d_tex.c:355-371; since 1.182) - P1 the
+    // constant of its own bits now, the per-pixel mask and 32-bit floats
+    // (:312-354; since 1.239).
     var work: Work = .{};
     const code = try throughMesa(&work, &reference.glslc_fetch_offset);
-    const p1: Word = .{ .float = @bitCast(per_pixel_mask) };
+    const p1: Word = .{ .float = @bitCast(per_pixel_mask | output_type_32_bit) };
     const p2: Word = .{ .float = @bitCast(@as(u32, 0x00F0E100)) };
-    try testing.expectEqualSlices(Word, &[_]Word{ .{ .texture = 0 }, p1, p2 }, code.stream());
+    try testing.expectEqualSlices(Word, &[_]Word{ wideTexture(0), p1, p2 }, code.stream());
     try testing.expectEqual(@as(usize, 1), countOf(code, "mov tmusf, "));
 }
 
 test "a texel and a sample of one texture are one unit, the sample's P1 the sampler's and a shadow sample's too" {
     // The fetch's P0 alone, beside the sample's P0 and P1
-    // (v3d_tex.c:340-348; since 1.182).
+    // (v3d_tex.c:340-348; since 1.182), and since 1.239 its P1 the
+    // constant of 32-bit floats and the per-pixel mask (:312-354).
     var work: Work = .{};
     const code = try throughMesa(&work, &reference.glslc_fetch_sampled);
     try testing.expectEqual(@as(usize, 1), code.sampled().len);
-    const sampler: Word = .{ .sampler = .{ .bits = per_pixel_mask } };
-    try testing.expectEqualSlices(Word, &[_]Word{ .{ .texture = 0 }, sampler, .{ .texture = 0 } }, code.stream());
+    const sampler: Word = .{ .sampler = .{ .bits = per_pixel_mask | output_type_32_bit } };
+    const fetch_p1: Word = .{ .float = @bitCast(per_pixel_mask | output_type_32_bit) };
+    try testing.expectEqualSlices(Word, &[_]Word{ wideTexture(0), sampler, wideTexture(0), fetch_p1 }, code.stream());
     try testing.expectEqual(@as(usize, 1), countOf(code, "mov tmus, "));
     try testing.expectEqual(@as(usize, 1), countOf(code, "mov tmusf, "));
     // A fetch reads no sampler state, so a comparison in the unit is no
@@ -14813,7 +14940,7 @@ test "a texel and a sample of one texture are one unit, the sample's P1 the samp
     const aliased_code = try throughMesa(&aliased, &reference.glslc_fetch_aliased);
     try testing.expectEqual(@as(usize, 1), aliased_code.sampled().len);
     try testing.expect(aliased_code.sampled()[0].compared);
-    try testing.expectEqualSlices(Word, &[_]Word{ .{ .texture = 0 }, sampler, .{ .texture = 0 } }, aliased_code.stream());
+    try testing.expectEqualSlices(Word, &[_]Word{ comparedTexture(0), sampler, wideTexture(0), fetch_p1 }, aliased_code.stream());
     try testing.expectEqual(@as(usize, 1), countOf(aliased_code, "tmudref"));
 }
 
@@ -14825,8 +14952,9 @@ test "a texel the helper pixels need writes P1, the constant of the per-pixel ma
     // since 1.182).
     var work: Work = .{};
     const code = try throughMesa(&work, &reference.glslc_fetch_dependent);
-    const sampler: Word = .{ .sampler = .{ .bits = per_pixel_mask } };
-    try testing.expectEqualSlices(Word, &[_]Word{ .{ .texture = 0 }, .{ .float = 0 }, .{ .texture = 0 }, sampler }, code.stream());
+    const sampler: Word = .{ .sampler = .{ .bits = per_pixel_mask | output_type_32_bit } };
+    // The constant of 32-bit floats alone (since 1.239).
+    try testing.expectEqualSlices(Word, &[_]Word{ wideTexture(0), .{ .float = @bitCast(output_type_32_bit) }, wideTexture(0), sampler }, code.stream());
     // A cube is no image a texel is fetched of (OpImageFetch's Dim;
     // v3d_tex.c:376): glslc_fetch's image made a cube.
     var cube = reference.glslc_fetch;
@@ -14862,10 +14990,10 @@ test "a gradient is lower_gradient's level: the size of level 0 made floats, the
     // since 1.183).
     var work: Work = .{};
     const code = try throughMesa(&work, &reference.glslc_grad_varying);
-    const sampler: Word = .{ .sampler = .{ .bits = per_pixel_mask } };
+    const sampler: Word = .{ .sampler = .{ .bits = per_pixel_mask | output_type_32_bit } };
     const width: Word = .{ .texture_size = .{ .field = .width } };
     const height: Word = .{ .texture_size = .{ .field = .height } };
-    try testing.expectEqualSlices(Word, &[_]Word{ width, height, .{ .texture = 0 }, sampler }, code.stream());
+    try testing.expectEqualSlices(Word, &[_]Word{ width, height, wideTexture(0), sampler }, code.stream());
     var sizes: usize = 0;
     for (work.program()) |each| switch (each.tag) {
         .texture_size => {
@@ -14898,7 +15026,7 @@ test "a gradient is lower_gradient's level: the size of level 0 made floats, the
     var constant: Work = .{};
     const constant_code = try throughMesa(&constant, &reference.glslc_grad);
     const hundredth: Word = .{ .float = @bitCast(@as(f32, 0.01)) };
-    try testing.expectEqualSlices(Word, &[_]Word{ width, height, hundredth, .{ .texture = 0 }, sampler }, constant_code.stream());
+    try testing.expectEqualSlices(Word, &[_]Word{ width, height, hundredth, wideTexture(0), sampler }, constant_code.stream());
     try testing.expectEqual(@as(usize, 2), countOf(constant_code, "fadd "));
     try testing.expectEqual(@as(usize, 2), countOf(constant_code, "rsqrt "));
     // The plan's programs compute no size, and refuse the txs.
@@ -14909,12 +15037,12 @@ test "a gradient is lower_gradient's level: the size of level 0 made floats, the
 test "a gradient of an array's layer reads the first two sizes, of a 3D texture three, and one with an offset has P2" {
     // lower_gradient's component_mask (nir_lower_tex.c:868-884): an
     // array's layers are no axis a derivative has (since 1.183).
-    const sampler: Word = .{ .sampler = .{ .bits = per_pixel_mask } };
+    const sampler: Word = .{ .sampler = .{ .bits = per_pixel_mask | output_type_32_bit } };
     const width: Word = .{ .texture_size = .{ .field = .width } };
     const height: Word = .{ .texture_size = .{ .field = .height } };
     var layers: Work = .{};
     const layers_code = try throughMesa(&layers, &reference.glslc_grad_layers);
-    try testing.expectEqualSlices(Word, &[_]Word{ width, height, .{ .texture = 0 }, sampler }, layers_code.stream());
+    try testing.expectEqualSlices(Word, &[_]Word{ width, height, wideTexture(0), sampler }, layers_code.stream());
     // The array's three integers made three floats, and two of them
     // taken: every product of a derivative is of one kind.
     var converted: usize = 0;
@@ -14936,7 +15064,7 @@ test "a gradient of an array's layer reads the first two sizes, of a 3D texture 
     var volume: Work = .{};
     const volume_code = try throughMesa(&volume, &reference.glslc_grad_volume);
     const depth: Word = .{ .texture_size = .{ .field = .depth } };
-    try testing.expectEqualSlices(Word, &[_]Word{ width, height, depth, .{ .texture = 0 }, sampler }, volume_code.stream());
+    try testing.expectEqualSlices(Word, &[_]Word{ width, height, depth, wideTexture(0), sampler }, volume_code.stream());
     try testing.expectEqual(@as(usize, 3), countOf(volume_code, "shr "));
     try testing.expectEqual(@as(usize, 1), countOf(volume_code, "mov tmur, "));
     try testing.expectEqual(@as(usize, 1), countOf(volume_code, "mov tmuslod, "));
@@ -14944,7 +15072,7 @@ test "a gradient of an array's layer reads the first two sizes, of a 3D texture 
     var offset: Work = .{};
     const offset_code = try throughMesa(&offset, &reference.glslc_grad_offset);
     const p2: Word = .{ .float = @bitCast(@as(u32, 0x00F0E100)) };
-    try testing.expectEqualSlices(Word, &[_]Word{ width, height, .{ .texture = 0 }, sampler, p2 }, offset_code.stream());
+    try testing.expectEqualSlices(Word, &[_]Word{ width, height, wideTexture(0), sampler, p2 }, offset_code.stream());
     try testing.expectEqual(@as(usize, 1), countOf(offset_code, "mov tmuslod, "));
 }
 
@@ -14953,10 +15081,10 @@ test "a shadow sample with a gradient compares at the level the gradient gives" 
     // TMUDREF, the level to TMUB, TMUSLOD (since 1.183).
     var work: Work = .{};
     const code = try throughMesa(&work, &reference.glslc_grad_shadow);
-    const sampler: Word = .{ .sampler = .{ .bits = per_pixel_mask } };
+    const sampler: Word = .{ .sampler = .{ .bits = per_pixel_mask | output_type_32_bit } };
     const width: Word = .{ .texture_size = .{ .field = .width } };
     const height: Word = .{ .texture_size = .{ .field = .height } };
-    try testing.expectEqualSlices(Word, &[_]Word{ width, height, .{ .texture = 0 }, sampler }, code.stream());
+    try testing.expectEqualSlices(Word, &[_]Word{ width, height, comparedTexture(0), sampler }, code.stream());
     try testing.expectEqual(@as(usize, 1), code.sampled().len);
     try testing.expect(code.sampled()[0].compared);
     try testing.expectEqual(@as(usize, 1), countOf(code, "mov tmudref, "));
@@ -14971,10 +15099,10 @@ test "two gradients of one texture read its size once, the two txs one by nir_op
     // 1.183).
     var work: Work = .{};
     const code = try throughMesa(&work, &reference.glslc_grad_twice);
-    const sampler: Word = .{ .sampler = .{ .bits = per_pixel_mask } };
+    const sampler: Word = .{ .sampler = .{ .bits = per_pixel_mask | output_type_32_bit } };
     const width: Word = .{ .texture_size = .{ .field = .width } };
     const height: Word = .{ .texture_size = .{ .field = .height } };
-    try testing.expectEqualSlices(Word, &[_]Word{ width, height, .{ .texture = 0 }, sampler, .{ .texture = 0 }, sampler }, code.stream());
+    try testing.expectEqualSlices(Word, &[_]Word{ width, height, wideTexture(0), sampler, wideTexture(0), sampler }, code.stream());
     try testing.expectEqual(@as(usize, 2), countOf(code, "shr "));
     try testing.expectEqual(@as(usize, 2), countOf(code, "log "));
     try testing.expectEqual(@as(usize, 2), countOf(code, "mov tmuslod, "));
@@ -15465,13 +15593,13 @@ test "a cube's gradient is lower_gradient_cube_map's level: the face's quotient 
     // 1.184).
     var work: Work = .{};
     const code = try throughMesa(&work, &reference.glslc_grad_cube);
-    const sampler: Word = .{ .sampler = .{ .bits = per_pixel_mask } };
+    const sampler: Word = .{ .sampler = .{ .bits = per_pixel_mask | output_type_32_bit } };
     const width: Word = .{ .texture_size = .{ .field = .width } };
     const minus_one: Word = .{ .float = -1.0 };
     const p2: Word = .{ .float = @bitCast(@as(u32, 0x00F00002)) };
     // L is the width alone: the height the i2f32 makes is read by
     // nothing (:840).
-    try testing.expectEqualSlices(Word, &[_]Word{ width, minus_one, .{ .texture = 0 }, sampler, p2 }, code.stream());
+    try testing.expectEqualSlices(Word, &[_]Word{ width, minus_one, wideTexture(0), sampler, p2 }, code.stream());
     var levels: usize = 0;
     for (work.program()) |each| if (each.tag == .sample) {
         try testing.expectEqual(Lookup.lod, each.lookup);
@@ -15777,35 +15905,37 @@ test "a gradient is refused on an implicit level's sample and on a fetch" {
     try testing.expectError(Error.Body, throughMesa(&fetched, &grad));
 }
 
-test "through Mesa's back end, a texel times the colour reads the texel's halves in its products" {
+test "through Mesa's back end, a texel times the colour reads the texel's floats in its products" {
     var work: Work = .{};
     const code = try throughMesa(&work, Modulated.words);
     try testing.expectEqual(@as(u32, 6), code.varyings);
     try testing.expectEqual(@as(u8, 4), code.threads);
-    try testing.expectEqualSlices(Word, &[_]Word{ .{ .texture = 0 }, .{ .sampler = .{ .bits = per_pixel_mask } } }, code.stream());
+    try testing.expectEqualSlices(Word, &[_]Word{ wideTexture(0), .{ .sampler = .{ .bits = per_pixel_mask | output_type_32_bit } } }, code.stream());
     // Mesa's allocator gives 7.1's four threads 32 registers each and
     // goes round them from rf4, where `qpu.registers` keeps the
     // hand-written programs in 16. The board has the 32: V3DTest MESA
     // draws this program at four threads with every pixel right.
-    try testing.expectEqual(@as(u32, 28), code.registers);
+    try testing.expectEqual(@as(u32, 30), code.registers);
     try testing.expect(code.registers > qpu.registers);
     try expectText(code, &.{
         text("nop", "nop", "ldvary.rf4; wrtmuc"),
         text("nop", "fmul rf5, rf4, rf3", "ldvary.rf7; wrtmuc"),
         text("fadd rf6, rf0, rf5", "fmul rf8, rf7, rf3", "ldvary.rf10"),
         text("fadd rf9, rf0, rf8", "fmul rf11, rf10, rf3", "ldvary.rf13"),
-        text("fadd rf12, rf0, rf11", "fmul rf14, rf13, rf3", "ldvary.rf16"),
+        text("fadd rf12, rf0, rf11", "fmul rf14, rf13, rf3", "thrsw; ldvary.rf16"),
         text("fadd rf15, rf0, rf14", "mov tmut, rf9", "thrsw"),
-        text("mov tmus, rf6", "fmul rf17, rf16, rf3", "thrsw; ldvary.rf19"),
-        text("fadd rf18, rf0, rf17", "fmul rf20, rf19, rf3", ""),
-        text("fadd rf21, rf0, rf20", "nop", "ldtmu.rf22"),
-        // Each half read straight out of the texel's word by the
-        // product, as the hand-written fmulLow and fmulHigh read it.
-        text("nop", "fmul rf24, rf22.l, rf12", "ldtmu.rf23"),
-        text("nop", "fmul rf25, rf22.h, rf15", ""),
-        text("vfpack tlb, rf24, rf25", "fmul rf26, rf23.l, rf18", ""),
-        text("nop", "fmul rf27, rf23.h, rf21", ""),
-        text("vfpack tlb, rf26, rf27", "nop", "thrsw"),
+        text("mov tmus, rf6", "fmul rf17, rf16, rf3", ""),
+        text("fadd rf18, rf0, rf17", "nop", "ldtmu.rf22"),
+        // Each float a word of its own, read by its product, the last
+        // varying read among them (since 1.239; each half of the
+        // texel's words before, as the hand-written fmulLow and
+        // fmulHigh read it).
+        text("nop", "fmul rf26, rf22, rf12", "ldvary.rf19"),
+        text("nop", "fmul rf20, rf19, rf3", "ldtmu.rf23"),
+        text("fadd rf21, rf0, rf20", "fmul rf27, rf23, rf15", "ldtmu.rf24"),
+        text("vfpack tlb, rf26, rf27", "fmul rf28, rf24, rf18", "ldtmu.rf25"),
+        text("nop", "fmul rf29, rf25, rf21", ""),
+        text("vfpack tlb, rf28, rf29", "nop", "thrsw"),
         text("nop", "nop", ""),
         text("nop", "nop", ""),
     });
@@ -15815,7 +15945,7 @@ test "through Mesa's back end, a texel added to: the floats of its own read arou
     var work: Work = .{};
     const code = try throughMesa(&work, Tinted.words);
     try testing.expectEqualSlices(Word, &[_]Word{
-        .{ .texture = 0 }, .{ .sampler = .{ .bits = per_pixel_mask } },
+        wideTexture(0),    .{ .sampler = .{ .bits = per_pixel_mask | output_type_32_bit } },
         .{ .float = 0.1 }, .{ .float = 0.2 },
         .{ .float = 0.3 },
     }, code.stream());
@@ -15831,12 +15961,13 @@ test "through Mesa's back end, a texel added to: the floats of its own read arou
         text("fadd rf9, rf0, rf8", "nop", "thrsw; ldunif"),
         text("nop", "mov tmut, rf9", "thrsw"),
         text("nop", "mov tmus, rf6", ""),
+        // A word a float of the texel (since 1.239).
         text("nop", "nop", "ldtmu.rf10"),
-        text("fadd rf12, rf0, rf10.l", "nop", "ldtmu.rf11; ldunif"),
-        text("fadd rf13, rf0, rf10.h", "nop", "ldunif"),
-        text("fadd rf14, rf0, rf11.l", "nop", ""),
-        text("vfpack tlb, rf12, rf13", "nop", "thrsw"),
-        text("vfpack tlb, rf14, rf11.h", "nop", ""),
+        text("fadd rf14, rf0, rf10", "nop", "ldtmu.rf11; ldunif"),
+        text("fadd rf15, rf0, rf11", "nop", "ldtmu.rf12; ldunif"),
+        text("fadd rf16, rf0, rf12", "nop", "ldtmu.rf13"),
+        text("vfpack tlb, rf14, rf15", "nop", "thrsw"),
+        text("vfpack tlb, rf16, rf13", "nop", ""),
         text("nop", "nop", ""),
     });
 }
@@ -16035,15 +16166,18 @@ test "through Mesa's back end, a pixel dropped: the comparison into the flags, S
         text("nop", "mov tmus, rf6", ""),
         text("nop", "nop", "ldtmu.rf10"),
         text("nop", "nop", "ldtmu.rf11"),
-        // The alpha is the second word's high half, read as it is by
-        // the comparison: the unpack was copied into it.
-        text("fcmp.pushn -, rf11.h, 0x3f000000", "nop", ""),
+        text("nop", "nop", "ldtmu.rf12"),
+        text("nop", "nop", "ldtmu.rf13"),
+        // The alpha is the fourth word, a 32-bit float (since 1.239; the
+        // second word's high half before, as `qpu.cutout_fragment`'s
+        // mediump sampler has it still).
+        text("fcmp.pushn -, rf13, 0x3f000000", "nop", ""),
         text("setmsf.ifa -, 0", "nop", ""),
         // Z from the rasterizer, its source anything (rf5, as
         // vir_to_qpu.c:290 has a null source), before the colour.
         text("nop", "mov tlbu, rf5", "thrsw"),
-        text("vfpack tlb, rf10.l, rf10.h", "nop", ""),
-        text("vfpack tlb, rf11.l, rf11.h", "nop", ""),
+        text("vfpack tlb, rf10, rf11", "nop", ""),
+        text("vfpack tlb, rf12, rf13", "nop", ""),
     });
 }
 
@@ -16051,12 +16185,14 @@ test "texture_cutout's programs are what Mesa's back end makes of facet's cut-ou
     // As `qpu.no_color_code` is held to compileNoColor: the fixed form's
     // programs are Mesa's, keyed as v3dv keys a subpass of each
     // (v3dv_pipeline.c:1240-1243, :2137-2142), and what the shader
-    // record says of them is what Mesa says.
+    // record says of them is what Mesa says. Its sampler mediump, as
+    // every fixed form reads its texels in half-floats (since 1.239).
     const keys = [_]Key{ .{}, .{ .f32_color_rb = 1 }, .{ .cbufs = 0 } };
     const programs = [_]qpu.Fragment{ qpu.cutout_fragment, qpu.wide_cutout_fragment, qpu.colorless_cutout_fragment };
+    const relaxed_cutout = comptime relaxedAt(Cutout.words, 0);
     for (keys, programs) |key, fragment| {
         var work: Work = .{};
-        const code = try throughMesaKeyed(&work, Cutout.words, key);
+        const code = try throughMesaKeyed(&work, &relaxed_cutout, key);
         try testing.expectEqualSlices(u64, code.words, fragment.code);
         try testing.expectEqual(code.varyings, fragment.varyings);
         try testing.expectEqual(code.uniform_count, fragment.uniforms);
@@ -16071,7 +16207,7 @@ test "texture_cutout's programs are what Mesa's back end makes of facet's cut-ou
         // the depth's specifier, and, into 32-bit floats, the colour's.
         const stream = code.stream();
         try testing.expectEqual(@as(usize, if (key.f32_color_rb != 0) 4 else 3), stream.len);
-        try testing.expectEqual(Word{ .texture = 0 }, stream[0]);
+        try testing.expectEqual(halfTexture(0), stream[0]);
         try testing.expectEqual(Word{ .sampler = .{ .bits = per_pixel_mask } }, stream[1]);
         try testing.expectEqual(qpu.no_color_specifier, @as(u32, @bitCast(stream[2].float)));
         if (key.f32_color_rb != 0) try testing.expectEqual(qpu.tlb_f32_specifier, @as(u32, @bitCast(stream[3].float)));
@@ -16956,8 +17092,8 @@ test "a selection Mesa leaves a branch is a branch: an arm over the limit, a sam
     try testing.expectEqual(@as(usize, 0), opsOf(arm, "xor.pushz"));
     try testing.expectEqual(@as(usize, 1), opsOf(arm, "mov.ifna"));
     try testing.expectEqual(@as(usize, 4), opsOf(arm, "mov.ifa"));
-    try testing.expectEqual(@as(usize, 27), arm.words.len);
-    try expectStream(&[_]Word{ .{ .float = @bitCast(@as(u32, 8)) }, .{ .texture = 0 }, .{ .sampler = .{ .bits = 4 } } }, arm.stream());
+    try testing.expectEqual(@as(usize, 28), arm.words.len);
+    try expectStream(&[_]Word{ .{ .float = @bitCast(@as(u32, 8)) }, wideTexture(0), .{ .sampler = .{ .bits = per_pixel_mask | output_type_32_bit } } }, arm.stream());
     // The first arm's end a jump to the second arm rather than the merge.
     try testing.expectError(Error.Branches, throughMesa(&work, &comptime patched(&reference.glslc_branch, .branch, 0, 0, 41)));
     // A phi naming a block that is neither arm.
@@ -16986,8 +17122,8 @@ test "through Mesa's back end, glslc's sample in one arm and a constant in the o
     // the true arm ends and to 0 where the false way's channels start.
     try testing.expectEqual(@as(usize, 8 + 2), opsOf(code, "mov.ifa"));
     try testing.expectEqual(@as(usize, 2), opsOf(code, "xor.pushz"));
-    try testing.expectEqual(@as(usize, 38), code.words.len);
-    try expectStream(&[_]Word{ .{ .float = @bitCast(@as(u32, 12)) }, .{ .texture = 0 }, .{ .sampler = .{ .bits = 4 } }, .{ .float = @bitCast(@as(u32, 4)) }, .{ .float = 0.75 } }, code.stream());
+    try testing.expectEqual(@as(usize, 39), code.words.len);
+    try expectStream(&[_]Word{ .{ .float = @bitCast(@as(u32, 12)) }, wideTexture(0), .{ .sampler = .{ .bits = per_pixel_mask | output_type_32_bit } }, .{ .float = @bitCast(@as(u32, 4)) }, .{ .float = 0.75 } }, code.stream());
 }
 
 test "through Mesa's back end, glslc's store in an arm on a push constant: a uniform branch, the store unmasked" {
@@ -17379,8 +17515,8 @@ test "through Mesa's back end, a selection kept in the arm of one kept: its mask
     try testing.expectEqual(@as(usize, 1), countOf(code, "bu.alla "));
     try testing.expectEqual(@as(usize, 3), countOf(code, "bu."));
     try testing.expectEqual(@as(usize, 1), countOf(code, ".nornz"));
-    try testing.expectEqual(@as(usize, 4), countOf(code, "ldtmu"));
-    try testing.expectEqual(@as(usize, 53), code.words.len);
+    try testing.expectEqual(@as(usize, 8), countOf(code, "ldtmu"));
+    try testing.expectEqual(@as(usize, 56), code.words.len);
     // Without -O glslc keeps the variable in memory, which
     // nir_lower_vars_to_ssa makes the same phis of: the same program.
     var o0: Work = .{};
@@ -17399,7 +17535,7 @@ test "through Mesa's back end, a selection kept in the false arm of one kept" {
     try testing.expectEqual(@as(usize, 2), countOf(code, "bu.allna"));
     try testing.expectEqual(@as(usize, 1), countOf(code, "bu.alla "));
     try testing.expectEqual(@as(usize, 1), countOf(code, ".nornz"));
-    try testing.expectEqual(@as(usize, 54), code.words.len);
+    try testing.expectEqual(@as(usize, 56), code.words.len);
 }
 
 test "through Mesa's back end, nested selections on a push constant and on a varying: uniform outside, under the mask inside" {
@@ -17418,8 +17554,8 @@ test "through Mesa's back end, nested selections on a push constant and on a var
     try testing.expectEqual(@as(usize, 1), countOf(code, "bu.alla "));
     try testing.expectEqual(@as(usize, 5), countOf(code, "bu."));
     try testing.expectEqual(@as(usize, 1), countOf(code, ".nornz"));
-    try testing.expectEqual(@as(usize, 8), countOf(code, "ldtmu"));
-    try testing.expectEqual(@as(usize, 82), code.words.len);
+    try testing.expectEqual(@as(usize, 16), countOf(code, "ldtmu"));
+    try testing.expectEqual(@as(usize, 87), code.words.len);
 }
 
 test "through Mesa's back end, a compute program's store in an arm of a selection whose arm stores" {
@@ -17469,9 +17605,9 @@ test "through Mesa's back end, a selection kept only for the one kept in its arm
     const code = try throughMesa(&work, &reference.glslc_nested_only);
     try testing.expectEqual(@as(usize, 2), stepsOf(&work, .begin_if));
     try testing.expectEqual(@as(usize, 3), stepsOf(&work, .mul));
-    try testing.expectEqual(@as(usize, 2), countOf(code, "ldtmu"));
+    try testing.expectEqual(@as(usize, 4), countOf(code, "ldtmu"));
     try testing.expect(!rereadsWritten(code, "fmul.ifa", 4));
-    try testing.expectEqual(@as(usize, 53), code.words.len);
+    try testing.expectEqual(@as(usize, 55), code.words.len);
 }
 
 test "through Mesa's back end, a sample in an inner arm that nir_opt_cse finds in the outer: the inner selection flattened" {
@@ -17484,9 +17620,9 @@ test "through Mesa's back end, a sample in an inner arm that nir_opt_cse finds i
     const code = try throughMesa(&work, &reference.glslc_nested_taken);
     try testing.expectEqual(@as(usize, 1), stepsOf(&work, .begin_if));
     try testing.expectEqual(@as(usize, 4), stepsOf(&work, .select));
-    try testing.expectEqual(@as(usize, 2), countOf(code, "ldtmu"));
+    try testing.expectEqual(@as(usize, 4), countOf(code, "ldtmu"));
     try testing.expectEqual(@as(usize, 2), countOf(code, "fcmp"));
-    try testing.expectEqual(@as(usize, 38), code.words.len);
+    try testing.expectEqual(@as(usize, 39), code.words.len);
 }
 
 test "through Mesa's back end, a selection kept in the arm of one, all of its true arm: nir_opt_collapse_if's one kept selection on the iand" {
@@ -17501,8 +17637,8 @@ test "through Mesa's back end, a selection kept in the arm of one, all of its tr
     try testing.expectEqual(@as(usize, 4), stepsOf(&work, .phi));
     try testing.expectEqual(@as(usize, 0), stepsOf(&work, .select));
     try testing.expectEqual(@as(usize, 1), countOf(code, "and rf"));
-    try testing.expectEqual(@as(usize, 2), countOf(code, "ldtmu"));
-    try testing.expectEqual(@as(usize, 33), code.words.len);
+    try testing.expectEqual(@as(usize, 4), countOf(code, "ldtmu"));
+    try testing.expectEqual(@as(usize, 34), code.words.len);
 }
 
 test "through Mesa's back end, nir_opt_collapse_if of a kept selection: not past a sample before it, and a float of the block before it chosen by a bcsel" {
@@ -17515,8 +17651,8 @@ test "through Mesa's back end, nir_opt_collapse_if of a kept selection: not past
     const apart = try throughMesa(&work, &reference.glslc_collapse_apart);
     try testing.expectEqual(@as(usize, 2), stepsOf(&work, .begin_if));
     try testing.expectEqual(@as(usize, 1), countOf(apart, ".nornz"));
-    try testing.expectEqual(@as(usize, 4), countOf(apart, "ldtmu"));
-    try testing.expectEqual(@as(usize, 41), apart.words.len);
+    try testing.expectEqual(@as(usize, 8), countOf(apart, "ldtmu"));
+    try testing.expectEqual(@as(usize, 44), apart.words.len);
     // glslc_collapse_sampled: the block before the inner selection makes
     // k, which the outer merge chooses. The collapse moves the block
     // before the selection on the iand (:498-502), and the empty outer
@@ -17527,7 +17663,7 @@ test "through Mesa's back end, nir_opt_collapse_if of a kept selection: not past
     try testing.expectEqual(@as(usize, 1), stepsOf(&work, .begin_if));
     try testing.expectEqual(@as(usize, 1), stepsOf(&work, .select));
     try testing.expectEqual(@as(usize, 1), countOf(sampled, "and rf"));
-    try testing.expectEqual(@as(usize, 40), sampled.words.len);
+    try testing.expectEqual(@as(usize, 41), sampled.words.len);
 }
 
 test "through Mesa's back end, seventeen selections one after another, each flattened, each giving its regions back" {
@@ -17983,6 +18119,7 @@ const Collapsed = ir.Fragment(struct {
 /// The stream word for word, a float by its bits: the TMU's
 /// configuration of a general lookup is a NaN as a float (since 1.167).
 fn expectStream(expected: []const Word, found: []const Word) !void {
+    errdefer for (found, 0..) |word, at| std.debug.print("stream {d}: {any}\n", .{ at, word });
     try testing.expectEqual(expected.len, found.len);
     for (expected, found) |want, got| switch (want) {
         .float => |bits| {
@@ -20326,14 +20463,14 @@ test "through Mesa's back end, a load at an offset that differs, read into a sam
     const quad_config: u32 = 0xffffff00 | 15 << 3 | 0 << 7 | 2;
     try testing.expectEqual(@as(u32, 0xFFFFFF7A), quad_config);
     try expectStream(&.{
-        .{ .float = 3 },                             ubo,
-        .{ .float = @bitCast(quad_config) },         .{ .texture = 0 },
-        .{ .sampler = .{ .bits = per_pixel_mask } }, .{ .float = @bitCast(@as(u32, 64)) },
+        .{ .float = 3 },                                                  ubo,
+        .{ .float = @bitCast(quad_config) },                              wideTexture(0),
+        .{ .sampler = .{ .bits = per_pixel_mask | output_type_32_bit } }, .{ .float = @bitCast(@as(u32, 64)) },
         ubo,
     }, code.stream());
     try testing.expectEqual(@as(usize, 1), countOf(code, "add tmuau, "));
     try testing.expectEqual(@as(usize, 1), countOf(code, "add tmua, "));
-    try testing.expectEqual(@as(usize, 5), countOf(code, "ldtmu"));
+    try testing.expectEqual(@as(usize, 7), countOf(code, "ldtmu"));
     try testing.expectEqual(@as(usize, 0), countOf(code, "unifa"));
     try testing.expectEqual(Sampler{ .set = 0, .binding = 1 }, code.sampled()[0]);
 }
@@ -20350,7 +20487,7 @@ test "through Mesa's back end, a sample at a coordinate the same in every lane k
         try testing.expect(!work.skip_helpers[at]);
     };
     const ubo: Word = .{ .ubo = .{ .set = 0, .binding = 0, .offset = 0 } };
-    try testing.expectEqualSlices(Word, &.{ .{ .push = 0 }, ubo, .{ .texture = 0 }, .{ .sampler = .{} } }, code.stream());
+    try testing.expectEqualSlices(Word, &.{ .{ .push = 0 }, ubo, wideTexture(0), .{ .sampler = .{ .bits = output_type_32_bit } } }, code.stream());
     try testing.expectEqual(@as(usize, 1), countOf(code, "add unifa"));
     try testing.expectEqual(@as(usize, 0), countOf(code, "tmua"));
 }
@@ -21190,12 +21327,12 @@ test "through Mesa's back end, two textures are two units, given as descriptor_m
     const code = try throughMesa(&work, &reference.glslc_two_textures);
     try testing.expectEqualSlices(Sampler, &.{ .{ .set = 0, .binding = 0 }, .{ .set = 1, .binding = 2 } }, code.sampled());
     try expectStream(&.{
-        .{ .texture = 0 }, .{ .sampler = .{ .unit = 0, .bits = per_pixel_mask } },
-        .{ .texture = 1 }, .{ .sampler = .{ .unit = 1, .bits = per_pixel_mask } },
-        .{ .texture = 0 }, .{ .sampler = .{ .unit = 0, .bits = per_pixel_mask } },
+        wideTexture(0), .{ .sampler = .{ .unit = 0, .bits = per_pixel_mask | output_type_32_bit } },
+        wideTexture(1), .{ .sampler = .{ .unit = 1, .bits = per_pixel_mask | output_type_32_bit } },
+        wideTexture(0), .{ .sampler = .{ .unit = 0, .bits = per_pixel_mask | output_type_32_bit } },
     }, code.stream());
     try testing.expectEqual(@as(usize, 3), countOf(code, "tmus"));
-    try testing.expectEqual(@as(usize, 6), countOf(code, "ldtmu"));
+    try testing.expectEqual(@as(usize, 12), countOf(code, "ldtmu"));
     // The first sample made one of `detail`, declared second: the units
     // are in the order the program reads the samplers, not the module
     // declares them. The load of `base` the first sample reads, %14, is
@@ -21204,9 +21341,9 @@ test "through Mesa's back end, two textures are two units, given as descriptor_m
     const swapped = comptime patched(&reference.glslc_two_textures, .load, 0, 2, 20);
     const other = try throughMesa(&work, &swapped);
     try testing.expectEqualSlices(Sampler, &.{ .{ .set = 1, .binding = 2 }, .{ .set = 0, .binding = 0 } }, other.sampled());
-    try testing.expectEqual(Word{ .texture = 0 }, other.stream()[0]);
-    try testing.expectEqual(Word{ .texture = 0 }, other.stream()[2]);
-    try testing.expectEqual(Word{ .texture = 1 }, other.stream()[4]);
+    try testing.expectEqual(wideTexture(0), other.stream()[0]);
+    try testing.expectEqual(wideTexture(0), other.stream()[2]);
+    try testing.expectEqual(wideTexture(1), other.stream()[4]);
     // The ir's two samplers of one set, and two of one binding in two.
     work = .{};
     const twice = try throughMesa(&work, Twice.words);
@@ -21225,8 +21362,8 @@ test "through Mesa's back end, a loop of four samples is four lookups of one uni
     try testing.expectEqualSlices(Sampler, &.{.{ .set = 0, .binding = 0 }}, code.sampled());
     var textures: usize = 0;
     for (code.stream()) |word| switch (word) {
-        .texture => |unit| {
-            try testing.expectEqual(@as(u8, 0), unit);
+        .texture => |each| {
+            try testing.expectEqual(@as(u8, 0), each.unit);
             textures += 1;
         },
         .sampler => |each| try testing.expectEqual(@as(u8, 0), each.unit),
@@ -21234,7 +21371,7 @@ test "through Mesa's back end, a loop of four samples is four lookups of one uni
     };
     try testing.expectEqual(@as(usize, 4), textures);
     try testing.expectEqual(@as(usize, 4), countOf(code, "tmus"));
-    try testing.expectEqual(@as(usize, 8), countOf(code, "ldtmu"));
+    try testing.expectEqual(@as(usize, 16), countOf(code, "ldtmu"));
     try testing.expectEqual(@as(usize, 0), countOf(code, "bu"));
     work = .{};
     try testing.expectError(Error.Samplers, throughMesa(&work, MixedCompare.words));
@@ -23248,8 +23385,8 @@ test "through Mesa's back end, a fragment program's colour stored, then again in
     try testing.expectEqual(@as(usize, 0), stepsOf(&work, .select));
     for (0..4) |k| try testing.expectEqual(Tag.phi, work.steps[partOf(&work, work.stored[0], @intCast(k)).step].tag);
     try testing.expectEqual(@as(usize, 1), countOf(code, "bu.allna"));
-    try testing.expectEqual(@as(usize, 2), countOf(code, "ldtmu"));
-    try testing.expectEqual(@as(usize, 35), code.words.len);
+    try testing.expectEqual(@as(usize, 4), countOf(code, "ldtmu"));
+    try testing.expectEqual(@as(usize, 36), code.words.len);
 }
 
 test "through Mesa's back end, a vertex program's outputs stored in an arm, through a chain, loaded and stored again, and in one arm alone, without -O" {
@@ -23483,7 +23620,9 @@ test "through Mesa's back end, a subpassLoad is a fetch where the pixel is: Frag
     // and S last at TMUSF (handle_tex_src, v3d_tex.c:99-150;
     // can_reorder_tmu_write, qpu_schedule.c:243-246). The layer's ldvary
     // is the program's one varying, and flat: C's MOV (emit_flat_varying,
-    // nir_to_vir.c:1049-1121). No sampler: P0 alone (since 1.215). The
+    // nir_to_vir.c:1049-1121). No sampler: P0 alone (since 1.215), and
+    // since 1.239 P1 the constant of 32-bit floats and the per-pixel mask
+    // (v3d_tex.c:312-354), its four words a float each. The
     // input attachment is an image variable, which info.num_images counts,
     // so early_fragment_tests is not promoted and the program writes the
     // rasterizer's Z through TLBU (nir_to_vir.c:2073-2137; since 1.219).
@@ -23491,7 +23630,7 @@ test "through Mesa's back end, a subpassLoad is a fetch where the pixel is: Frag
     const code = try throughMesa(&work, &reference.glslc_subpass);
     try expectText(code, &.{
         text("fycd rf5", "nop", "ldvary.rf6; wrtmuc"),
-        text("fxcd rf4", "nop", ""),
+        text("fxcd rf4", "nop", "wrtmuc"),
         text("ftoiz rf9, rf5", "mov rf7, rf0", ""),
         text("ftoiz rf8, rf4", "mov tmub, 0", ""),
         text("nop", "mov tmut, rf9", "thrsw"),
@@ -23499,11 +23638,13 @@ test "through Mesa's back end, a subpassLoad is a fetch where the pixel is: Frag
         text("nop", "mov tmusf, rf8", ""),
         text("nop", "mov tlbu, rf5", "ldtmu.rf10"),
         text("nop", "nop", "ldtmu.rf11"),
-        text("nop", "fmul rf12, rf10.l, 0x3f000000", ""),
-        text("nop", "fmul rf13, rf10.h, 0x3f000000", ""),
-        text("vfpack tlb, rf12, rf13", "fmul rf14, rf11.l, 0x3f000000", ""),
-        text("nop", "fmul rf15, rf11.h, 0x3f000000", ""),
-        text("vfpack tlb, rf14, rf15", "nop", "thrsw"),
+        text("nop", "nop", "ldtmu.rf12"),
+        text("nop", "fmul rf14, rf10, 0x3f000000", ""),
+        text("nop", "fmul rf15, rf11, 0x3f000000", ""),
+        text("vfpack tlb, rf14, rf15", "nop", "ldtmu.rf13"),
+        text("nop", "fmul rf16, rf12, 0x3f000000", ""),
+        text("nop", "fmul rf17, rf13, 0x3f000000", ""),
+        text("vfpack tlb, rf16, rf17", "nop", "thrsw"),
         text("nop", "nop", ""),
         text("nop", "nop", ""),
     });
@@ -23511,7 +23652,7 @@ test "through Mesa's back end, a subpassLoad is a fetch where the pixel is: Frag
     try testing.expect(code.reads_layer);
     try testing.expectEqual(@as(u32, 1), code.flat_shade_flags);
     try testing.expectEqual(@as(u32, 0), code.noperspective_flags);
-    try expectStream(&.{ .{ .texture = 0 }, wordOf(0xFFFF_FF84) }, code.stream());
+    try expectStream(&.{ wideTexture(0), wordOf(per_pixel_mask | output_type_32_bit), wordOf(0xFFFF_FF84) }, code.stream());
     // Only FragCoord's x and y: no Z read and no W, but Z written, and the
     // early test off (`uses_images`).
     try testing.expect(code.writes_z and code.disable_ez);
@@ -23715,7 +23856,7 @@ test "through Mesa's back end, a subpassLoad of an input attachment of four samp
     try testing.expectEqual(@as(u32, 1), code.sampler_count);
     try expectText(code, &.{
         text("fycd rf5", "nop", "ldvary.rf6; wrtmuc"),
-        text("ftoiz rf9, rf5", "nop", ""),
+        text("ftoiz rf9, rf5", "nop", "wrtmuc"),
         text("fxcd rf4", "mov rf7, rf0", ""),
         text("shl rf11, rf9, 1", "mov tmui, rf7", ""),
         text("ftoiz rf8, rf4", "add rf12, 1, rf11", ""),
@@ -23724,17 +23865,22 @@ test "through Mesa's back end, a subpassLoad of an input attachment of four samp
         text("nop", "mov tmusf, rf10", "thrsw"),
         text("nop", "nop", "thrsw"),
         text("nop", "nop", ""),
+        // Its four words a float each (since 1.239).
         text("nop", "mov tlbu, rf5", "ldtmu.rf13"),
         text("nop", "nop", "ldtmu.rf14"),
-        text("nop", "fmul rf15, rf13.l, 0x3f000000", ""),
-        text("nop", "fmul rf16, rf13.h, 0x3f000000", ""),
-        text("vfpack tlb, rf15, rf16", "fmul rf17, rf14.l, 0x3f000000", ""),
-        text("nop", "fmul rf18, rf14.h, 0x3f000000", ""),
-        text("vfpack tlb, rf17, rf18", "nop", "thrsw"),
+        text("nop", "nop", "ldtmu.rf15"),
+        text("nop", "fmul rf17, rf13, 0x3f000000", ""),
+        text("nop", "fmul rf18, rf14, 0x3f000000", ""),
+        text("vfpack tlb, rf17, rf18", "nop", "ldtmu.rf16"),
+        text("nop", "fmul rf19, rf15, 0x3f000000", ""),
+        text("nop", "fmul rf20, rf16, 0x3f000000", ""),
+        text("vfpack tlb, rf19, rf20", "nop", "thrsw"),
         text("nop", "nop", ""),
         text("nop", "nop", ""),
     });
-    try expectStream(&.{ .{ .texture = 0 }, wordOf(0xFFFF_FF84) }, code.stream());
+    // P0, and P1 the constant of 32-bit floats and the per-pixel mask
+    // (since 1.239).
+    try expectStream(&.{ wideTexture(0), wordOf(per_pixel_mask | output_type_32_bit), wordOf(0xFFFF_FF84) }, code.stream());
 
     // A sample worked out at run time, the two lowest bits of the pixel's
     // x: its low bit and its next found by and and shr, which the
@@ -24031,6 +24177,122 @@ test "through Mesa's back end, a fragment program's imageStore is x at TMUSF, y 
     try testing.expectEqual(Sampler{ .set = 0, .binding = 0, .storage = true }, code.sampled()[0]);
 }
 
+test "a sampler RelaxedPrecision hands back two words of half-floats, P1 the per-pixel mask alone, and one that is not four 32-bit floats, P1's output of 32 bits set (since 1.239)" {
+    // lower_tex_src's sampler_is_32b, of the variable's precision
+    // (v3dv_pipeline.c:771-787), which vtn makes GLSL_PRECISION_MEDIUM
+    // of a RelaxedPrecision (vtn_variables.c:1367-1369): P0's words and
+    // P1's Output Type 32-bit (v3d_tex.c:240-255, :311-321), and
+    // nir_lower_tex's packing_16 for the half-floats (nir_lower_tex.c:
+    // 1182-1194), which vir_opt_alu folds into the vfpack.
+    var work: Work = .{};
+    const half = try throughMesa(&work, &reference.glslc_mediump);
+    try testing.expect(work.samplers[0].relaxed);
+    try testing.expect(!wideOf(&work, 0, false));
+    try expectStream(&.{ halfTexture(0), .{ .sampler = .{ .bits = per_pixel_mask } } }, half.stream());
+    try testing.expectEqual(@as(usize, 2), countOf(half, "ldtmu"));
+    // The program every sample made before 1.239, word for word: each
+    // word's halves packed as they are for the tile buffer.
+    try expectText(half, &.{
+        text("nop", "nop", "ldvary.rf4; wrtmuc"),
+        text("nop", "fmul rf5, rf4, rf3", "ldvary.rf7; wrtmuc"),
+        text("fadd rf6, rf0, rf5", "fmul rf8, rf7, rf3", ""),
+        text("fadd rf9, rf0, rf8", "nop", "thrsw"),
+        text("nop", "mov tmut, rf9", "thrsw"),
+        text("nop", "mov tmus, rf6", ""),
+        text("nop", "nop", "thrsw; ldtmu.rf10"),
+        text("vfpack tlb, rf10.l, rf10.h", "nop", "ldtmu.rf11"),
+        text("vfpack tlb, rf11.l, rf11.h", "nop", ""),
+    });
+    // The RelaxedPrecision moved off the variable onto the sample's
+    // result, which v3dv sets no mediump_16bit_alu for, so vtn keeps it
+    // at 32 bits (vtn_value_needs_mediump_16bit, vtn_private.h:
+    // 1167-1171): four words.
+    work = .{};
+    const wide = try throughMesa(&work, &comptime patched(&reference.glslc_mediump, .decorate, 1, 0, 19));
+    try testing.expect(!work.samplers[0].relaxed);
+    try testing.expect(wideOf(&work, 0, false));
+    try expectStream(&.{ wideTexture(0), .{ .sampler = .{ .bits = per_pixel_mask | output_type_32_bit } } }, wide.stream());
+    try testing.expectEqual(@as(usize, 4), countOf(wide, "ldtmu"));
+    // A float a word, the tile buffer's half-floats packed of two each.
+    try expectText(wide, &.{
+        text("nop", "nop", "ldvary.rf4; wrtmuc"),
+        text("nop", "fmul rf5, rf4, rf3", "ldvary.rf7; wrtmuc"),
+        text("fadd rf6, rf0, rf5", "fmul rf8, rf7, rf3", ""),
+        text("fadd rf9, rf0, rf8", "nop", "thrsw"),
+        text("nop", "mov tmut, rf9", "thrsw"),
+        text("nop", "mov tmus, rf6", ""),
+        text("nop", "nop", "ldtmu.rf10"),
+        text("nop", "nop", "ldtmu.rf11"),
+        text("vfpack tlb, rf10, rf11", "nop", "thrsw; ldtmu.rf12"),
+        text("nop", "nop", "ldtmu.rf13"),
+        text("vfpack tlb, rf12, rf13", "nop", ""),
+    });
+}
+
+test "two variables at one set and binding, one RelaxedPrecision, sample as one unit of 32 bits; a fetch through the RelaxedPrecision one keeps its half-floats (since 1.239)" {
+    // descriptor_map_add keeps the sampler map's entry 32-bit once any
+    // sample through it is (v3dv_pipeline.c:535-541), and v3d_tex.c reads
+    // the key by the sampler's index (:240-245).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_mediump_aliased);
+    try testing.expectEqual(@as(usize, 1), code.sampled().len);
+    try testing.expect(work.samplers[0].relaxed and !work.samplers[1].relaxed);
+    try testing.expect(wideOf(&work, 0, false) and wideOf(&work, 1, false));
+    const sampler: Word = .{ .sampler = .{ .bits = per_pixel_mask | output_type_32_bit } };
+    try expectStream(&.{ wideTexture(0), sampler, wideTexture(0), sampler }, code.stream());
+    try testing.expectEqual(@as(usize, 8), countOf(code, "ldtmu"));
+    // A fetch has no sampler, so the default one lower_sampler gives it
+    // is of its texture's variable alone (v3dv_pipeline.c:835-841): the
+    // fetch's two words of half-floats, its P1 the constant 0 as a fetch
+    // at a place the same in every lane keeps its helper pixels
+    // (v3d_tex.c:312-354), beside the sample's four.
+    work = .{};
+    const fetched = try throughMesa(&work, &reference.glslc_mediump_fetch);
+    try testing.expectEqual(@as(usize, 1), fetched.sampled().len);
+    try testing.expect(!wideOf(&work, 0, true) and wideOf(&work, 1, false));
+    try expectStream(&.{ halfTexture(0), wordOf(0), wideTexture(0), sampler }, fetched.stream());
+    try testing.expectEqual(@as(usize, 6), countOf(fetched, "ldtmu"));
+}
+
+test "a subpassLoad of a RelaxedPrecision input attachment is the fetch of half-floats it was before 1.239, and a member RelaxedPrecision is nothing" {
+    // The default sampler of 16 bits (lower_sampler, v3dv_pipeline.c:
+    // 835-841; V3DV_NO_SAMPLER_16BIT_IDX): no P1, two words.
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_subpass_mediump);
+    try expectStream(&.{ halfTexture(0), wordOf(0xFFFF_FF84) }, code.stream());
+    try testing.expectEqual(@as(usize, 2), countOf(code, "ldtmu"));
+    // glslc_subpass's program of 1.215 to 1.238, word for word.
+    try expectText(code, &.{
+        text("fycd rf5", "nop", "ldvary.rf6; wrtmuc"),
+        text("fxcd rf4", "nop", ""),
+        text("ftoiz rf9, rf5", "mov rf7, rf0", ""),
+        text("ftoiz rf8, rf4", "mov tmub, 0", ""),
+        text("nop", "mov tmut, rf9", "thrsw"),
+        text("nop", "mov tmui, rf7", "thrsw"),
+        text("nop", "mov tmusf, rf8", ""),
+        text("nop", "mov tlbu, rf5", "ldtmu.rf10"),
+        text("nop", "nop", "ldtmu.rf11"),
+        text("nop", "fmul rf12, rf10.l, 0x3f000000", ""),
+        text("nop", "fmul rf13, rf10.h, 0x3f000000", ""),
+        text("vfpack tlb, rf12, rf13", "fmul rf14, rf11.l, 0x3f000000", ""),
+        text("nop", "fmul rf15, rf11.h, 0x3f000000", ""),
+        text("vfpack tlb, rf14, rf15", "nop", "thrsw"),
+        text("nop", "nop", ""),
+        text("nop", "nop", ""),
+    });
+    // A uniform block's member RelaxedPrecision, which
+    // struct_member_decoration_cb leaves be (spirv_to_nir.c:1622-1626):
+    // the block read as any other, the sample's four words.
+    work = .{};
+    const member = try throughMesa(&work, &reference.glslc_mediump_member);
+    try testing.expectEqual(@as(usize, 4), countOf(member, "ldtmu"));
+    try expectStream(&.{
+        wideTexture(0),
+        .{ .sampler = .{ .bits = per_pixel_mask | output_type_32_bit } },
+        .{ .ubo = .{ .set = 0, .binding = 1, .offset = 0 } },
+    }, member.stream());
+}
+
 test "through Mesa's back end, a fragment program's imageLoad that a sample's coordinate is keeps the quad's helper pixels, P1 the constant 0, and one that is the colour leaves them out, P1 the default" {
     // nir_opt_load_skip_helpers with v3d's intrinsic_try_skip_helpers
     // (vir.c:1937-1951): the sample's coordinate wants the helper pixels
@@ -24052,15 +24314,18 @@ test "through Mesa's back end, a fragment program's imageLoad that a sample's co
         text("fmov rf10, rf8.l", "fmov rf11, rf8.h", "thrsw; ldtmu.rf9; wrtmuc"),
         text("nop", "mov tmut, rf11", "thrsw"),
         text("nop", "mov tmus, rf10", ""),
-        text("nop", "mov tlbu, rf5", "thrsw; ldtmu.rf12"),
-        text("vfpack tlb, rf12.l, rf12.h", "nop", "ldtmu.rf13"),
-        text("vfpack tlb, rf13.l, rf13.h", "nop", ""),
+        // The sample's four words a float each (since 1.239).
+        text("nop", "mov tlbu, rf5", "ldtmu.rf12"),
+        text("nop", "nop", "ldtmu.rf13"),
+        text("vfpack tlb, rf12, rf13", "nop", "thrsw; ldtmu.rf14"),
+        text("nop", "nop", "ldtmu.rf15"),
+        text("vfpack tlb, rf14, rf15", "nop", ""),
     });
     try expectStream(&.{
         .{ .image = .{ .unit = 1, .bits = to_vir.texel_words } },
         wordOf(0),
-        .{ .texture = 0 },
-        .{ .sampler = .{ .unit = 0, .bits = per_pixel_mask } },
+        wideTexture(0),
+        .{ .sampler = .{ .unit = 0, .bits = per_pixel_mask | output_type_32_bit } },
         wordOf(0xFFFF_FF84),
     }, kept.stream());
     try testing.expect(!kept.tmu_dirty_rcl);
