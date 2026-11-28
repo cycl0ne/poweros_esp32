@@ -21,7 +21,7 @@ const tables = @import("tables/_tables.zig");
 /// The name it is opened by. The SDK's.
 pub const RESOURCE_NAME = acpi.ACPINAME;
 pub const RESOURCE_VERSION = 1;
-pub const RESOURCE_REVISION = 0;
+pub const RESOURCE_REVISION = 1;
 const BUILD_DATE = "28.11.2026";
 const RESOURCE_VERSION_STRING =
     "\x00$VER: " ++ RESOURCE_NAME ++ " " ++
@@ -38,15 +38,21 @@ fn acpiBase(lib: *exec.Library) *AcpiBase {
     return @alignCast(@fieldParentPtr("lib", lib));
 }
 
-/// The firmware's root, as the board's firmware part names it: null on a
-/// board without one, or where it does not hold.
-fn firmwareRoot(sys: *ExecBase) ?hardware_acpi.Root {
+/// What the board's description says the interpreter needs: the
+/// firmware's root, as the firmware part names it - null on a board
+/// without one, or where it does not hold -, and PCI's configuration
+/// space, as the host bridge's part names it (`ab.pci_config`; 0 where
+/// there is none).
+fn boardFacts(sys: *ExecBase, ab: *AcpiBase) ?hardware_acpi.Root {
     const utility_lib = sys.OpenLibrary(sdk.interface.utility.NAME, 1) orelse return null;
     defer sys.CloseLibrary(utility_lib);
     const expansion_lib = sys.OpenLibrary(sdk.expansion.EXPANSIONNAME, 1) orelse return null;
     defer sys.CloseLibrary(expansion_lib);
     const ub: *UtilityBase = @ptrCast(utility_lib);
     const eb: *ExpansionBase = @ptrCast(expansion_lib);
+    if (eb.FindBoardPart(null, st.PARTKIND_PCI, st.CHIP_PCI_ECAM)) |bridge| {
+        ab.pci_config = ub.GetTagData(st.PART_PciConfig, 0, bridge.tags);
+    }
     const part = eb.FindBoardPart(null, st.PARTKIND_FIRMWARE, st.CHIP_ACPI) orelse return null;
     return hardware_acpi.rootAt(ub.GetTagData(st.PART_Address, 0, part.tags));
 }
@@ -76,14 +82,23 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     ab.integer_bits = 64;
     ab.tables = 0;
     ab.loaded = .{};
+    ab.never = .{};
+    ab.firmware = 0;
+    ab.pci_config = 0;
+    ab.connected = @splat(0);
+    ab.notices = .{};
+    ab.copies = null;
     sys_base.InitSemaphore(&ab.lock);
     ab.pool = sys_base.CreatePool(exec.MEMF_ANY, PUDDLE_SIZE, THRESHOLD) orelse return lib;
     if (!namespace.make(ab)) return lib;
-    const root = firmwareRoot(sys_base) orelse return lib;
+    const root = boardFacts(sys_base, ab) orelse return lib;
+    ab.firmware = root.at;
+    sys_base.ObtainSemaphore(&ab.lock);
     tables.loadFirmware(ab, &root);
+    sys_base.ReleaseSemaphore(&ab.lock);
     const loaded = ab.loaded;
-    machine.log(ab, exec.LOG_INFO, "%u tables, %u names; %u terms outside a method; %u defined again, %u not there, %u not known, %u broken\n", .{
-        @as(u32, ab.tables), loaded.names, loaded.code, loaded.again, loaded.missing, loaded.unknown, loaded.broken,
+    machine.log(ab, exec.LOG_INFO, "%u tables, %u names; %u terms outside a method run, %u of them ended early; %u defined again, %u not there, %u not known, %u broken\n", .{
+        @as(u32, ab.tables), loaded.names, loaded.code, loaded.failed, loaded.again, loaded.missing, loaded.unknown, loaded.broken,
     });
     return lib;
 }

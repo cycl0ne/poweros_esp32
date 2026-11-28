@@ -32,6 +32,12 @@ test {
     _ = @import("aml/opcodes.zig");
     _ = @import("aml/load.zig");
     _ = @import("tables/_tables.zig");
+    _ = @import("interpreter/convert.zig");
+    _ = @import("interpreter/store.zig");
+    _ = @import("interpreter/operators.zig");
+    _ = @import("region/_region.zig");
+    _ = @import("tests/executor.zig");
+    _ = @import("tests/fields.zig");
 }
 
 fn setUp() !*AcpiBase {

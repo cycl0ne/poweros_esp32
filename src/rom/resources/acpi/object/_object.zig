@@ -1,31 +1,36 @@
 // SPDX-License-Identifier: MPL-2.0
-//! What a name in the namespace holds: an object - an integer, a string,
-//! a buffer, a package, a method, a device, a region of an address space
-//! and the fields in it, a mutex - each counted by how many hold it.
+//! What a name in the namespace holds, and what the bytecode computes
+//! with: an object - an integer, a string, a buffer, a package, a method,
+//! a device, a region of an address space and the fields in it, a mutex,
+//! a reference to another object - each counted by how many hold it.
 //!
 //! **Kinds.** An object's kind is the number the bytecode's ObjectType
-//! answers for it (`Kind`, 0 to 16), and two of the interpreter's own
+//! answers for it (`Kind`, 0 to 16), and three of the interpreter's own
 //! above them: a name a package holds that is looked up only when it is
-//! read (`name`), and another name for a node (`alias`). A field unit
-//! says itself which of the three declarations made it, a region's, a
-//! bank's or an index's.
+//! read (`name`), another name for a node (`alias`), and a reference
+//! (`reference`) - what RefOf and Index answer: a name, the object a
+//! local or an argument held, a package's element, a buffer's byte. A
+//! field unit says itself which of the three declarations made it, a
+//! region's, a bank's or an index's.
 //!
 //! **What is kept, and where.** A string's and a buffer's bytes are the
 //! object's own, copied out of the table: the bytecode may change them,
 //! and the table stays as the firmware wrote it. A method keeps its body
 //! where it is, in the table, which stays in memory as long as the system
-//! runs: it is read only when the method runs. What the bytecode leaves
-//! to be worked out later - a region whose address is an expression, a
-//! field of a buffer declared outside any method - keeps the bytes of
-//! those expressions (`Deferred`) for the step that evaluates them.
+//! runs: it is read only when the method runs. A field of a buffer holds
+//! the buffer, so that it sees what is stored in it later.
 //!
 //! **Counting.** `make` hands out an object held once; whoever else keeps
 //! it calls `retain`, and everyone lets go with `release`, which frees
-//! the object, and what it holds, once nobody does.
+//! the object, and what it holds, once nobody does. A reference to a
+//! name holds the node (`namespace.hold`): a name a method made is taken
+//! out of the namespace when the method returns, and freed when nothing
+//! refers to it any more.
 
 const machine = @import("../machine/_machine.zig");
 const AcpiBase = @import("../acpi_base.zig").AcpiBase;
-const Node = @import("../namespace/_namespace.zig").Node;
+const namespace = @import("../namespace/_namespace.zig");
+const Node = namespace.Node;
 
 /// An object's kind: the bytecode's ObjectType numbers, then the
 /// interpreter's own.
@@ -50,6 +55,8 @@ pub const Kind = enum(u8) {
     name = 0x80,
     /// Another name for a node (Alias).
     alias = 0x81,
+    /// What RefOf and Index answer.
+    reference = 0x82,
 };
 
 /// An object, and how many hold it.
@@ -70,17 +77,18 @@ pub const Value = union(Kind) {
     package: Package,
     field_unit: Field,
     device: void,
-    event: void,
+    event: Event,
     method: Method,
     mutex: Mutex,
     region: Region,
     power_resource: PowerResource,
     processor: Processor,
     thermal_zone: void,
-    buffer_field: Deferred,
+    buffer_field: BufferField,
     debug: void,
     name: NameRef,
     alias: *Node,
+    reference: Reference,
 };
 
 /// A string's or a buffer's bytes, the object's own: `length` of them,
@@ -108,39 +116,56 @@ pub const METHOD_SERIALIZED: u8 = 0x08;
 pub const METHOD_SYNC_SHIFT = 4;
 
 /// A method: its body where the table has it, and its flags. A method
-/// the interpreter answers itself (`\_OSI`) has no body.
+/// the interpreter answers itself (`\_OSI`) has no body. A serialized
+/// one is run by one evaluation at a time, which holds it as a mutex at
+/// the method's sync level (`serial`).
 pub const Method = struct {
     code: ?[*]const u8 = null,
     length: u32 = 0,
     flags: u8 = 0,
     builtin: Builtin = .none,
+    serial: Mutex = .{},
 
     pub fn args(method: Method) u8 {
         return method.flags & METHOD_ARGS;
+    }
+
+    pub fn syncLevel(method: Method) u8 {
+        return method.flags >> METHOD_SYNC_SHIFT;
     }
 };
 
 /// The methods the interpreter answers itself.
 pub const Builtin = enum(u8) { none, osi };
 
-/// A mutex, and the level a task must not hold a higher one than to take
-/// it.
+/// A mutex: the level a task must not hold a higher one than to take it,
+/// and who holds it now (an evaluation, `Run`) and how many times over.
 pub const Mutex = struct {
     sync_level: u8 = 0,
+    depth: u16 = 0,
+    owner: ?*const anyopaque = null,
+};
+
+/// An event: how many times it was signalled and not yet waited for.
+pub const Event = struct {
+    pending: u32 = 0,
 };
 
 /// A region of an address space: which space (`SPACE_*` of
 /// sdk.hardware.acpi, as a register's), where it starts and how long it
-/// is - or, where the bytecode gives either as an expression, those
-/// expressions to evaluate (`deferred`), and the two numbers 0 until
-/// then. A region over a table in memory (DataTableRegion) has its three
-/// strings deferred, and `table` set.
+/// is. A region over a table in memory (DataTableRegion) has `table`
+/// set, and the table's address as its offset. A region of PCI's
+/// configuration space keeps the function it is of once its first
+/// access has worked it out (`pci`, `pci_known`). `connected` once its
+/// `_REG` has been run to say it can be reached.
 pub const Region = struct {
     space: u8 = 0,
     offset: u64 = 0,
     length: u64 = 0,
-    deferred: ?Deferred = null,
     table: bool = false,
+    pci: machine.Pci = .{},
+    pci_known: bool = false,
+    connected: bool = false,
 };
 
 /// Which declaration made a field unit.
@@ -173,18 +198,17 @@ pub const ACCESS_BUFFER: u8 = 5;
 /// A field unit: its bits within what it is a field of, and how they are
 /// reached. `container` is the region (a Field's and a BankField's) or
 /// the index register (an IndexField's); `second` the bank register or
-/// the data register. A BankField's bank value is `bank_value`, or its
-/// expression where it is one. `attributes`, `attribute_kind` (the top
-/// two bits of the access type: none, bytes, raw bytes, raw process
-/// bytes) and `access_length` are the last AccessAs before the field;
-/// `connection` the last Connection, a resource buffer or the name of
-/// one.
+/// the data register. A BankField's bank value is `bank_value`.
+/// `attributes`, `attribute_kind` (the top two bits of the access type:
+/// none, bytes, raw bytes, raw process bytes) and `access_length` are the
+/// last AccessAs before the field; `connection` the last Connection, a
+/// resource buffer or the name of one, and `connection_at` the bit the
+/// fields after it count their pins from.
 pub const Field = struct {
     kind: FieldKind = .region,
     container: *Node,
     second: ?*Node = null,
     bank_value: u64 = 0,
-    bank_deferred: ?Deferred = null,
     bit_offset: u32 = 0,
     bit_length: u32 = 0,
     flags: u8 = 0,
@@ -192,6 +216,7 @@ pub const Field = struct {
     attribute_kind: u8 = 0,
     access_length: u8 = 0,
     connection: ?*Object = null,
+    connection_at: u32 = 0,
 
     pub fn access(field: Field) u8 {
         return field.flags & FIELD_ACCESS;
@@ -213,18 +238,36 @@ pub const PowerResource = struct {
     resource_order: u16 = 0,
 };
 
-/// Bytecode kept to be evaluated later, in the scope it was met in: the
-/// operands of a term whose result is wanted only when it is used. A
-/// field of a buffer (CreateDWordField and its family) keeps its opcode
-/// with them.
-pub const Deferred = struct {
-    scope: *Node,
-    code: [*]const u8,
-    length: u32,
-    opcode: u16 = 0,
+/// A field of a buffer (CreateDWordField and its family): `bit_length`
+/// bits from `bit_offset` of the buffer it holds. One CreateField made
+/// reads as a buffer whatever its width (`as_buffer`); the others as an
+/// integer where they fit one.
+pub const BufferField = struct {
+    buffer: *Object,
+    bit_offset: u32,
+    bit_length: u32,
+    as_buffer: bool = false,
 };
 
-/// A name as the bytecode wrote it, and the scope it is looked up from.
+/// What a reference refers to: a name - whatever it holds when the
+/// reference is followed -, the object a local or an argument held, one
+/// element of a package, one byte of a buffer or a string.
+pub const Reference = union(enum) {
+    node: *Node,
+    object: *Object,
+    element: Element,
+    byte: Element,
+};
+
+/// An element of a package, or a byte of a buffer or a string: the
+/// object it is in, held, and its place there.
+pub const Element = struct {
+    container: *Object,
+    index: u32,
+};
+
+/// A name as the bytecode wrote it, and the scope it is looked up from,
+/// held.
 pub const NameRef = struct {
     scope: *Node,
     path: [*]const u8,
@@ -268,7 +311,7 @@ pub fn makeString(ab: *AcpiBase, text: []const u8) ?*Object {
 
 /// A package of `count` elements, every one null; null without memory.
 pub fn makePackage(ab: *AcpiBase, count: u32) ?*Object {
-    const elements = machine.allocArray(ab, ?*Object, count) orelse return null;
+    const elements: [*]?*Object = if (count == 0) undefined else machine.allocArray(ab, ?*Object, count) orelse return null;
     for (elements[0..count]) |*element| element.* = null;
     return make(ab, .{ .package = .{ .elements = elements, .count = count } }) orelse {
         machine.freeArray(ab, ?*Object, elements, count);
@@ -295,6 +338,13 @@ pub fn release(ab: *AcpiBase, maybe: ?*Object) void {
             machine.freeArray(ab, ?*Object, package.elements, package.count);
         },
         .field_unit => |field| release(ab, field.connection),
+        .name => |name| namespace.unhold(ab, name.scope),
+        .buffer_field => |field| release(ab, field.buffer),
+        .reference => |reference| switch (reference) {
+            .node => |node| namespace.unhold(ab, node),
+            .object => |held| release(ab, held),
+            .element, .byte => |element| release(ab, element.container),
+        },
         else => {},
     }
     machine.free(ab, Object, object);

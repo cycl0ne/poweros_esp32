@@ -5,6 +5,12 @@
 //! function that writes them, and the table finished with its header and
 //! its checksum. Package lengths, name strings and constants are
 //! encoded the shortest way, as a compiler does.
+//!
+//! Code is written as the bytecode has it, an operator before its
+//! operands: `op` for an opcode, `local`, `arg`, `integer`, `name` for
+//! the operands, and `open` and `close` around what a term with a package
+//! holds - a method's body, an If's, a While's, a buffer's or a
+//! package's contents - its length filled in when it is closed.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -114,6 +120,49 @@ pub const Table = struct {
             @memcpy(segment[0..part.len], part);
             try table.raw(&segment);
         }
+    }
+
+    /// An opcode: one byte, or the extended prefix and one.
+    pub fn op(table: *Table, code: u16) !void {
+        if (code > 0xFF) return table.raw(&.{ 0x5B, @truncate(code) });
+        return table.raw(&.{@intCast(code)});
+    }
+
+    pub fn local(table: *Table, index: u8) !void {
+        return table.raw(&.{0x60 + index});
+    }
+
+    pub fn arg(table: *Table, index: u8) !void {
+        return table.raw(&.{0x68 + index});
+    }
+
+    /// `code`, then room for a package length that `close` fills in, at
+    /// the place `open` answers.
+    pub fn open(table: *Table, code: u16) !usize {
+        try table.op(code);
+        const mark = table.bytes.items.len;
+        try table.raw(&.{ 0, 0, 0, 0 });
+        return mark;
+    }
+
+    /// The package opened at `mark` closed: its length, which counts
+    /// itself, written the shortest way.
+    pub fn close(table: *Table, mark: usize) !void {
+        const content = table.bytes.items.len - mark - 4;
+        var encoded = table.nested();
+        defer encoded.deinit();
+        try encoded.pkgLength(content);
+        const length = encoded.bytes.items;
+        try table.bytes.replaceRange(table.allocator, mark, 4, length);
+    }
+
+    /// A method opened, its body written after it and closed with
+    /// `close`.
+    pub fn openMethod(table: *Table, path: []const u8, flags: u8) !usize {
+        const mark = try table.open(0x14);
+        try table.name(path);
+        try table.raw(&.{flags});
+        return mark;
     }
 
     /// An integer the shortest way.
@@ -307,6 +356,17 @@ pub const Table = struct {
         try inner.integer(value);
         try fieldList(&inner, flags, units);
         try table.package(&.{ 0x5B, 0x87 }, inner.bytes.items);
+    }
+
+    /// A method of no arguments whose body is `Return (value)`, `value`
+    /// already bytecode.
+    pub fn returning(table: *Table, path: []const u8, value: []const u8) !void {
+        var inner = table.nested();
+        defer inner.deinit();
+        try inner.name(path);
+        try inner.raw(&.{ 0, 0xA4 });
+        try inner.raw(value);
+        try table.package(&.{0x14}, inner.bytes.items);
     }
 
     /// `If (predicate) { body }`, both already bytecode.

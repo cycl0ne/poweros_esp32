@@ -8,6 +8,12 @@
 //! which table defined it - its place in the order the tables were
 //! loaded, from 1 - and 0 for the names the namespace starts with.
 //!
+//! **Names that go.** A name a method makes while it runs is taken out
+//! again when it returns (`remove`). A reference to a name holds its node
+//! (`hold`): one taken out while something still refers to it stays in
+//! memory, outside the namespace and holding nothing, until the last
+//! reference lets go (`unhold`).
+//!
 //! **What the namespace starts with.** The scopes the specification
 //! names at the root - `\_GPE` for the general events, `\_PR` for old
 //! processor objects, `\_SB` for the devices on the system bus, `\_SI`
@@ -55,6 +61,11 @@ pub const Node = struct {
     /// The table that defined it, from 1 in the order they were loaded;
     /// 0 for the names the namespace starts with.
     table: u16 = 0,
+    /// Taken out of the namespace, and kept only for the references that
+    /// still hold it.
+    removed: bool = false,
+    /// How many references hold the node.
+    references: u32 = 0,
 
     /// The object's kind, `.uninitialized` where it holds none.
     pub fn kind(node: *const Node) object.Kind {
@@ -309,6 +320,45 @@ pub fn pathOf(node: *const Node, into: []u8) usize {
 /// The deepest a path is shown to.
 const MOST_DEPTH = 64;
 
+/// Room for a path in the log.
+pub const PATH_ROOM = 160;
+
+/// `path`, which `scope` refers to, as text for the log, in `into`:
+/// from the root, each name without the `_` that fill it out.
+pub fn pathText(scope: *Node, path: Path, into: *[PATH_ROOM]u8) [*:0]const u8 {
+    var length: usize = 0;
+    if (path.root) {
+        into[0] = '\\';
+        length = 1;
+    } else {
+        var start = scope;
+        var up: u8 = 0;
+        while (up < path.parents) : (up += 1) start = start.parent orelse break;
+        length = pathOf(start, into);
+        // The root's path is "\\", which the first name follows directly.
+        if (length > 1 and path.count > 0 and length + 1 < into.len) {
+            into[length] = '.';
+            length += 1;
+        }
+    }
+    var index: u8 = 0;
+    while (index < path.count) : (index += 1) {
+        const text = textOf(path.segment(index));
+        var shown: usize = 4;
+        while (shown > 1 and text[shown - 1] == '_') shown -= 1;
+        for (text[0..shown]) |char| {
+            if (length + 1 < into.len) into[length] = char;
+            length += 1;
+        }
+        if (index + 1 < path.count and length + 1 < into.len) {
+            into[length] = '.';
+            length += 1;
+        }
+    }
+    into[@min(length, into.len - 1)] = 0;
+    return @ptrCast(into);
+}
+
 fn put(into: []u8, length: *usize, char: u8) void {
     if (length.* + 1 < into.len) into[length.*] = char;
     length.* += 1;
@@ -358,10 +408,70 @@ fn failed(ab: *AcpiBase) bool {
     return false;
 }
 
+/// One more reference holding `node`.
+pub fn hold(node: *Node) *Node {
+    node.references += 1;
+    return node;
+}
+
+/// One reference fewer holding `node`: a node taken out of the namespace
+/// freed with the last.
+pub fn unhold(ab: *AcpiBase, node: *Node) void {
+    node.references -= 1;
+    if (node.references == 0 and node.removed) machine.free(ab, Node, node);
+}
+
+/// `node` and every name inside it taken out of the namespace, what each
+/// holds let go of: each freed, or kept outside the namespace while a
+/// reference holds it.
+pub fn remove(ab: *AcpiBase, node: *Node) void {
+    const parent = node.parent orelse return;
+    var previous: ?*Node = null;
+    var at = parent.first;
+    while (at) |each| : (at = each.next) {
+        if (each == node) break;
+        previous = each;
+    }
+    if (at == null) return;
+    if (previous) |before| before.next = node.next else parent.first = node.next;
+    if (parent.last == node) parent.last = previous;
+    node.next = null;
+    node.parent = null;
+    // The names inside it, leaf by leaf as `discard` goes.
+    var inside: ?*Node = node;
+    while (inside) |each| {
+        if (each.first) |first| {
+            inside = first;
+            continue;
+        }
+        const above = each.parent;
+        if (above) |up| {
+            up.first = each.next;
+            if (up.first == null) up.last = null;
+        }
+        retire(ab, each);
+        inside = above;
+    }
+}
+
+/// A node out of the namespace: what it holds let go of, and the node
+/// freed unless a reference still holds it.
+fn retire(ab: *AcpiBase, node: *Node) void {
+    const held = node.object;
+    node.object = null;
+    node.parent = null;
+    node.next = null;
+    object.release(ab, held);
+    node.removed = true;
+    if (node.references == 0) machine.free(ab, Node, node);
+}
+
 /// The whole namespace freed: every node and what each holds. The base
 /// has no namespace afterwards.
 pub fn discard(ab: *AcpiBase) void {
     const root = ab.root orelse return;
+    @import("../interpreter/notice.zig").forget(ab);
+    defer @import("../aml/load.zig").discardCopies(ab);
     var at: ?*Node = root;
     // Down to the first leaf, then each leaf freed and its parent's next
     // child gone down to, until the root is a leaf itself.
@@ -375,8 +485,7 @@ pub fn discard(ab: *AcpiBase) void {
             above.first = node.next;
             if (above.first == null) above.last = null;
         }
-        object.release(ab, node.object);
-        machine.free(ab, Node, node);
+        retire(ab, node);
         at = parent;
     }
     ab.root = null;

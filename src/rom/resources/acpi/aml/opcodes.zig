@@ -89,6 +89,7 @@ pub const DATA_REGION_OP: u16 = EXT | 0x88;
 
 /// The first and the last of the eight locals and the seven arguments.
 pub const LOCAL0_OP: u16 = 0x60;
+pub const ARG0_OP: u16 = 0x68;
 pub const ARG6_OP: u16 = 0x6E;
 
 const none = &[_]Arg{};

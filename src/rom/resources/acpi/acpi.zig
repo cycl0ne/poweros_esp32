@@ -10,14 +10,20 @@
 //! defines (`load.zig`); `namespace/` is the tree of names, their paths
 //! and the rules a name is looked up by, with the two calls a program
 //! makes (`findacpinode.zig`, `nextacpidevice.zig`); `object/` what a
-//! name holds. Code at a table's own level, and the methods, are kept and
-//! not yet run.
+//! name holds. `interpreter/` runs the bytecode - the code at a table's
+//! own level as the table loads, and a method when it is called: terms
+//! and their operands on stacks of its own, not on the caller's, the
+//! conversions, the references, the mutexes and events, the
+//! notifications queued, more tables loaded; `region/` reads and writes
+//! the fields of the address spaces' regions, unit by unit, and tells
+//! the firmware which spaces can be reached (`_REG`).
 //!
 //! **Where it runs.** `machine/` is what the interpreter asks of what it
-//! runs in - memory, the log, the lock - as a table of calls the base
-//! points at. The resource's table is exec's; tools/acpicheck gives the
-//! same code its own and loads a folder of saved tables on the host, so
-//! what is proved there is the resource's code.
+//! runs in - memory, the log, the lock, the clock and its waits, the
+//! firmware's tables, one access to an address space - as a table of
+//! calls the base points at. The resource's table is exec's; tools/
+//! acpicheck gives the same code its own and loads a folder of saved
+//! tables on the host, so what is proved there is the resource's code.
 //!
 //! The jump table is acpi_lvo.zig, the ROM tag and init acpi_init.zig,
 //! the base acpi_base.zig. This file is the module's root: the names the
@@ -47,5 +53,8 @@ pub const machine = @import("machine/_machine.zig");
 pub const namespace = @import("namespace/_namespace.zig");
 pub const object = @import("object/_object.zig");
 pub const load = @import("aml/load.zig");
+pub const interpreter = @import("interpreter/_interpreter.zig");
+pub const notice = @import("interpreter/notice.zig");
+pub const region = @import("region/_region.zig");
 pub const FindAcpiNode = @import("namespace/findacpinode.zig").FindAcpiNode;
 pub const NextAcpiDevice = @import("namespace/nextacpidevice.zig").NextAcpiDevice;

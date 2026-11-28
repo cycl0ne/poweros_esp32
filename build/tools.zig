@@ -143,7 +143,7 @@ pub fn addHostTools(b: *std.Build, with: HostToolsWith) MadeHostTools {
 
     // tools/acpicheck, acpi.resource's interpreter run on the host over a
     // folder of saved tables: `zig build acpicheck -- [--namespace]
-    // <folder>`, or without the arguments installed as
+    // [--acpiexec | --run] <folder>`, or without the arguments installed as
     // zig-out/bin/acpicheck. The interpreter is the resource's own code
     // (src/rom/resources/acpi as a module of its own).
     const acpi_mod = b.createModule(.{
@@ -162,7 +162,7 @@ pub fn addHostTools(b: *std.Build, with: HostToolsWith) MadeHostTools {
     });
     acpicheck.root_module.addImport("sdk", sdk);
     acpicheck.root_module.addImport("acpi", acpi_mod);
-    const acpicheck_step = b.step("acpicheck", "Load a folder of saved ACPI tables with acpi.resource's interpreter (zig build acpicheck -- [--namespace] <folder>)");
+    const acpicheck_step = b.step("acpicheck", "Load a folder of saved ACPI tables with acpi.resource's interpreter, and run their methods (zig build acpicheck -- [--namespace] [--acpiexec | --run] <folder>)");
     if (b.args) |given| {
         const run_acpicheck = b.addRunArtifact(acpicheck);
         run_acpicheck.addArgs(given);
