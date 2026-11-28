@@ -52,7 +52,7 @@ and writing a controller.
 | `usb/aic8800.device` | `DEVS:usb/` | AIC8800 Wi-Fi sticks as a wireless network device, their firmware loaded from `DEVS:usb/firmware/aic8800/` |
 | `usb/uac.device` | `DEVS:usb/` | speakers, headsets and sound adapters of the audio class as sound outputs, a sink of rta.library each, on a controller with isochronous transfers |
 | `C:USB` | | starts and stops a bus |
-| `C:USBInfo` | | lists what is on the buses, and who holds the ports |
+| `C:USBInfo` | | lists what is on the buses, the current each device draws, and who holds the ports |
 
 ## A bus
 
@@ -195,19 +195,50 @@ does the split transactions itself.
 ## What is on it
 
 `USBInfo` lists every device: its bus and address, the hub and port it
-is plugged into, its speed, vendor and product, its name, and who drives
-each of its interfaces. `USBInfo FULL` adds the interfaces and
-endpoints, and the states a SuperSpeed device's link rests in.
+is plugged into, its speed, vendor and product, the most current it
+draws in mA, its name, and who drives each of its interfaces.
 
 ```
-bus addr hub port speed  id         class  device
-  0    1   0    0 full   0000:0000  hub    DWC2 root hub
+bus addr hub port speed  id         class    mA  device
+  0    1   0    0 full   0000:0000  hub       -  xHCI root hub
                                     interface 0: usb.library
-  0    2   1    1 full   0409:55AA  hub    QEMU USB Hub, QEMU
+  0    2   1    1 high   0627:0001  -       100  QEMU USB Keyboard, QEMU
+                                    interface 0: usb/hid.device
+  0    3   1    2 high   0627:0001  -       100  QEMU USB Tablet, QEMU
+                                    interface 0: usb/hid.device
+  0    4   1    3 full   0409:55AA  hub       0  QEMU USB Hub, QEMU
                                     interface 0: usb.library
-  0    3   2    1 full   0627:0001  -      QEMU USB Keyboard, QEMU
+  0    5   4    1 full   0627:0001  -       100  QEMU USB Keyboard, QEMU
                                     interface 0: usb/hid.device
 ```
+
+`USBInfo FULL` adds, for each device, the USB version it speaks and its
+own version, its serial number, its place below the root hub and its
+speed, the current it draws of what its port gives, whether it powers
+itself or runs on the bus, and whether it can wake the machine; then
+its interfaces and endpoints, and the states a SuperSpeed device's link
+rests in. `DEVICE` takes one device by its address:
+
+```
+1.System:> USBInfo DEVICE 5 FULL
+bus addr hub port speed  id         class    mA  device
+  0    5   4    1 full   0627:0001  -       100  QEMU USB Keyboard, QEMU
+                                    interface 0: usb/hid.device
+      USB 2.0, version 0.00, serial 68284-0000:00:01.0-3.1
+      at 0-3.1, up to 12 Mbit/s
+      draws up to 100 mA of the 500 mA its port gives, from the bus; it can wake the machine
+      interface 0.0  class hid (3/1/1), 1 endpoints
+        endpoint 0x81  in  interrupt, 8 bytes, every 10
+```
+
+Its place, `0-3.1`, is bus 0, the root hub's port 3, and port 1 of the
+hub plugged in there. What a device draws is what its configuration
+says it draws at most. What its port gives is what the USB rules give
+it: 500 mA below SuperSpeed and 900 mA at it on a root hub's port or on
+one of a hub that powers itself, 100 mA and 150 mA on one of a hub that
+runs on the bus. A device that draws more than its port gives says so
+in the list. How much a board's sockets can really give, the stack does
+not know.
 
 A program reads the same from the library's list, a `USBDevice` per
 device, between `ObtainUSBDeviceList` and `ReleaseUSBDeviceList`. The
