@@ -194,6 +194,7 @@ pub fn build(b: *std.Build) void {
     const mkicon = host_tools.mkicon;
     const mkstick = host_tools.mkstick;
     const posfsck = host_tools.posfsck;
+    const acpicheck = host_tools.acpicheck;
     const svgcompare = host_tools.svgcompare;
 
     const disk_images = addDiskImages(b, .{
@@ -376,6 +377,7 @@ pub fn build(b: *std.Build) void {
 
     addCheckSteps(b, .{
         .a64_target = a64_target,
+        .acpicheck = acpicheck,
         .a64v80_target = a64v80_target,
         .board = board,
         .built = built,

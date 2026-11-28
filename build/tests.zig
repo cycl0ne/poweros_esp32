@@ -24,6 +24,7 @@ const addReport = build_release.addReport;
 /// What `addCheckSteps` takes from the build so far.
 pub const CheckStepsWith = struct {
     a64_target: std.Build.ResolvedTarget,
+    acpicheck: *std.Build.Step.Compile,
     a64v80_target: std.Build.ResolvedTarget,
     board: Board,
     built: Image,
@@ -51,6 +52,7 @@ pub const CheckStepsWith = struct {
 /// what `test` checks: `autodoc`, `modchart` and `fd`.
 pub fn addCheckSteps(b: *std.Build, with: CheckStepsWith) void {
     const a64_target = with.a64_target;
+    const acpicheck = with.acpicheck;
     const a64v80_target = with.a64v80_target;
     const board = with.board;
     const built = with.built;
@@ -218,6 +220,7 @@ pub fn addCheckSteps(b: *std.Build, with: CheckStepsWith) void {
     disk_test_mod.addOptions("test_options", test_options);
     test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = disk_test_mod })).step);
     test_step.dependOn(&posfsck.step);
+    test_step.dependOn(&acpicheck.step);
     // esp32s3wifi.device's own code compiles for the chip even where the vendor
     // libraries it links are missing: as an object, which needs no link.
     const wifi_check = b.addObject(.{

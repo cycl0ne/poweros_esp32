@@ -52,7 +52,7 @@ const HEADER_CREATOR_REVISION = 32;
 
 /// No table is longer than this. A length beyond it is a table written
 /// over, and summing that far could run off the memory the firmware has.
-const MOST_TABLE_BYTES: u32 = 16 << 20;
+pub const MOST_TABLE_BYTES: u32 = 16 << 20;
 
 /// How many of each the reader records. The cores are not among them:
 /// there are as many as the machine has, which is any number at all, so

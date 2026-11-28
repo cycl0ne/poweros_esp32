@@ -1,0 +1,18 @@
+// SPDX-License-Identifier: MIT
+//! acpi.resource's functions: the firmware's namespace - a name found by
+//! its path, and the devices gone through. A resource: no Open or Close,
+//! its first function in the first slot. The base comes from
+//! OpenResource("acpi.resource").
+##include resources/acpi as acpi
+##basetype AcpiBase
+##name acpi.resource
+##bias 0
+##public
+/// The name at `path` from `scope` (null: the root) - "\\_SB.PCI0",
+/// "PCI0._HID", "^_PRT" - or null where there is none.
+?*acpi.AcpiNode FindAcpiNode(?*acpi.AcpiNode scope, [*:0]const u8 path)
+/// The device after `old` (null: from the start) in the namespace's
+/// order whose identity or compatible identity is `id` ("PNP0C0C"),
+/// every device where `id` is null; null after the last.
+?*acpi.AcpiNode NextAcpiDevice(?*acpi.AcpiNode old, ?[*:0]const u8 id)
+##end

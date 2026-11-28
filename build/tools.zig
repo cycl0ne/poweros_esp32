@@ -21,12 +21,13 @@ pub const MadeHostTools = struct {
     mkicon: *std.Build.Step.Compile,
     mkstick: *std.Build.Step.Compile,
     posfsck: *std.Build.Step.Compile,
+    acpicheck: *std.Build.Step.Compile,
     svgcompare: *std.Build.Step.Compile,
 };
 
 /// The tools that run on the host and their steps: mkfs and posfsck, the
-/// icon maker, the stick maker, the benches of audio.device and
-/// graphics.library, and svgcompare.
+/// icon maker, the stick maker, acpicheck, the benches of audio.device
+/// and graphics.library, and svgcompare.
 /// Where scripts/fetch-svg-suite.sh puts resvg's test suite: `tests/`,
 /// `resources/` and `fonts/` as the suite keeps them, and `commit`, the
 /// one it is.
@@ -139,6 +140,34 @@ pub fn addHostTools(b: *std.Build, with: HostToolsWith) MadeHostTools {
         run_posfsck.addArgs(given);
         posfsck_step.dependOn(&run_posfsck.step);
     } else posfsck_step.dependOn(&b.addInstallArtifact(posfsck, .{}).step);
+
+    // tools/acpicheck, acpi.resource's interpreter run on the host over a
+    // folder of saved tables: `zig build acpicheck -- [--namespace]
+    // <folder>`, or without the arguments installed as
+    // zig-out/bin/acpicheck. The interpreter is the resource's own code
+    // (src/rom/resources/acpi as a module of its own).
+    const acpi_mod = b.createModule(.{
+        .root_source_file = b.path("src/rom/resources/acpi/acpi.zig"),
+        .target = b.graph.host,
+        .optimize = .ReleaseSafe,
+    });
+    acpi_mod.addImport("sdk", sdk);
+    const acpicheck = b.addExecutable(.{
+        .name = "acpicheck",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/acpicheck/acpicheck.zig"),
+            .target = b.graph.host,
+            .optimize = .ReleaseSafe,
+        }),
+    });
+    acpicheck.root_module.addImport("sdk", sdk);
+    acpicheck.root_module.addImport("acpi", acpi_mod);
+    const acpicheck_step = b.step("acpicheck", "Load a folder of saved ACPI tables with acpi.resource's interpreter (zig build acpicheck -- [--namespace] <folder>)");
+    if (b.args) |given| {
+        const run_acpicheck = b.addRunArtifact(acpicheck);
+        run_acpicheck.addArgs(given);
+        acpicheck_step.dependOn(&run_acpicheck.step);
+    } else acpicheck_step.dependOn(&b.addInstallArtifact(acpicheck, .{}).step);
 
     // tools/mkstick makes the medium a machine whose firmware is UEFI
     // starts from. The FAT32 volume on it is laid down by the file
@@ -274,6 +303,7 @@ pub fn addHostTools(b: *std.Build, with: HostToolsWith) MadeHostTools {
         .mkicon = mkicon,
         .mkstick = mkstick,
         .posfsck = posfsck,
+        .acpicheck = acpicheck,
         .svgcompare = svgcompare,
     };
 }

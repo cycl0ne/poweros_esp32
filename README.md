@@ -406,6 +406,7 @@ The [install guide](sdk/docs/guides/install.md) has the details, and the
 | `./zig build release` | every board's archive and package at once, into `release/`, after `check-all` has passed |
 | `./zig build sums` | `release/SHA256SUMS` over the archives in `release/`, in the form `sha256sum -c` and `C:Hash CHECK` read |
 | `./zig build posfsck -- [--data] flash.bin` | check the posfs volumes of a flash dump or a card's image on the host ([posfs guide](sdk/docs/guides/posfs.md#checking-a-volume)) |
+| `./zig build acpicheck -- [--namespace] <folder>` | load a machine's tables of bytecode, as `C:Acpi TO` saved them, into a namespace on the host with acpi.resource's own interpreter: what each table defines and anything in it that could not be read; with `--namespace` the namespace itself, a name a line in the layout of ACPICA's `acpiexec`, so that the two compare |
 | `-Ddisk-tree=false` | leave the `disk/` tree in this root off the disk images: what `archive` and `release` want for something to hand out, since those files are the builder's own |
 | `-Dboot=/boot/firmware/bcm2712-rpi-cm5-cm5io.dtb` | a file this tree does not hold in a release package's `boot/` and in `SYS:Storage/Boot`, under its own name or the one before a `=`: what a board's firmware reads besides the kernel |
 | `-Dserve-port=8080` | the port `./zig build serve` hands a package out on |
