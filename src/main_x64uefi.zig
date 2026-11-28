@@ -111,6 +111,10 @@ var power_part: [15]Tag = @splat(.done);
 /// The video BIOS images' part, where the firmware's tables have a table
 /// of them: the display device's driver reads its own out of it.
 var video_bios_part: [6]Tag = @splat(.done);
+/// The firmware's tables' own part, where their root was found and holds:
+/// where that root is, for what reads more of them than the kernel does -
+/// `C:Acpi`, which lists them and saves them.
+var tables_part: [7]Tag = @splat(.done);
 /// Whether that part was written, and whether the screen's memory takes
 /// gathered writes: both go in the boot's lines.
 var screen_declared = false;
@@ -205,6 +209,24 @@ fn takeVideoBios() void {
     _ = boards.system.addPart(&video_bios_part);
 }
 
+/// The firmware's tables, written into the board's description as its
+/// firmware part: the root's address, nothing else - what is below it is
+/// the firmware's to say each time it is read. Nothing is written where
+/// no root was found or its checksums did not hold.
+fn takeTables() void {
+    if (!tables.found) return;
+    tables_part = .{
+        .value(st.PART_Kind, st.PARTKIND_FIRMWARE),
+        .value(st.PART_Chip, st.CHIP_ACPI),
+        .pointer(st.PART_ChipName, "acpi"),
+        .value(st.PART_Bus, st.BUS_MEMORY),
+        .value(st.PART_Address, tables_at),
+        .pointer(st.PART_Label, "firmware tables"),
+        .done,
+    };
+    _ = boards.system.addPart(&tables_part);
+}
+
 /// The framebuffer the firmware lit, written into the board's description
 /// as a panel part. Nothing is written where the firmware lit none, or
 /// where its pixels are in an order the display driver does not draw in -
@@ -270,6 +292,7 @@ fn takeBoard(machine: *const handover.Handover) void {
     takePci();
     takePower();
     takeVideoBios();
+    takeTables();
     // The firmware's own restart and its way to turn the machine off,
     // which only it can do: its runtime half is still where it left it.
     firmware.take(system_table);

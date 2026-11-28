@@ -308,10 +308,11 @@ const part = eb.FindBoardPart(null, st.PARTKIND_CRYPTO, st.CHIP_JH7110_CRYPTO) o
   of list at run time from its firmware's tables and add it, which
   `src/main_x64uefi.zig` does for its framebuffer (`CHIP_UEFI_FB`), its
   clock (`CHIP_MC146818`), its power management (`CHIP_ACPI_PM`), its
-  PCI host (`CHIP_PCI_ECAM`) and the table of its display devices' video
+  PCI host (`CHIP_PCI_ECAM`), the table of its display devices' video
   BIOS images (`CHIP_ACPI_VFCT`), which `amdgpu.resource` finds its
-  device's image in. The module above cannot tell the
-  difference, and that is the point.
+  device's image in, and the root of the tables themselves (`CHIP_ACPI`),
+  from which `C:Acpi` lists and saves them. The module above cannot tell
+  the difference, and that is the point.
 - **A part nobody lists does not exist.** Every driver of a part answers
   null and goes away quietly, so a new machine starts with none of them
   and gains one at a time. This is what makes a port showable at every
@@ -324,7 +325,7 @@ const part = eb.FindBoardPart(null, st.PARTKIND_CRYPTO, st.CHIP_JH7110_CRYPTO) o
   that moves a reset from a pad to the expander changes its list and
   nothing else.
 
-`sdk/libs/expansion/systemtags.zig` names **30 kinds of part and 54
+`sdk/libs/expansion/systemtags.zig` names **32 kinds of part and 62
 chips**, which is the list of on-board hardware this system drives. It is
 the file to read before writing a driver: a part much like one already
 there usually wants the same tags.

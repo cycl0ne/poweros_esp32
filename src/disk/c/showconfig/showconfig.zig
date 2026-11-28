@@ -38,7 +38,7 @@ const ExpansionBase = sdk.interface.expansion.ExpansionBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "ShowConfig";
-const VERSION_STRING = "\x00$VER: ShowConfig 1.13 (22.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: ShowConfig 1.14 (28.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "DEVICES/S,SPEAKS/K";
@@ -282,6 +282,7 @@ fn kindName(kind: u32) [*:0]const u8 {
         st.PARTKIND_POWER => "power",
         st.PARTKIND_FIRMWARE => "firmware",
         st.PARTKIND_BLUETOOTH => "bluetooth",
+        st.PARTKIND_VIDEO_BIOS => "video bios",
         else => "?",
     };
 }

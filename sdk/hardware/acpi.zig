@@ -19,6 +19,14 @@
 //! it is a format, and what it finds goes into the board's description,
 //! which stays the one thing every module asks.
 //!
+//! **The walk.** Besides the facts the kernel takes (`read`), the root and
+//! the list it points at can be walked table by table (`rootAt`, then
+//! `Root.table` and `Root.find`), each table's header read (`headerOf`),
+//! and the two tables the root does not list found through the fixed
+//! description (`dsdtOf`, `facsOf`): what a program that lists or saves
+//! the tables walks them with. The tables stay where the firmware put
+//! them for as long as the machine runs, so this may be done at any time.
+//!
 //! **Byte by byte.** The tables are packed and a field may sit on any
 //! boundary, so every field is read a byte at a time. These are read once
 //! each, at boot.
@@ -28,6 +36,15 @@ const HEADER_SIZE = 36;
 const HEADER_LENGTH = 4;
 const HEADER_REVISION = 8;
 const HEADER_CHECKSUM = 9;
+const HEADER_OEM = 10;
+const HEADER_OEM_TABLE = 16;
+const HEADER_OEM_REVISION = 24;
+const HEADER_CREATOR = 28;
+const HEADER_CREATOR_REVISION = 32;
+
+/// No table is longer than this. A length beyond it is a table written
+/// over, and summing that far could run off the memory the firmware has.
+const MOST_TABLE_BYTES: u32 = 16 << 20;
 
 /// How many of each the reader records. The cores are not among them:
 /// there are as many as the machine has, which is any number at all, so
@@ -205,12 +222,18 @@ fn sums(at: usize, length: usize) bool {
     return total == 0;
 }
 
-/// Whether the four bytes at `at` are `signature`.
-fn named(at: usize, signature: *const [4]u8) bool {
+/// Whether the bytes at `at` are `signature`.
+fn named(at: usize, signature: []const u8) bool {
     for (signature, 0..) |char, index| {
         if (byteAt(at + index) != char) return false;
     }
     return true;
+}
+
+/// Whether a table of `length` bytes at `at` is long enough for its
+/// header, no longer than any table is, and sums to zero.
+fn sound(at: usize, length: u32) bool {
+    return length >= HEADER_SIZE and length <= MOST_TABLE_BYTES and sums(at, length);
 }
 
 // --- the tables --------------------------------------------------------------------
@@ -223,49 +246,26 @@ const RSDP_RSDT = 16;
 const RSDP_LENGTH = 20;
 const RSDP_XSDT = 24;
 
+/// The longest root there is: revision 2's is 36 bytes, and a length far
+/// beyond that is a root written over.
+const RSDP_MOST: u32 = 1024;
+
 /// What the tables say, read from the root the firmware pointed at. A root
 /// whose checksum does not hold, or that points at no list, gives facts
 /// that say nothing - and the kernel says so rather than acting on
 /// whatever was there.
 pub fn read(rsdp: usize) Facts {
     var facts: Facts = .{};
-    if (rsdp == 0) return facts;
-    for (RSDP_SIGNATURE, 0..) |char, index| {
-        if (byteAt(rsdp + index) != char) return facts;
-    }
-    // The first twenty bytes are the old root and sum on their own; the
-    // rest of a newer one sums with them.
-    if (!sums(rsdp, 20)) return facts;
-    facts.revision = byteAt(rsdp + RSDP_REVISION);
-    var list: usize = 0;
-    var wide = false;
-    if (facts.revision >= 2) {
-        const length = longAt(rsdp + RSDP_LENGTH);
-        if (length >= 33 and sums(rsdp, length)) {
-            const xsdt = quadAt(rsdp + RSDP_XSDT);
-            if (xsdt != 0) {
-                list = @intCast(xsdt);
-                wide = true;
-            }
-        }
-    }
-    if (list == 0) list = longAt(rsdp + RSDP_RSDT);
-    if (list == 0) return facts;
-    if (!named(list, if (wide) "XSDT" else "RSDT")) return facts;
-    const list_length = longAt(list + HEADER_LENGTH);
-    if (list_length < HEADER_SIZE or !sums(list, list_length)) return facts;
+    const root = rootAt(rsdp) orelse return facts;
+    facts.revision = root.revision;
     facts.found = true;
-
-    const stride: usize = if (wide) 8 else 4;
-    const count = (list_length - HEADER_SIZE) / stride;
-    facts.listed = @intCast(count);
-    var index: usize = 0;
-    while (index < count) : (index += 1) {
-        const at = list + HEADER_SIZE + index * stride;
-        const table: usize = if (wide) @intCast(quadAt(at)) else longAt(at);
+    facts.listed = root.count;
+    var index: u32 = 0;
+    while (index < root.count) : (index += 1) {
+        const table = root.table(index);
         if (table == 0) continue;
         const length = longAt(table + HEADER_LENGTH);
-        if (length < HEADER_SIZE or !sums(table, length)) continue;
+        if (!sound(table, length)) continue;
         if (named(table, "APIC")) takeInterrupts(&facts, table, length);
         if (named(table, "FACP")) takeFixed(&facts, table, length);
         if (named(table, "MCFG")) takeConfigSpace(&facts, table, length);
@@ -273,6 +273,173 @@ pub fn read(rsdp: usize) Facts {
         if (named(table, "VFCT")) facts.vfct = table;
     }
     return facts;
+}
+
+// --- the walk ----------------------------------------------------------------------
+
+/// The root and the list of tables it points at, found and checked.
+pub const Root = struct {
+    /// Where the root itself is, its revision, and how many of its bytes
+    /// hold: 20 for the old root, its own figure for a newer one whose
+    /// whole checksum holds.
+    at: usize = 0,
+    revision: u8 = 0,
+    length: u32 = 0,
+    /// The list of tables: the one with 64-bit pointers (XSDT) where the
+    /// root has one, the 32-bit one (RSDT) otherwise; and how many
+    /// tables it lists.
+    list: usize = 0,
+    wide: bool = false,
+    count: u32 = 0,
+
+    /// Where the list's `index`th table is, 0 the first: 0 where the
+    /// list has none there.
+    pub fn table(root: *const Root, index: u32) usize {
+        if (index >= root.count) return 0;
+        const stride: usize = if (root.wide) 8 else 4;
+        const at = root.list + HEADER_SIZE + @as(usize, index) * stride;
+        return if (root.wide) @intCast(quadAt(at)) else longAt(at);
+    }
+
+    /// The `nth` table, 0 the first, of those the list has with
+    /// `signature` and whose checksum holds: 0 where there are fewer.
+    pub fn find(root: *const Root, signature: *const [4]u8, nth: u32) usize {
+        var seen: u32 = 0;
+        var index: u32 = 0;
+        while (index < root.count) : (index += 1) {
+            const at = root.table(index);
+            if (at == 0 or !named(at, signature)) continue;
+            if (!sound(at, longAt(at + HEADER_LENGTH))) continue;
+            if (seen == nth) return at;
+            seen += 1;
+        }
+        return 0;
+    }
+};
+
+/// The root at `rsdp`, checked: its signature, its checksums, and the
+/// list it points at, with that list's own signature and checksum. The
+/// first twenty bytes are the old root and sum on their own; the rest of
+/// a newer one sums with them, and the newer list is taken only where
+/// that holds. Null where there is no root, or no list that holds.
+pub fn rootAt(rsdp: usize) ?Root {
+    if (rsdp == 0) return null;
+    if (!named(rsdp, RSDP_SIGNATURE)) return null;
+    if (!sums(rsdp, 20)) return null;
+    var root: Root = .{ .at = rsdp, .revision = byteAt(rsdp + RSDP_REVISION), .length = 20 };
+    if (root.revision >= 2) {
+        const length = longAt(rsdp + RSDP_LENGTH);
+        if (length >= 33 and length <= RSDP_MOST and sums(rsdp, length)) {
+            root.length = length;
+            const xsdt = quadAt(rsdp + RSDP_XSDT);
+            if (xsdt != 0) {
+                root.list = @intCast(xsdt);
+                root.wide = true;
+            }
+        }
+    }
+    if (root.list == 0) root.list = longAt(rsdp + RSDP_RSDT);
+    if (root.list == 0) return null;
+    if (!named(root.list, if (root.wide) "XSDT" else "RSDT")) return null;
+    const list_length = longAt(root.list + HEADER_LENGTH);
+    if (!sound(root.list, list_length)) return null;
+    const stride: u32 = if (root.wide) 8 else 4;
+    root.count = (list_length - HEADER_SIZE) / stride;
+    return root;
+}
+
+/// What a table's header says.
+pub const Header = struct {
+    /// Its four letters: "FACP", "DSDT", "SSDT", ...
+    signature: [4]u8 = @splat(0),
+    /// How many bytes the table is, its header among them.
+    length: u32 = 0,
+    revision: u8 = 0,
+    /// Whether its length is one a table can have and its bytes sum to
+    /// zero.
+    sound: bool = false,
+    /// Who made it: the maker's six letters, the maker's eight for this
+    /// table, and the table's revision by the maker's count.
+    oem: [6]u8 = @splat(0),
+    oem_table: [8]u8 = @splat(0),
+    oem_revision: u32 = 0,
+    /// What it was made with - for a table of bytecode, the compiler's
+    /// four letters - and that tool's revision.
+    creator: [4]u8 = @splat(0),
+    creator_revision: u32 = 0,
+};
+
+/// The header of the table at `table`, which must be one the root or the
+/// fixed description points at.
+pub fn headerOf(table: usize) Header {
+    var header: Header = .{};
+    for (&header.signature, 0..) |*char, index| char.* = byteAt(table + index);
+    header.length = longAt(table + HEADER_LENGTH);
+    header.revision = byteAt(table + HEADER_REVISION);
+    for (&header.oem, 0..) |*char, index| char.* = byteAt(table + HEADER_OEM + index);
+    for (&header.oem_table, 0..) |*char, index| char.* = byteAt(table + HEADER_OEM_TABLE + index);
+    header.oem_revision = longAt(table + HEADER_OEM_REVISION);
+    for (&header.creator, 0..) |*char, index| char.* = byteAt(table + HEADER_CREATOR + index);
+    header.creator_revision = longAt(table + HEADER_CREATOR_REVISION);
+    header.sound = sound(table, header.length);
+    return header;
+}
+
+/// Where the fixed description (FACP) at `fadt` points for the table of
+/// the machine's bytecode the root does not list (DSDT): its 64-bit field
+/// where the table is long enough to have one and it is not 0, its
+/// 32-bit field otherwise. 0 where it points nowhere.
+pub fn dsdtOf(fadt: usize) usize {
+    if (wideField(fadt, FADT_X_DSDT)) |at| return at;
+    return narrowField(fadt, FADT_DSDT);
+}
+
+/// Where the fixed description at `fadt` points for the firmware's
+/// control structure (FACS): its 32-bit field where it is not 0, its
+/// 64-bit one otherwise. Firmware that fills in both, and differently,
+/// has been found to wake only from the structure the 32-bit field
+/// names. 0 where it points nowhere.
+pub fn facsOf(fadt: usize) usize {
+    const narrow = narrowField(fadt, FADT_FIRMWARE_CTRL);
+    if (narrow != 0) return narrow;
+    return wideField(fadt, FADT_X_FIRMWARE_CTRL) orelse 0;
+}
+
+/// How long the control structure at `facs` says it is - it has a
+/// signature and a length of its own but none of a table's other
+/// header, and no checksum: 0 where it is not one.
+pub fn facsLength(facs: usize) u32 {
+    if (facs == 0 or !named(facs, "FACS")) return 0;
+    const length = longAt(facs + HEADER_LENGTH);
+    if (length < FACS_LEAST or length > MOST_TABLE_BYTES) return 0;
+    return length;
+}
+
+/// The control structure's version, 0 where `facs` is not one.
+pub fn facsVersion(facs: usize) u8 {
+    if (facsLength(facs) == 0) return 0;
+    return byteAt(facs + FACS_VERSION);
+}
+
+/// The fixed description's pointers to the two tables the root does not
+/// list, each with a 32-bit field from the first revision and a 64-bit
+/// one later; and the control structure's own few fields.
+const FADT_FIRMWARE_CTRL = 36;
+const FADT_DSDT = 40;
+const FADT_X_FIRMWARE_CTRL = 132;
+const FADT_X_DSDT = 140;
+const FACS_LEAST: u32 = 64;
+const FACS_VERSION = 32;
+
+fn wideField(fadt: usize, offset: u32) ?usize {
+    if (longAt(fadt + HEADER_LENGTH) < offset + 8) return null;
+    const at = quadAt(fadt + offset);
+    return if (at != 0) @intCast(at) else null;
+}
+
+fn narrowField(fadt: usize, offset: u32) usize {
+    if (longAt(fadt + HEADER_LENGTH) < offset + 4) return 0;
+    return longAt(fadt + offset);
 }
 
 /// The interrupt table (MADT): where a core's own controller is, which

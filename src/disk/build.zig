@@ -256,7 +256,7 @@ const commands = [_][]const u8{
     "makelink",      "posfs",       "binddrivers", "pciinfo",       "record",
     "audio",         "temperature", "hash",        "break",         "status",
     "cpuclock",      "install",     "update",      "reboot",        "shutdown",
-    "bluetooth",
+    "bluetooth",     "acpi",
 };
 const tests = [_][]const u8{
     "hello",       "echoargs",    "gfx",         "anim",         "intuition",
@@ -558,7 +558,8 @@ const mac_only = [_][]const u8{"emac.device"};
 const esp_only = [_][]const u8{ "usbotg.device", "sdcard.device", "programs/Dock" };
 /// What the 64-bit machines - RISC-V 64 under SBI, AArch64 under PSCI,
 /// x86-64 under UEFI - have and the ESP32s do not: PCI, the command that
-/// lists it, and the USB controllers and SSDs on it. The install, which
+/// lists it, and the USB controllers and SSDs on it; the command that lists
+/// and saves a firmware's description tables. The install, which
 /// puts a system onto a card or an SSD for a machine whose firmware loads
 /// a kernel from a partition - an ESP32's kernel is in its flash - and
 /// update.library, C:Update and SYS:System/Update, which bring such a
@@ -570,7 +571,7 @@ const esp_only = [_][]const u8{ "usbotg.device", "sdcard.device", "programs/Dock
 /// chip.vcodec goes with them: it drives videodec.resource, which no
 /// ESP32 has, and carries the parameter-set readers it reads a stream's
 /// colours with - 60 KB for a chip that is not there.
-const rv64_only = [_][]const u8{ "pci.library", "pciinfo", "xhci.device", "nvme.device", "intelnet.device", "realnet.device", "mt7922.device", "install", "update", "update.library", "System/Update", "Installer", "System/SystemScan", "WBStartup/Dock", "videodec", "vchiq", "dts.acodec", "chip.vcodec", "h264.vcodec", "hevc.vcodec", "vp8.vcodec", "vp9.vcodec", "av1.vcodec", "dttime" };
+const rv64_only = [_][]const u8{ "pci.library", "pciinfo", "acpi", "xhci.device", "nvme.device", "intelnet.device", "realnet.device", "mt7922.device", "install", "update", "update.library", "System/Update", "Installer", "System/SystemScan", "WBStartup/Dock", "videodec", "vchiq", "dts.acodec", "chip.vcodec", "h264.vcodec", "hevc.vcodec", "vp8.vcodec", "vp9.vcodec", "av1.vcodec", "dttime" };
 /// Drivers of what only the Raspberry Pi CM5's BCM2712 has among the
 /// AArch64 machines and no other chip does: its V3D 7.1 - the BCM2711's
 /// is older.

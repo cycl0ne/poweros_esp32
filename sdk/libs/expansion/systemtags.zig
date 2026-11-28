@@ -550,9 +550,12 @@ pub const PARTKIND_GPU: u32 = 28;
 /// PART_Address and the PART_Power* tags where its registers are, and
 /// PART_Irq the line it raises. power.resource's.
 pub const PARTKIND_POWER: u32 = 29;
-/// The firmware that runs beside the CPUs and is asked things through a
-/// mailbox - the next start's flags, the cores' clocks, power to a
-/// block: PART_Chip which firmware, PART_Address its mailbox.
+/// The machine's firmware, where the system asks it things or reads what
+/// it wrote down: one that runs beside the CPUs and answers through a
+/// mailbox - the next start's flags, the cores' clocks, power to a block -
+/// or one that left a description of the machine in memory (CHIP_ACPI).
+/// PART_Chip which firmware, PART_Address its mailbox or its
+/// description's root.
 pub const PARTKIND_FIRMWARE: u32 = 30;
 /// A Bluetooth controller on the board, spoken to in HCI over one of the
 /// chip's UARTs: PART_Chip which controller, PART_Bus BUS_UART with
@@ -792,6 +795,13 @@ pub const CHIP_ACPI_PM: u32 = 52;
 /// first image is at the offset it names, and each image behind a header
 /// that says which PCI function it is for and how long it is.
 pub const CHIP_ACPI_VFCT: u32 = 61;
+/// The firmware's description tables (PARTKIND_FIRMWARE on BUS_MEMORY):
+/// PART_Address the root the firmware pointed at (signature "RSD PTR "),
+/// from which every table is found - the ones it lists, and the two the
+/// fixed description points at. They are in the firmware's own memory,
+/// which the system keeps and maps where it is, for as long as the
+/// machine runs; `sdk.hardware.acpi` walks them.
+pub const CHIP_ACPI: u32 = 62;
 /// Broadcom's BCM54213PE, a 10/100/1000 Mbit/s Ethernet PHY (PARTKIND_NET
 /// on BUS_RGMII), the Compute Module 4's, on the BCM2711's GENET:
 /// PART_Address its address on the MAC's management bus, PART_RxDelay and
