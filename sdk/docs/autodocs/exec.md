@@ -9550,23 +9550,26 @@ fn ShareWork(base: *ExecBase, work: WorkFn, data: ?*anyopaque, parts: u32) u32
 
 **RESULT**
 
-How many parts it was done in: 1 when the caller did the whole job
-itself.
+How many parts the job was cut into, each done once: 1 when the caller
+did the whole job itself, as one part.
 
 **BEHAVIOR**
 
 exec keeps a worker task on each core, pinned to it. The job is cut
 into as many parts as `parts` asks for and there are idle workers on
 the other cores: each does one, at the caller's priority, and the caller
-does part 0. The call returns when every part is done. A worker running
-jobs posted with PostWork is passed over (SINCE 1.27): a job is not cut
-short.
+does part 0. A part whose worker has not begun it by the time part 0 is
+done the caller then does as well (SINCE 1.47): a worker begins only
+once the tasks of a higher priority on its core wait, and the call
+would wait as long. The call returns when every part is done. A worker
+running jobs posted with PostWork is passed over (SINCE 1.27): a job is
+not cut short.
 
 The parts run at the same time, so `work` must cut the job so that no
 two write the same memory - nor the same cache line, on a machine whose
-caches are not kept in step for it. A part runs on a worker's task,
-not the caller's: a semaphore the caller holds is not the part's, and
-a part that obtains one would wait for good.
+caches are not kept in step for it. A part runs on whichever task does
+it, a worker's or the caller's: a semaphore the caller holds is not a
+worker's, and a part that obtains one there would wait for good.
 
 The caller does the whole job itself, as `work(data, 0, 1)`, when
 `parts` is 1 or less, the machine has one core, another job is under
@@ -9594,7 +9597,9 @@ microseconds: a job worth sharing takes much longer than that.
 
 **BUGS**
 
-None known.
+A part its worker has begun is waited for, however long a task of a
+higher priority that becomes ready on the worker's core then keeps it
+from going on.
 
 **SEE ALSO**
 

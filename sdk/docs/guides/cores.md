@@ -83,6 +83,16 @@ var sums: Sums = .{ .blocks = buffer, .crcs = crcs };
 _ = sys.ShareWork(&sumBlocks, &sums, 4);
 ```
 
+A worker is pinned to its core, so a task of a higher priority there
+keeps it from beginning its part until that task waits. A part whose
+worker has not begun it by the time part 0 is done the caller does
+itself, after part 0, so the call waits only for the parts under way:
+on the NucBox, beside tasks of a higher priority that keep cores busy
+for 200 ms, a job of 32 ms in 16 parts takes 4 ms with one core held -
+the caller doing two of the parts - and 32 ms with fifteen held, the
+caller doing them all. A part its worker has begun is waited for, even
+where such a task then keeps that worker from going on.
+
 One job is shared at a time, for the whole system. The caller does the
 whole job itself, as `work(data, 0, 1)`, when another job is under way,
 when every other worker is running posted jobs, on one core, and where
@@ -152,7 +162,9 @@ handler's own share of a core went from 48% to 23%.
 
 ## What the code handed over may do
 
-A part (but part 0) and a job run on a worker's task, not on the caller's:
+A job runs on a worker's task, and so may any part: part 0 is the
+caller's, and so is a part its worker has not begun by then, but the
+code cannot tell which. So a part keeps to the same rules as a job:
 
 | It may | It may not |
 |---|---|
@@ -186,6 +198,11 @@ its own.
 `C:test/TaskBench` times a task started and ended, a process, a job of
 nothing posted and back, four at once, `ShareWork` in parts, and three
 posters with `ShareWork` beside them, checking that every job ran once.
+`TaskBench HELD` shares a job beside tasks of a higher priority that
+keep cores busy - none, core 1, every core but its own - with a second
+asker sharing beside it while core 1 is held, and says how long each
+job took and which parts its asker did, checking that every part was
+done once.
 `C:Top` shows the workers as `exec worker 0` to `3`, with their share of
 the time, beside the task that hands them work; `ReadCoreTimes` answers
 how busy each core was.

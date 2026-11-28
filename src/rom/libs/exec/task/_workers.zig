@@ -11,16 +11,24 @@
 //! and waits again. A worker runs at the priority of the task whose job it
 //! does.
 //!
-//! **Shared jobs.** The task that shares a job does part 0 itself, hands a
-//! part to each idle worker of the other cores, and waits until the last
-//! of them has counted itself out and signalled it. One shared job at a
-//! time: one shared while another is under way is done by its asker alone,
-//! rather than waiting for the cores; so is one shared from where a task
-//! may not wait - an interrupt, inside Disable, holding a spinlock, before
-//! multitasking, an idle task - since its asker waits for the workers, and
-//! one shared while every other core's worker runs posted jobs. Whatever
-//! is shared from within a part - a write-back a part asks for - is then
-//! done alone as well.
+//! **Shared jobs.** The task that shares a job hands a part to each idle
+//! worker of the other cores and does part 0 itself; then it takes back
+//! each part whose worker has not begun it, does that too, and waits until
+//! the last part under way has been counted out and signalled. A worker
+//! runs at its asker's priority on its own core, so one whose core a task
+//! of a higher priority keeps busy begins only once that task waits - and
+//! the job would wait as long, every other job shared meanwhile done by
+//! its asker alone. A part is taken with one exchange of its worker's
+//! `handed`, by the worker or back by the asker, so one of the two does
+//! it and the other finds nothing.
+//!
+//! One shared job at a time: one shared while another is under way is
+//! done by its asker alone, rather than waiting for the cores; so is one
+//! shared from where a task may not wait - an interrupt, inside Disable,
+//! holding a spinlock, before multitasking, an idle task - since its asker
+//! waits for the workers, and one shared while every other core's worker
+//! runs posted jobs. Whatever is shared from within a part - a write-back
+//! a part asks for - is then done alone as well.
 //!
 //! **Posted jobs** queue by priority - the poster's - and a worker that
 //! has nothing to do takes the first: PostWork wakes an idle worker,
@@ -73,8 +81,10 @@ pub const Worker = extern struct {
     part: u32 = 0,
     state: State = .idle,
     /// Set by ShareWork once the part is ready to be done - after the job's
-    /// fields, before the signal - and taken by the worker: the claim alone
-    /// comes before the job is filled in.
+    /// fields, before the signal - and taken, exchanged to 0, by the worker,
+    /// or by the asker where the worker has not taken it by the time the
+    /// asker's own part is done: the claim alone comes before the job is
+    /// filled in.
     handed: u32 = 0,
 };
 
@@ -121,10 +131,10 @@ fn workerCode(sys: *sdk.interface.exec.ExecBase) callconv(.c) void {
 }
 
 /// What a woken worker does until there is nothing left: its part, when
-/// ShareWork claimed it, and the posted jobs queued. It goes idle when the
-/// queue is empty - under the job lock, so a job posted after that wakes
-/// it again.
-fn serve(sys: *sdk.interface.exec.ExecBase, pool: *Pool, worker: *Worker) void {
+/// ShareWork claimed it and its asker has not taken it back, and the
+/// posted jobs queued. It goes idle when the queue is empty - under the
+/// job lock, so a job posted after that wakes it again.
+pub fn serve(sys: *sdk.interface.exec.ExecBase, pool: *Pool, worker: *Worker) void {
     while (true) {
         if (@atomicRmw(u32, &worker.handed, .Xchg, 0, .acq_rel) != 0) {
             pool.work.?(pool.data, worker.part, pool.parts);
@@ -260,7 +270,7 @@ pub fn setUp(base: *ExecBase) void {
 }
 
 /// `work` done in as many as `wanted` parts, shared between the asker and
-/// the workers of the other cores; the parts it was done in. Alone - one
+/// the workers of the other cores; the parts it was cut into. Alone - one
 /// part - when one is asked for, there are no workers, they are busy, or
 /// the asker may not wait.
 pub fn share(base: *ExecBase, work: WorkFn, data: ?*anyopaque, wanted: u32) u32 {
@@ -304,8 +314,30 @@ pub fn share(base: *ExecBase, work: WorkFn, data: ?*anyopaque, wanted: u32) u32 
         sys.Signal(task, worker.go);
     }
     work(data, 0, pool.parts);
+    takeBack(sys, pool);
     join(sys, pool);
     return helpers + 1;
+}
+
+/// The parts no worker has begun by the time the asker is done with its
+/// own, done by the asker. A worker that has not begun its part by then
+/// waits for its core, which a task of a higher priority has, and would
+/// hold the job until that task waits; a part takes as long on either
+/// core, so the asker's is done no later. Each is taken from its worker by
+/// the exchange the worker takes it with; the asker then lets the worker
+/// be claimed again and counts the part out, as the worker would have.
+/// The worker, woken later, finds nothing handed and looks at the queue.
+/// A part its worker has begun is the worker's to finish, and waited for.
+fn takeBack(sys: *sdk.interface.exec.ExecBase, pool: *Pool) void {
+    for (pool.workers_at[0..pool.count]) |*worker| {
+        if (@atomicLoad(u32, &worker.handed, .acquire) == 0) continue;
+        if (@atomicRmw(u32, &worker.handed, .Xchg, 0, .acq_rel) == 0) continue;
+        pool.work.?(pool.data, worker.part, pool.parts);
+        sys.AcquireLock(&pool.job_lock);
+        worker.state = .idle;
+        sys.ReleaseLock(&pool.job_lock);
+        _ = @atomicRmw(u32, &pool.remaining, .Sub, 1, .acq_rel);
+    }
 }
 
 /// The queue of posted jobs and its lock, empty.

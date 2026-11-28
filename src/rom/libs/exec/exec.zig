@@ -3497,6 +3497,97 @@ test "PostWork: run at once and replied with one core; with workers queued by th
     try expectNoLeaks();
 }
 
+/// A job in three parts that counts each part, notes its order and
+/// whether a worker did it, and can play a worker that begins its part
+/// while part 0 runs.
+const Parts = struct {
+    var done: [3]u32 = @splat(0);
+    var by_worker: [3]bool = @splat(false);
+    var order: [3]u32 = @splat(9);
+    var count: usize = 0;
+    var during: ?*_workers.Worker = null;
+    var in_worker = false;
+
+    fn reset() void {
+        done = @splat(0);
+        by_worker = @splat(false);
+        order = @splat(9);
+        count = 0;
+        during = null;
+    }
+
+    fn work(_: ?*anyopaque, part: u32, _: u32) callconv(.c) void {
+        done[part] += 1;
+        by_worker[part] = in_worker;
+        order[count] = part;
+        count += 1;
+        if (part != 0) return;
+        const worker = during orelse return;
+        in_worker = true;
+        _workers.serve(SysBase.iface(), &SysBase.workers, worker);
+        in_worker = false;
+    }
+};
+
+test "ShareWork: a part no worker has begun by the end of part 0 is the caller's; one begun is its worker's" {
+    try setUp();
+    defer deinit();
+    const pool = &SysBase.workers;
+    _workers.initQueue(SysBase);
+    InitSemaphore(SysBase, &pool.lock);
+    // Two workers of other cores whose tasks never run here - as workers
+    // whose cores a task of a higher priority keeps - and the caller's
+    // core's, never handed a part.
+    const me = FindTask(SysBase, null).?;
+    const go: u32 = 1 << 16;
+    const first = CreateTask(SysBase, "worker 1", me.node.pri - 1, &idleCode, 2048).?;
+    const second = CreateTask(SysBase, "worker 2", me.node.pri - 1, &idleCode, 2048).?;
+    var three_workers = [_]_workers.Worker{
+        .{ .core = 0 },
+        .{ .task = first, .core = 1, .go = go },
+        .{ .task = second, .core = 2, .go = go },
+    };
+    pool.workers_at = &three_workers;
+    pool.count = 3;
+    defer pool.count = 0;
+
+    // Neither begins: the caller does both parts after its own, in order,
+    // and each worker is let go, its signal waiting for it.
+    Parts.reset();
+    try testing.expectEqual(@as(u32, 3), ShareWork(SysBase, &Parts.work, null, 3));
+    try testing.expectEqual([3]u32{ 1, 1, 1 }, Parts.done);
+    try testing.expectEqual([3]u32{ 0, 1, 2 }, Parts.order);
+    try testing.expectEqual([3]bool{ false, false, false }, Parts.by_worker);
+    for (three_workers[1..]) |*worker| {
+        try testing.expectEqual(_workers.State.idle, worker.state);
+        try testing.expectEqual(@as(u32, 0), worker.handed);
+        try testing.expect(worker.task.?.sig_recvd & go != 0);
+    }
+    try testing.expectEqual(@as(u32, 0), pool.remaining);
+    try testing.expect(SetSignal(SysBase, 0, 0) & SIGF_SINGLE == 0);
+    // Woken at last, a worker finds nothing handed and does nothing.
+    _workers.serve(SysBase.iface(), pool, &three_workers[1]);
+    try testing.expectEqual([3]u32{ 1, 1, 1 }, Parts.done);
+    try testing.expectEqual(_workers.State.idle, three_workers[1].state);
+
+    // Worker 1 begins its part while part 0 runs: it is its own, counted
+    // out by it, and the caller does only worker 2's.
+    Parts.reset();
+    Parts.during = &three_workers[1];
+    try testing.expectEqual(@as(u32, 3), ShareWork(SysBase, &Parts.work, null, 3));
+    try testing.expectEqual([3]u32{ 1, 1, 1 }, Parts.done);
+    try testing.expectEqual([3]u32{ 0, 1, 2 }, Parts.order);
+    try testing.expectEqual([3]bool{ false, true, false }, Parts.by_worker);
+    try testing.expectEqual(@as(u32, 0), pool.remaining);
+    for (three_workers[1..]) |*worker| try testing.expectEqual(_workers.State.idle, worker.state);
+    try testing.expect(SetSignal(SysBase, 0, 0) & SIGF_SINGLE == 0);
+    try testing.expectEqual(@as(u32, 0), pool.job_lock.state);
+
+    RemTask(SysBase, first);
+    RemTask(SysBase, second);
+    try expectNoLeaks();
+}
+
 test "waitables: SignalWaitable, ResetWaitable, WaitForAny's answers, a waiter woken, timed out and withdrawn" {
     try setUp();
     defer deinit();

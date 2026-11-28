@@ -133,8 +133,13 @@ pub const LIBRARY_VERSION = 1;
 /// being stopped - and KillTask, the Software Failure requester's Kill as
 /// a call, so a tool in a shell can look into a task that is stuck and
 /// end it; FindTaskById, a task by the number the listings show.
-pub const LIBRARY_REVISION = 46;
-const BUILD_DATE = "21.11.2026";
+/// 47: ShareWork's caller, its own part done, does each part whose worker
+/// has not begun it: a worker whose core a task of a higher priority kept
+/// busy held the job until that task waited, and every job shared
+/// meanwhile was done by its asker alone - on the NucBox a copy of 14 MiB
+/// in 126 ms that the cores do in 10.
+pub const LIBRARY_REVISION = 47;
+const BUILD_DATE = "28.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++
